@@ -140,8 +140,8 @@ fn the_markdown_report_names_the_producer() {
     let results = Executor::new(200)
         .execute(&program)
         .expect("fixture simulates");
-    let sensitivity = fermi::sensitivity::full_sensitivity_analysis(&program, 200)
-        .expect("sensitivity runs");
+    let sensitivity =
+        fermi::sensitivity::full_sensitivity_analysis(&program, 200).expect("sensitivity runs");
     let dir = std::env::temp_dir().join("fermi_provenance_report_test");
     std::fs::create_dir_all(&dir).expect("temp dir");
 

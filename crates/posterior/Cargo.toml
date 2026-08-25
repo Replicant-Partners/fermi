@@ -21,6 +21,11 @@ chrono = { version = "0.4", features = ["serde"] }
 # Typed errors
 thiserror = "1.0"
 
+# `Feed` is an async, object-safe trait (feeds.rs). A language utility, not a
+# transport — this crate stays domain-and-transport-neutral per spec 14 §9, and
+# feed *implementations* live in the root crate where their I/O deps already are.
+async-trait = "0.1"
+
 [dev-dependencies]
 # For deterministic test seeding
 rand = "0.8"

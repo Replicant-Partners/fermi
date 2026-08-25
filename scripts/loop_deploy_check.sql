@@ -27,7 +27,7 @@ SELECT t.name AS expected_table,
        ) AS t(name, introduced_by);
 
 \echo ''
-\echo '── 2. The unattributable forecasts (Loop 5a / L5-M03) ──────────────────'
+\echo '── 2. The unattributable forecasts (Loop 5.A / L5-M03) ─────────────────'
 \echo '   A scored forecast with an empty roster: the Brier exists but no agent'
 \echo '   can ever be credited for it. Not recoverable retrospectively unless we'
 \echo '   know who contributed.'

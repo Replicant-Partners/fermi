@@ -90,9 +90,10 @@ pub struct LiveObservation {
 pub fn spawn_live_observation(state: &AppState, obs: LiveObservation) {
     let store = Arc::clone(&state.memory_store);
     tokio::spawn(async move {
-        if let Err(e) = record_live_observation(&store, obs).await {
-            tracing::warn!(error = %e, "live observation failed");
-        }
+        let _ = fermi::write_accounting::observe(
+            fermi::write_accounting::Sink::AgentTimelineEntries,
+            record_live_observation(&store, obs).await,
+        );
     });
 }
 
@@ -280,13 +281,20 @@ pub async fn sweep_observability_once(state: &AppState) -> anyhow::Result<(usize
     let mut scanned = 0usize;
     let mut anomalies = 0usize;
     for (agent_id,) in rows {
-        match worker.scan_agent(agent_id).await {
-            Ok(report) => {
+        // The scan advances `agent_observability_state`'s checkpoint. A failure
+        // that is only logged leaves the checkpoint where it was, so the same
+        // agent is re-selected on the next pass and fails again — indefinitely,
+        // and at a rate nothing reports.
+        match fermi::write_accounting::observe(
+            fermi::write_accounting::Sink::AgentObservabilityState,
+            worker.scan_agent(agent_id).await,
+        ) {
+            Some(report) => {
                 scanned += 1;
                 anomalies += report.anomalies_detected;
             }
             // One bad agent must not stop the sweep.
-            Err(e) => tracing::warn!(agent_id = %agent_id, error = %e, "agent scan failed"),
+            None => tracing::warn!(agent_id = %agent_id, "agent scan failed"),
         }
     }
     Ok((scanned, anomalies))

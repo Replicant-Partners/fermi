@@ -243,17 +243,17 @@ The cold-start period can be shortened by replaying known-resolved historical fo
 
 A conceptually important distinction in the Fermi architecture is between two entirely separate Monte Carlo loops that serve different purposes and operate on different timescales.
 
-**Loop B — Forecast Simulation (online, per question):** The FPL executor. Given a FPL program with distribution parameters, it runs Monte Carlo simulation and returns the outcome distribution. Loop B is stateless — it takes a program and returns results. It does not learn, does not adapt, and does not retain state between calls. The executor is unchanged by any learning or calibration activity in the system. This loop runs on every forecast question, in real time.
+**The simulation loop — Forecast Simulation (online, per question):** The FPL executor. Given a FPL program with distribution parameters, it runs Monte Carlo simulation and returns the outcome distribution. The simulation loop is stateless — it takes a program and returns results. It does not learn, does not adapt, and does not retain state between calls. The executor is unchanged by any learning or calibration activity in the system. This loop runs on every forecast question, in real time.
 
-**Loop A — Parameter Fitting (offline, per data accumulation):** BayesOps. Given a historical observation dataset, it fits a posterior distribution over outcome parameters and produces typed distribution parameters (`Beta(α, β)`, `Normal(μ, σ)`, etc.) that can be written into FPL `Driver` declarations. Loop A is triggered by data accumulation, not by forecast requests. It operates on a longer timescale and its outputs are explicit: changed parameter numbers in FPL programs, not invisible weight updates inside a model.
+**The fitting loop — Parameter Fitting (offline, per data accumulation):** BayesOps. Given a historical observation dataset, it fits a posterior distribution over outcome parameters and produces typed distribution parameters (`Beta(α, β)`, `Normal(μ, σ)`, etc.) that can be written into FPL `Driver` declarations. The fitting loop is triggered by data accumulation, not by forecast requests. It operates on a longer timescale and its outputs are explicit: changed parameter numbers in FPL programs, not invisible weight updates inside a model.
 
-Loop A feeds Loop B — its output is the parameters Loop B runs with — but they are fully independent in operation. The seam between them is the `Distribution` type in the FPL AST. Whether driver parameters were typed by a human analyst or produced by BayesOps, Loop B treats them identically.
+The fitting loop feeds the simulation loop — its output is the parameters the simulation loop runs with — but they are fully independent in operation. The seam between them is the `Distribution` type in the FPL AST. Whether driver parameters were typed by a human analyst or produced by BayesOps, the simulation loop treats them identically.
 
 This separation is architecturally deliberate. It means parameter improvements are explicit and auditable: every change to a forecast model appears as a change to specific numbers in a specific FPL program, with a documented source (analyst judgment or fitted posterior). There are no opaque weight updates.
 
 ### 6.2 BayesOps: design and current status
 
-BayesOps is the Loop A component. Its specification is complete; implementation is not yet started. When deployed, it will:
+BayesOps is the fitting-loop component. Its specification is complete; implementation is not yet started. When deployed, it will:
 
 1. Accept a historical observation dataset as input (e.g., historical outcomes for a class of events)
 2. Fit a posterior distribution using conjugate methods (Phase 1) or Hamiltonian Monte Carlo (Phase 2+)

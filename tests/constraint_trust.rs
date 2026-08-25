@@ -115,6 +115,76 @@ fn no_new_migration_declares_a_constraint_it_cannot_apply() {
     );
 }
 
+/// The linter must see the shape the ratchet counts.
+///
+/// The detector here is not Rust — it is `scripts/lint-migrations.sh`, and the
+/// test above only counts the lines it prints. So a rule quietly stopping
+/// matching looks exactly like a tree that has been cleaned up: the count falls,
+/// and the *second* assertion above tells you to lower the constant, which
+/// locks the blindness in.
+///
+/// That is not hypothetical for this particular check. Its stated reason was
+/// rewritten in August after the original mechanism turned out to be wrong
+/// (`raw_sql` sends the file as one simple query, so the pooler never splits
+/// it), and a rule whose justification has already been replaced once is a rule
+/// worth proving still fires.
+///
+/// Runs the real script over two temporary files, so what is falsified is the
+/// detector rather than a Rust re-implementation of it.
+#[test]
+fn the_linter_sees_a_non_atomic_constraint_migration() {
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let dir = std::env::temp_dir().join(format!("fermi-lint-probe-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+
+    let bare = dir.join("900_bare_drop_add.sql");
+    std::fs::write(
+        &bare,
+        "ALTER TABLE public.t DROP CONSTRAINT IF EXISTS t_k_check;\n\
+         ALTER TABLE public.t ADD CONSTRAINT t_k_check CHECK (k IN ('a'));\n",
+    )
+    .expect("write probe");
+
+    let wrapped = dir.join("901_wrapped_drop_add.sql");
+    std::fs::write(
+        &wrapped,
+        "DO $$ BEGIN\n\
+         \x20   ALTER TABLE public.t DROP CONSTRAINT IF EXISTS t_k_check;\n\
+         \x20   ALTER TABLE public.t ADD CONSTRAINT t_k_check CHECK (k IN ('a'));\n\
+         END $$;\n",
+    )
+    .expect("write probe");
+
+    let lint = |p: &std::path::Path| -> String {
+        let out = std::process::Command::new("bash")
+            .arg("scripts/lint-migrations.sh")
+            .arg(p)
+            .current_dir(&root)
+            .output()
+            .expect("run scripts/lint-migrations.sh");
+        String::from_utf8_lossy(&out.stdout).to_string()
+    };
+
+    let on_bare = lint(&bare);
+    let on_wrapped = lint(&wrapped);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    // The exact substring the ratchet counts. If the linter's wording moves,
+    // the ratchet silently counts zero and this is what says so.
+    assert!(
+        on_bare.contains("DROP+ADD CONSTRAINT outside DO block"),
+        "the linter did not flag a bare DROP+ADD pair, so \
+         `no_new_migration_declares_a_constraint_it_cannot_apply` is counting \
+         a string nothing prints — and its ratchet would read the resulting \
+         zero as progress.\n\n{on_bare}"
+    );
+    assert!(
+        !on_wrapped.contains("DROP+ADD CONSTRAINT outside DO block"),
+        "the linter flags the *remedy* it recommends, which is how a check \
+         comes to be switched off.\n\n{on_wrapped}"
+    );
+}
+
 fn glob_migrations(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut v: Vec<_> = std::fs::read_dir(root.join("migrations"))
         .expect("migrations/")

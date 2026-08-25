@@ -71,14 +71,20 @@ const MUST_STATE: &[(&str, &str)] = &[
 /// same shape as a temperature band, and the day it is asked for one, it belongs
 /// in `MUST_STATE`.
 const NOT_YET: &[(&str, &str)] = &[
-    ("biotech_analyst", "trial outcomes and approvals, not ranges"),
+    (
+        "biotech_analyst",
+        "trial outcomes and approvals, not ranges",
+    ),
     ("entity_investigator", "entity behaviour, not ranges"),
     (
         "equity_analyst",
         "event questions today; an EPS or revenue BAND has the same shape and \
          would move it into MUST_STATE",
     ),
-    ("football_analyst", "match and tournament outcomes, not ranges"),
+    (
+        "football_analyst",
+        "match and tournament outcomes, not ranges",
+    ),
     (
         "macro_forecaster",
         "policy and geopolitical events; produces base rates but has not been \
@@ -176,8 +182,8 @@ fn no_base_rate_card_is_silently_uncovered() {
         if !declares_base_rate(&name) {
             continue;
         }
-        let covered = MUST_STATE.iter().any(|(a, _)| *a == name)
-            || NOT_YET.iter().any(|(a, _)| *a == name);
+        let covered =
+            MUST_STATE.iter().any(|(a, _)| *a == name) || NOT_YET.iter().any(|(a, _)| *a == name);
         if !covered {
             uncovered.push(name);
         }
@@ -224,8 +230,11 @@ fn the_spliced_cards_are_still_valid_json_with_intact_prompts() {
              splice truncated it",
             p.len()
         );
-        assert!(!p.contains("\\n"), "{agent} prompt contains a literal backslash-n, \
+        assert!(
+            !p.contains("\\n"),
+            "{agent} prompt contains a literal backslash-n, \
              which means an escape was double-written and the agent will read it \
-             as text");
+             as text"
+        );
     }
 }

@@ -1,4 +1,11 @@
 # Session Handoff — 2026-05-24
+
+> **Terminology note (2026-08-23):** this handoff predates the settled loop
+> taxonomy and is kept as a dated record. Its "Loop A / Loop B" are the two
+> *Monte Carlo* loops — now called the fitting loop and the simulation loop.
+> BayesOps as a platform *feedback* loop is **Loop 5.B**. See
+> `docs/architecture/FEEDBACK_LOOPS.md`.
+
 **Time:** 02:15 CEST  
 **Session focus:** AutoStan / Bayesian forecasting research → spec → implementation  
 **Next engineer / session:** picks up from here

@@ -51,14 +51,16 @@ use crate::theme;
 // Trajectory-pane prose. Lives in the lib target so it can be unit
 // tested; see the module docs for why the binary's tests cannot run.
 use crate::ui;
+use fermi_console::abw_pacing::{self, LaunchPacer, FALLBACK_RETRY, MAX_RATE_LIMIT_RETRIES};
 use fermi_console::agent_naming::{
     base_agent_id, base_agent_id_for_driver, bound_agent_name, evidence_belongs_to_agent,
     evidence_id, sanitize_name,
 };
 use fermi_console::calibration::{critique_base_rate, Severity as CalibrationSeverity};
+use fermi_console::coverage;
 use fermi_console::negotiate;
 use fermi_console::routing::{
-    detect_domain, domain_specialist, select_agent_for_driver, FERMI_ORCHESTRA,
+    self, detect_domain, domain_specialist, select_agent_for_driver, FERMI_ORCHESTRA,
 };
 use fermi_console::trajectory_narrative as narrative;
 use fermi_console::wire::{clamp_wire_interval_bound, clamp_wire_probability};
@@ -670,6 +672,28 @@ pub struct CockpitState {
     pub sse_rx: std_mpsc::Receiver<SseEvent>,
     /// Sender cloned into each fire_agent background task.
     pub sse_tx: std_mpsc::Sender<SseEvent>,
+
+    /// Per-agent measured contribution, keyed by agent name.
+    ///
+    /// Feeds [`Self::agent_record`], which the specialist ranking consults
+    /// ahead of what an agent's card declares. Empty until
+    /// [`Self::load_agent_contributions`] lands, and an empty table simply
+    /// means the ranking falls back to declarations.
+    pub agent_contributions: Vec<routing::Proven>,
+    /// Whether the contribution fetch has been attempted this session.
+    pub agent_contributions_loaded: bool,
+
+    /// Local model of ABW's per-user LLM budget.
+    ///
+    /// Shared rather than owned by `CockpitState` because it is consulted
+    /// from inside the detached task that issues the request, where
+    /// `this.update(cx, ..)` would mean a round trip through the UI thread
+    /// for a decision that has to be atomic across concurrent launches.
+    ///
+    /// Every agent launch reserves a slot here before it goes out. See
+    /// [`fermi_console::abw_pacing`] for why the console needs its own
+    /// model of a limit the server already enforces.
+    pub launch_pacer: Arc<std::sync::Mutex<LaunchPacer>>,
 
     // ── Agent Schedules (persisted via API) ───────────────────────
     pub schedules: Vec<ForecastSchedule>,
@@ -1321,6 +1345,9 @@ impl CockpitState {
             selected_version: None,
             sse_rx: rx,
             sse_tx: tx,
+            agent_contributions: Vec::new(),
+            agent_contributions_loaded: false,
+            launch_pacer: Arc::new(std::sync::Mutex::new(LaunchPacer::default())),
             schedules: Vec::new(),
             schedules_loading: false,
             pending_toasts: Vec::new(),
@@ -1991,6 +2018,12 @@ impl CockpitState {
     pub fn refresh_server_agent_cards(&mut self, cx: &mut Context<Self>) {
         self.server_agent_cards_fetched = false;
         self.load_server_agent_cards(cx);
+        // A newly admitted agent may already carry a record from work done
+        // elsewhere, and a resolution since the last fetch changes every
+        // agent's. Refreshing one latch and not the other would rank a
+        // fresh roster on a stale table.
+        self.agent_contributions_loaded = false;
+        self.load_agent_contributions(cx);
     }
 
     /// Manually re-trigger the Polymarket type-ahead search for the
@@ -2651,6 +2684,10 @@ impl CockpitState {
         // a cold roster silently narrows the orchestra to the curated
         // members in `FERMI_ORCHESTRA`.
         self.load_server_agent_cards(cx);
+        // And what those specialists have actually achieved, for the same
+        // reason and on the same clock: a cold contribution table silently
+        // reverts the ranking to what the cards claim.
+        self.load_agent_contributions(cx);
 
         self.fire_agent("fermi", "fermi", &structured_query, cx);
 
@@ -2874,7 +2911,7 @@ impl CockpitState {
                 let domain = detect_domain(&question_text);
                 let roster = self.domain_roster();
                 if let Some(specialist) =
-                    fermi_console::routing::declared_specialist(&domain, &roster, &|a| {
+                    fermi_console::routing::declared_specialist_ranked(&domain, &roster, &|a| {
                         self.agent_is_assignable(a)
                     })
                 {
@@ -3207,14 +3244,22 @@ impl CockpitState {
         // weather forecasts came back as their own climatological base rate.
         let declared_for_domain = {
             let roster = self.domain_roster();
-            let picked = fermi_console::routing::declared_specialist(&domain, &roster, &|a| {
-                self.agent_is_assignable(a)
-            });
-            if let Some(ref a) = picked {
+            let record = self.agent_record();
+            // The full ranked list, not just the head: the runner-up is what
+            // makes "one agent is carrying this whole forecast" actionable
+            // rather than merely true.
+            let ranked = fermi_console::routing::declared_specialists_ranked(
+                &domain,
+                &roster,
+                &record,
+                &|a| self.agent_is_assignable(a),
+            );
+            if let Some(a) = ranked.first() {
                 log::info!(
-                    "[routing] domain '{}' declared by {} (roster of {} agents)",
+                    "[routing] domain '{}' declared by {} ({} claimant(s) in a roster of {})",
                     domain,
                     a,
+                    ranked.len(),
                     roster.len()
                 );
             } else {
@@ -3225,7 +3270,7 @@ impl CockpitState {
                     roster.len()
                 );
             }
-            picked
+            ranked.into_iter().next()
         };
 
         let driver_names: Vec<String> = self
@@ -3247,6 +3292,11 @@ impl CockpitState {
             // text — we are about to bind them to an interface they never
             // advertised. Same defect class the pipeline audit found 13 of.
             let mut mismatched: Vec<(String, negotiate::InputBinding)> = Vec::new();
+            // What actually got routed, for the team-level grade below.
+            // Collected rather than re-derived so the summary describes the
+            // decomposition that ran, not one recomputed from the same
+            // inputs and hoped to match.
+            let mut routed: Vec<(String, String, fermi_console::routing::RouteReason)> = Vec::new();
 
             for driver_name in &driver_names {
                 let driver = self.program.driver(driver_name);
@@ -3308,6 +3358,7 @@ impl CockpitState {
                     suggestion.map(|(a, _)| a.as_str()),
                     domain,
                 );
+                routed.push((driver_name.clone(), agent_to_use.clone(), reason));
 
                 // Reuse Fermi's bespoke query only when we kept Fermi's
                 // agent — a query written for a macro forecaster asks a
@@ -3341,6 +3392,7 @@ impl CockpitState {
                             contract.as_ref(),
                             Some(driver_name),
                         )
+                        .for_forecast(self.forecast_id.as_deref())
                         .with_route(
                             reason.slug(),
                             reason.is_deliberate(),
@@ -3369,6 +3421,7 @@ impl CockpitState {
                             contract.as_ref(),
                             Some(driver_name),
                         )
+                        .for_forecast(self.forecast_id.as_deref())
                         .with_route(
                             reason.slug(),
                             reason.is_deliberate(),
@@ -3422,36 +3475,62 @@ impl CockpitState {
                 assigned_count += 1;
             }
 
-            // Summarize what was assigned
-            let mut agent_counts: HashMap<String, usize> = HashMap::new();
-            for a in self
-                .program
-                .agents()
-                .iter()
-                .filter(|a| a.name != "fermi" && !a.driver_refs.is_empty())
-            {
-                let base = base_agent_id(&a.name, &a.driver_refs).to_string();
-                *agent_counts.entry(base).or_insert(0) += 1;
-            }
-            let summary: Vec<String> = agent_counts
-                .iter()
-                .map(|(agent, count)| format!("{} ({})", agent, count))
-                .collect();
+            // Grade the TEAM, not just the assignments.
+            //
+            // This used to be a bare `agent (count)` roll-up, which is the
+            // same information the per-driver lines already carried and says
+            // nothing about whether the decomposition is staffed by experts
+            // or by stand-ins. Five drivers on a presidential election
+            // produced five confident-looking lines and no way to notice that
+            // four of them were fallbacks and the roster had no politics
+            // specialist in it at all.
+            // Run the discovery search here rather than telling the operator
+            // to run it: the console already holds the catalogue, so "nothing
+            // claims this domain" is a fact it can establish instead of a
+            // chore it can delegate.
+            let dormant = coverage::dormant_claimants(
+                &domain,
+                &self.domain_roster(),
+                &self.agent_record(),
+                &|a| self.agent_is_assignable(a),
+            );
+            let coverage =
+                coverage::assess(&domain, declared_for_domain.as_deref(), &routed, &dormant);
 
             self.messages.push(AssistantMessage {
                 node: "question".into(),
                 kind: MessageKind::Suggestion,
                 text: format!(
-                    "🔬 Staged {} agents on {} drivers: {}. \
-                     Nothing has run yet and nothing has been billed — review the \
+                    "{} Nothing has run yet and nothing has been billed — review the \
                      assignments on each driver card, re-assign anything that looks wrong, \
                      then press {} to run them (or use Run Now per driver).",
-                    assigned_count,
-                    driver_names.len() - skipped.len(),
-                    summary.join(", "),
+                    coverage.summary(),
                     crate::keys::chord("Enter"),
                 ),
             });
+            let _ = assigned_count;
+
+            // Each shortage, with the thing to do about it. A gap with no
+            // remedy is an observation, and the operator already had plenty
+            // of those.
+            for gap in &coverage.gaps {
+                let severity = match gap {
+                    // A roster hole is the shortage that produces the others,
+                    // and the only one the operator cannot fix by editing the
+                    // forecast. It gets the louder kind.
+                    coverage::Gap::NoResidentExpert { .. } => MessageKind::Warning,
+                    _ => MessageKind::Tip,
+                };
+                let node = match gap {
+                    coverage::Gap::NoSignal { driver } => format!("driver:{}", driver),
+                    _ => "agents".to_string(),
+                };
+                self.messages.push(AssistantMessage {
+                    node,
+                    kind: severity,
+                    text: format!("{} {}.", gap.headline(), gap.remedy().call_to_action()),
+                });
+            }
 
             // Name the placeholders that were left out, per driver, so the
             // omission is visible where the fix is. Silently skipping would
@@ -3661,9 +3740,17 @@ impl CockpitState {
     /// routable for a new domain by editing `metadata.domains` on its card —
     /// no console release. Server cards take precedence over the on-disk
     /// registry, since that is where a third-party agent's declaration lives.
-    fn domain_roster(&self) -> Vec<(String, Vec<String>)> {
+    ///
+    /// The third element is whether `metadata.domains` was actually PRESENT,
+    /// as opposed to the domains having been inferred from `metadata.tags`.
+    /// It used to be dropped here, which quietly downgraded the live path to
+    /// `declared_specialist` while the tests exercised the explicit-aware
+    /// `declared_specialist_ranked` — so an agent tagged for search could
+    /// outrank one that had actually declared the domain, and only in
+    /// production.
+    fn domain_roster(&self) -> Vec<(String, Vec<String>, bool)> {
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let mut out: Vec<(String, Vec<String>)> = Vec::new();
+        let mut out: Vec<(String, Vec<String>, bool)> = Vec::new();
 
         for card in &self.server_agent_cards {
             let Some(id) = ["agent_id", "agent_name"]
@@ -3672,9 +3759,9 @@ impl CockpitState {
             else {
                 continue;
             };
-            let domains = negotiate::AgentContract::from_card(card).domains;
-            if !domains.is_empty() && seen.insert(id.to_string()) {
-                out.push((id.to_string(), domains));
+            let contract = negotiate::AgentContract::from_card(card);
+            if !contract.domains.is_empty() && seen.insert(id.to_string()) {
+                out.push((id.to_string(), contract.domains, contract.domains_explicit));
             }
         }
 
@@ -3685,15 +3772,74 @@ impl CockpitState {
                     continue;
                 }
                 if let Ok(json) = serde_json::to_value(&card) {
-                    let domains = negotiate::AgentContract::from_card(&json).domains;
-                    if !domains.is_empty() {
+                    let contract = negotiate::AgentContract::from_card(&json);
+                    if !contract.domains.is_empty() {
                         seen.insert(id.clone());
-                        out.push((id, domains));
+                        out.push((id, contract.domains, contract.domains_explicit));
                     }
                 }
             }
         }
         out
+    }
+
+    /// What the platform has measured about each agent's own contribution.
+    ///
+    /// Sourced from `GET /api/agents/contributions`, which decomposes each
+    /// resolved forecast's improvement over its no-agent baseline into
+    /// exact per-agent Shapley credit. Empty until that fetch lands, and
+    /// empty forever for an agent nothing has resolved for — both of which
+    /// the ranking handles by falling back to what the cards declare.
+    ///
+    /// Note what is NOT read here: the agent's team Brier. It is available
+    /// and it is useless for ranking, because a member cited on every
+    /// forecast of a composition carries the same team score as every
+    /// other member, at any sample size. See [`routing::Proven`].
+    fn agent_record(&self) -> Vec<routing::Proven> {
+        self.agent_contributions.clone()
+    }
+
+    /// Fetch the per-agent contribution table.
+    ///
+    /// One call for the whole roster, once per session unless something
+    /// resolves. Failure is non-fatal and deliberately quiet: with no
+    /// record the router ranks on declarations, which is exactly what it
+    /// did before this table existed.
+    pub fn load_agent_contributions(&mut self, cx: &mut Context<Self>) {
+        if self.agent_contributions_loaded {
+            return;
+        }
+        self.agent_contributions_loaded = true;
+        let api = self.api.clone();
+        cx.spawn(async move |this, cx| {
+            match api.agent_contributions().await {
+                Ok(resp) => {
+                    // Parsed by the lib target's `wire` module rather than
+                    // here: this conversion has three silent failure modes
+                    // (a renamed field, a null interval read as zero, a
+                    // negative count) and every one of them degrades
+                    // specialist ranking without erroring. It belongs where
+                    // it can be asserted, which is not this file.
+                    let parsed = fermi_console::wire::agent_contributions_from_json(&resp);
+                    log::info!(
+                        "[routing] measured contributions for {} agent(s)",
+                        parsed.len()
+                    );
+                    this.update(cx, |state, cx| {
+                        state.agent_contributions = parsed;
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                Err(e) => {
+                    // A server without the endpoint is the normal case
+                    // during rollout, and ranking on declarations alone is
+                    // a correct answer rather than a degraded one.
+                    log::info!("[routing] no measured contributions available: {}", e);
+                }
+            }
+        })
+        .detach();
     }
 
     fn contract_for(&self, agent_id: &str) -> Option<negotiate::AgentContract> {
@@ -3860,6 +4006,7 @@ impl CockpitState {
         let registry = self.registry.clone();
         let q = query.to_string();
         let sse_tx = self.sse_tx.clone();
+        let pacer = self.launch_pacer.clone();
         let invocation = provenance.map(|p| p.to_json());
 
         cx.spawn(async move |this, cx| {
@@ -3895,186 +4042,308 @@ impl CockpitState {
                 }
                 let body = body_json.to_string();
 
-                // Channel for SSE line events from HTTP stream → event processor
-                let (tx, mut rx) = mpsc::channel::<(String, String)>(32);
-                let sse_tx_clone = sse_tx.clone();
-                let tracking_for_sse = tracking_id.clone();
+                // ── Attempt loop ──────────────────────────────────
+                //
+                // A 429 is not a failure of the agent, it is a statement
+                // about WHEN the agent may run, and it used to end the run
+                // permanently. Each pass through this loop reserves a slot
+                // against the local model of the server's budget, waits for
+                // it, and — if the server refuses anyway — folds the delay
+                // it names back into that model before trying again.
+                let mut attempt: u32 = 0;
+                let attempt_result: Result<JsonValue, String> = loop {
+                    // Reserve BEFORE issuing. `reserve` books the slot in
+                    // the same call that computes the wait, so five drivers
+                    // assigned in the same tick stagger instead of each
+                    // observing an empty bucket.
+                    let queued_for = pacer
+                        .lock()
+                        .map(|mut p| p.reserve(std::time::Instant::now()))
+                        .unwrap_or_default();
+                    if !queued_for.is_zero() {
+                        log::info!(
+                            "[composer] {} queued {}s behind the LLM budget",
+                            tracking_id,
+                            queued_for.as_secs()
+                        );
+                        let waited = tracking_id.clone();
+                        let secs = queued_for.as_secs().max(1);
+                        this.update(cx, |state, cx| {
+                            state.note_agent_queued(&waited, secs);
+                            cx.notify();
+                        })
+                        .ok();
+                        cx.background_executor().timer(queued_for).await;
+                    }
 
-                // Spawn the HTTP streaming request on tokio runtime
-                tokio::spawn(async move {
-                    let client = reqwest::Client::new();
-                    let resp = client
-                        .post(&sse_url)
-                        .header("Authorization", format!("Bearer {}", api_key))
-                        .header("Content-Type", "application/json")
-                        .header("Accept", "text/event-stream")
-                        .body(body)
-                        .timeout(std::time::Duration::from_secs(120))
-                        .send()
-                        .await;
+                    let sse_url = sse_url.clone();
+                    let api_key = api_key.clone();
+                    let body = body.clone();
 
-                    match resp {
-                        Ok(response) => {
-                            if !response.status().is_success() {
-                                let status = response.status().as_u16();
-                                let body = response.text().await.unwrap_or_default();
-                                let _ = tx.send(("error".into(), format!("HTTP {}: {}", status, body))).await;
-                                return;
-                            }
-                            // Read SSE stream line by line
-                            use futures::StreamExt;
-                            let mut stream = response.bytes_stream();
-                            let mut buffer = String::new();
-                            let mut current_event = String::new();
+                    // Channel for SSE line events from HTTP stream → event processor
+                    let (tx, mut rx) = mpsc::channel::<(String, String)>(32);
+                    let sse_tx_clone = sse_tx.clone();
+                    let tracking_for_sse = tracking_id.clone();
 
-                            while let Some(chunk) = stream.next().await {
-                                match chunk {
-                                    Ok(bytes) => {
-                                        buffer.push_str(&String::from_utf8_lossy(&bytes));
-                                        // Process complete lines
-                                        while let Some(newline_pos) = buffer.find('\n') {
-                                            let line = buffer[..newline_pos].trim_end().to_string();
-                                            buffer = buffer[newline_pos + 1..].to_string();
+                    // Spawn the HTTP streaming request on tokio runtime
+                    tokio::spawn(async move {
+                        let client = reqwest::Client::new();
+                        let resp = client
+                            .post(&sse_url)
+                            .header("Authorization", format!("Bearer {}", api_key))
+                            .header("Content-Type", "application/json")
+                            .header("Accept", "text/event-stream")
+                            .body(body)
+                            .timeout(std::time::Duration::from_secs(120))
+                            .send()
+                            .await;
 
-                                            if line.starts_with("event: ") {
-                                                current_event = line[7..].to_string();
-                                            } else if line.starts_with("data: ") {
-                                                let data = line[6..].to_string();
-                                                let evt = if current_event.is_empty() {
-                                                    "message".to_string()
-                                                } else {
-                                                    current_event.clone()
-                                                };
-                                                if tx.send((evt, data)).await.is_err() {
-                                                    return; // receiver dropped
+                        match resp {
+                            Ok(response) => {
+                                if !response.status().is_success() {
+                                    // The status and the body are fused into prose
+                                    // here because the channel carries strings.
+                                    // That is survivable for a 429 specifically:
+                                    // ABW puts the retry delay in the BODY and sets
+                                    // no `Retry-After` header, so nothing is lost
+                                    // that `abw_pacing::retry_after_secs` cannot
+                                    // read back out of this same message.
+                                    let status = response.status().as_u16();
+                                    let body = response.text().await.unwrap_or_default();
+                                    let _ = tx.send(("error".into(), format!("HTTP {}: {}", status, body))).await;
+                                    return;
+                                }
+                                // Read SSE stream line by line
+                                use futures::StreamExt;
+                                let mut stream = response.bytes_stream();
+                                let mut buffer = String::new();
+                                let mut current_event = String::new();
+
+                                while let Some(chunk) = stream.next().await {
+                                    match chunk {
+                                        Ok(bytes) => {
+                                            buffer.push_str(&String::from_utf8_lossy(&bytes));
+                                            // Process complete lines
+                                            while let Some(newline_pos) = buffer.find('\n') {
+                                                let line = buffer[..newline_pos].trim_end().to_string();
+                                                buffer = buffer[newline_pos + 1..].to_string();
+
+                                                if line.starts_with("event: ") {
+                                                    current_event = line[7..].to_string();
+                                                } else if line.starts_with("data: ") {
+                                                    let data = line[6..].to_string();
+                                                    let evt = if current_event.is_empty() {
+                                                        "message".to_string()
+                                                    } else {
+                                                        current_event.clone()
+                                                    };
+                                                    if tx.send((evt, data)).await.is_err() {
+                                                        return; // receiver dropped
+                                                    }
+                                                } else if line.is_empty() {
+                                                    current_event.clear();
                                                 }
-                                            } else if line.is_empty() {
-                                                current_event.clear();
                                             }
                                         }
-                                    }
-                                    Err(e) => {
-                                        let _ = tx.send(("error".into(), format!("Stream: {}", e))).await;
-                                        return;
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            let _ = tx.send(("error".into(), format!("Connection: {}", e))).await;
-                        }
-                    }
-                });
-
-                // Receive SSE events and update UI progressively
-                let mut final_result: Option<JsonValue> = None;
-                let mut stream_error: Option<String> = None;
-
-                // Process SSE events — push live updates through the GPUI channel
-                while let Some((event_type, data)) = rx.recv().await {
-                    match event_type.as_str() {
-                        "started" => {
-                            log::info!("[composer] {} SSE: started", tracking_id);
-                            let _ = sse_tx_clone.send(SseEvent::Started {
-                                agent_id: tracking_for_sse.clone(),
-                            });
-                        }
-                        "progress" => {
-                            if let Ok(d) = serde_json::from_str::<JsonValue>(&data) {
-                                let msg = d.get("message").and_then(|v| v.as_str()).unwrap_or("");
-                                let elapsed = d.get("elapsed_ms").and_then(|v| v.as_u64()).unwrap_or(0);
-                                log::info!("[composer] {} SSE: {} ({}ms)", tracking_id, msg, elapsed);
-                            }
-                        }
-                        "evidence" => {
-                            if let Ok(d) = serde_json::from_str::<JsonValue>(&data) {
-                                if let Some(finding) = d.get("finding").and_then(|v| v.as_str()) {
-                                    if !finding.is_empty() {
-                                        log::info!(
-                                            "[composer] {} SSE evidence: {}",
-                                            tracking_id,
-                                            finding.chars().take(80).collect::<String>()
-                                        );
-                                        let _ = sse_tx_clone.send(SseEvent::Finding {
-                                            agent_id: tracking_for_sse.clone(),
-                                            text: finding.to_string(),
-                                        });
+                                        Err(e) => {
+                                            let _ = tx.send(("error".into(), format!("Stream: {}", e))).await;
+                                            return;
+                                        }
                                     }
                                 }
                             }
-                        }
-                        "complete" => {
-                            log::info!("[composer] {} SSE: complete", tracking_id);
-                            if let Ok(result) = serde_json::from_str::<JsonValue>(&data) {
-                                final_result = Some(result);
-                            } else {
-                                stream_error = Some("Failed to parse complete event".into());
+                            Err(e) => {
+                                let _ = tx.send(("error".into(), format!("Connection: {}", e))).await;
                             }
-                            break;
                         }
-                        "error" => {
-                            log::error!("[composer] {} SSE error: {}", tracking_id, data);
-                            stream_error = Some(data);
-                            break;
-                        }
-                        _ => {} // keepalive, unknown events
-                    }
-                }
+                    });
 
-                // No result means fall back, whatever the reason.
-                //
-                // This used to be `else if let Some(err) = stream_error`, so the
-                // non-streaming retry ran ONLY when the server had sent an
-                // explicit `error` event. When the stream merely ENDS — the
-                // connection dropped, a proxy timed it out, the server closed it
-                // — both `final_result` and `stream_error` are None, and the
-                // third arm returned a bare error without ever attempting the
-                // recovery that exists for exactly this case.
-                //
-                // That is not the rare path. Observed 2026-08-21: four agents
-                // fired on one forecast; the one that ran alone took 117s and
-                // completed, and three fired within 19s of each other all died
-                // with "SSE stream ended without complete event" at the SAME
-                // wall-clock instant, at 44s, 52s and 63s elapsed respectively.
-                // A shared drop, not a per-request timeout — and the fallback
-                // was skipped on all three, so three paid-for runs produced
-                // nothing and the operator saw drivers that never moved.
-                if let Some(result) = final_result {
-                    Ok(result)
-                } else {
+                    // Receive SSE events and update UI progressively
+                    let mut final_result: Option<JsonValue> = None;
+                    let mut stream_error: Option<String> = None;
+
+                    // Process SSE events — push live updates through the GPUI channel
+                    while let Some((event_type, data)) = rx.recv().await {
+                        match event_type.as_str() {
+                            "started" => {
+                                log::info!("[composer] {} SSE: started", tracking_id);
+                                let _ = sse_tx_clone.send(SseEvent::Started {
+                                    agent_id: tracking_for_sse.clone(),
+                                });
+                            }
+                            "progress" => {
+                                if let Ok(d) = serde_json::from_str::<JsonValue>(&data) {
+                                    let msg = d.get("message").and_then(|v| v.as_str()).unwrap_or("");
+                                    let elapsed = d.get("elapsed_ms").and_then(|v| v.as_u64()).unwrap_or(0);
+                                    log::info!("[composer] {} SSE: {} ({}ms)", tracking_id, msg, elapsed);
+                                }
+                            }
+                            "evidence" => {
+                                if let Ok(d) = serde_json::from_str::<JsonValue>(&data) {
+                                    if let Some(finding) = d.get("finding").and_then(|v| v.as_str()) {
+                                        if !finding.is_empty() {
+                                            log::info!(
+                                                "[composer] {} SSE evidence: {}",
+                                                tracking_id,
+                                                finding.chars().take(80).collect::<String>()
+                                            );
+                                            let _ = sse_tx_clone.send(SseEvent::Finding {
+                                                agent_id: tracking_for_sse.clone(),
+                                                text: finding.to_string(),
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                            "complete" => {
+                                log::info!("[composer] {} SSE: complete", tracking_id);
+                                if let Ok(result) = serde_json::from_str::<JsonValue>(&data) {
+                                    final_result = Some(result);
+                                } else {
+                                    stream_error = Some("Failed to parse complete event".into());
+                                }
+                                break;
+                            }
+                            "error" => {
+                                log::error!("[composer] {} SSE error: {}", tracking_id, data);
+                                stream_error = Some(data);
+                                break;
+                            }
+                            _ => {} // keepalive, unknown events
+                        }
+                    }
+
+                    // No result means fall back, whatever the reason.
+                    //
+                    // This used to be `else if let Some(err) = stream_error`, so the
+                    // non-streaming retry ran ONLY when the server had sent an
+                    // explicit `error` event. When the stream merely ENDS — the
+                    // connection dropped, a proxy timed it out, the server closed it
+                    // — both `final_result` and `stream_error` are None, and the
+                    // third arm returned a bare error without ever attempting the
+                    // recovery that exists for exactly this case.
+                    //
+                    // That is not the rare path. Observed 2026-08-21: four agents
+                    // fired on one forecast; the one that ran alone took 117s and
+                    // completed, and three fired within 19s of each other all died
+                    // with "SSE stream ended without complete event" at the SAME
+                    // wall-clock instant, at 44s, 52s and 63s elapsed respectively.
+                    // A shared drop, not a per-request timeout — and the fallback
+                    // was skipped on all three, so three paid-for runs produced
+                    // nothing and the operator saw drivers that never moved.
+                    if let Some(result) = final_result {
+                        break Ok(result);
+                    }
+
                     let why = stream_error.unwrap_or_else(|| {
                         "stream ended without a complete event".to_string()
                     });
-                    log::warn!("[composer] {} SSE failed, trying non-streaming: {}", tracking_id, why);
-                    let api_fb = api.clone();
-                    let bid = base_id.clone();
-                    let qfb = q.clone();
-                    let handle = tokio::spawn(async move {
-                        api_fb.execute_agent(&bid, &qfb).await
-                    });
-                    match handle.await {
-                        Ok(Ok(api_result)) => {
-                            let evidence = api_result.evidence.unwrap_or_default();
-                            let metadata = api_result.metadata.unwrap_or_else(|| serde_json::json!({}));
-                            Ok(serde_json::json!({
-                                "agent_id": api_result.agent_id,
-                                "status": api_result.status,
-                                "confidence": api_result.confidence,
-                                "execution_time_ms": api_result.execution_time_ms,
-                                "tokens_used": api_result.tokens_used,
-                                "credits_charged": api_result.credits_charged,
-                                "evidence": evidence,
-                                "metadata": metadata,
-                            }))
+
+                    // ── Was this a refusal, or a failure? ──────────────
+                    //
+                    // A 429 says WHEN, not whether. Everything else says the
+                    // attempt is over. Separating the two is the whole point:
+                    // the non-streaming fallback below used to be applied to
+                    // 429s as well, because it was applied to everything, and
+                    // it is the one recovery that cannot possibly work.
+                    // `/execute` and `/execute/stream` are BOTH on ABW's
+                    // `LLM_SPEND_ROUTES` and both charge the same per-user
+                    // bucket, so the "recovery" drew a second token from a
+                    // bucket that had just been refused — deepening the
+                    // deficit for the sibling drivers still in flight, and
+                    // guaranteeing its own failure. Observed as three drivers
+                    // dying inside nine seconds on a five-driver forecast.
+                    let mut refusal: Option<std::time::Duration> = if abw_pacing::is_rate_limited(&why) {
+                        Some(
+                            abw_pacing::retry_after_secs(None, &why)
+                                .map(std::time::Duration::from_secs)
+                                .unwrap_or(FALLBACK_RETRY),
+                        )
+                    } else {
+                        None
+                    };
+                    let mut fatal: Option<String> = None;
+
+                    // ── A dropped stream: the transport fallback ─────────
+                    if refusal.is_none() {
+                        log::warn!("[composer] {} SSE failed, trying non-streaming: {}", tracking_id, why);
+                        let api_fb = api.clone();
+                        let bid = base_id.clone();
+                        let qfb = q.clone();
+                        let handle = tokio::spawn(async move {
+                            api_fb.execute_agent(&bid, &qfb).await
+                        });
+                        match handle.await {
+                            Ok(Ok(api_result)) => {
+                                let evidence = api_result.evidence.unwrap_or_default();
+                                let metadata = api_result.metadata.unwrap_or_else(|| serde_json::json!({}));
+                                break Ok(serde_json::json!({
+                                    "agent_id": api_result.agent_id,
+                                    "status": api_result.status,
+                                    "confidence": api_result.confidence,
+                                    "execution_time_ms": api_result.execution_time_ms,
+                                    "tokens_used": api_result.tokens_used,
+                                    "credits_charged": api_result.credits_charged,
+                                    "evidence": evidence,
+                                    "metadata": metadata,
+                                }));
+                            }
+                            // The fallback can be refused too — a stream that
+                            // drops for unrelated reasons still spends a token
+                            // when it retries, and may find the bucket empty.
+                            // That is a refusal, not a dead run, and it is the
+                            // one case where the typed error carries the delay
+                            // instead of prose.
+                            Ok(Err(e)) => {
+                                refusal = e.retry_after().or_else(|| {
+                                    matches!(e, ApiError::RateLimitedUnknown)
+                                        .then_some(FALLBACK_RETRY)
+                                });
+                                // Both errors name the SSE failure as well as
+                                // their own. Reporting only the retry's error
+                                // hid the fact that a stream had dropped first,
+                                // which is the part that says whether the agent
+                                // or the transport is at fault.
+                                fatal = Some(format!("ABW API: {} (after SSE {})", e, why));
+                            }
+                            Err(e) => {
+                                fatal = Some(format!("Agent task panicked: {} (after SSE {})", e, why));
+                            }
                         }
-                        // Both errors name the SSE failure as well as their own.
-                        // Reporting only the retry's error hid the fact that a
-                        // stream had dropped first, which is the part that says
-                        // whether the agent or the transport is at fault.
-                        Ok(Err(e)) => Err(format!("ABW API: {} (after SSE {})", e, why)),
-                        Err(e) => Err(format!("Agent task panicked: {} (after SSE {})", e, why)),
                     }
-                }
+
+                    let Some(delay) = refusal else {
+                        break Err(fatal.unwrap_or(why));
+                    };
+
+                    // Teach the local model what the server just said, so
+                    // every OTHER queued launch moves too rather than walking
+                    // into the same wall in turn.
+                    if let Ok(mut p) = pacer.lock() {
+                        p.penalise(std::time::Instant::now(), delay);
+                    }
+                    attempt += 1;
+                    if attempt > MAX_RATE_LIMIT_RETRIES {
+                        break Err(format!(
+                            "ABW rate limit still in force after {} attempts: {}",
+                            MAX_RATE_LIMIT_RETRIES,
+                            fatal.unwrap_or(why)
+                        ));
+                    }
+                    log::warn!(
+                        "[composer] {} rate limited, retry {}/{} in {}s",
+                        tracking_id, attempt, MAX_RATE_LIMIT_RETRIES, delay.as_secs()
+                    );
+                    let waited = tracking_id.clone();
+                    let secs = delay.as_secs().max(1);
+                    this.update(cx, |state, cx| {
+                        state.note_agent_rate_limited(&waited, secs, attempt);
+                        cx.notify();
+                    })
+                    .ok();
+                    cx.background_executor().timer(delay).await;
+                };
+                attempt_result
             } else {
                 // ── Fallback: local registry (dev mode with ANTHROPIC_API_KEY) ──
                 let executor_name = registry.executor_arc().name().to_string();
@@ -4944,6 +5213,41 @@ impl CockpitState {
         });
     }
 
+    /// Say that a run is waiting its turn against the LLM budget.
+    ///
+    /// A queued run and a hung run look identical in the UI otherwise, and
+    /// the difference matters: one is the console behaving correctly, the
+    /// other is a bug. The run stays `Running` because it is still going to
+    /// happen — only later.
+    fn note_agent_queued(&mut self, agent_name: &str, secs: u64) {
+        self.messages.push(AssistantMessage {
+            node: format!("agent:{}", agent_name),
+            kind: MessageKind::Info,
+            text: format!(
+                "⏳ {} queued {}s — ABW allows a limited number of agent runs per minute.",
+                agent_name, secs
+            ),
+        });
+    }
+
+    /// Say that the server refused a run and when it will be retried.
+    ///
+    /// Previously this was a terminal `Failed` with an error naming a
+    /// 5-second delay that nothing waited for and that the server had not
+    /// asked for. Naming the real delay, and the attempt number, is the
+    /// difference between "the console is broken" and "the console is
+    /// waiting".
+    fn note_agent_rate_limited(&mut self, agent_name: &str, secs: u64, attempt: u32) {
+        self.messages.push(AssistantMessage {
+            node: format!("agent:{}", agent_name),
+            kind: MessageKind::Warning,
+            text: format!(
+                "⏳ {} rate limited by ABW — retrying in {}s (attempt {} of {}).",
+                agent_name, secs, attempt, MAX_RATE_LIMIT_RETRIES
+            ),
+        });
+    }
+
     fn mark_agent_failed(&mut self, agent_name: &str, error: &str) {
         if let Some(run) = self
             .agent_runs
@@ -5136,6 +5440,7 @@ impl CockpitState {
         // third-party agent could not be assigned to a driver. Always
         // fetch. Lazy and once per session; cost is one ~1KB call.
         self.load_server_agent_cards(cx);
+        self.load_agent_contributions(cx);
         self.focused_node = FocusedNode::AgentPicker(driver_name.to_string());
         self.right_tab = RightTab::Edit;
 
@@ -5147,7 +5452,7 @@ impl CockpitState {
         // the auto-assign path uses, so the picker's "Recommended" card
         // agrees with what Fermi actually spawned — they used to be two
         // independent keyword ladders that disagreed.
-        let (recommended, _reason) =
+        let (recommended, reason) =
             select_agent_for_driver(driver_name, &task.rationale, &domain, None, &|a| {
                 self.agent_is_assignable(a)
             });
@@ -5171,14 +5476,88 @@ impl CockpitState {
         self.driver_research_input
             .update(cx, |input, cx| input.set_text("", cx));
 
+        // Say WHY, not just who. An operator who saw `energy_advisor`
+        // recommended for `democratic_primary_viability` had no way to tell
+        // whether the console had a reason or a bug, and the answer took a
+        // code read. The route reason and the runner-up are cheap to print
+        // and turn a surprising recommendation into a checkable claim.
+        let why = match routing::route_candidates(driver_name, &task.rationale, &domain).as_slice()
+        {
+            [] => reason.as_str().to_string(),
+            [(top, _)] => format!("{}; only candidate was {}", reason.as_str(), top),
+            [(top, ts), (next, ns), ..] => format!(
+                "{}; {} scored {:.1} vs {} at {:.1}",
+                reason.as_str(),
+                top,
+                ts,
+                next,
+                ns
+            ),
+        };
+
+        // A stand-in must not be offered in the same words as a specialist.
+        // Both used to read "recommended: X", which is how a generalist
+        // fallback acquired the authority of a considered choice.
+        let standing = coverage::Standing::of(&recommended, reason);
+        let (verb, kind) = match standing {
+            coverage::Standing::Resident => ("recommended", MessageKind::Info),
+            coverage::Standing::Adjacent => ("recommended", MessageKind::Info),
+            coverage::Standing::Stopgap => ("standing in", MessageKind::Warning),
+        };
+        // If the recommendation is backed by measurement, say so and say
+        // how much. "Ranked above the alternatives because it has actually
+        // done better" is a different claim from "its card claims this
+        // domain", and the operator cannot weigh a recommendation without
+        // knowing which one they are being given.
+        let track_record = self
+            .agent_record()
+            .into_iter()
+            .find(|p| p.agent == recommended && p.is_established())
+            .map(|p| {
+                format!(
+                    " Measured contribution +{:.3} over {} resolved forecast{}.",
+                    p.mean_shapley,
+                    p.n_forecasts,
+                    if p.n_forecasts == 1 { "" } else { "s" }
+                )
+            })
+            .unwrap_or_default();
+
         self.messages.push(AssistantMessage {
             node: format!("driver:{}", driver_name),
-            kind: MessageKind::Info,
+            kind,
             text: format!(
-                "🔬 Research panel for '{}' — recommended: {} (edit query below to customize)",
-                task.driver_display, recommended
+                "🔬 Research panel for '{}' — {}: {} ({} · {}).{} Edit the query below to customise.",
+                task.driver_display,
+                verb,
+                recommended,
+                standing.label(),
+                why,
+                track_record
             ),
         });
+
+        // No specialist for this domain is a roster fact, not a driver fact,
+        // and it is the one the operator can actually act on: every driver of
+        // this forecast will keep landing on stand-ins until the roster gains
+        // an agent that claims the domain.
+        if standing == coverage::Standing::Stopgap && domain != "general" {
+            let gap = coverage::Gap::NoResidentExpert {
+                domain: domain.clone(),
+                on_non_residents: 1,
+                dormant: coverage::dormant_claimants(
+                    &domain,
+                    &self.domain_roster(),
+                    &self.agent_record(),
+                    &|a| self.agent_is_assignable(a),
+                ),
+            };
+            self.messages.push(AssistantMessage {
+                node: "agents".into(),
+                kind: MessageKind::Tip,
+                text: format!("{} {}.", gap.headline(), gap.remedy().call_to_action()),
+            });
+        }
 
         cx.notify();
     }
@@ -6528,7 +6907,8 @@ impl CockpitState {
             &binding,
             contract.as_ref(),
             Some(driver_name),
-        );
+        )
+        .for_forecast(self.forecast_id.as_deref());
         self.fire_agent_with(agent_id, &bound_name, &query, Some(provenance), cx);
 
         // Persist recurring schedules to the backend (Once is fire-and-forget)
@@ -7779,7 +8159,7 @@ impl CockpitState {
         let domain = detect_domain(&question);
         let producer = {
             let roster = self.domain_roster();
-            match fermi_console::routing::declared_specialist(&domain, &roster, &|a| {
+            match fermi_console::routing::declared_specialist_ranked(&domain, &roster, &|a| {
                 self.agent_is_assignable(a)
             }) {
                 Some(a) => {

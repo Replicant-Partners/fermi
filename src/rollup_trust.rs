@@ -1,6 +1,11 @@
 //! # Rollup trust contract — the columns that exist but lie
 //!
-//! Sibling to [`crate::schema_trust`]. That contract asks *"is this column
+//! **Rung 3 of the verification ladder** (`crate::ladder`), which the paper
+//! calls **Truth**. Named here for the denormalisation mechanism it checks
+//! rather than for the question it answers, so `crate::ladder` is where the
+//! two are tied together.
+//!
+//! Sibling to [`crate::schema_trust`] — rung 1, **Presence**. That contract asks *"is this column
 //! present?"*. This one asks *"is this column telling the truth?"*.
 //!
 //! ## The failure class

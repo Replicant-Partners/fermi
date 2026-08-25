@@ -545,6 +545,20 @@ pub struct InvocationProvenance {
     /// The driver this run was researching, for joining back to the forecast.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub driver: Option<String>,
+    /// The forecast that driver belongs to.
+    ///
+    /// Not decoration: this is the field that lets the agent's quantified
+    /// judgement be RETAINED. The server writes a `forecast_agent_claims`
+    /// row — the sole input to Shapley attribution — only when the run
+    /// carries a binding, and until mig-213 the only accepted binding was a
+    /// workspace id, which console runs do not have. So every judgement the
+    /// console ever produced was computed, paid for, and dropped: 61 of 61,
+    /// and the table sat empty from the day it was created.
+    ///
+    /// Paired with `driver` on purpose. A claim is a number bound to one
+    /// driver of one forecast; either half alone is unattributable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub forecast_id: Option<String>,
 
     // ── Why this agent, not another ───────────────────────────────────────
     //
@@ -592,11 +606,28 @@ impl InvocationProvenance {
             declared_label_count: contract.map(|c| c.finding_labels.len()).unwrap_or(0),
             recomposed_from: composed.recomposed_from.clone(),
             driver: driver.map(str::to_string),
+            forecast_id: None,
             route_reason: None,
             route_deliberate: None,
             route_overrode_suggestion: None,
             route_domain: None,
         }
+    }
+
+    /// Bind this run to the forecast whose driver it is researching.
+    ///
+    /// A builder rather than a `new` parameter because the forecast id is
+    /// not always known at composition time — a query composed against a
+    /// draft that has never been saved has no id to give — and forcing
+    /// callers to pass `None` would make the missing case invisible rather
+    /// than explicit. An unsaved forecast producing no claim is correct:
+    /// there is nothing for attribution to join back to.
+    pub fn for_forecast(mut self, forecast_id: Option<&str>) -> Self {
+        self.forecast_id = forecast_id
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        self
     }
 
     /// Record why the router chose this agent.
@@ -1295,6 +1326,43 @@ mod tests {
         assert_eq!(j["declared_label_count"], 5);
         // Absent optionals must not appear as nulls on the wire.
         assert!(j.get("recomposed_from").is_none());
+    }
+
+    #[test]
+    fn the_forecast_binding_reaches_the_wire_under_the_name_the_server_reads() {
+        // The link that closes the attribution loop, and the one that would
+        // break in total silence. `execution.rs` and `execution_stream.rs`
+        // both do `obj.get("forecast_id")` on this blob; a rename or a serde
+        // attribute here would stop every claim being written and nothing
+        // would error — the server would simply see a run with no binding,
+        // which is a legitimate case it is required to tolerate.
+        let c = AgentContract::from_card(&sentiment_card());
+        let composed = compose_query(&task(), Some(&c));
+        let binding = bind_input(Some(&c));
+        let p = InvocationProvenance::new(&composed, &binding, Some(&c), Some("driver_a"))
+            .for_forecast(Some("fc_123"));
+
+        let j = p.to_json();
+        assert_eq!(j["forecast_id"], "fc_123");
+        // Both halves are required: a claim is a number bound to one driver
+        // of one forecast, and either alone is unattributable.
+        assert_eq!(j["driver"], "driver_a");
+    }
+
+    #[test]
+    fn an_unsaved_forecast_sends_no_binding_rather_than_an_empty_one() {
+        // A draft has no id. Omitting the field entirely is what makes the
+        // server's tolerant read ("no forecast binding") correct; an empty
+        // string would pass `as_str()` and be written as a claim bound to a
+        // forecast that does not exist, which the FK would then reject at
+        // the point where nobody is looking.
+        let composed = compose_query(&task(), None);
+        for id in [None, Some(""), Some("   ")] {
+            let p = InvocationProvenance::new(&composed, &bind_input(None), None, Some("d"))
+                .for_forecast(id);
+            assert_eq!(p.forecast_id, None, "accepted {id:?}");
+            assert!(p.to_json().get("forecast_id").is_none(), "{id:?}");
+        }
     }
 
     #[test]

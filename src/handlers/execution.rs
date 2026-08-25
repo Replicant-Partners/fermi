@@ -74,11 +74,25 @@ pub async fn execute_agent_handler(
 
     // Rate limit LLM calls
     if let Err(retry) = state.rate_limits.llm.check(&format!("user:{}", caller_id)) {
+        // The limiter is an in-memory map with no export, so its refusals have
+        // never been visible — including the case that matters most, which is a
+        // per-process limiter quietly doing a fraction of its job behind more
+        // than one replica.
+        fermi::gate_trust::decided(
+            fermi::gate_trust::Gate::RateLimit,
+            fermi::gate_trust::Decision::Refused,
+            Some("llm limiter"),
+        );
         return Err((
             StatusCode::TOO_MANY_REQUESTS,
             format!("LLM rate limit exceeded. Retry after {} seconds.", retry),
         ));
     }
+    fermi::gate_trust::decided(
+        fermi::gate_trust::Gate::RateLimit,
+        fermi::gate_trust::Decision::Approved,
+        None,
+    );
 
     // 0. Check caller has credits
     let wallet = get_or_create_wallet(&state.db, "user", &caller_id)
@@ -90,11 +104,25 @@ pub async fn execute_agent_handler(
             )
         })?;
     if wallet.balance <= 0 {
+        // Counted. Every credit refusal in the system returned before the
+        // `credit_ledger` INSERT, so the platform recorded what it spent and
+        // nothing about what it declined — spend was observable and demand was
+        // not.
+        fermi::gate_trust::decided(
+            fermi::gate_trust::Gate::Credit,
+            fermi::gate_trust::Decision::Refused,
+            Some("execute: wallet balance <= 0"),
+        );
         return Err((
             StatusCode::PAYMENT_REQUIRED,
             "Insufficient credits".to_string(),
         ));
     }
+    fermi::gate_trust::decided(
+        fermi::gate_trust::Gate::Credit,
+        fermi::gate_trust::Decision::Approved,
+        None,
+    );
 
     // 1. Resolve agent in database, then build card (registry or DB fallback)
     let db_agent = resolve_agent(&state, &agent_id).await?;
@@ -163,12 +191,22 @@ pub async fn execute_agent_handler(
         })
         .collect();
 
-    if let Err(e) = fermi::attachments::ensure_deliverable(
-        &attachments,
-        &card.capabilities.provider,
-        &card.capabilities.model,
-    ) {
-        return Err((StatusCode::BAD_REQUEST, e.to_string()));
+    {
+        let deliverable = fermi::attachments::ensure_deliverable(
+            &attachments,
+            &card.capabilities.provider,
+            &card.capabilities.model,
+        );
+        // Only counted when there was something to check: a request with no
+        // attachment is not a decision this gate made, and counting it as an
+        // approval would bury the refusal rate under the traffic of every
+        // text-only call.
+        if !attachments.is_empty() {
+            fermi::gate_trust::decided_ok(fermi::gate_trust::Gate::Attachment, &deliverable);
+        }
+        if let Err(e) = deliverable {
+            return Err((StatusCode::BAD_REQUEST, e.to_string()));
+        }
     }
 
     let context = ExecutionContext {
@@ -266,47 +304,97 @@ pub async fn execute_agent_handler(
             )
         })?;
 
-    // 3.5 Post-agent hook: apply multiplier recommendations to workspace params.
-    // If the ToolContext has a workspace_id AND the agent produced evidence with
-    // [MULTIPLIER] blocks, write them to the workspace's params and trigger a refit.
+    // 3.5 Post-agent hook: retain the agent's quantified judgement, and — when
+    // there is a workspace — apply it to that workspace's params and refit.
     let ws_id_opt = tool_context_for_hook.workspace_id; // Copy (Option<Uuid>)
 
+    // The other binding a caller may have: the exact (forecast, driver) this
+    // run was commissioned for.
+    //
+    // Read out of `invocation`, which the caller already sends and which
+    // `stamp_invocation` already stores on the episode below — the same
+    // statement of intent, read for a second purpose rather than a new field
+    // on the wire. Tolerant throughout: a missing, non-object or wrongly-typed
+    // field means "no forecast binding", never a failure, because a caller
+    // that says nothing about a forecast is the normal case.
+    // Read through `fermi::claim_outcome`, which declares the two keys. They
+    // were string literals here and in `execution_stream.rs`, against serde
+    // field names in `fermi-console` — four spellings, two crates, nothing
+    // comparing them, and a rename on either side yields zero claims silently.
+    let wire = fermi::claim_outcome::binding_from_invocation(body.invocation.as_ref());
+    let (forecast_id_opt, driver_opt) = (wire.forecast_id, wire.driver);
+
+    // The gate was `if let Some(ws_id) = ws_id_opt`, and that discarded every
+    // judgement the Fermi Console ever produced: it executes agents with no
+    // workspace, because what it has is better — the exact (forecast, driver)
+    // the run is bound to. `forecast_agent_claims.workspace_id` was NOT NULL,
+    // so there was no row the hook could have written and the gate was
+    // correct given the schema. 61 quantified judgements, 61 discarded, zero
+    // rows in the table since mig-187 created it
+    // (docs/HANDOFF_loops_and_gates.md §4.2). Migration 213 makes
+    // `workspace_id` nullable and requires workspace OR forecast instead, so
+    // the gate is now "is there any binding at all".
+    //
+    // A bare `driver` with neither binding is deliberately not enough: it
+    // would violate `forecast_agent_claims_has_binding` and there is nothing
+    // to attach the claim to.
+    //
     // The claim carries `episode_id` (minted above) so attribution is exact
     // rather than a (agent_id, driver, time-window) guess — mig-197. This hook
     // and the episode write race, and the claim usually lands first, which is
     // why the id could not simply be read back from the stored episode.
-    if let Some(ws_id) = ws_id_opt {
-        if !output.evidence.is_empty() {
-            let pool = state.db.clone();
-            let registry = state.extractor_registry.clone();
-            let agent_name = agent_id.clone();
-            let evidence = output.evidence.clone();
-            tokio::spawn(async move {
-                match crate::handlers::workspace::agent_params_hook::apply_agent_multipliers(
-                    &pool,
-                    &registry,
-                    ws_id,
-                    &agent_name,
-                    &evidence,
-                    Some(episode_id),
-                )
-                .await
-                {
-                    Ok(true) => tracing::info!(
-                        workspace = %ws_id,
-                        agent = %agent_name,
-                        "agent multipliers applied to workspace params"
-                    ),
-                    Ok(false) => {} // no multiplier found, nothing to do
-                    Err(e) => tracing::warn!(
-                        workspace = %ws_id,
-                        agent = %agent_name,
-                        error = %e,
-                        "failed to apply agent multipliers"
-                    ),
-                }
-            });
-        }
+    if (ws_id_opt.is_some() || forecast_id_opt.is_some()) && !output.evidence.is_empty() {
+        let pool = state.db.clone();
+        let registry = state.extractor_registry.clone();
+        let agent_name = agent_id.clone();
+        let evidence = output.evidence.clone();
+        let binding = crate::handlers::workspace::agent_params_hook::ClaimBinding {
+            workspace_id: ws_id_opt,
+            forecast_id: forecast_id_opt,
+            driver: driver_opt,
+        };
+        let log_workspace = ws_id_opt.map(|w| w.to_string()).unwrap_or_default();
+        let log_forecast = binding.forecast_id.clone().unwrap_or_default();
+        tokio::spawn(async move {
+            match crate::handlers::workspace::agent_params_hook::apply_agent_multipliers(
+                &pool,
+                &registry,
+                &binding,
+                &agent_name,
+                &evidence,
+                Some(episode_id),
+            )
+            .await
+            {
+                // Was `Ok(true) => info!`, `Ok(false) => {}`. The empty arm
+                // covered three different states, and `forecast_agent_claims`
+                // has held zero rows since mig-187 — so the first bound run
+                // that still produces no claim is the observation Loop 4 has
+                // been waiting for, and it would have arrived silent and
+                // indistinguishable from the 65 unbound runs before it.
+                Ok(o) if o.recorded() => tracing::info!(
+                    workspace = %log_workspace,
+                    forecast = %log_forecast,
+                    agent = %agent_name,
+                    outcome = o.label(),
+                    "agent multiplier recorded as a claim"
+                ),
+                Ok(o) => tracing::info!(
+                    workspace = %log_workspace,
+                    forecast = %log_forecast,
+                    agent = %agent_name,
+                    outcome = o.label(),
+                    "bound run wrote no claim"
+                ),
+                Err(e) => tracing::warn!(
+                    workspace = %log_workspace,
+                    forecast = %log_forecast,
+                    agent = %agent_name,
+                    error = %e,
+                    "failed to apply agent multipliers"
+                ),
+            }
+        });
     }
 
     // 3.6 Grounding contract — could any tool this agent has have supplied
@@ -330,6 +418,38 @@ pub async fn execute_agent_handler(
         Some(mut doc) => fermi::grounding_trust::enforce(&agent_id, &mut doc),
         None => fermi::grounding_trust::Report::default(),
     };
+    // The invocation gate's own verdict, counted — in three states, not two.
+    //
+    // `enforce` returns an empty report for an agent with no declared contract,
+    // and from here that is indistinguishable from a clean pass. The first
+    // version of this block said exactly that in a comment and then recorded it
+    // as `Approved` anyway.
+    //
+    // It matters at the scale this actually runs. Measured: **5 of 3,558
+    // episodes** carry a grounding tag at all. Counting the other 3,553 as
+    // approvals would have the gate reporting `3558 asked, 0 refused` — which
+    // reads as "a control that has never needed to fire" when the truth is "a
+    // control that almost never engages". Different findings, different
+    // remedies, and the row count cannot tell them apart.
+    //
+    // `Undetermined` is what that state is: the gate was reached and formed no
+    // opinion, because there was no contract to form one against.
+    let has_contract = fermi::grounding_trust::contracts_for(&agent_id)
+        .next()
+        .is_some();
+    fermi::gate_trust::decided(
+        fermi::gate_trust::Gate::Grounding,
+        if !has_contract {
+            fermi::gate_trust::Decision::Undetermined
+        } else if grounding_report.is_clean() {
+            fermi::gate_trust::Decision::Approved
+        } else {
+            fermi::gate_trust::Decision::Refused
+        },
+        (!grounding_report.is_clean())
+            .then(|| format!("{} violation(s)", grounding_report.violations.len()))
+            .as_deref(),
+    );
     if !grounding_report.is_clean() {
         tracing::warn!(
             agent = %agent_id,
@@ -337,58 +457,6 @@ pub async fn execute_agent_handler(
             violations = grounding_report.violations.len(),
             "grounding contract violated on the execute path — fields with no possible source"
         );
-
-        // Raise it as an anomaly, not just a log line.
-        //
-        // §4's lifecycle diagram says `violations found -> anomaly event
-        // (kind = grounding)`, and migration 200 widened the CHECK constraint
-        // for exactly this kind. Nothing ever wrote one: violations were logged
-        // and the event stream stayed at zero rows since it was created.
-        //
-        // It matters beyond tidiness. `anomaly_events` is Loop 2's only input.
-        // With none, the HITL queue is empty, no reviewer ever intervenes, no
-        // AgentWide correction is ever made, `bump_persona_version` (its sole
-        // caller is coherence-gate's two_write) never fires, every agent stays
-        // at persona_version 1 — and the drift detector skips every entry it
-        // scans, because drift against a previous version is undefined at v1.
-        // Measured: 0 anomaly events against 1,405 timeline entries.
-        //
-        // Loop 2 needed its own output as its input. This is the seed that
-        // breaks the cycle, and it is the honest one: a real defect, detected
-        // by a real contract, on live traffic.
-        //
-        // Non-fatal and spawned: an audit write must never fail the request it
-        // is auditing.
-        let anomaly = agent_bestiary_memory::AnomalyEvent {
-            event_id: uuid::Uuid::new_v4(),
-            agent_id: db_agent.agent_id,
-            episode_id: Some(episode_id),
-            run_id: None,
-            dyad_id: None,
-            kind: "grounding".to_string(),
-            // L1: a reviewable defect in one output, not a fleet-wide safety
-            // event. Severity is what stops the queue from crying wolf.
-            severity: "L1".to_string(),
-            payload: json!({
-                "agent": agent_id,
-                "violations": grounding_report.violations.len(),
-                "fields": grounding_report
-                    .provenance
-                    .iter()
-                    .map(|(block, prov)| json!({ "block": block, "provenance": prov }))
-                    .collect::<Vec<_>>(),
-            }),
-            requires_review: true,
-            resolved_at: None,
-            resolved_by: None,
-            created_at: chrono::Utc::now(),
-        };
-        let store = state.memory_store.clone();
-        tokio::spawn(async move {
-            if let Err(e) = store.create_anomaly_event(&anomaly).await {
-                tracing::warn!(error = %e, "failed to record grounding anomaly");
-            }
-        });
     }
 
     // 4. Record stats in registry
@@ -418,6 +486,20 @@ pub async fn execute_agent_handler(
             .as_ref()
             .and_then(|i| i.get("input_binding"))
             .and_then(|v| v.as_str());
+        // Advisory by design — it records and continues. Counted anyway,
+        // because the mismatch RATE is the number that would justify making it
+        // fatal, and until now it existed only as episode tags nothing reads.
+        fermi::gate_trust::decided(
+            fermi::gate_trust::Gate::InputBinding,
+            if verified.is_mismatch() {
+                fermi::gate_trust::Decision::Refused
+            } else {
+                fermi::gate_trust::Decision::Approved
+            },
+            verified
+                .is_mismatch()
+                .then_some("free text to a structured port"),
+        );
         if verified.is_mismatch() {
             tracing::warn!(
                 agent = %card.agent_id,
@@ -481,7 +563,7 @@ pub async fn execute_agent_handler(
     // storage.
     let episode_for_observation = episode.clone();
 
-    let episode_id = state
+    let stored_episode_id = state
         .memory_store
         .store_episode_with_provenance(episode, provenance.as_ref(), Some(source_ref))
         .await
@@ -489,6 +571,27 @@ pub async fn execute_agent_handler(
             eprintln!("Warning: failed to store episode: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
         })?;
+
+    // ── Loop 2's seed ─────────────────────────────────────────────────────
+    //
+    // Below the episode write, and that placement is load-bearing.
+    // `anomaly_events.episode_id` is a real foreign key; the original raise sat
+    // ~200 lines above referencing an id whose row did not exist yet, and lost
+    // the race whenever anything between them took time. The ordering is
+    // enforced by the binding rather than by this comment: `stored_episode_id`
+    // is produced by `store_episode_with_provenance` above and does not exist
+    // before it, so moving this block up is a compile error.
+    //
+    // The event itself is built by `grounding_anomaly`, which is the only
+    // place in the system that turns a violation into a Loop 2 input. This was
+    // an inline copy — the ninth call site of `enforce` and the only one that
+    // raised — and eight other paths had no equivalent at all.
+    fermi::grounding_anomaly::spawn_raise(
+        std::sync::Arc::clone(&state.memory_store),
+        agent_id.clone(),
+        Some(stored_episode_id),
+        grounding_report.clone(),
+    );
 
     // Make this turn visible to drift + anomaly detection. Without a timeline
     // entry the observability worker never sees live traffic, so the HITL
@@ -523,7 +626,7 @@ pub async fn execute_agent_handler(
     // stays soft-fail: the work has already been done and we don't
     // want to double-bill on retry. When the royalty deposit fails
     // the platform absorbs (logged, not raised).
-    let ep_id_str = episode_id.to_string();
+    let ep_id_str = stored_episode_id.to_string();
     let (_charged, royalty_paid) = match charge_execution_with_royalty(
         &state.db,
         wallet.wallet_id,
@@ -583,11 +686,11 @@ pub async fn execute_agent_handler(
         // the agent's execution history for details" — which was a dead
         // end, because the history stored the constant "Execution failed".
         let body = match output.metadata.failure_reason.as_deref() {
-            Some(reason) => format!("{} (episode {})", reason, episode_id),
+            Some(reason) => format!("{} (episode {})", reason, stored_episode_id),
             None => format!(
                 "No reason reported by the executor. stop_reason={}, episode {}",
                 output.metadata.stop_reason.as_deref().unwrap_or("unknown"),
-                episode_id
+                stored_episode_id
             ),
         };
         tokio::spawn(async move {
@@ -620,7 +723,7 @@ pub async fn execute_agent_handler(
     // 8. Return result
     Ok(Json(json!({
         "agent_id": agent_id,
-        "episode_id": episode_id,
+        "stored_episode_id": stored_episode_id,
         "status": format!("{:?}", output.status),
         "confidence": output.confidence,
         "execution_time_ms": output.execution_time_ms,

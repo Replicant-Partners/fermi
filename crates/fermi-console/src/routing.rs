@@ -32,6 +32,41 @@
 //      generalist suggestion silently displaced the domain expert.
 //
 // Net effect: `macro_forecaster (5)` on a Premier League question.
+//
+// The second generation of this file fixed those three, and introduced a
+// fourth: the keyword ladder was a FIRST-MATCH `if` chain over the driver
+// name concatenated with its rationale. One incidental word anywhere in
+// sixty words of prose decided the route, and the rung ORDER was the only
+// tie-break. Observed 2026-08-22 on "Will Alexandria Ocasio-Cortez win the
+// 2028 US Presidential Election?":
+//
+//   driver:      democratic_primary_viability
+//   rationale:   "... Upside: movement energy, small-donor base ..."
+//   routed to:   energy_advisor
+//
+// `energy` was checked above `sentiment` and `entity`, so the one word in
+// the rationale that had nothing to do with the driver won outright. The
+// same run sent three of five drivers to `macro_forecaster`, which sat at
+// the bottom of the ladder with the broadest vocabulary in it (`economic`,
+// `policy`, `crisis`, `trade`) AND was the hardcoded default, so it could
+// not lose.
+//
+// The ladder is now a SCORED table instead. See `RUNGS` and `score_rungs`.
+// Three properties do the work:
+//
+//   * the driver NAME outweighs its rationale. A name is a declaration of
+//     what the driver is; a rationale is prose that may mention anything.
+//   * prose counts as a SHARE, not a presence. `recession` in a rationale
+//     that is four-fifths about public opinion is context, not the topic.
+//   * displacing a resident specialist costs more than picking one when no
+//     specialist exists, so prose alone can never take a driver away from
+//     the domain expert.
+//
+// `energy_advisor` was also removed from the table outright: its card is a
+// SimOps energy-balance member that answers JSON task payloads
+// (`propose_stage_energy`), not a research agent. Handing it a forecast
+// driver was a category error even when the keyword was genuinely about
+// energy.
 
 /// Agent ids Fermi may route to without proof of local installation.
 ///
@@ -59,6 +94,18 @@ pub const FERMI_ORCHESTRA: &[&str] = &[
 /// treated as "Fermi had no strong opinion" and does not get to
 /// displace a domain specialist on an in-domain driver.
 const GENERALIST_AGENTS: &[&str] = &["macro_forecaster", "market_research"];
+
+/// Whether this agent has a domain of its own.
+///
+/// A generalist assignment is a legitimate outcome — sometimes nothing
+/// better exists — but it is never a *specialist recommendation*, and the
+/// console has to be able to tell the two apart before it presents them.
+/// Presenting a stand-in with the same confidence as a resident expert is
+/// the antipattern that made five identical-looking recommendations out of
+/// one considered choice and four fallbacks.
+pub fn is_generalist(agent: &str) -> bool {
+    GENERALIST_AGENTS.contains(&agent)
+}
 
 /// The resident expert for a question domain, if one exists.
 ///
@@ -126,205 +173,403 @@ pub fn contains_word(haystack: &str, needle: &str) -> bool {
     false
 }
 
-/// Concerns that sit *outside* any domain specialist's remit.
-///
-/// A football analyst can tell you what fixture congestion does to xG.
-/// It cannot tell you how the Premier League's 115 FFP charges will be
-/// adjudicated. These keywords mark the drivers where the domain expert
-/// should stand aside for a cross-cutting specialist — and are the only
-/// reason a specialist-domain question ever routes elsewhere.
-fn cross_cutting_agent(combined: &str) -> Option<&'static str> {
-    let has = |needles: &[&str]| needles.iter().any(|n| contains_word(combined, n));
-
-    if has(&[
-        "regulatory",
-        "regulation",
-        "legal",
-        "lawsuit",
-        "litigation",
-        // NOT bare "court": it collides with "home_court_advantage",
-        // which sent an NBA driver to entity_investigator. Legal
-        // adjudication is already covered by the neighbours here.
-        "court ruling",
-        "court case",
-        "tribunal",
-        "hearing",
-        "compliance",
-        "antitrust",
-        "investigation",
-        "charges",
-        "ffp",
-        "financial fair play",
-        "ownership",
-        "governance",
-        "takeover",
-    ]) {
-        return Some("entity_investigator");
-    }
-
-    if has(&[
-        "macroeconomic",
-        "inflation",
-        "interest rate",
-        "recession",
-        "gdp",
-        "currency",
-        "fiscal",
-        "monetary",
-        "central bank",
-        // Spelled out rather than a `geopolit` prefix — see
-        // `contains_word`.
-        "geopolitical",
-        "geopolitics",
-        "sanctions regime",
-    ]) {
-        return Some("macro_forecaster");
-    }
-
-    if has(&[
-        "public opinion",
-        "fan sentiment",
-        "media narrative",
-        "social media",
-        "press coverage",
-    ]) {
-        return Some("sentiment_analyzer");
-    }
-
-    None
+/// One agent's claim on a driver, expressed as vocabulary.
+struct Rung {
+    agent: &'static str,
+    /// Whether this rung may take a driver AWAY from the resident domain
+    /// specialist.
+    ///
+    /// A football analyst can tell you what fixture congestion does to xG.
+    /// It cannot tell you how the Premier League's 115 FFP charges will be
+    /// adjudicated. Only the three genuinely cross-domain rungs — legal /
+    /// institutional, macroeconomic, public opinion — are allowed to
+    /// displace an expert; everything else has to wait for a question in
+    /// its own domain. Without this flag a driver named
+    /// `broadcast_revenue_shock` would pull an EPL forecast over to
+    /// `market_research` on the strength of one word in its name.
+    cross_cutting: bool,
+    /// Question domains in which this vocabulary is trustworthy on its own.
+    ///
+    /// Empty means domain-neutral. Outside its home domains a rung must
+    /// match the driver NAME to score at all — prose is not enough. This is
+    /// the guard that stops a clinical-trial vocabulary from claiming a
+    /// climate driver, and it is checked before scoring so a foreign rung
+    /// does not even dilute the prose denominator.
+    home: &'static [&'static str],
+    /// Whole-word needles. See [`contains_word`] for why these are spelled
+    /// out rather than prefixed, and why bare `market`, `approval`,
+    /// `policy` and `court` are deliberately absent: each of them matched
+    /// something it had no business matching.
+    needles: &'static [&'static str],
 }
 
-/// Keyword ladder over the driver name + rationale.
+/// Every rung, scored together rather than tried in order.
 ///
-/// Returns `None` when nothing matches, so callers can distinguish "the
-/// text says market share" from "the text says nothing in particular".
-/// The old inline version returned `macro_forecaster` for the latter,
-/// which made a no-signal driver indistinguishable from a macro driver.
-fn keyword_agent(combined: &str, domain: &str) -> Option<&'static str> {
-    let has = |needles: &[&str]| needles.iter().any(|n| contains_word(combined, n));
+/// Note what is NOT here. `energy_advisor` used to own
+/// `energy | oil | renewable | solar | carbon | emission`, which is how
+/// "movement energy" in a rationale about a Democratic primary routed a
+/// political driver to a SimOps energy-balance agent. Its card answers
+/// JSON task payloads for process design; it is not a research agent and
+/// must never be auto-assigned to a driver. It stays in
+/// [`FERMI_ORCHESTRA`] so an operator can still hire it deliberately.
+/// Commodity and energy-price vocabulary moved to `macro_forecaster`,
+/// which is where a WTI question belongs; physical climate vocabulary is
+/// served by `weather_oracle` through its DECLARED domains.
+const RUNGS: &[Rung] = &[
+    // ── Legal, institutional, electoral ────────────────────────────
+    Rung {
+        agent: "entity_investigator",
+        cross_cutting: true,
+        home: &[],
+        needles: &[
+            "regulatory",
+            "regulation",
+            "legal",
+            "lawsuit",
+            "litigation",
+            // NOT bare "court": it collides with "home_court_advantage",
+            // which sent an NBA driver to entity_investigator.
+            "court ruling",
+            "court case",
+            "tribunal",
+            "hearing",
+            "compliance",
+            "antitrust",
+            "investigation",
+            "charge",
+            "indictment",
+            "ffp",
+            "financial fair play",
+            "ownership",
+            "governance",
+            "takeover",
+            "sanction",
+            // Electoral and institutional vocabulary. Before this existed,
+            // every driver of a presidential-election forecast fell to the
+            // generalist, because `politics` has no resident specialist and
+            // nothing else in the table spoke about candidates at all.
+            "candidate",
+            "primary",
+            "primaries",
+            "nomination",
+            "nominee",
+            "incumbent",
+            "challenger",
+            "opponent",
+            "caucus",
+            "ballot",
+            "electoral",
+            "election",
+            "political",
+            "politician",
+            "party",
+            "coalition",
+            "establishment",
+            "endorsement",
+            "fundraising",
+            "donor",
+            "leadership",
+            "management",
+            "succession",
+            "regime",
+            "government",
+            "military",
+            "cohesion",
+        ],
+    },
+    // ── Macroeconomics, geopolitics, commodities ───────────────────
+    Rung {
+        agent: "macro_forecaster",
+        cross_cutting: true,
+        home: &[],
+        needles: &[
+            "macro",
+            "macroeconomic",
+            "economic",
+            "economy",
+            "inflation",
+            "interest rate",
+            "recession",
+            "gdp",
+            "unemployment",
+            "currency",
+            "fiscal",
+            "monetary",
+            "central bank",
+            "treasury",
+            "bond yield",
+            "tariff",
+            "trade war",
+            "commodity",
+            // Spelled out rather than a `geopolit` prefix — see
+            // `contains_word`.
+            "geopolitical",
+            "geopolitics",
+            "sanctions regime",
+            "diplomatic",
+            "diplomacy",
+            "treaty",
+            "alliance",
+            "foreign policy",
+            // Commodities. Inherited from the deleted energy_advisor rung:
+            // a crude-oil price question is a macro question.
+            "oil",
+            "crude",
+            "opec",
+            "barrel",
+            "energy price",
+            "electricity price",
+            "natural gas",
+        ],
+    },
+    // ── Public opinion ─────────────────────────────────────────────
+    Rung {
+        agent: "sentiment_analyzer",
+        cross_cutting: true,
+        home: &[],
+        needles: &[
+            "sentiment",
+            "public opinion",
+            "opinion poll",
+            "polling",
+            "poll",
+            // "approval RATING", not bare "approval": a driver named
+            // `fda_approval_probability` is not a popularity contest.
+            "approval rating",
+            "favorability",
+            "popularity",
+            "perception",
+            "buzz",
+            "narrative",
+            "media narrative",
+            "press coverage",
+            "social media",
+            "fan sentiment",
+            "public support",
+            "protest",
+            "unrest",
+            "dissent",
+            "backlash",
+            "turnout",
+        ],
+    },
+    // ── Domain-bound rungs. None of these may displace a specialist. ─
+    Rung {
+        agent: "football_analyst",
+        cross_cutting: false,
+        home: &["sports_football"],
+        needles: &[
+            "xg",
+            "expected goals",
+            "elo",
+            "fixture",
+            "squad",
+            "transfer window",
+            "matchday",
+            "goal difference",
+            "clean sheet",
+            "relegation",
+            "league table",
+            "points deduction",
+            "tactical",
+            "formation",
+            "pressing",
+            "possession",
+            "manager",
+            "striker",
+            "midfield",
+            "defence",
+            "defense",
+        ],
+    },
+    Rung {
+        agent: "nba_analyst",
+        cross_cutting: false,
+        home: &["sports_nba", "basketball"],
+        needles: &[
+            "nba",
+            "basketball",
+            "home court",
+            "net rating",
+            "netrtg",
+            "playoff seed",
+            "roster",
+        ],
+    },
+    Rung {
+        agent: "biotech_analyst",
+        cross_cutting: false,
+        home: &["biotech", "pharma", "clinical"],
+        // "trial" is whole-word: `pre-industrial` must not read as a
+        // clinical trial. `contains_word` treats `-` as a boundary, so
+        // "clinical trial" and "trial readout" still match.
+        needles: &[
+            "clinical",
+            "trial",
+            "fda",
+            "drug",
+            "indication",
+            "oncology",
+            "endpoint",
+            "readout",
+            "efficacy",
+        ],
+    },
+    Rung {
+        agent: "equity_analyst",
+        cross_cutting: false,
+        home: &["stocks", "finance"],
+        needles: &[
+            "stock price",
+            "share price",
+            "eps",
+            "p/e",
+            "earnings",
+            "shareholder",
+            "valuation",
+            "dividend",
+            "buyback",
+            "free cash flow",
+            "market cap",
+            "price target",
+            "analyst estimate",
+        ],
+    },
+    // ── Commercial. Domain-neutral, but never displaces a specialist. ─
+    Rung {
+        agent: "market_research",
+        cross_cutting: false,
+        home: &[],
+        // NOT bare "market": it matched "prediction market", "stock
+        // market" and "labour market", none of which is a TAM question.
+        needles: &[
+            "market share",
+            "market size",
+            "go-to-market",
+            "competitor",
+            "competition",
+            "partnership",
+            "revenue",
+            "pricing",
+            "demand",
+            "adoption",
+            "customer",
+            "subscriber",
+            "churn",
+            "commercial",
+            "sales",
+        ],
+    },
+];
 
-    // Domain specialists first — a football driver that also mentions
-    // "competition" is still a football driver.
-    if has(&[
-        "xg",
-        "expected goals",
-        "elo",
-        "fixture",
-        "squad",
-        "transfer window",
-        "matchday",
-        "goal difference",
-        "clean sheet",
-        "relegation",
-        "tactical",
-        "formation",
-        "pressing",
-        "possession",
-        "manager",
-        "striker",
-        "midfield",
-        "defence",
-        "defense",
-    ]) && (domain == "sports_football" || has(&["football", "soccer", "league", "club"]))
-    {
-        return Some("football_analyst");
+/// A name hit is worth this much. Deliberately larger than the entire
+/// prose budget: a driver called `national_sentiment_shift` is about
+/// sentiment no matter how much economics its rationale recites.
+const NAME_HIT: f32 = 4.0;
+
+/// The whole rationale is worth at most this much, split between the
+/// agents that matched it in proportion to how much of the matched
+/// vocabulary each one owns.
+///
+/// Sharing rather than counting is the point. `recession` appearing in a
+/// rationale that is otherwise about public support is context; the same
+/// word in a rationale that is *entirely* about inflation and rates is the
+/// topic. A presence test cannot tell those apart, and routed both to
+/// `macro_forecaster`.
+const PROSE_BUDGET: f32 = 3.0;
+
+/// Minimum score to be trusted when the question has no resident expert.
+const MIN_KEYWORD: f32 = 1.5;
+
+/// Minimum score to take a driver AWAY from a resident expert.
+///
+/// Above [`PROSE_BUDGET`] on purpose: prose alone, however dominant, can
+/// never displace the domain specialist. A displacer has to match the
+/// driver's NAME.
+const MIN_DISPLACE: f32 = NAME_HIT;
+
+/// Score every rung against one driver, best first.
+///
+/// Ties break on agent id so the choice is identical run to run — a
+/// surprising assignment should be reproducible when someone goes looking
+/// for it.
+fn score_rungs(driver_name: &str, rationale: &str, domain: &str) -> Vec<(&'static str, f32)> {
+    let name = driver_name.to_lowercase();
+    let prose = rationale.to_lowercase();
+    let domain = domain.trim().to_ascii_lowercase();
+
+    let count = |hay: &str, needles: &[&str]| -> usize {
+        needles.iter().filter(|n| contains_word(hay, n)).count()
+    };
+
+    // Pass one: hits, with foreign-domain rungs dropped before they can
+    // dilute the prose denominator.
+    let mut hits: Vec<(&'static str, usize, usize)> = Vec::new();
+    for rung in RUNGS {
+        // A rung outside its home domains has to be named by the driver.
+        // Prose is not enough: this is where "movement energy" stopped
+        // being an energy driver, and where "pre-industrial" stopped being
+        // a clinical trial.
+        let name_hits = count(&name, rung.needles);
+        if !rung.home.is_empty() && !rung.home.contains(&domain.as_str()) && name_hits == 0 {
+            continue;
+        }
+        let prose_hits = count(&prose, rung.needles);
+        if name_hits == 0 && prose_hits == 0 {
+            continue;
+        }
+        hits.push((rung.agent, name_hits, prose_hits));
     }
 
-    if has(&["nba", "basketball", "home court", "netrtg"]) {
-        return Some("nba_analyst");
-    }
+    let total_prose: usize = hits.iter().map(|(_, _, p)| p).sum();
 
-    // "trial" is whole-word here: `pre-industrial` must not read as a
-    // clinical trial. `contains_word` treats `-` as a boundary, so
-    // "clinical trial" and "trial readout" still match.
-    if has(&["clinical", "trial", "fda", "drug", "indication"]) {
-        return Some("biotech_analyst");
-    }
+    let mut scored: Vec<(&'static str, f32)> = hits
+        .iter()
+        .map(|(agent, name_hits, prose_hits)| {
+            let share = if total_prose == 0 {
+                0.0
+            } else {
+                *prose_hits as f32 / total_prose as f32
+            };
+            (*agent, NAME_HIT * *name_hits as f32 + PROSE_BUDGET * share)
+        })
+        .collect();
 
-    if has(&[
-        "stock",
-        "equity",
-        "eps",
-        "p/e",
-        "earnings",
-        "share price",
-        "shareholder",
-        "valuation",
-    ]) {
-        return Some("equity_analyst");
-    }
+    scored.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(b.0))
+    });
+    scored
+}
 
-    if has(&[
-        "energy",
-        "oil",
-        "renewable",
-        "solar",
-        "wind power",
-        "carbon",
-        "emission",
-    ]) {
-        return Some("energy_advisor");
-    }
+/// The scored candidates for one driver, best first.
+///
+/// Exposed so the console can answer "why this agent?" with the actual
+/// numbers instead of asking someone to re-derive the table by hand. The
+/// reported `energy_advisor` assignment took a code read to explain; it
+/// should have taken a glance at a log line.
+pub fn route_candidates(
+    driver_name: &str,
+    rationale: &str,
+    domain: &str,
+) -> Vec<(&'static str, f32)> {
+    score_rungs(driver_name, rationale, domain)
+}
 
-    if has(&[
-        "sentiment",
-        "opinion",
-        "perception",
-        "buzz",
-        "narrative",
-        "protest",
-        "unrest",
-        "dissent",
-    ]) {
-        return Some("sentiment_analyzer");
-    }
+/// Whether this agent's rung is allowed to displace a resident specialist.
+fn is_cross_cutting(agent: &str) -> bool {
+    RUNGS.iter().any(|r| r.agent == agent && r.cross_cutting)
+}
 
-    if has(&[
-        "entity",
-        "leadership",
-        "management",
-        "succession",
-        "regime",
-        "government",
-        "military",
-        "cohesion",
-    ]) {
-        return Some("entity_investigator");
-    }
-
-    if has(&[
-        "market",
-        "competitor",
-        "partnership",
-        "revenue",
-        "pricing",
-        "demand",
-        "adoption",
-        "customer",
-        "commercial",
-        "sales",
-    ]) {
-        return Some("market_research");
-    }
-
-    if has(&[
-        "macro",
-        "macroeconomic",
-        "economic",
-        "economy",
-        "policy",
-        "diplomatic",
-        "diplomacy",
-        "foreign",
-        "international",
-        "alliance",
-        "trade",
-        "crisis",
-    ]) {
-        return Some("macro_forecaster");
-    }
-
-    None
+/// Whether an agent has enough independent textual support to be taken
+/// seriously as Fermi's suggestion.
+///
+/// Used only by the generalist guard: Fermi handing back `macro_forecaster`
+/// is accepted when the driver text independently says something macro, and
+/// rejected when it says nothing at all.
+fn corroborated(scored: &[(&'static str, f32)], agent: &str) -> bool {
+    scored.iter().any(|(a, s)| *a == agent && *s >= MIN_KEYWORD)
 }
 
 /// Why a driver ended up with the agent it did. Logged so a surprising
@@ -430,12 +675,9 @@ pub fn select_agent_for_driver_declared(
     declared: Option<&str>,
     is_routable: &dyn Fn(&str) -> bool,
 ) -> (String, RouteReason) {
-    let combined = format!("{} {}", driver_name, rationale).to_lowercase();
-
     let declared = declared.map(str::trim).filter(|s| !s.is_empty());
     let specialist = domain_specialist(domain);
-    let cross = cross_cutting_agent(&combined);
-    let keyword = keyword_agent(&combined, domain);
+    let scored = score_rungs(driver_name, rationale, domain);
 
     let suggested = suggested.map(str::trim).filter(|s| !s.is_empty());
 
@@ -447,36 +689,53 @@ pub fn select_agent_for_driver_declared(
         // considered choice.
         //
         // The exception is narrow: the generalist stands only when the
-        // cross-cutting analysis independently reached the SAME agent.
-        // An earlier version accepted the suggestion whenever `cross`
-        // was non-None, which let a `macro_forecaster` suggestion
-        // pre-empt the `entity_investigator` that `cross` had actually
-        // selected — the FFP driver routed to the generalist anyway.
+        // driver text INDEPENDENTLY supports it. An earlier version
+        // accepted the suggestion whenever any cross-cutting keyword
+        // matched, which let a `macro_forecaster` suggestion pre-empt the
+        // `entity_investigator` the analysis had actually selected — the
+        // FFP driver routed to the generalist anyway.
         //
         // A DECLARED specialist counts as a resident expert here too, which is
         // the fix for weather: Fermi suggested the generalist, no hardcoded
         // specialist existed for `climate`, and every driver went generic.
         let expert_exists = specialist.is_some() || declared.is_some();
         let displaces_specialist =
-            expert_exists && GENERALIST_AGENTS.contains(&s) && cross != Some(s);
+            expert_exists && GENERALIST_AGENTS.contains(&s) && !corroborated(&scored, s);
         if !displaces_specialist {
             candidates.push((s, RouteReason::Fermi));
         }
     }
 
-    // Declaration beats the compile-time table, and beats keyword guesswork.
+    // Declaration beats the scored table, and beats the compile-time one.
     if let Some(d) = declared {
         candidates.push((d, RouteReason::DeclaredSpecialist));
     }
-    if let Some(c) = cross {
-        candidates.push((c, RouteReason::CrossCutting));
-    }
+
+    // A resident expert is displaced only by a cross-cutting rung that
+    // cleared `MIN_DISPLACE` — which, by construction, requires the
+    // driver's NAME to say so. Every qualifying rung is offered in score
+    // order, so an unroutable first choice degrades to the next-best
+    // displacer rather than snapping back to the specialist.
     if let Some(s) = specialist {
+        for (agent, score) in &scored {
+            if *agent != s && *score >= MIN_DISPLACE && is_cross_cutting(agent) {
+                candidates.push((agent, RouteReason::CrossCutting));
+            }
+        }
         candidates.push((s, RouteReason::DomainSpecialist));
+    } else {
+        // No resident expert: the scored table IS the opinion. The
+        // threshold is what distinguishes "the text says market share"
+        // from "the text says nothing in particular"; below it the honest
+        // answer is the generalist default, not the highest of several
+        // meaningless scores.
+        for (agent, score) in &scored {
+            if *score >= MIN_KEYWORD {
+                candidates.push((agent, RouteReason::Keyword));
+            }
+        }
     }
-    if let Some(k) = keyword {
-        candidates.push((k, RouteReason::Keyword));
-    }
+
     // A generalist suggestion that lost the domain guard is still a
     // better answer than a blind default, so re-offer it here.
     if let Some(s) = suggested {
@@ -491,83 +750,162 @@ pub fn select_agent_for_driver_declared(
         .unwrap_or_else(|| ("macro_forecaster".to_string(), RouteReason::Default))
 }
 
-/// The routable agent that most specifically DECLARES this domain.
+/// The best routable agent that DECLARES this domain.
 ///
-/// `roster` is `(agent_id, declared_domains)`, read from cards by
-/// `AgentContract::from_card`. Ties break toward the agent claiming the FEWEST
-/// domains, so a generalist tagging itself with twenty subjects cannot crowd
-/// out a specialist claiming one; the agent id breaks remaining ties so routing
-/// is deterministic across runs.
+/// The head of [`declared_specialists_ranked`], which documents the ordering.
+/// Prefer the plural form when the runner-up matters — "one agent is carrying
+/// four of five drivers" is only actionable if something knows whether a
+/// second claimant exists.
 ///
-/// Prefer [`declared_specialist_ranked`], which additionally ranks an explicit
-/// `metadata.domains` declaration above a tag-fallback match.
-pub fn declared_specialist(
-    domain: &str,
-    roster: &[(String, Vec<String>)],
-    is_routable: &dyn Fn(&str) -> bool,
-) -> Option<String> {
-    let d = domain.trim().to_ascii_lowercase().replace('-', "_");
-    if d.is_empty() || d == "general" {
-        return None;
-    }
-    let matches_domain = |t: &String| {
-        let t = t.trim().to_ascii_lowercase().replace('-', "_");
-        t == d || d.split('_').any(|p| p == t) || t.split('_').any(|p| p == d)
-    };
-
-    let mut hits: Vec<(&String, usize)> = roster
-        .iter()
-        .filter(|(id, domains)| {
-            !GENERALIST_AGENTS.contains(&id.as_str())
-                && domains.iter().any(matches_domain)
-                && is_routable(id)
-        })
-        .map(|(id, domains)| (id, domains.len()))
-        .collect();
-    hits.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(b.0)));
-    hits.first().map(|(id, _)| (*id).clone())
-}
-
-/// As [`declared_specialist`], but ranking an EXPLICIT declaration above a tag
-/// match.
-///
-/// `roster` is `(agent_id, domains, domains_are_explicit)`. Ordering:
-///   1. explicit `metadata.domains` before a `metadata.tags` fallback — tags
-///      are written for search, not routing
-///   2. fewer domains before more — narrower claim wins
-///   3. agent id, so the choice is deterministic run to run
-///
-/// An agent with an explicitly EMPTY `domains: []` never appears here at all,
-/// which is how a composition's members stay out of the router's way.
+/// There used to be a second, weaker version of this taking a roster without
+/// the explicit-declaration flag. Both were live: the tests exercised this
+/// one and the console called that one, so an agent merely TAGGED for search
+/// could outrank one that had actually declared the domain — but only in
+/// production. One ranking now, so the two cannot disagree again.
 pub fn declared_specialist_ranked(
     domain: &str,
     roster: &[(String, Vec<String>, bool)],
     is_routable: &dyn Fn(&str) -> bool,
 ) -> Option<String> {
+    declared_specialists_ranked(domain, roster, &[], is_routable)
+        .into_iter()
+        .next()
+}
+
+/// What the platform has MEASURED about an agent's own contribution, as
+/// opposed to what the agent's card claims.
+///
+/// # This is deliberately NOT the agent's Brier score
+///
+/// The obvious number — "mean Brier of the forecasts this agent worked
+/// on" — cannot rank agents, and the server says so in as many words
+/// (`src/calibration.rs`, `score_scope: "team"`):
+///
+/// > `brier_mean` averages the Brier of forecasts this agent
+/// > participated in, which is a property of the composition, not of the
+/// > agent. When every member is cited on every forecast those team
+/// > numbers are identical across members by construction and can never
+/// > rank them.
+///
+/// A router fed team Brier would order co-cited agents identically
+/// forever, at any sample size, and would look like it was working. The
+/// platform already computes the identifiable quantity instead: an exact
+/// Shapley decomposition of each resolved forecast's improvement over its
+/// no-agent baseline (`src/attribution/`), which is per-agent by
+/// construction and sums exactly to the team's total.
+///
+/// # Orientation
+///
+/// `mean_shapley` is positively oriented: higher is a larger contribution
+/// toward the truth. It is signed — an agent that dragged a forecast away
+/// from the outcome carries negative credit even when its team improved.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Proven {
+    pub agent: String,
+    /// Mean Shapley credit across resolved forecasts. Higher is better.
+    pub mean_shapley: f64,
+    /// Resolved forecasts backing `mean_shapley`.
+    pub n_forecasts: u32,
+    /// Lower bound of the cluster bootstrap CI, or `None` when the server
+    /// declined to compute one.
+    ///
+    /// `None` is meaningful and must not be read as zero: below
+    /// `attribution::MIN_BOOTSTRAP_CLUSTERS` distinct clusters there is no
+    /// replication to resample, so the data contain no information at all
+    /// about between-cluster variability.
+    pub ci_low: Option<f64>,
+}
+
+impl Proven {
+    /// Whether this record is strong enough to outrank a declaration.
+    ///
+    /// The test is that the agent's credit is distinguishable from zero,
+    /// not that some arbitrary number of forecasts have accumulated. A
+    /// count threshold would be a guess at the question the bootstrap
+    /// interval already answers properly, and it would pass an agent with
+    /// fifty forecasts and no detectable effect while failing one with
+    /// four and a decisive one.
+    ///
+    /// It also subsumes the sample-size floor for free: the server returns
+    /// no interval below `attribution::MIN_BOOTSTRAP_CLUSTERS` clusters, so
+    /// a thin record cannot pass this test however good its mean looks.
+    /// That is the guard against the first agent to get lucky being
+    /// promoted over every specialist.
+    pub fn is_established(&self) -> bool {
+        self.ci_low.is_some_and(|lo| lo > 0.0)
+    }
+}
+
+/// Every routable agent that declares this domain, best first.
+///
+/// Ordering, in priority order:
+///   1. a MEASURED record, when it is distinguishable from zero — higher
+///      Shapley contribution first. What an agent has DONE outranks what
+///      its card says. See [`Proven`] for why this is a contribution and
+///      not a Brier score.
+///   2. explicit `metadata.domains` before a `metadata.tags` fallback —
+///      tags are written for search, not routing
+///   3. fewer domains before more — narrower claim wins, so a generalist
+///      tagging itself with twenty subjects cannot crowd out a specialist
+///      claiming one
+///   4. agent id, so the choice is identical run to run
+///
+/// With an empty `record` this reduces exactly to rules 2–4, which is the
+/// ordering that shipped before measurement existed.
+///
+/// An agent with an explicitly EMPTY `domains: []` never appears here at
+/// all, which is how a composition's members stay out of the router's way.
+pub fn declared_specialists_ranked(
+    domain: &str,
+    roster: &[(String, Vec<String>, bool)],
+    record: &[Proven],
+    is_routable: &dyn Fn(&str) -> bool,
+) -> Vec<String> {
     let d = domain.trim().to_ascii_lowercase().replace('-', "_");
     if d.is_empty() || d == "general" {
-        return None;
+        return Vec::new();
     }
     let matches_domain = |t: &String| {
         let t = t.trim().to_ascii_lowercase().replace('-', "_");
         t == d || d.split('_').any(|p| p == t) || t.split('_').any(|p| p == d)
     };
 
-    let mut hits: Vec<(&String, bool, usize)> = roster
+    // An agent's measured contribution, but only once it is
+    // distinguishable from zero.
+    let proven = |id: &str| -> Option<f64> {
+        record
+            .iter()
+            .find(|p| p.agent == id && p.is_established())
+            .map(|p| p.mean_shapley)
+    };
+
+    let mut hits: Vec<(&String, Option<f64>, bool, usize)> = roster
         .iter()
         .filter(|(id, domains, _)| {
             !GENERALIST_AGENTS.contains(&id.as_str())
                 && domains.iter().any(matches_domain)
                 && is_routable(id)
         })
-        .map(|(id, domains, explicit)| (id, *explicit, domains.len()))
+        .map(|(id, domains, explicit)| (id, proven(id), *explicit, domains.len()))
         .collect();
+
     hits.sort_by(|a, b| {
-        b.1.cmp(&a.1) // explicit first
-            .then_with(|| a.2.cmp(&b.2)) // narrower claim first
-            .then_with(|| a.0.cmp(b.0)) // deterministic
+        // Measured before unmeasured, then by score. Descending, because
+        // Shapley credit is positively oriented — the opposite direction
+        // from the Brier score this used to be, and a silent sign error
+        // here would rank the worst contributor first while looking
+        // entirely plausible.
+        match (a.1, b.1) {
+            (Some(x), Some(y)) => y.partial_cmp(&x).unwrap_or(std::cmp::Ordering::Equal),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
+        .then_with(|| b.2.cmp(&a.2)) // explicit first
+        .then_with(|| a.3.cmp(&b.3)) // narrower claim first
+        .then_with(|| a.0.cmp(b.0)) // deterministic
     });
-    hits.first().map(|(id, _, _)| (*id).clone())
+    hits.into_iter().map(|(id, _, _, _)| id.clone()).collect()
 }
 
 pub fn detect_domain(question: &str) -> String {
@@ -1150,6 +1488,221 @@ mod routing_tests {
     // ── Other domains keep working ───────────────────────────
 
     // ── Substring hazards ──────────────────────────────────
+
+    // ── The reported regression: a US presidential election ─────────
+    //
+    // Observed 2026-08-22 on "Will Alexandria Ocasio-Cortez win the 2028 US
+    // Presidential Election?". Five drivers, and the activity log recorded:
+    //
+    //   democratic_primary_viability  → energy_advisor
+    //   national_sentiment_shift      → macro_forecaster
+    //   republican_opponent_strength  → macro_forecaster
+    //   aoc_political_capital_growth  → entity_investigator
+    //   economic_conditions_2027_2028 → macro_forecaster
+    //
+    // Four of the five were wrong, and one of them was wrong in a way that
+    // could not be recovered from: `energy_advisor` is a SimOps agent that
+    // answers JSON task payloads about kWh per input unit. Rationales below
+    // are the verbatim ones Fermi produced in that run.
+
+    const PRIMARY: &str = "AOC's progressive brand faces structural headwinds in Democratic \
+         primaries, which since 1972 have favored centrist candidates 11/14 times. However, \
+         demographic shifts (younger, more diverse electorate), Sanders' 2016/2020 near-misses, \
+         and potential lack of strong centrist heir in 2028 create upside. Downside: party \
+         establishment resistance, fundraising disadvantage vs governors/senators. Upside: \
+         movement energy, small-donor base, media fluency.";
+
+    const SENTIMENT: &str = "Public support for Medicare-for-All, Green New Deal, and wealth \
+         taxes has fluctuated 35-55% in polls 2018-2024. Economic conditions in 2027-28 \
+         (recession, inequality trends, climate events) could shift this dramatically. P50 \
+         slightly above 1.0 reflects modest leftward drift in Dem base; p95 at 1.6 allows for \
+         major economic crisis creating appetite for structural change (cf. FDR 1932). P5 at \
+         0.7 reflects backlash scenario (inflation fears, moderate restoration).";
+
+    const OPPONENT: &str =
+        "Strength of the eventual Republican nominee and the party's coalition heading into 2028.";
+    const CAPITAL: &str =
+        "Committee assignments, fundraising totals and national profile through 2027.";
+    const ECONOMY: &str = "GDP growth, unemployment and inflation path into the election year.";
+
+    fn aoc_drivers() -> [(&'static str, &'static str); 5] {
+        [
+            ("democratic_primary_viability", PRIMARY),
+            ("national_sentiment_shift", SENTIMENT),
+            ("republican_opponent_strength", OPPONENT),
+            ("aoc_political_capital_growth", CAPITAL),
+            ("economic_conditions_2027_2028", ECONOMY),
+        ]
+    }
+
+    #[test]
+    fn movement_energy_in_a_political_rationale_is_not_an_energy_driver() {
+        // Two words of metaphor — "Upside: movement energy" — sixty words
+        // into a rationale about Democratic primaries. The old ladder was a
+        // first-match chain with `energy` above `sentiment` and `entity`, so
+        // those two words decided the route outright.
+        let (agent, reason) = select_agent_for_driver(
+            "democratic_primary_viability",
+            PRIMARY,
+            "politics",
+            None,
+            &all_available,
+        );
+        assert_ne!(agent, "energy_advisor", "the metaphor won again");
+        assert_eq!(agent, "entity_investigator");
+        assert_eq!(reason, RouteReason::Keyword);
+    }
+
+    #[test]
+    fn the_simops_energy_agent_is_never_auto_routed() {
+        // The class of bug, not the instance. `energy_advisor`'s card is a
+        // SimOps member that answers `propose_stage_energy` task payloads;
+        // handing it any forecast driver is a category error regardless of
+        // which keyword got there. It must not appear in the scored table
+        // at all — it stays in FERMI_ORCHESTRA only so an operator can hire
+        // it deliberately.
+        assert!(
+            !RUNGS.iter().any(|r| r.agent == "energy_advisor"),
+            "a SimOps member agent is auto-routable again"
+        );
+        assert!(FERMI_ORCHESTRA.contains(&"energy_advisor"));
+    }
+
+    #[test]
+    fn a_driver_named_for_sentiment_survives_economic_context() {
+        // `national_sentiment_shift` says what it is in its own name. Its
+        // rationale mentions recession, inflation, "economic crisis" and
+        // "economic conditions" — four macro words against a driver that is
+        // about public opinion. Presence-testing the concatenated text sent
+        // it to macro_forecaster; sharing the prose budget does not.
+        let (agent, _) = select_agent_for_driver(
+            "national_sentiment_shift",
+            SENTIMENT,
+            "politics",
+            None,
+            &all_available,
+        );
+        assert_eq!(agent, "sentiment_analyzer");
+
+        // And the macro reading is still recorded — as context, not topic.
+        let scored = route_candidates("national_sentiment_shift", SENTIMENT, "politics");
+        let macro_score = scored
+            .iter()
+            .find(|(a, _)| *a == "macro_forecaster")
+            .map(|(_, s)| *s)
+            .expect("macro context should still register");
+        let top = scored[0].1;
+        assert!(macro_score < top, "context outscored topic: {scored:?}");
+    }
+
+    #[test]
+    fn a_presidential_election_does_not_collapse_onto_the_generalist() {
+        // The shape of the complaint, asserted directly: three of five
+        // drivers went to macro_forecaster, which was simultaneously the
+        // broadest keyword rung and the hardcoded default, so it could not
+        // lose. Only the one driver that is actually about the economy may
+        // land there now.
+        let assigned: Vec<String> = aoc_drivers()
+            .iter()
+            .map(|(n, r)| select_agent_for_driver(n, r, "politics", None, &orchestra_only).0)
+            .collect();
+
+        let macro_count = assigned.iter().filter(|a| *a == "macro_forecaster").count();
+        assert_eq!(
+            macro_count, 1,
+            "generalist monoculture on a political decomposition: {assigned:?}"
+        );
+        assert_eq!(
+            assigned[4], "macro_forecaster",
+            "the one genuinely macro driver must still reach the macro agent: {assigned:?}"
+        );
+        assert!(
+            !assigned.iter().any(|a| a == "energy_advisor"),
+            "{assigned:?}"
+        );
+    }
+
+    #[test]
+    fn every_political_driver_is_a_deliberate_choice() {
+        // A `Default` route means the router had nothing to say and the
+        // generalist was the honest fallback. Before the electoral
+        // vocabulary existed, that was the truthful description of most of
+        // this forecast — it just was not what got logged.
+        for (n, r) in aoc_drivers() {
+            let (agent, reason) = select_agent_for_driver(n, r, "politics", None, &orchestra_only);
+            assert!(
+                reason.is_deliberate(),
+                "{n} fell through to {agent} with no signal"
+            );
+        }
+    }
+
+    // ── The scoring rules themselves ────────────────────────────────
+
+    #[test]
+    fn prose_alone_cannot_take_a_driver_from_the_resident_expert() {
+        // One legal word buried in a football rationale must not outrank
+        // the football analyst. Displacing a resident expert requires the
+        // driver's NAME to say so — which is exactly what the FFP driver
+        // does, and what this one does not.
+        let (agent, reason) = select_agent_for_driver(
+            "squad_depth",
+            "Rotation options across a congested fixture list; one player is subject to an \
+             ongoing investigation.",
+            "sports_football",
+            None,
+            &all_available,
+        );
+        assert_eq!(agent, "football_analyst");
+        assert_eq!(reason, RouteReason::DomainSpecialist);
+    }
+
+    #[test]
+    fn a_domain_bound_rung_cannot_claim_a_foreign_driver_on_prose() {
+        // `equity_analyst` owns "valuation". A football driver whose
+        // rationale happens to mention broadcast-rights valuations is not
+        // an equity research assignment, and the rung is dropped before it
+        // can even dilute the prose share of the agents that do belong.
+        let scored = route_candidates(
+            "broadcast_revenue_shock",
+            "UK inflation and interest rate path compress broadcast rights valuations.",
+            "sports_football",
+        );
+        assert!(
+            !scored.iter().any(|(a, _)| *a == "equity_analyst"),
+            "a foreign rung scored on prose: {scored:?}"
+        );
+    }
+
+    #[test]
+    fn a_name_hit_outranks_a_rationale_that_talks_about_something_else() {
+        // The invariant the whole table rests on, stated once.
+        let scored = route_candidates(
+            "regulatory_review_outcome",
+            "Demand, pricing and customer adoption are all strong; revenue is growing.",
+            "general",
+        );
+        assert_eq!(scored[0].0, "entity_investigator", "{scored:?}");
+        assert!(scored.iter().any(|(a, _)| *a == "market_research"));
+    }
+
+    #[test]
+    fn the_scored_table_is_deterministic() {
+        // A surprising assignment has to be reproducible when someone goes
+        // looking for it, so ties break on agent id rather than on the
+        // iteration order of the table.
+        let a = route_candidates(
+            "competitor_response",
+            "Rival pricing and customer adoption.",
+            "general",
+        );
+        let b = route_candidates(
+            "competitor_response",
+            "Rival pricing and customer adoption.",
+            "general",
+        );
+        assert_eq!(a, b);
+    }
 
     #[test]
     fn contains_word_respects_boundaries() {

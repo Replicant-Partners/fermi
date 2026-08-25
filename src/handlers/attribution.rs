@@ -860,13 +860,32 @@ pub fn spawn_attribution(pool: &PgPool, forecast_id: &str) {
     tokio::spawn(async move {
         match attribute_resolved_forecast(&pool, &forecast_id, Neutralisation::Identity).await {
             Ok(AttributionOutcome::Written { n_agents, .. }) => {
+                fermi::write_accounting::record(
+                    fermi::write_accounting::Sink::ForecastAttributions,
+                    true,
+                    None,
+                );
                 tracing::debug!(forecast = %forecast_id, agents = n_agents, "[attribution] done");
             }
             Ok(AttributionOutcome::NoClaims) => {}
+            // Counted as a failure, deliberately. A rejected attribution writes
+            // no row, and from the sink it is indistinguishable from one that
+            // was never attempted — which is how `forecast_attributions` came to
+            // sit at zero with two live callers upstream of it.
             Ok(AttributionOutcome::Rejected { reason }) => {
+                fermi::write_accounting::record(
+                    fermi::write_accounting::Sink::ForecastAttributions,
+                    false,
+                    Some(&format!("rejected: {reason}")),
+                );
                 tracing::error!(forecast = %forecast_id, "[attribution] rejected: {reason}");
             }
             Err(e) => {
+                fermi::write_accounting::record(
+                    fermi::write_accounting::Sink::ForecastAttributions,
+                    false,
+                    Some(&e.to_string()),
+                );
                 tracing::warn!(forecast = %forecast_id, error = %e, "[attribution] failed");
             }
         }

@@ -677,46 +677,41 @@ pub async fn execute_simops_write_observation(
     .await
     .map_err(|e| format!("Failed to write observation: {e}"))?;
 
-    // Hook 1: commit synthetic predictions immediately so the immutable clock starts.
-    // Only fires for simops_simulation observations (not real sensor readings).
-    // Non-fatal — commitment is observability, not correctness.
+    // Hook 1: commit synthetic predictions immediately so the immutable clock
+    // starts. Non-fatal — commitment is observability, not correctness.
+    //
+    // This was a `let _ = (...)` tuple of every argument the call needs,
+    // annotated "hooks for an observability path that may or may not be live".
+    // It was not live, and `commitment_hash` was returned as `null` on both
+    // arms of an `if` — so the tool reported the same result whether the clock
+    // had started or not. A maybe in a comment is how that survived.
+    //
+    // The predicate is [`crate::projection_kind`] now, not a local
+    // `source == "simops_simulation"`. This path is the only writer of that
+    // tag and has produced zero rows; the projections that exist arrive through
+    // the HTTP ingest with a different tag, and three readers matching the
+    // wrong one is what kept Loop 5.A (projection accuracy) empty.
     //
     // Re-borrow as immutable: the prior `extra_obj = extra.as_object_mut()`
     // mutable borrow is no longer needed after the INSERT above.
-    let extra_obj = extra.as_object().expect("extra is always an object here");
-    let is_synthetic = extra_obj
-        .get("source")
-        .and_then(|v| v.as_str())
-        .map(|s| s == "simops_simulation")
-        .unwrap_or(false);
-
-    let commitment_hash: Option<String> = if is_synthetic {
-        // ctx.workspace_id is already Option<Uuid>; no parse needed.
-        let workspace_id: Option<uuid::Uuid> = ctx.workspace_id;
-        let projection_id = extra_obj.get("projection_id").and_then(|v| v.as_str());
-        let model_uri = extra_obj.get("model_uri").and_then(|v| v.as_str());
-        let stage_id_val = extra_obj.get("stage_id").and_then(|v| v.as_str());
-        let process_ctx: Option<serde_json::Value> = extra_obj.get("process_context").cloned();
-
-        // Pre-existing in-progress hook (not part of Spec 22 work). Stub-out
-        // gracefully if the handler module isn't wired yet — this is hooks
-        // for an observability path that may or may not be live.
-        #[allow(unused_variables)]
-        let _ = (
+    let commitment_hash: Option<String> = if crate::projection_kind::is_projection(&extra) {
+        let extra_obj = extra.as_object().expect("extra is always an object here");
+        let str_field = |k: &str| extra_obj.get(k).and_then(|v| v.as_str());
+        crate::projection_commit::commit_projection(
             pool,
             observation_id,
             session_id,
-            workspace_id,
+            ctx.workspace_id,
             observable_property,
             feature_of_interest,
             result_value,
-            model_uri,
-            stage_id_val,
-            projection_id,
+            str_field("model_uri"),
+            str_field("stage_id"),
+            str_field("projection_id"),
             phenomenon_time,
-            process_ctx,
-        );
-        None
+            extra_obj.get("process_context"),
+        )
+        .await
     } else {
         None
     };

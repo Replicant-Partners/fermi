@@ -76,14 +76,22 @@ async fn every_declared_write_path_has_run_at_least_once() {
                 // detector that finds nothing may simply be correct, and
                 // asserting on its row count would be asserting that anomalies
                 // must exist.
+                // The rule lives in `is_actionable_silence`, not here. This
+                // file used to apply its own copy of it, and the library
+                // applied a different one — so the script said `0 silent` and
+                // the library's report said `anomaly_events` was silent with no
+                // excuse. §3.4: one implementation, owned by the layer that owns
+                // the vocabulary.
                 if c.expectation == Expectation::Conditional {
                     println!(
                         "        conditional — reported, not asserted. {}",
                         c.remediation
                     );
+                    debug_assert!(!fermi::liveness_trust::is_actionable_silence(c));
                 } else if let Some(why) = known_silent(c.sink) {
                     excused.push(c.sink);
                     println!("        known-silent: {why}");
+                    debug_assert!(!fermi::liveness_trust::is_actionable_silence(c));
                 } else {
                     silent.push(format!(
                         "{}\n         writer: {}\n         lost:   {}\n         next:   {}",
@@ -204,6 +212,89 @@ async fn report_quantified_output_the_platform_discards() {
     }
 }
 
+/// Where Loop 5.A's projection-accuracy signal path actually stops, reported
+/// rather than asserted.
+///
+/// The chain is three links and every one of them is now honestly `INERT`,
+/// which is a true statement and a quiet one. It replaces a single contract
+/// that read **0 writes / 12,167 opportunities** and was loud about the wrong
+/// thing: all 12,167 of those rows are the projections themselves, so the rung
+/// was comparing an empty sink against a census of the predictions and calling
+/// the difference missed work.
+///
+/// A finding that becomes three `INERT`s can be scrolled past, so the numbers
+/// live here where the shape of the gap is legible. The gap is not a wiring
+/// defect any more; it is that nothing has yet measured anything that was
+/// projected.
+#[tokio::test]
+#[ignore = "needs DATABASE_URL"]
+async fn report_where_projection_calibration_stops() {
+    let pool = pool().await;
+
+    let one = |sql: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(sql)
+                .fetch_one(&pool)
+                .await
+                .unwrap_or(-1)
+        }
+    };
+
+    let projections = one(
+        "SELECT count(DISTINCT extra->>'projection_id')::bigint FROM sosa_observations \
+          WHERE extra ? 'projection_id'",
+    )
+    .await;
+    let points =
+        one("SELECT count(*)::bigint FROM sosa_observations WHERE extra ? 'projection_id'").await;
+    let commits = one("SELECT count(*)::bigint FROM process_projection_commits").await;
+    let resolved = one("SELECT count(*)::bigint FROM process_spacetime").await;
+    let scored =
+        one("SELECT count(*)::bigint FROM eval_signals WHERE evaluator_name ILIKE '%projection%'")
+            .await;
+
+    // The question the old 12,167 was standing in for, asked properly: does any
+    // measurement exist for anything that was ever projected?
+    let overlapping = one("SELECT count(*)::bigint FROM sosa_observations r \
+          WHERE NOT (r.extra ? 'projection_id') \
+            AND EXISTS (SELECT 1 FROM sosa_observations s \
+                         WHERE s.extra ? 'projection_id' \
+                           AND s.observable_property = r.observable_property)")
+    .await;
+    let measurements =
+        one("SELECT count(*)::bigint FROM sosa_observations WHERE NOT (extra ? 'projection_id')")
+            .await;
+
+    println!("\n  Loop 5.A (projection accuracy), link by link:");
+    println!(
+        "  {:<44} {:>10}",
+        "projections written (distinct runs)", projections
+    );
+    println!("  {:<44} {:>10}", "  └ trajectory points", points);
+    println!("  {:<44} {:>10}", "commitments anchored", commits);
+    println!(
+        "  {:<44} {:>10}",
+        "resolutions (measurement met model)", resolved
+    );
+    println!("  {:<44} {:>10}", "accuracy signals scored", scored);
+    println!(
+        "\n  {measurements} measurement(s) on file; {overlapping} of them share an \
+         observable_property with any projection."
+    );
+
+    if resolved == 0 {
+        println!(
+            "\n  Loop 5.A's projection-accuracy path has never had an input. \
+             Not a wiring fault: the projections cover a set of \
+             `chem:`/`bio:` properties that the measurement stream almost \
+             entirely does not touch. Until the two streams overlap, every \
+             link below the anchor is correctly INERT and no amount of \
+             triggering will produce a signal."
+        );
+    }
+}
+
 /// Every verification must point at an assertion that exists.
 ///
 /// The price of storing assertions flat in a JSONB array. `episodes.assertions`
@@ -283,22 +374,45 @@ async fn an_uncited_human_verification_is_rejected_by_the_database() {
 
     // Attempted inside a transaction that is always rolled back, so the probe
     // cannot leave a row behind whether it succeeds or fails.
+    // `verdict` and `actor_kind` are bound from their owning declarations, not
+    // spelled. `assertion_verifications` has no production writer yet — Loop 4
+    // stalls upstream of it — so this probe is the only place either vocabulary
+    // meets the live column, and binding `ActorKind::Human` is what exercises
+    // the `#[sqlx(type_name = "text")]` encoding against a real Postgres. A
+    // spliced literal would have proved the constraint and nothing about the
+    // type the first production writer will use.
     let mut tx = pool.begin().await.expect("begin");
     let attempt = sqlx::query(
         "INSERT INTO assertion_verifications \
              (assertion_id, episode_id, verdict, actor, actor_kind) \
-         SELECT gen_random_uuid(), episode_id, 'human_sourced', 'probe', 'human' \
+         SELECT gen_random_uuid(), episode_id, $1, 'probe', $2 \
            FROM episodes LIMIT 1",
     )
+    .bind(fermi::grounding_trust::PROV_HUMAN_SOURCED)
+    .bind(fermi::seam_vocabulary::ActorKind::Human)
     .execute(&mut *tx)
     .await;
     let _ = tx.rollback().await;
 
-    assert!(
-        attempt.is_err(),
+    let err = attempt.expect_err(
         "the database accepted a `human_sourced` verification with no citation. \
          That makes the human route the cheapest way to turn a guess into a fact \
          — it scores level with a tool call, and the citation is the only thing \
-         that earns the score."
+         that earns the score.",
+    );
+
+    // `is_err()` alone would pass on a bind that never reached the constraint.
+    // Both values are now bound rather than spliced, and a bound
+    // `#[sqlx(type_name = "text")]` enum resolves its type by name at bind time
+    // — so a typo in the attribute fails with `TypeNotFound`, which is also an
+    // error, and this probe would have reported the constraint as enforced on
+    // the strength of it. Naming the constraint is what makes the pass mean
+    // what it says, and it is simultaneously the only live proof that
+    // `ActorKind` encodes as text against a real Postgres.
+    let msg = err.to_string();
+    assert!(
+        msg.contains("assertion_verifications_citation_check"),
+        "the insert failed, but not on the citation constraint — so this test \
+         has demonstrated nothing about it. Postgres said: {msg}"
     );
 }

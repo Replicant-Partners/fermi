@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="en" class="theme-hasui">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Specimen — Agent Bestiary</title>
+  <link rel="stylesheet" href="/static/css/variables.css"/>
+  <link rel="stylesheet" href="/static/css/common.css"/>
+  <link rel="stylesheet" href="/static/css/components.css"/>
+  <style>
+  body{font-family:"Berkeley Mono","JetBrains Mono",monospace;line-height:1.5;background:var(--bg0-hard);font-size:13px;margin:0;}
+  a{color:var(--fg3);text-decoration:none;}
+  a:hover{color:var(--yellow);}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 20px 60px;}
+
+  /* ── Head: the card, full size ── */
+  .sp-head{padding:18px 0 0;border-bottom:1px solid var(--bg2);margin-bottom:0;}
+  .sp-top{display:flex;align-items:flex-start;gap:14px;}
+  .sp-id{flex:1;min-width:0;}
+  .sp-label{font-size:1.15rem;color:var(--yellow);margin:0;}
+  .sp-sys{font-size:0.7rem;color:var(--fg4);}
+  .sp-type{font-size:0.74rem;color:var(--fg4);margin-top:5px;}
+  .sp-type .gen{color:var(--purple,#d3869b);font-style:italic;}
+  .sp-desc{font-size:0.8rem;color:var(--fg3);margin-top:8px;max-width:70ch;line-height:1.5;}
+  .sp-cost{text-align:right;flex-shrink:0;}
+  .tierbox{font-size:0.63rem;text-transform:uppercase;letter-spacing:0.06em;padding:2px 7px;border:1px solid;}
+  .t-system{color:#d4af37;border-color:#d4af37;}
+  .t-curated{color:var(--aqua);border-color:var(--aqua);}
+  .t-community{color:var(--green);border-color:var(--green);}
+  .t-none{color:var(--fg4);border-color:var(--bg3);}
+  .sp-min{font-size:0.63rem;color:var(--fg4);margin-top:3px;}
+  .sp-marks{display:flex;gap:8px;align-items:center;margin-top:9px;font-size:0.68rem;color:var(--fg4);}
+  .prov{width:7px;height:7px;border-radius:50%;}
+  .p-approved{background:var(--green);} .p-curated_seed{background:var(--aqua);}
+  .p-admin_grant{background:var(--yellow);} .p-implicit{background:var(--bg3);}
+  .p-none{background:transparent;border:1px solid var(--bg3);}
+  .lvl{color:var(--yellow);}
+
+  /* ── Tabs ── */
+  .tabs{display:flex;gap:0;margin-top:14px;}
+  .tab{padding:6px 16px;font-size:0.76rem;color:var(--fg4);cursor:pointer;background:transparent;
+       border:none;border-bottom:2px solid transparent;font-family:inherit;}
+  .tab:hover{color:var(--fg2);}
+  .tab.active{color:var(--yellow);border-bottom-color:var(--yellow);}
+  .tab .badge{font-size:0.6rem;color:var(--fg4);margin-left:5px;}
+  .drawer-btn{margin-left:auto;align-self:center;background:transparent;border:1px solid var(--bg3);
+              padding:3px 10px;font-size:0.7rem;color:var(--fg4);cursor:pointer;font-family:inherit;}
+  .drawer-btn:hover{border-color:var(--yellow);color:var(--yellow);}
+
+  .pane{padding-top:16px;}
+  .block{margin-bottom:22px;}
+  .block h3{font-size:0.72rem;color:var(--fg2);margin:0 0 7px;text-transform:uppercase;letter-spacing:0.07em;
+            padding-bottom:4px;border-bottom:1px solid var(--bg2);}
+  .kv{display:grid;grid-template-columns:150px 1fr;gap:3px 10px;font-size:0.76rem;}
+  .kv dt{color:var(--fg4);}
+  .kv dd{margin:0;color:var(--fg3);}
+  .chips{display:flex;flex-wrap:wrap;gap:4px;}
+  .chip{font-size:0.66rem;padding:1px 6px;border:1px solid var(--bg3);color:var(--fg4);}
+  .chip.filled{border-color:var(--green);color:var(--green);background:rgba(152,151,26,0.1);}
+  .chip.orphan{border-style:dashed;opacity:0.7;}
+
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:1px;background:var(--bg2);}
+  .stat{background:var(--bg0);padding:9px 11px;}
+  .stat-l{font-size:0.62rem;color:var(--fg4);text-transform:uppercase;letter-spacing:0.06em;}
+  .stat-v{font-size:1.02rem;color:var(--aqua);margin-top:2px;}
+  .stat-s{font-size:0.64rem;color:var(--fg4);}
+  .absent{color:var(--fg4);font-style:italic;font-size:0.8rem;}
+
+  table{width:100%;border-collapse:collapse;font-size:0.73rem;}
+  th{text-align:left;color:var(--fg4);font-weight:normal;font-size:0.62rem;text-transform:uppercase;
+     letter-spacing:0.06em;padding:4px 7px;border-bottom:1px solid var(--bg3);}
+  td{padding:5px 7px;border-bottom:1px solid var(--bg2);color:var(--fg3);}
+  tr:hover td{background:var(--bg1);}
+  .num{text-align:right;font-variant-numeric:tabular-nums;}
+  .dim{color:var(--fg4);}
+  .ok{color:var(--green);} .bad{color:var(--red,#fb4934);}
+
+  /* ── Health rows ── */
+  .h-row{display:flex;gap:9px;align-items:flex-start;padding:7px 8px;border-bottom:1px solid var(--bg2);}
+  .h-mark{width:14px;text-align:center;font-weight:bold;flex-shrink:0;}
+  .m-fault{color:var(--red,#fb4934);} .m-idle{color:var(--fg4);} .m-unknown{color:var(--purple,#d3869b);}
+  .h-body{flex:1;min-width:0;}
+  .h-shows{font-size:0.77rem;color:var(--fg2);}
+  .h-detail{font-size:0.7rem;color:var(--fg4);margin-top:2px;line-height:1.45;}
+  .h-rem{font-size:0.7rem;color:var(--aqua);margin-top:3px;}
+  .h-tok{font-size:0.63rem;color:var(--fg4);border:1px solid var(--bg3);padding:1px 5px;white-space:nowrap;}
+
+  /* ── Drawer ── */
+  .scrim{position:fixed;inset:0;background:rgba(0,0,0,0.55);display:none;z-index:40;}
+  .scrim.open{display:block;}
+  .drawer{position:fixed;top:0;right:0;bottom:0;width:min(520px,92vw);background:var(--bg0);
+          border-left:1px solid var(--bg2);z-index:41;transform:translateX(100%);
+          transition:transform 0.18s ease;overflow-y:auto;padding:18px 20px 40px;}
+  .drawer.open{transform:translateX(0);}
+  .drawer h2{font-size:0.9rem;color:var(--yellow);margin:0 0 3px;}
+  .drawer .sub{font-size:0.7rem;color:var(--fg4);margin-bottom:16px;}
+  .drawer .close{position:absolute;top:14px;right:16px;background:transparent;border:none;
+                 color:var(--fg4);cursor:pointer;font-size:1rem;font-family:inherit;}
+  .note{font-size:0.71rem;color:var(--fg4);font-style:italic;line-height:1.5;margin:-2px 0 10px;}
+  .empty{padding:14px 8px;font-size:0.76rem;color:var(--fg4);}
+  </style>
+</head>
+<body>
+  <div id="nav-root"></div>
+  <div class="wrap"><div id="content"><div class="empty">Loading…</div></div></div>
+  <div class="scrim" id="scrim"></div>
+  <div class="drawer" id="drawer"></div>
+
+  <script src="/static/js/widgets/nav.js"></script>
+  <script src="/static/js/theme.js"></script>
+  <script>
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
+    ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const NAME = decodeURIComponent(location.pathname.split("/").filter(Boolean).pop() || "");
+  let D = null, TAB = "profile", SEAM = new Set();
+
+  const num = n => n == null ? `<span class="absent">not measured</span>` : n;
+  const pct = v => v == null ? `<span class="absent">no runs yet</span>`
+                             : (v * 100).toFixed(1) + "%";
+  const usd = v => v == null ? `<span class="absent">not measured</span>` : "$" + v.toFixed(4);
+  const when = t => t ? new Date(t).toISOString().slice(0, 10) : `<span class="absent">never</span>`;
+  const tierC = t => ["system","curated","community"].includes(t) ? t : "none";
+
+  function head() {
+    const p = D.profile;
+    const tx = p.taxonomy;
+    const typeLine = tx && tx.genus
+      ? `${esc(p.agent_type || "unclassified")} — <span class="gen">${esc(tx.genus)} ${esc(tx.species || "")}</span>`
+      : `${esc(p.agent_type || "unclassified")} — <span class="dim"><i>undescribed</i></span>`;
+    const lvl = p.level != null
+      ? `<span class="lvl">lv ${p.level}</span>${p.peak_level > p.level ? ` <span class="dim">(peak ${p.peak_level})</span>` : ""}`
+      : `<span class="dim"><i>untried, not failing</i></span>`;
+
+    return `<div class="sp-head">
+      <div class="sp-top">
+        <div class="sp-id">
+          <h1 class="sp-label">${esc(p.label)}</h1>
+          ${p.label !== p.agent_name ? `<div class="sp-sys">${esc(p.agent_name)}</div>` : ""}
+          <div class="sp-type">${typeLine}</div>
+          <div class="sp-desc">${esc(p.description || "No description.")}</div>
+          <div class="sp-marks">
+            <span class="prov p-${esc(p.provenance || "none")}"
+                  title="${esc(p.provenance || "no orchestra membership")}"></span>
+            ${lvl}
+            <span class="dim">${D.record.runs} runs</span>
+            ${p.fork_count ? `<span class="dim">⚯ ${p.fork_count}</span>` : ""}
+            ${p.status && p.status !== "published" ? `<span class="dim">${esc(p.status)}</span>` : ""}
+          </div>
+        </div>
+        <div class="sp-cost">
+          <div class="tierbox t-${tierC(p.tier)}">${esc(p.tier || "—")}</div>
+          ${p.min_tier ? `<div class="sp-min">needs ${esc(p.min_tier)}</div>` : ""}
+        </div>
+      </div>
+      <div class="tabs">
+        <button class="tab ${TAB==="profile"?"active":""}" data-tab="profile">Profile</button>
+        <button class="tab ${TAB==="record"?"active":""}" data-tab="record">Record</button>
+        <button class="tab ${TAB==="health"?"active":""}" data-tab="health">Health
+          ${faults() ? `<span class="badge" style="color:var(--red,#fb4934)">⚑ ${faults()}</span>` : ""}</button>
+        <button class="drawer-btn" id="open-drawer">Configure ⚙</button>
+      </div>
+    </div>`;
+  }
+
+  const faults = () => (D.health || []).filter(h => h.reading === "fault").length;
+
+  function studChips(list, typed) {
+    if (!list.length) return `<span class="dim">none declared</span>`;
+    return `<div class="chips">${list.map(l =>
+      `<span class="chip ${typed ? "filled" : ""} ${SEAM.has(l) ? "" : "orphan"}">${esc(l)}</span>`
+    ).join("")}</div>`;
+  }
+
+  function paneProfile() {
+    const p = D.profile, s = p.substrate, tx = p.taxonomy || {};
+    const ranks = ["kingdom","phylum","class","order","family","genus","species"];
+    return `<div class="pane">
+      <div class="block">
+        <h3>Interface</h3>
+        <div class="note">
+          Ports are labels, not types. A stud is filled only where a schema resolves,
+          and dashed where the label appears on no counterpart anywhere in the
+          population — composability through it is not merely unverified but impossible.
+        </div>
+        <dl class="kv">
+          <dt>Accepts</dt><dd>${studChips(p.accepts, p.typed)}</dd>
+          <dt>Produces</dt><dd>${studChips(p.produces, p.typed)}</dd>
+          <dt>Output contract</dt><dd>${
+            p.typed ? '<span class="ok">typed — schema resolves</span>'
+            : p.declares_contract ? '<span class="dim">declared, untyped — names a schema rather than carrying one</span>'
+            : '<span class="dim">none</span>'}</dd>
+        </dl>
+      </div>
+
+      <div class="block">
+        <h3>Classification</h3>
+        ${tx.genus ? `<dl class="kv">${ranks.map(r =>
+            `<dt>${r}</dt><dd>${esc(tx[r] || "—")}</dd>`).join("")}</dl>`
+          : `<div class="absent">Undescribed — no taxonomy on this card. It sits in
+             <i>Incertae sedis</i> in the register, which is a real placement and not a gap.</div>`}
+      </div>
+
+      <div class="block">
+        <h3>Substrate</h3>
+        <dl class="kv">
+          <dt>Provider</dt><dd>${esc(s.provider || "—")}</dd>
+          <dt>Model</dt><dd>${esc(s.model || "—")}</dd>
+          <dt>Executor</dt><dd>${esc(s.executor || "—")}</dd>
+          <dt>Temperature</dt><dd>${s.temperature ?? "—"}</dd>
+          <dt>Persona version</dt><dd>v${s.persona_version ?? 1}</dd>
+        </dl>
+      </div>
+
+      ${p.tags.length ? `<div class="block"><h3>Tags</h3>
+        <div class="chips">${p.tags.map(t => `<span class="chip">${esc(t)}</span>`).join("")}</div></div>` : ""}
+
+      ${p.sample_queries.length ? `<div class="block"><h3>Observed use</h3>
+        ${p.sample_queries.map(q => `<div class="dim" style="margin-bottom:4px">“${esc(q)}”</div>`).join("")}</div>` : ""}
+
+      ${p.forked_from ? `<div class="block"><h3>Lineage</h3>
+        <dl class="kv"><dt>Descends from</dt>
+        <dd><a href="/specimen/${encodeURIComponent(p.forked_from)}">${esc(p.forked_from)}</a></dd>
+        <dt>Descendants</dt><dd>${p.fork_count}</dd></dl></div>` : ""}
+    </div>`;
+  }
+
+  function paneRecord() {
+    const r = D.record;
+    return `<div class="pane">
+      <div class="block">
+        <h3>Execution</h3>
+        <div class="note">
+          Measured from the episode log, which recorded every run. The
+          <code>agents.total_executions</code> rollup is deliberately not read: it was
+          added with the table and never wired, so it reads zero for almost every agent.
+        </div>
+        <div class="stats">
+          <div class="stat"><div class="stat-l">Runs</div><div class="stat-v">${r.runs}</div></div>
+          <div class="stat"><div class="stat-l">Succeeded</div><div class="stat-v">${r.succeeded}</div>
+            <div class="stat-s">${r.failed} failed</div></div>
+          <div class="stat"><div class="stat-l">Success rate</div><div class="stat-v">${pct(r.success_rate)}</div></div>
+          <div class="stat"><div class="stat-l">Cost</div><div class="stat-v">${usd(r.cost_usd)}</div>
+            <div class="stat-s">${r.cost_per_run != null ? "$" + r.cost_per_run.toFixed(5) + " / run" : ""}</div></div>
+          <div class="stat"><div class="stat-l">Last run</div><div class="stat-v" style="font-size:0.8rem">${when(r.last_run)}</div></div>
+        </div>
+      </div>
+
+      <div class="block">
+        <h3>What it has learned</h3>
+        <div class="stats">
+          <div class="stat"><div class="stat-l">Entities</div><div class="stat-v">${r.entities}</div></div>
+          <div class="stat"><div class="stat-l">Facts</div><div class="stat-v">${r.facts}</div></div>
+          <div class="stat"><div class="stat-l">Rules</div><div class="stat-v">${r.rules}</div>
+            <div class="stat-s">${r.rules_retrieved} ever retrieved</div></div>
+          <div class="stat"><div class="stat-l">Dream cycles</div><div class="stat-v">${r.dream_cycles}</div>
+            <div class="stat-s">last ${when(r.last_dreamt)}</div></div>
+          <div class="stat"><div class="stat-l">Dream credits</div>
+            <div class="stat-v">${r.dream_budget - r.dream_used}</div>
+            <div class="stat-s">of ${r.dream_budget}</div></div>
+        </div>
+        ${r.rules > 0 && r.rules_retrieved === 0 ? `<div class="note" style="color:var(--yellow)">
+          This agent has ${r.rules} rule(s) and none has ever been retrieved into a prompt:
+          it writes what it learns and reads none of it back.</div>` : ""}
+      </div>
+
+      <div class="block">
+        <h3>Evaluation</h3>
+        <dl class="kv">
+          <dt>Eval runs</dt><dd>${r.eval_runs}</dd>
+          <dt>Last eval</dt><dd>${when(r.last_eval)}</dd>
+        </dl>
+      </div>
+
+      <div class="block">
+        <h3>Recent executions</h3>
+        ${r.episodes.length ? `<table><thead><tr><th>When</th><th>Query</th>
+          <th>Status</th><th class="num">Cost</th></tr></thead><tbody>
+          ${r.episodes.map(e => `<tr>
+            <td class="dim">${esc((e.at || "").slice(0,10))}</td>
+            <td>${esc((e.query || "").slice(0,70))}</td>
+            <td class="${e.status === "success" ? "ok" : "bad"}">${esc(e.status || "—")}
+              ${e.error ? `<div class="dim">${esc(e.error.slice(0,80))}</div>` : ""}</td>
+            <td class="num dim">${e.cost_usd != null ? "$" + e.cost_usd.toFixed(5) : "—"}</td>
+          </tr>`).join("")}</tbody></table>`
+          : `<div class="absent">No execution recorded.</div>`}
+      </div>
+    </div>`;
+  }
+
+  function paneHealth() {
+    const h = D.health || [];
+    return `<div class="pane">
+      <div class="block">
+        <h3>What the platform can say about this specimen</h3>
+        <div class="note">
+          Each row is a panel and the contract that answers it. <b>fault</b> means
+          something should have happened for this agent and did not; <b>idle</b> means
+          it has had no occasion; <b>unknown</b> means no contract can tell the two
+          apart. The opportunity count is the evidence, and it is scoped to this
+          specimen rather than the platform.
+        </div>
+        ${h.length ? h.map(x => `
+          <div class="h-row">
+            <div class="h-mark m-${esc(x.reading)}">${esc((x.marker || "").trim() || "·")}</div>
+            <div class="h-body">
+              <div class="h-shows">${esc(x.shows)}</div>
+              <div class="h-detail">${esc(x.detail)}</div>
+              ${x.remediation ? `<div class="h-rem">→ ${esc(x.remediation)}</div>` : ""}
+              <div class="h-detail dim">← ${esc(x.answered_by)} · ${esc(x.marker_word)}</div>
+            </div>
+            <div class="h-tok">${esc(x.token)}</div>
+          </div>`).join("")
+        : `<div class="absent">No agent-scoped panel is declared.</div>`}
+      </div>
+      <div class="block">
+        <h3>Clinical detail</h3>
+        <div class="note">Eval dimensions, persona drift, dyad state and the anomaly
+          timeline live in the Observatory, which is the surface built for them.</div>
+        <a href="/observatory?agent=${encodeURIComponent(D.profile.agent_name)}">Open in Observatory →</a>
+      </div>
+    </div>`;
+  }
+
+  function drawer() {
+    const p = D.profile;
+    document.getElementById("drawer").innerHTML = `
+      <button class="close" id="close-drawer">✕</button>
+      <h2>Configure</h2>
+      <div class="sub">${esc(p.label)}</div>
+      <div class="note">
+        Editing is a mode, not a tab: it is a different activity from reading, and
+        mixing them is how a page grows eight tabs. These controls still live on the
+        old agent page; this drawer is where they belong.
+      </div>
+      <div class="block"><h3>Lifecycle</h3>
+        <dl class="kv"><dt>Status</dt><dd>${esc(p.status || "—")}</dd>
+        <dt>Visibility</dt><dd>${esc(p.visibility || "—")}</dd></dl></div>
+      <div class="block"><h3>Not yet moved</h3>
+        <div class="note">Manage, Intelligence and eval authoring are still served by the
+        previous page. They move here in the deletion pass, once these three tabs have
+        earned their place.</div>
+        <a href="/agent/${encodeURIComponent(p.agent_name)}#manage">Open the old page →</a></div>`;
+    document.getElementById("close-drawer").onclick = closeDrawer;
+  }
+  const openDrawer = () => { drawer();
+    document.getElementById("drawer").classList.add("open");
+    document.getElementById("scrim").classList.add("open"); };
+  const closeDrawer = () => {
+    document.getElementById("drawer").classList.remove("open");
+    document.getElementById("scrim").classList.remove("open"); };
+
+  function render() {
+    const pane = TAB === "profile" ? paneProfile() : TAB === "record" ? paneRecord() : paneHealth();
+    document.getElementById("content").innerHTML = head() + pane;
+    document.querySelectorAll(".tab").forEach(b =>
+      b.onclick = () => { TAB = b.dataset.tab; render(); });
+    document.getElementById("open-drawer").onclick = openDrawer;
+  }
+
+  async function boot() {
+    if (window.Nav) Nav.init({ current: "bestiary" });
+    document.getElementById("scrim").onclick = closeDrawer;
+    try {
+      const [res, reg] = await Promise.all([
+        fetch(`/api/specimen/${encodeURIComponent(NAME)}`),
+        fetch("/api/bestiary").catch(() => null),
+      ]);
+      if (res.status === 404) {
+        document.getElementById("content").innerHTML =
+          `<div class="empty">No specimen named <b>${esc(NAME)}</b>.
+           <a href="/bestiary">Back to the register</a></div>`;
+        return;
+      }
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      D = await res.json();
+
+      // Which labels can form a seam anywhere in the population — so a stud that
+      // cannot connect is drawn differently from one that merely is not typed.
+      if (reg && reg.ok) {
+        const r = await reg.json();
+        const acc = new Set(), prod = new Set();
+        (r.specimens || []).forEach(s => {
+          (s.accepts || []).forEach(l => acc.add(l));
+          (s.produces || []).forEach(l => prod.add(l));
+        });
+        acc.forEach(l => { if (prod.has(l)) SEAM.add(l); });
+      }
+    } catch (e) {
+      document.getElementById("content").innerHTML =
+        `<div class="empty">Could not load the specimen: ${esc(e.message)}.</div>`;
+      return;
+    }
+    render();
+  }
+
+  boot();
+  </script>
+</body>
+</html>

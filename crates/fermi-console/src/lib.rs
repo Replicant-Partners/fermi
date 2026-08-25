@@ -64,6 +64,15 @@
 //! what evidence a forecast is built on, so it is assertion-worthy by
 //! definition.
 //!
+//! [`coverage`] grades the whole team a decomposition hires, which
+//! [`routing`] cannot see one driver at a time. A generalist standing in
+//! is a legitimate outcome; a generalist standing in that LOOKS like a
+//! considered choice is not, and five identically-phrased assignment
+//! lines were how four fallbacks passed for four decisions. It is also
+//! where per-agent fitness lands when tournaments start producing it —
+//! the ordering rule is written and asserted now, with an empty record,
+//! so feeding it later is data rather than a rewrite.
+//!
 //! [`negotiate`] composes the query an agent is sent from what that agent's
 //! card *declares*, rather than from a hardcoded match on its identifier. The
 //! match was a closed world: an agent designed by someone else could only
@@ -91,12 +100,20 @@
 //! before it reaches the AST: a backwards triangular distribution does
 //! not fail loudly, it silently produces a nonsense forecast.
 //!
+//! [`abw_pacing`] models the server's per-user LLM budget on the client, so
+//! a fan-out of five drivers queues into a legal cadence instead of racing
+//! into three 429s that were never retried. It is clock-free — every entry
+//! point takes `now` — because the alternative is a test suite that sleeps
+//! for a minute to assert one wait.
+//!
 //! Candidates to migrate here as they're decoupled from GPUI: the FPL
 //! action-marker parser in `chat.rs` and the Anthropic error extractor
 //! in `cockpit.rs`, both of which currently have tests that can't run.
 
+pub mod abw_pacing;
 pub mod agent_naming;
 pub mod calibration;
+pub mod coverage;
 pub mod drivers;
 pub mod flow;
 pub mod mutations;

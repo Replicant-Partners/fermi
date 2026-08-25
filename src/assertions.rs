@@ -975,9 +975,8 @@ mod tests {
     #[test]
     fn one_judgement_restated_is_recovered_once() {
         let line = "[MULTIPLIER] Suggested p50: 0.99 (p5: 0.97, p95: 1.00)";
-        let text = format!(
-            "key_findings: {line}\n\nIn summary, {line}\n\n{{\"assessment\": \"{line}\"}}"
-        );
+        let text =
+            format!("key_findings: {line}\n\nIn summary, {line}\n\n{{\"assessment\": \"{line}\"}}");
 
         let (found, rejected) = extract_from_prose(&text);
         assert_eq!(
@@ -985,7 +984,10 @@ mod tests {
             1,
             "the same triple appearing three times is one judgement, not three"
         );
-        assert!(rejected.is_empty(), "a restatement is not a malformed claim");
+        assert!(
+            rejected.is_empty(),
+            "a restatement is not a malformed claim"
+        );
         assert_eq!(found[0].value.p50, 0.99);
     }
 

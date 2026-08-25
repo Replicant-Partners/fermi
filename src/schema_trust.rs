@@ -98,6 +98,11 @@ pub const SCHEMA_TABLES: &[&str] = &[
     "agent_versions",
     "workspace_agents",
     "admin_bypass_events",
+    // The record of what the platform refused. Its absence was the audit's
+    // §2.2, and the asymmetry is the reason it is declared next to its own
+    // inverse: the BYPASS of the admission gate has been audited since it
+    // existed, and the refusal was not recorded anywhere at all.
+    "gate_decisions",
     // Fermi forecasting
     "fermi_forecasts",
     "fermi_forecast_updates",

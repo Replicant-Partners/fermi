@@ -1213,6 +1213,19 @@ pub async fn check_resolutions_handler(
         }
     }
 
+    // `fermi_leaderboard` is a materialized view, so a resolution that
+    // isn't followed by a REFRESH is invisible to the leaderboard even
+    // though `fermi_forecasts` is correct. This path was missing that
+    // refresh entirely — only `resolve_forecast_handler` had it — which
+    // froze the board while the dashboard (a live query) kept moving.
+    //
+    // Batched deliberately: `REFRESH MATERIALIZED VIEW` rescans the whole
+    // resolved population, so it runs once per sweep rather than once per
+    // forecast, and only when something actually settled.
+    if resolved_count > 0 {
+        crate::handlers::forecasts::refresh_leaderboard_async(&state.db);
+    }
+
     Ok(Json(json!({
         "checked": checked_count,
         "resolved": resolved_count,
@@ -1569,6 +1582,14 @@ pub async fn sweep_resolutions_once(
                 "[pm-sweep] resolved"
             );
         }
+    }
+
+    // One refresh for the whole sweep — see the note in
+    // `check_resolutions_handler`. A sweep can settle up to
+    // SWEEP_BATCH_LIMIT forecasts, and refreshing per row would turn a
+    // bounded batch into 40 full matview rebuilds.
+    if resolved > 0 {
+        crate::handlers::forecasts::refresh_leaderboard_async(db);
     }
 
     Ok((checked, resolved))

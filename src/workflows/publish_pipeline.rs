@@ -133,7 +133,37 @@ pub async fn publish_agent(
 
     let measured = crate::agent_economics::measured_exec_stats_one(pool, agent.agent_id).await;
     let checks = run_publish_checks(agent, measured.map(|m| m.executions));
-    if !force && !can_publish(&checks) {
+    let blocked = !force && !can_publish(&checks);
+
+    // Counted. Note the asymmetry this closes: the admin BYPASS of these checks
+    // has always been audited to `admin_bypass_events`, and the refusal itself
+    // left no trace at all — so the platform could report how often the gate
+    // was overridden and not how often it fired.
+    //
+    // A forced publish is recorded as `undetermined`: the gate did not approve
+    // and did not refuse, it was skipped.
+    crate::gate_trust::decided(
+        crate::gate_trust::Gate::Admission,
+        if force {
+            crate::gate_trust::Decision::Undetermined
+        } else if blocked {
+            crate::gate_trust::Decision::Refused
+        } else {
+            crate::gate_trust::Decision::Approved
+        },
+        blocked
+            .then(|| {
+                let failing: Vec<&str> = checks
+                    .iter()
+                    .filter(|c| c.severity == CheckSeverity::Error && !c.passed)
+                    .map(|c| c.name.as_str())
+                    .collect();
+                format!("failing: {}", failing.join(", "))
+            })
+            .as_deref(),
+    );
+
+    if blocked {
         return Err("Publish blocked by failing checks".into());
     }
 

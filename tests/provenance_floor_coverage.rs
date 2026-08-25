@@ -93,6 +93,72 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// How a construction site wired its oracle.
+#[derive(Debug, PartialEq, Eq)]
+enum Wiring {
+    /// `.with_provenance_oracle(None)` — the letter of the contract and none
+    /// of it.
+    Nulled,
+    /// A real oracle was passed.
+    Wired,
+    /// The builder was never called.
+    Unwired,
+}
+
+/// The three-way reading, extracted from the walk so it can be shown a
+/// known-bad source without a filesystem.
+///
+/// The needles are assembled with `concat!` so this file does not match itself.
+/// It did, on the first run of the tightened scan: it reads source, this source
+/// discusses the strings it looks for, and it duly reported itself.
+fn wiring(src: &str) -> Wiring {
+    const NULL_ORACLE: &str = concat!(".with_provenance", "_oracle(None)");
+    const REAL_ORACLE: &str = concat!(".with_provenance", "_oracle(Some(");
+    if src.contains(NULL_ORACLE) {
+        Wiring::Nulled
+    } else if src.contains(REAL_ORACLE) {
+        Wiring::Wired
+    } else {
+        Wiring::Unwired
+    }
+}
+
+/// The detector must tell a null oracle from a real one.
+///
+/// This scan has already been wrong once in exactly this way. It checked
+/// `src.contains(".with_provenance_oracle(")` — the presence of the call,
+/// nothing about its argument — so `.with_provenance_oracle(None)` satisfied it
+/// completely, and a worker wired that way writes precisely the ungraded rules
+/// the check exists to prevent. It was found by sabotage, by hand, after the
+/// fact. Nothing in the build would have found it, and nothing in the build
+/// would have found the next one.
+#[test]
+fn the_scan_sees_a_rule_written_without_a_floor() {
+    let nulled = concat!(
+        "    let worker = ConsolidationWorker::new(store)\n",
+        "        .with_provenance",
+        "_oracle(None);\n"
+    );
+    assert_eq!(
+        wiring(nulled),
+        Wiring::Nulled,
+        "a null oracle reads as wired, which is the defect this scan already \
+         had once"
+    );
+
+    let wired = concat!(
+        "    let worker = ConsolidationWorker::new(store)\n",
+        "        .with_provenance",
+        "_oracle(Some(oracle.clone()));\n"
+    );
+    assert_eq!(wiring(wired), Wiring::Wired);
+
+    assert_eq!(
+        wiring("    let worker = ConsolidationWorker::new(store);\n"),
+        Wiring::Unwired
+    );
+}
+
 #[test]
 fn every_consolidation_worker_is_given_a_provenance_oracle() {
     let root = repo_root();
@@ -137,34 +203,19 @@ fn every_consolidation_worker_is_given_a_provenance_oracle() {
             exercised_exemptions.push(path);
             continue;
         }
-        // `Some(`, not merely the call.
-        //
-        // This checked `src.contains(".with_provenance_oracle(")` — presence of
-        // the call, nothing about its argument — so `.with_provenance_oracle(None)`
-        // satisfied it completely. A worker wired that way writes exactly the
-        // ungraded rules this test exists to prevent, and the scan reported it
-        // green. Verified by sabotage: passing `None` at the sweeper site left
-        // the suite passing.
+        // `Some(`, not merely the call. See [`wiring`] and
+        // [`the_scan_sees_a_rule_written_without_a_floor`]: this checked for
+        // the presence of the call and nothing about its argument, so
+        // `.with_provenance_oracle(None)` satisfied it completely.
         //
         // Which is this repository's own defect class, in the check built to
         // catch it: a spec-shaped artifact that is not spec-enforcing. The
         // remedy is the same one it prescribes elsewhere — assert the thing you
         // actually care about, not a proxy that is cheaper to satisfy.
-        //
-        // The needles are assembled with `concat!` so this file does not match
-        // itself. It did, on the first run: the scan reads source, this source
-        // now discusses the strings it looks for, and it duly reported itself
-        // as a violation. Left as a note because the same trap is waiting for
-        // anyone who adds an example to a scanner.
-        const NULL_ORACLE: &str = concat!(".with_provenance", "_oracle(None)");
-        const REAL_ORACLE: &str = concat!(".with_provenance", "_oracle(Some(");
-
-        if src.contains(NULL_ORACLE) {
-            nulled.push(rel);
-        } else if src.contains(REAL_ORACLE) {
-            wired += 1;
-        } else {
-            unwired.push(rel);
+        match wiring(&src) {
+            Wiring::Nulled => nulled.push(rel),
+            Wiring::Wired => wired += 1,
+            Wiring::Unwired => unwired.push(rel),
         }
     }
 

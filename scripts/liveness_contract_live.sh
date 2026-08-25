@@ -65,7 +65,36 @@ fi
 
 echo "▸ offline tier — are the contracts well-formed and read-only?"
 cargo test --lib -p fermi liveness_trust
+cargo test --lib -p fermi anomaly_vocabulary
 
 echo
 echo "▸ live tier — has each declared write path ever run?"
-exec cargo test --test liveness_contract -- --ignored --nocapture --test-threads=1
+cargo test --test liveness_contract -- --ignored --nocapture --test-threads=1
+
+# The Conditional sinks cannot be settled by a row count: a detector that finds
+# nothing may be right. What CAN be settled is whether it would be recorded if
+# it found something, and that half was false — Loop 2's grounding seed wrote a
+# severity the CHECK constraint rejects, in a spawned task, with the error only
+# logged. Without this tier the sink's zero is unfalsifiable, which is the same
+# standing as a scan that cannot go red.
+echo
+echo "▸ firing tier — could the anomaly detectors record anything if they fired?"
+cargo test --test anomaly_firing_probe -- --ignored --nocapture --test-threads=1
+
+# The chain view. Every stage of Loop 2 is empty; read stage by stage that is
+# five findings, read as a chain it is one, and only the first is actionable.
+echo
+echo "▸ chain tier — where does each feedback loop stop, and why?"
+cargo test --test loop_model_contract -- --ignored --nocapture --test-threads=1
+
+# Do Rust and Postgres still agree about what each column will accept? This is
+# the tier that would have caught `severity = "L1"` the day it was written.
+echo
+echo "▸ seam tier — do the vocabularies still agree with the schema?"
+cargo test --test seam_vocabulary_contract -- --ignored --nocapture --test-threads=1
+
+# And the machinery scoring itself. Last, because it reads what the tiers above
+# produce: counters, gate decisions, chains and the liveness report.
+echo
+echo "▸ native tier — what do the evaluators make of all of the above?"
+exec cargo test --test native_evaluator_contract -- --ignored --nocapture --test-threads=1

@@ -286,6 +286,22 @@ pub async fn execute_agent_stream_handler(
                         );
                     }
                     crate::stamp_grounding(&mut episode, &report);
+
+                    // Tell Loop 2. This path stamped and did not raise, so a
+                    // violation on the streaming endpoint was recorded on the
+                    // episode and never reached a reviewer.
+                    //
+                    // `None` for the episode id: on this path the episode row
+                    // is written later, and `anomaly_events.episode_id` is a
+                    // foreign key. Passing an unwritten id is the race that
+                    // made the original raise fail silently on the other
+                    // endpoint for the life of the feature.
+                    fermi::grounding_anomaly::spawn_raise(
+                        std::sync::Arc::clone(&state_clone.memory_store),
+                        agent_id_clone.clone(),
+                        None,
+                        report.clone(),
+                    );
                 }
                 // Verify the asking against the card — see execution.rs. Both
                 // execute endpoints must check, or the unchecked one becomes
@@ -363,6 +379,79 @@ pub async fn execute_agent_stream_handler(
                         None
                     }
                 };
+
+                // Retain the agent's quantified judgement as a claim.
+                //
+                // The non-streaming `execute_agent_handler` has done this
+                // since mig-187; this handler never has. That gap was the
+                // whole of the remaining loss after migration 213, because
+                // the Fermi Console runs almost everything through THIS
+                // route: it prefers the stream for progress events, and
+                // only falls back to `/execute` when a stream drops. So
+                // "claims are enabled for forecast-bound runs" would have
+                // been true and still produced nothing.
+                //
+                // Deliberately mirrors `execution.rs` rather than sharing a
+                // helper: the two handlers already duplicate their episode,
+                // credit and royalty logic, and the thing worth preventing
+                // is not the duplication but the two paths silently
+                // DIVERGING. Keep them edited in pairs.
+                // The envelope read is shared with `execution.rs` through
+                // `fermi::claim_outcome`, and it is the one piece of this
+                // mirroring that should NOT be duplicated: two independent
+                // reads of two JSON keys can diverge, the divergence is
+                // invisible, and there is nothing for a shared function to
+                // paper over. The surrounding episode/credit/royalty logic
+                // stays mirrored, for the reason given above.
+                let claim_binding =
+                    fermi::claim_outcome::binding_from_invocation(invocation.as_ref());
+                if claim_binding.forecast_id.is_some() && !output.evidence.is_empty() {
+                    let pool = state_clone.db.clone();
+                    let registry = state_clone.extractor_registry.clone();
+                    let claim_agent = agent_id_clone.clone();
+                    let evidence = output.evidence.clone();
+                    // This route has no workspace — `workspace_id` is hardcoded
+                    // `None` in its tool context above, which is also what
+                    // `binding_from_invocation` leaves it as.
+                    let binding = claim_binding;
+                    let log_forecast = binding.forecast_id.clone().unwrap_or_default();
+                    tokio::spawn(async move {
+                        match crate::handlers::workspace::agent_params_hook::apply_agent_multipliers(
+                            &pool,
+                            &registry,
+                            &binding,
+                            &claim_agent,
+                            &evidence,
+                            Some(minted_episode_id),
+                        )
+                        .await
+                        {
+                            // The outcome was previously dropped entirely on
+                            // this path — `if let Err` reads only the failure,
+                            // so a run that declined to write a claim looked
+                            // exactly like one that wrote three. This route is
+                            // forecast-bound by construction (`workspace_id`
+                            // is hardcoded `None` above), so `no_driver_for_agent`
+                            // is unreachable here and `unbound` means the
+                            // console sent no driver.
+                            Ok(o) => tracing::info!(
+                                forecast = %log_forecast,
+                                agent = %claim_agent,
+                                outcome = o.label(),
+                                "claim retention outcome"
+                            ),
+                            // Best-effort: a lost claim must never fail a run
+                            // the caller has already paid for. Warned, not
+                            // swallowed, because a claim cannot be
+                            // reconstructed after the fact.
+                            Err(e) => tracing::warn!(
+                                forecast = %log_forecast,
+                                error = %e,
+                                "claim retention failed on the streaming path"
+                            ),
+                        }
+                    });
+                }
 
                 // Make this turn visible to drift + anomaly detection.
                 if episode_id.is_some() {

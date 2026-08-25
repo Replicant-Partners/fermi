@@ -292,7 +292,7 @@ CREATE INDEX IF NOT EXISTS idx_sosa_obs_source_property
 | `ProjectionScoringEvaluator` | `agent-bestiary/evaluators/src/projection_scoring.rs` | Medium (~150 LoC) | Yes |
 | Register evaluator in `EvaluatorRegistry` | `agent-bestiary/evaluators/src/registry.rs` | 1 line | Yes |
 | Update `simops_dynamics_runner` agent card skill list | `agents/curated/simops_dynamics_runner/agent_card.json` | Trivial | No |
-| Add `projection_accuracy` to Loop 5 Brier calibration dashboard query | `src/handlers/agents.rs` | Small | No |
+| Add `projection_accuracy` to Loop 5.A Brier calibration dashboard query | `src/handlers/agents.rs` | Small | No |
 
 **Estimated effort:** 2–3 days focused work. The evaluator is the bulk — the rest is plumbing.
 
@@ -341,13 +341,13 @@ The weight-update side remains open. If and when fine-tunable local models run v
 
 This spec and `docs/specs/14_BAYESOPS_SPEC.md` address the same root problem — historical data shaping SimOps predictions — via complementary mechanisms that operate at different levels of the stack. They are not alternatives; they compose.
 
-**This spec (Spec 20) operates at the harness level — Loop 1.**
+**This spec (Spec 20) operates at the harness level — Loop 1.B (projection accuracy).**
 
 The `ProjectionScoringEvaluator` produces `EvalSignal` rows. The `ConsolidationWorker` clusters them into semantic rules. Those rules are injected into `simops_dynamics_runner`'s KG context before each execution. The effect: the agent learns *which models are unreliable under which conditions* and can reason about that at inference time. No distribution parameters change. No model weights change. The harness changes.
 
 Example rule produced: `"kask:dynamics/kombucha_fermentation@v1 overestimates bio:bc_yield_g_per_l by ~15% when temperature_c > 65°C"`. The runner reads this in its context, selects a different model or flags the calibration gap, and produces a better projection.
 
-**Spec 14 (BayesOps) operates at the distribution-parameter level — Loop A (offline parameter fitting).**
+**Spec 14 (BayesOps) operates at the distribution-parameter level — Loop 5.B (offline parameter correction).**
 
 BayesOps fits a posterior distribution over historical observations and produces `Beta(α, β)` or `Normal(μ, σ)` parameters that feed directly into FPL `Driver` declarations. The effect: the *uncertainty width* of the forecast is calibrated to the evidence available. 8 real runs produces a wide posterior; 80 runs produces a tight one. This is not a harness change — it changes the parameters of the distributions the Monte Carlo executor samples from.
 

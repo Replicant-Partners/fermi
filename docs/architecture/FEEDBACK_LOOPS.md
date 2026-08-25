@@ -1,7 +1,7 @@
 # Feedback Loops in the Agent Bestiary
 
 **Date:** 2026-05-15, revised 2026-06-03, **verified and revised 2026-08-15**, **operational evidence + remaining fixes 2026-08-16**, **second pass 2026-08-21**
-**Status:** Reference — describes the five adaptive feedback loops, their verified implementation state, what the first deploy actually demonstrated, and BayesOps Loop A (shipped through Phase 3).
+**Status:** Reference — describes the five adaptive feedback loops, their verified implementation state, what the first deploy actually demonstrated, and BayesOps / Loop 5.B (shipped through Phase 3).
 **Verified against:** `main` @ `e4a70acf`, migrations through `211`.
 
 > **Read §5 first if you want the short version.** Every loop is wired, and
@@ -190,19 +190,21 @@ What makes these loops *adaptive* rather than merely reactive is that the correc
 
 A useful framing from the SIA paper (arXiv:2603.27766): *"Harness shapes how the agent searches; weight updates change what the model knows."*
 
-All five loops described here are **harness-level changes**. They modify:
+Most of the loops described here are **harness-level changes**. They modify:
 - What semantic rules, entities, and facts the agent's prompt is enriched with before each execution (Loop 1)
 - Which anomalies a human reviewer sees and corrects (Loop 2)
 - What coordination brief the agents read on the next turn (Loop 3)
-- Who is in the composition (Loop 4)
-- Which member the routing strategist selects (Loop 5)
+- Who is in the composition (Loop 4.A)
+- Which member the routing strategist selects (Loop 4.B)
+- How accurate the last prediction turned out to be (Loop 5.A)
 
 None of these loops update model weights. They change the context, the configuration, and the routing — not the underlying model's parameters. This is the correct design for API-hosted models where weight updates are unavailable. It is also the correct design even when fine-tunable local models are available: harness changes are reversible, auditable, and human-gateable; weight updates are none of those things by default.
 
 The quality ceiling question — whether harness-level accumulation of semantic rules reaches the same improvement ceiling as gradient descent — is empirically open. The architecture does not preclude weight updates for local models; the quality-weighted episode history produced by these loops is a direct prerequisite for any future fine-tuning path.
 
-Loop A (BayesOps) is the one exception to the harness framing, and it is not a
-weight update either — see §4.
+Loop 5.B (BayesOps) is the one exception to the harness framing, and it is not a
+weight update either — it changes distribution parameters rather than context.
+See §4.
 
 ### Two classes of eval signal
 
@@ -210,7 +212,7 @@ The loops consume two structurally different kinds of eval signal, and the diffe
 
 **LLM-judged signals** — scores produced by evaluators that use an LLM to assess output quality (LlmJudge, Faithfulness, Sotopia, etc.). These are fast and domain-general but inherit LLM non-determinism. They require the coherence gate in Loop 2 because a sufficiently adversarial or confused judge could produce a correction that damages the agent's world model.
 
-**Hard-verified signals** — scores produced by deterministic comparison against ground truth that resolves independently of the agent's output. Brier score on resolved forecasts (Loop 5) and `projection_accuracy` on real SOSA observations vs. prior cascade projections (Loop 1, Spec 20) are both hard-verified. The scoring step has no LLM in it. The ground truth (market resolution, physical batch measurement) does not know or care what the agent predicted.
+**Hard-verified signals** — scores produced by deterministic comparison against ground truth that resolves independently of the agent's output. Brier score on resolved forecasts and `projection_accuracy` on real SOSA observations vs. prior cascade projections are the two signal paths of Loop 5.A, and both are hard-verified. The scoring step has no LLM in it. The ground truth (market resolution, physical batch measurement) does not know or care what the agent predicted.
 
 Hard-verified signals are epistemically stronger: they cannot be gamed by an agent that learns to produce plausible-sounding outputs, and they do not require a coherence gate before propagating into memory. When a real cultivation batch yields 3.8 kg against a predicted 4.2 kg, that delta is a fact. The semantic rule it produces ("this model overestimates yield at high temperature") is grounded in physical reality, not in an LLM's judgment of output quality.
 
@@ -236,7 +238,7 @@ question" from "the agent is bad at the job" — previously the same row. See
 *LLM-judged dimensions* — relevance, accuracy, completeness, persona_fidelity, and similar scores produced by the EvaluatorRegistry (LlmJudge, Faithfulness, Sotopia, etc.). Fast, domain-general, inherently noisy.
 
 *Hard-verified dimensions* — scores computed by deterministic comparison against ground truth that resolves independently of the agent's output:
-- `forecast_calibration` (Brier score on resolved `fermi_forecasts`) — Loop 5 feeds this back into Loop 1 for forecasting agents
+- `forecast_calibration` (Brier score on resolved `fermi_forecasts`) — Loop 5.A feeds this back into Loop 1 for forecasting agents
 - `projection_accuracy` (SOSA observation delta: `1 - |predicted - actual| / |actual|`) — introduced in Spec 20 for `simops_dynamics_runner` and `simops_cascade` agents; computed by `ProjectionScoringEvaluator` when a real batch measurement arrives against a prior synthetic projection
 
 Hard-verified signals require no coherence gate before consolidation. They are facts about the physical world, not judgments about output quality.
@@ -607,7 +609,7 @@ cohere_and_coordinate accumulates session episodes in its own memory
         message (handlers/composition.rs), charges 5 credits
       → Stage 4 / valence-homophily threshold (spread < 0.25) exists as
         PROMPT TEXT ONLY. No Rust computes arousal or valence spread.
-    → propose_composition_change → PHANTOM TOOL (see Loop 4)
+    → propose_composition_change → PHANTOM TOOL (see Loop 4.A)
 ```
 
 **What changes — and the mechanism the earlier revisions got wrong.**
@@ -642,7 +644,7 @@ humans reading along — it is not the mechanism.
 
 - Inner loop: the coherence update message steers the current conversation; the
   cascade changes what each member knows next time.
-- Outer loop: composition proposals — see Loop 4.
+- Outer loop: composition proposals — see Loop 4.A.
 
 **Timescale:** inner loop runs within the session (minutes). Outer loop requires accumulated session history and human approval (days to weeks).
 
@@ -719,7 +721,23 @@ above reflects the current semantics.
 
 ---
 
-### Loop 4 — Composition evolution (tune-team RSI)
+### Loop 4 — Team shape
+
+Loop 4 governs **who is on the team, and who gets called**. It has two halves,
+which correct different things on different timescales from the same
+attribution substrate:
+
+- **4.A — Composition evolution** (*tune-team RSI*): changes team *membership*.
+  Slow, owner-gated. Documented in this section.
+- **4.B — Routing accuracy**: changes which member is *selected* for a given
+  query. Faster, automatic. Its mechanism is documented in §3, because routing
+  became measurable in the same revision that re-verified calibration.
+
+Both consume the calibration measurements produced by Loop 5.A. The division of
+labour across Loops 4 and 5 is: **5.A measures how wrong we were, 4 corrects
+*who* answers, and 5.B corrects *what the numbers are*.**
+
+#### 4.A — Composition evolution (tune-team RSI)
 
 **Target:** the composition's team structure should improve over time to reduce chronic coordination failures and redundant membership.
 
@@ -805,32 +823,55 @@ version. That is an onboarding gap, not a loop defect (§5).
 not a target; the loop is young and a confident proposal derived from two
 correlated forecasts would be worse than no proposal.
 
-**Important distinction from Loop 3:** Loop 3's inner iteration changes conversation direction (fast, within-session). Loop 4 changes team composition (slow, across-sessions). They operate at different timescales and different levels of the system.
+**Important distinction from Loop 3:** Loop 3's inner iteration changes conversation direction (fast, within-session). Loop 4.A changes team composition (slow, across-sessions). They operate at different timescales and different levels of the system.
+
+**Relationship to 3.B.** Both 3.B and 4.A can produce a composition proposal,
+and this is not a duplication: they are two *generators* feeding one
+*mechanism*. 4.A owns the `composition_versions` row and the owner-accept gate.
+The Shapley path is its quantitative generator; 3.B's tension audit is its
+qualitative one. A proposal is 4.A regardless of which generator raised it.
 
 **See also:** `docs/architecture/COMBINATORIAL_CREDIT_ASSIGNMENT.md`.
 
 ---
 
-### Loop 5 — Calibration and routing accuracy
+### Loop 5 — Calibration
 
-**Target:** the platform's agents should become more calibrated over time; the MoE routing strategist should learn which members are genuinely accurate on which sub-domains.
+Loop 5 governs **how wrong we were, and what gets corrected as a result**. Like
+Loop 4 it has two halves, and they are measurement and correction rather than
+two signal paths:
 
-**Two signal paths feed this loop:**
+- **5.A — Calibration measurement**: scores predictions against ground truth
+  that resolved independently. Documented in this section. Two signal paths
+  feed it — Brier on resolved forecasts, and projection accuracy on real SOSA
+  observations.
+- **5.B — Parameter correction (BayesOps)**: refits the distribution parameters
+  the predictions were made from. Documented in §4.
 
-**5a — Forecast calibration (Brier score)**
+5.A produces no correction of its own; it is consumed by Loop 1 (semantic
+rules), Loop 4.B (routing weights) and Loop 5.B (parameter fits). A loop that
+only measures is still a loop, but only because something else acts on it.
+
+#### 5.A — Calibration measurement
+
+**Target:** the platform should know, from independently-resolving ground truth, how accurate each agent's predictions actually were — accurately enough that the layers acting on that measurement can be trusted.
+
+**Two signal paths feed 5.A:**
+
+**Forecast calibration (Brier score)**
 - Signal: Brier score when `fermi_forecasts` resolve against actual outcomes. Computed by `BrierEvaluator` (`handlers/eval_brier.rs`, `BrierLookupSqlx`), written to `eval_signals.dimension = "forecast_calibration"`.
 - Timescale: months. Requires sufficient resolved forecasts to establish calibration curves.
 - Ground truth source: market resolution, event outcomes — independent of the agent's prediction.
 
-**5b — SimOps projection accuracy**
+**SimOps projection accuracy**
 - Signal: `projection_accuracy` score when real SOSA observations arrive against prior cascade projections. Computed by `ProjectionScoringEvaluator` (`handlers/eval_projection.rs`, `ProjectionLookupSqlx`), written to `eval_signals.dimension = "projection_accuracy"`.
 - Timescale: days to weeks, depending on batch cycle time. Ground truth arrives with every completed cultivation run — far faster than forecast resolution.
 - Ground truth source: physical batch measurement — the batch does not know what was predicted.
-- **Key difference from 5a:** this signal is available for SimOps agents even when no `fermi_forecasts` exist. It feeds Loop 1 directly (semantic rules about model calibration) and Loop 5 routing (which dynamics model to select for which process conditions).
+- **Key difference from the Brier path:** this signal is available for SimOps agents even when no `fermi_forecasts` exist. It feeds Loop 1 directly (semantic rules about model calibration) and Loop 4.B routing (which dynamics model to select for which process conditions).
 
 **Verified state of the signal paths:**
 ```
-5a — Forecast calibration:
+Forecast calibration:
     Agent executes forecast question
     → BrierEvaluator reads fermi_forecasts filtered on agents_used   ✅
     → Computes 1 - brier_score → forecast_calibration dimension      ✅
@@ -845,7 +886,7 @@ correlated forecasts would be worse than no proposal.
       (dispatch arm + BuiltinToolDef; shares fermi::calibration with
        the route, so the two cannot drift)
 
-5b — Projection accuracy:
+Projection accuracy:
     Cascade projection runs → synthetic SOSA observation written,
       projection_id stamped via CascadeProvenance
       (crates/simops/src/cascade_v2.rs, agent_backend/simops_tools.rs)  ✅
@@ -858,7 +899,7 @@ correlated forecasts would be worse than no proposal.
     Migration 130 deployed long ago (repo is at 210).
 ```
 
-**The break, as it stood on 2026-08-15 (fixed 2026-08-16).** The previous revision marked Loop 5 closed. Every
+**The break, as it stood on 2026-08-15 (fixed 2026-08-16).** The previous revision marked this loop closed. Every
 *producer-side* claim in it holds: the evaluators are wired, the annotation
 fires on resolution, the endpoint is live and returns all five documented
 fields. But the consumer cannot read it.
@@ -882,17 +923,17 @@ with the HTTP route, so the two cannot drift. The phantom-tool check now scans
 all of `agents/curated` as a ratchet rather than four hardcoded weather agents;
 the corpus scan that estimated 27 offenders in fact found 92, now 73 (§7).
 
-**What remains for Loop 5 is data, not wiring.** `agents_used` carries entries
+**What remains for Loop 5.A is data, not wiring.** `agents_used` carries entries
 that resolve to no agent, so the mechanism probe reports `WIRING BROKEN` and
 declines to certify the score — correctly. See §5.
 
-**Timescale:** 5a: months (forecast resolution cadence). 5b: days to weeks (batch cycle cadence).
+**Timescale:** Brier path: months (forecast resolution cadence). Projection path: days to weeks (batch cycle cadence).
 
 **Status:**
-- 5a: ✅ Wiring closed — signal collection, outcome annotation, endpoint and router read path all verified. **But the mechanism probe reports `WIRING BROKEN` on data grounds** (§5): 7 scored forecasts have an empty roster and 6 roster entries name no agent, so those Brier scores can never reach an agent's calibration. Read `brier_skill_score`, not `calibration_score`.
-- 5b: ✅ Wiring closed — full evaluator chain deployed and the router can read it; awaiting a first real SOSA observation cycle for operational evidence.
+- Brier path: ✅ Wiring closed — signal collection, outcome annotation, endpoint and router read path all verified. **But the mechanism probe reports `WIRING BROKEN` on data grounds** (§5): 7 scored forecasts have an empty roster and 6 roster entries name no agent, so those Brier scores can never reach an agent's calibration. Read `brier_skill_score`, not `calibration_score`.
+- Projection path: ✅ Wiring closed — full evaluator chain deployed and the router can read it; awaiting a first real SOSA observation cycle for operational evidence.
 
-**See also:** `docs/specs/20_SIMOPS_PROJECTION_SCORING.md` for 5b implementation detail.
+**See also:** `docs/specs/20_SIMOPS_PROJECTION_SCORING.md` for projection-path implementation detail.
 
 ---
 
@@ -901,20 +942,20 @@ declines to certify the score — correctly. See §5.
 The five loops operate at different timescales and different system levels:
 
 ```
-Timescale    Loop                        Wiring   Observed turning?  (2026-08-16)
-──────────────────────────────────────────────────────────────────────────────
-Hours        1a. Individual learning      ✅       ✅ 8 eval runs, 23 ontology rows
-Hours        1b. Projection accuracy      ✅       — no real SOSA cycle yet
-Hours        1c. Live observation         ✅       — no live traffic since deploy
-Days         2.  HITL correction          ✅       — queue empty (depends on 1c)
-Session      3a. Coherence (inner)        ✅       ✅ 6 evaluations, Γ(C) 0.97
-Weeks        3b. Coherence (outer)        ✅       — needs session history
-Months       4.  Composition evolution    ✅       — no workspace has a composition
-Days-weeks   5b. Projection calibration   ✅       — awaiting first observation
-Months+      5a. Brier calibration        ✅       ✅ MECHANISM SOUND, 9/9
-──────────────────────────────────────────────────────────────────────────────
-Offline      A.  BayesOps — parameter fit ✅       ✅ refits on workspace resolution
-             (feeds Loop B / FPL executor)         Phases 1–3; Phase 4 not built
+Timescale    Loop                          Wiring  Observed turning?  (2026-08-16)
+───────────────────────────────────────────────────────────────────────────────
+Hours        1.A Individual learning        ✅      ✅ 8 eval runs, 23 ontology rows
+Hours        1.B Projection accuracy        ✅      — no real SOSA cycle yet
+Hours        1.C Live observation           ✅      — no live traffic since deploy
+Days         2.  HITL correction            ✅      — queue empty (depends on 1.C)
+Session      3.A Coherence (inner)          ✅      ✅ 6 evaluations, Γ(C) 0.97
+Weeks        3.B Coherence (outer)          ✅      — needs session history
+Months       4.A Composition evolution      ✅      — no workspace has a composition
+Months       4.B Routing accuracy           ✅      ◐ provenance stamped; views unread
+Days-weeks   5.A Calibration — projection   ✅      — awaiting first observation
+Months+      5.A Calibration — Brier        ✅      ✅ MECHANISM SOUND, 9/9
+Offline      5.B Parameter fit (BayesOps)   ✅      ✅ refits on workspace resolution
+                 (feeds the FPL simulation loop)   Phases 1–3; Phase 4 not built
 ```
 
 **Two columns, two claims.** *Wiring* means every hop has an executing call
@@ -926,11 +967,16 @@ loops that had never run.
 The nesting is real rather than aspirational, and now runs in both directions:
 Loop 2 → Loop 1 (corrections become embedded episodes that survive the
 extraction budget), Loop 3 → Loop 1 (coordination observations become semantic
-rules in member memory), Loop 5 → Loop 4 (Shapley attribution generates
-composition proposals), Loop 1 → Loop 2 (live traffic produces anomalies that
-reach the HITL queue).
+rules in member memory), Loop 5.A → Loop 4.A (Shapley attribution generates
+composition proposals), Loop 5.A → Loop 4.B (calibration scores become routing
+weights), Loop 5.A → Loop 5.B (measured error motivates a parameter refit),
+Loop 1 → Loop 2 (live traffic produces anomalies that reach the HITL queue).
 
-Loop 3's outer iteration was *supposed* to feed Loop 4 and never did — the
+That Loop 5.A has three consumers and no correction of its own is the clearest
+statement of the taxonomy: **measurement is one loop, and the things that act on
+it are others.**
+
+Loop 3's outer iteration was *supposed* to feed Loop 4.A and never did — the
 `propose_composition_change` phantom tool meant the tension audit could conclude
 "the team should change" and end in `Unknown tool`. The Shapley path in
 `handlers::composition_evolution` replaced it as the primary generator; the tool
@@ -942,9 +988,12 @@ which have, on real data, and which are still waiting.
 
 ---
 
-## 3. Loop 5 — Closure Status (revised 2026-08-16)
+## 3. Loop 5.A and Loop 4.B — Closure Status (revised 2026-08-16)
 
-The four steps of the original plan, re-verified:
+These two are documented together because routing became measurable in the same
+revision that re-verified calibration, and 4.B consumes 5.A directly.
+
+### 5.A — the four steps of the original plan, re-verified
 
 | Step | Status | Where |
 |---|---|---|
@@ -953,15 +1002,16 @@ The four steps of the original plan, re-verified:
 | `get_agent_calibration` tool on `moe_router_strategist` | ✅ Dispatch arm + `BuiltinToolDef`; shares `fermi::calibration::compute_agent_calibration` with the route | `src/agent_backend/tools_legacy.rs`, `src/calibration.rs` |
 | Routing episode outcome annotation | ✅ Fires on forecast resolution | `src/handlers/forecasts.rs::resolve_forecast_handler` |
 
-**All four steps are closed. Loop 5's remaining problem is not wiring — it is
+**All four steps are closed. Loop 5.A's remaining problem is not wiring — it is
 data.** See §5: the mechanism probe reports `WIRING BROKEN` because
 `fermi_forecasts.agents_used` contains entries that resolve to no agent, so
 scored forecasts exist whose Brier can never reach an agent's calibration.
 
-### New since 2026-06-03: routing moved to a measured substrate
+### 4.B — routing moved to a measured substrate (new since 2026-06-03)
 
-The previous revision modelled Loop 5 as *endpoint + episode annotation*. Three
-changes since have made routing itself measurable:
+The previous revision modelled routing as *endpoint + episode annotation*, and
+filed it under calibration. It is now its own loop, because three changes have
+made routing itself measurable:
 
 **a) Route provenance on every episode** (`7b768a08`). `stamp_invocation`
 (`src/api_server.rs`) writes caller-supplied invocation records as slugged
@@ -1015,7 +1065,7 @@ The value of the system increases monotonically with data. The architecture degr
 
 ---
 
-## 4. BayesOps — Loop A: Parameter Fitting (**shipped**)
+## 4. Loop 5.B — BayesOps: Parameter Correction (**shipped**)
 
 **Status:** Phases 1–3 shipped 2026-06-16. Phase 4 not built. Phase 5 shipped
 in a different shape than specified. The previous revision's "specified, not
@@ -1023,26 +1073,28 @@ yet implemented" and the "zero implementation" note in
 `docs/specs/14_BAYESOPS_SPEC.md §12` are both stale; `docs/fermi/BAYESOPS_CONTRACT.md`
 and `docs/specs/23_BAYESOPS_WORLD_CUP_DEMO.md` are current.
 
-### What Loop A is and why it is not Loop 1–5
+### What 5.B is, and why it sits inside Loop 5 rather than beside it
 
-Loops 1–5 are all **harness-level changes**: they modify what context agents receive, how they are routed, and how their compositions are structured. They operate over agent episodes and produce semantic rules, coordination briefs, and routing weights.
+Loops 1–4 and 5.A are all **harness-level**: they modify what context agents receive, how they are routed, and how their compositions are structured. They operate over agent episodes and produce semantic rules, coordination briefs, and routing weights.
 
-Loop A is different in kind. It operates **upstream of Loop B** (the FPL Monte Carlo executor) and produces something the loops do not: **the distribution parameters themselves**.
+5.B is different in kind, and it belongs in Loop 5 because it is the **correction arm of calibration**. 5.A establishes that a prediction was wrong; 5.B changes the numbers the prediction was made from. It produces something no other loop does: **the distribution parameters themselves**.
+
+A separate distinction, easily confused with this one and unrelated to it, is the two Monte Carlo loops inside Fermi:
 
 ```
-Loop A (BayesOps — offline, per dataset):
+The fitting loop (BayesOps — offline, per dataset):
   Historical observations
     → fit posterior distribution
     → FittedDistribution: Beta(9.4, 13.6) or Normal(4.8, 0.7)
     → written into FPL Driver as distribution parameters
 
-Loop B (FPL executor — online, per forecast question):
-  Driver yield: Beta(9.4, 13.6)   ← from Loop A, or from a human
+The simulation loop (FPL executor — online, per forecast question):
+  Driver yield: Beta(9.4, 13.6)   ← from the fitting loop, or from a human
     → Monte Carlo simulation (10,000 samples)
     → ExecutionResults: mean, p5, p95, Sobol indices
 ```
 
-Loop B is entirely unchanged by BayesOps. The seam between Loop A and Loop B is the `Distribution` type in the FPL AST — `Beta`, `Normal`, `Lognormal`, `Triangular` — which already exists. Loop A produces those parameters from data rather than from human elicitation.
+These are Monte Carlo loops, not feedback loops — an earlier revision of this document called them "Loop A" and "Loop B", which collided with the feedback-loop numbering and is why the letters have been retired. The simulation loop is entirely unchanged by BayesOps. The seam between them is the `Distribution` type in the FPL AST — `Beta`, `Normal`, `Lognormal`, `Triangular` — which already exists. Loop 5.B produces those parameters from data rather than from human elicitation.
 
 ### Phase status (verified)
 
@@ -1066,7 +1118,7 @@ and two more), 2 doc-tests. All pass.
 (`src/handlers/bayesops.rs`, ~900 lines, plus posterior cache list/evict,
 workspace state, pending accept/reject, manual refit).
 
-### What actually feeds Loop A today
+### What actually feeds Loop 5.B today
 
 **Not SOSA.** There is no wiring from `sosa_observations` into `fit_marginal`.
 The live feed is **workspace resolutions** (Spec 23, R-1):
@@ -1092,34 +1144,34 @@ Manual trigger: `refit_workspace_handler`. Conditional posteriors are held in a
 `handlers/forecasts.rs`, though `forecast_benchmark.rs` accepts and hashes the
 column.
 
-### How Loop A relates to Loops 1 and 5
+### How Loop 5.B relates to Loops 1 and 5.A
 
 **Extends Loop 1 (agent learning):** Loops 1 and 5 accumulate
 `projection_accuracy` eval signals when real batches resolve against cascade
 projections (Spec 20). Those signals feed semantic rules into the agent's KG
 context — harness-level changes that tell the agent *which model is unreliable
-under which conditions*. Loop A adds the complementary capability: given that
+under which conditions*. Loop 5.B adds the complementary capability: given that
 an agent knows which model to use, BayesOps provides *calibrated distribution
 parameters for what that model predicts*.
 
 | | Mechanism | Output | Level |
 |---|---|---|---|
 | Loop 1 / Spec 20 | EvalSignal → consolidation → semantic rule | "Use bc_optimization at 30 °C, not kombucha_fermentation" | Harness |
-| Loop A / BayesOps | Observation history → posterior fit → `Beta(α,β)` | "At 30 °C, yield follows `Normal(4.8, 0.6)` based on 40 real runs" | Distribution parameters |
+| Loop 5.B / BayesOps | Observation history → posterior fit → `Beta(α,β)` | "At 30 °C, yield follows `Normal(4.8, 0.6)` based on 40 real runs" | Distribution parameters |
 
-Together: Loop 1 tells the agent *what to run*; Loop A tells the FPL model *how to parameterise it*.
+Together: Loop 1 tells the agent *what to run*; Loop 5.B tells the FPL model *how to parameterise it*.
 
-**Extends Loop 5 (calibration and routing):** the `ConditionalPosterior`
+**Extends Loop 5.A (calibration measurement):** the `ConditionalPosterior`
 produced by `posterior-reg` generates input sensitivity indices, scenario
 comparisons, and probability-at-threshold queries
 (`P(yield ≥ 5.5 kg | lighting = 135)`). These are scored by the same
-Brier/projection_accuracy infrastructure Loop 5 already uses — the fitted
+Brier/projection_accuracy infrastructure Loop 5.A already uses — the fitted
 model's predictions resolve against real outcomes, feeding evidence about which
 BayesOps model variant is most accurate for which conditions. With only
 `LinearNormal` implemented there is currently one variant to choose between, so
 this is capability-in-waiting rather than an operating loop.
 
-### Remaining Loop A work
+### Remaining Loop 5.B work
 
 1. Additional regression models (`StudentT`, `HeteroscedasticNormal`,
    `NonlinearNormal`) — without them the improvement ladder in
@@ -1131,7 +1183,17 @@ this is capability-in-waiting rather than an operating loop.
    framed the loop around
 5. Populate `harness_snapshots.bayesops_params`
 
-See `docs/specs/14_BAYESOPS_SPEC.md §12` (sequencing — note the phase-status
+**Item 4, generalised.** The reason 5.B has one feed is not that the others are
+hard — it is that `refit.rs:737` is a single `if` on
+`source == "upstream_resolutions"`, and `refit_workspace` refuses any workspace
+with no linked `fermi_forecast` before it does anything at all. A SOSA feed on
+its own would be a second special case. `docs/specs/35_BAYESOPS_PLATFORM_LAYER.md`
+lifts the intake to a `Feed` registry, makes the impact gate and accept hook
+App-supplied, and gives 5.B a second consumer outside forecasting (Loop 4.B,
+§10 there) to keep the abstraction honest.
+
+See `docs/specs/35_BAYESOPS_PLATFORM_LAYER.md` (intake and platform layer),
+`docs/specs/14_BAYESOPS_SPEC.md §12` (sequencing — note the phase-status
 lines there are stale), `docs/fermi/BAYESOPS_CONTRACT.md`, and
 `docs/specs/23_BAYESOPS_WORLD_CUP_DEMO.md`.
 
@@ -1165,12 +1227,12 @@ facts.** Platform-wide: 1,096 embedded, 107 CEP seeds, 26 unreachable — and al
 **14 → 0**. That is the corrected `last_scan_completed_at` predicate executing
 against the real schema, which is the detail the first draft got wrong.
 
-**Loop 1a, measured independently.** The loop-health panel, which derives from
+**Loop 1.A, measured independently.** The loop-health panel, which derives from
 `eval_runs ⋈ eval_signals` and `consolidation_jobs ⋈ entities/facts/semantic_rules`
 rather than from anything asserted here: *"8 eval runs, 3 dimensions scored, and
 3 dreaming cycles wrote back 23 ontology rows. Both halves turning."*
 
-**Loop 3a, measured independently.** *"6 evaluations across 1/127 workspaces,
+**Loop 3.A, measured independently.** *"6 evaluations across 1/127 workspaces,
 Γ(C) mean 0.97."*
 
 **mig-200, verified behaviourally rather than by inspection**, with a control:
@@ -1183,19 +1245,19 @@ after an ordinary auto_pass      267   ← real runs still counted
 
 ### The column nobody wrote — found 2026-08-16
 
-Loop 3's coordination half and the whole of Loop 4 were unreachable **by
+Loop 3's coordination half and the whole of Loop 4.A were unreachable **by
 construction rather than by defect**, and this is the most instructive finding
 of the whole exercise.
 
 `teams.coordination_strategist_id` is read in **40 places**: the
-composition-dreaming handler, the Loop 4 accept path, and
+composition-dreaming handler, the Loop 4.A accept path, and
 `record_coordination_observation`'s authorisation gate. It was written by none of
 them — and by no endpoint, no creation path, and no migration. Nothing on the
 platform had ever assigned a coordination strategist.
 
 **249 workspaces. One had one.** The exception looks manual.
 
-So the observation tool built to close Loop 3a — correctly implemented,
+So the observation tool built to close Loop 3.A — correctly implemented,
 correctly gated on "the caller must be this workspace's registered strategist"
 — would have refused in **248 of 249 workspaces**. It was shipped, tested, and
 aimed at a column nobody populated. Composition dreaming had the same problem:
@@ -1246,7 +1308,7 @@ stamped with a persona version and 1,999 are not**, but the newest episode
 predates the deploying boot, so the stamping fix has not yet been seen to fire
 on the live execution path.
 
-### Loop 5a — was `WIRING BROKEN`; the verdict was correct, and it is now sound
+### Loop 5.A (Brier path) — was `WIRING BROKEN`; the verdict was correct, and it is now sound
 
 The mechanism probe reports two HIGH violations. Neither is a code defect; both
 are data, and the panel is right to refuse to certify the score while they
@@ -1415,7 +1477,7 @@ which is what makes it worth trusting:
 | `GET /api/me/loop-health` | Live per-loop health aggregation, Loops 1–5 | `src/api_server.rs` → `handlers::agents::loop_health_handler` |
 | `GET /api/observatory/loops/dreaming/maturity` | Is Loop 1 running-but-learning-nothing? (the "91 cycles, zero rules" mode) | `src/handlers/dreaming_maturity.rs` |
 | Observatory **Loops** tab (`/observatory?agent=<name>`) | Per-agent RSI loop health, each row derived from a named query and labelled `closed` / `partial` / `open` / `broken` / `unmeasured`. Distinguishes *thin* (sound wiring, little data — wait) from *broken* (faulty wiring — repair), because the remedies are opposite | `src/handlers/observatory.rs`, `templates/observatory.html` |
-| `agent_evolution` ledger | Four un-averaged progression dimensions — `memory` (Loop 1), `judgment` (Loop 5), `conduct` (Loop 2), `craft` — with a `peak_level` ratchet so regression is measurable | `migrations/190_agent_evolution.sql`, `src/handlers/evolution.rs` |
+| `agent_evolution` ledger | Four un-averaged progression dimensions — `memory` (Loop 1), `judgment` (Loop 5.A), `conduct` (Loop 2), `craft` — with a `peak_level` ratchet so regression is measurable | `migrations/190_agent_evolution.sql`, `src/handlers/evolution.rs` |
 
 The dimensions are deliberately not averaged into a single score, and
 `agent_evolution` deliberately replaced an activity-based maturity metric that
@@ -1447,22 +1509,22 @@ Every verified break, ordered by cost-to-fix against value:
 
 | # | Break | Loop | Fix size |
 |---|---|---|---|
-| 1 | ~~`get_agent_calibration` has no dispatch arm; router Stage 0 gets `Unknown tool`~~ | 5a, 5b | **Fixed 2026-08-15** — arm + `BuiltinToolDef`; computation extracted to `fermi::calibration` so route and tool share one implementation |
-| 2 | ~~`propose_composition_change` has no dispatch arm~~ | 3b, 4 | **Fixed 2026-08-15** — arm + `BuiltinToolDef`; writes a pending `composition_versions` row |
-| 3 | ~~Composition accept path writes `teams.member_weights`, a column that does not exist~~ | 4 | **Fixed 2026-08-15** — reconciles `workspace_agents`, transactionally, strategist exempt from eviction |
+| 1 | ~~`get_agent_calibration` has no dispatch arm; router Stage 0 gets `Unknown tool`~~ | 5.A, 4.B | **Fixed 2026-08-15** — arm + `BuiltinToolDef`; computation extracted to `fermi::calibration` so route and tool share one implementation |
+| 2 | ~~`propose_composition_change` has no dispatch arm~~ | 3.B, 4.A | **Fixed 2026-08-15** — arm + `BuiltinToolDef`; writes a pending `composition_versions` row |
+| 3 | ~~Composition accept path writes `teams.member_weights`, a column that does not exist~~ | 4.A | **Fixed 2026-08-15** — reconciles `workspace_agents`, transactionally, strategist exempt from eviction |
 | 4 | ~~Phantom-tool regression test covers only 4 weather agents~~ | all | **Fixed 2026-08-15** — `no_curated_card_declares_a_phantom_tool` scans all of `agents/curated` as a **ratchet**: 92 pre-existing declarations are quarantined in `known_debt`, anything new fails, and the list may only shrink |
 | 5 | ~~Live executions write no eval signal / timeline entry, so drift and anomaly detection never see real traffic~~ | 1, 2 | **Fixed 2026-08-15** — `handlers::live_observability`: deterministic evaluators only, fire-and-forget, plus a scan sweeper |
 | 6 | ~~`ConsolidationWorker` never reads `authority_weight`, and synthetic corrections are written unembedded, so a human correction can neither cluster nor survive the extraction budget~~ | 2 | **Fixed 2026-08-15** — `with_embedder` + `rank_success_episodes_by_authority`; locked by `consolidation::authority_tests` |
-| 7 | ~~Coherence shelf executes the strategist without a `ToolContext`; Stages 0 and 3 are inert~~ | 3a | **Fixed 2026-08-15** — routed through `ToolAwareExecutor` with a full `ToolContext` |
-| 8 | ~~`_coordination/brief.md` sits outside the `context/` prefix~~ | 3a | **Superseded 2026-08-15** — the brief was never the mechanism; `record_coordination_observation` writes into member memory instead. The brief remains, for humans |
+| 7 | ~~Coherence shelf executes the strategist without a `ToolContext`; Stages 0 and 3 are inert~~ | 3.A | **Fixed 2026-08-15** — routed through `ToolAwareExecutor` with a full `ToolContext` |
+| 8 | ~~`_coordination/brief.md` sits outside the `context/` prefix~~ | 3.A | **Superseded 2026-08-15** — the brief was never the mechanism; `record_coordination_observation` writes into member memory instead. The brief remains, for humans |
 | 9 | ~~`create_snapshot` reachable only from the CLI~~ | 1 | **Fixed 2026-08-15** — see 9d |
 
 | 9a | ~~`get_ontology` read `ontology_snapshots` (never written on the API path) and hardcoded empty entity/relationship arrays, so a successful dreaming cycle displayed as zero~~ | 1 | **Fixed 2026-08-15** — reads live tables; locked by `handlers::ontology::tests` |
 | 9c | ~~KG injection gated on `card.ontology_stats`, which nothing maintains (sole updater queried the nonexistent table `kg_entities`), so learned knowledge was never retrieved into any execution~~ | **1 — was the loop's actual break** | **Fixed 2026-08-15** — gate queries the knowledge tables; locked by `kg_context::gate_tests` |
 | 9d | ~~`create_snapshot` never called on the API path, so ontologies never developed and the narrator's synopsis write was a no-op~~ | 1 | **Fixed 2026-08-15** — `snapshot_ontology` on the dreaming path, push disabled, failure non-fatal |
 | 9b | Agent-level episode recovery excludes any agent that has since learned anything, so investigating a damaged agent by re-dreaming it forfeits recovery | 1 | **Addressed** — `scripts/loop1_reset_sterile_episodes.sql` recovers per-episode |
-| 10 | Valence-homophily threshold (spread < 0.25) exists only as prompt text | 3b | Compute it, or stop documenting it as a mechanism |
-| 11 | `route_outcomes` joins heuristically on `(agent_id, driver)` within a time window | 5 | Stamp `episode_id` onto the claim row (deliberately deferred) |
+| 10 | Valence-homophily threshold (spread < 0.25) exists only as prompt text | 3.B | Compute it, or stop documenting it as a mechanism |
+| 11 | `route_outcomes` joins heuristically on `(agent_id, driver)` within a time window | 4.B | Stamp `episode_id` onto the claim row (deliberately deferred) |
 
 ### The `detected_at` incident — why this section declares columns
 
@@ -1493,15 +1555,15 @@ is not an instrument.
 
 | # | Break | Loop | Notes |
 |---|---|---|---|
-| 12 | ~~`fermi_forecasts.agents_used` records FPL *statement* names, which calibration readers treat as agent identities~~ | 5a | **Fixed 2026-08-16** — `fermi::attribution::roster` resolves at write time; mig-209 repaired 40 entries. **L5-M03 narrowed on evidence.** Probe now reports MECHANISM SOUND, 9/9 |
+| 12 | ~~`fermi_forecasts.agents_used` records FPL *statement* names, which calibration readers treat as agent identities~~ | 5.A | **Fixed 2026-08-16** — `fermi::attribution::roster` resolves at write time; mig-209 repaired 40 entries. **L5-M03 narrowed on evidence.** Probe now reports MECHANISM SOUND, 9/9 |
 | 13 | ~~Entity extraction returned 0 entities on 12 episodes while rule extraction returned 5~~ | 1 | **Fixed 2026-08-16** — neither extractor read `response_text`; both now share `episode_digest`. Not a failure, an omission |
 | 16 | ~~`create_snapshot` decoded a NULL aggregate into `(i32,)`, so the first snapshot for any agent always errored and the function has never once succeeded~~ | 1 | **Fixed 2026-08-21** — `query_scalar::<Option<i32>>`. Corroborated by 0 consolidation jobs with a snapshot id, ever. DB-backed regression test asserts both decode shapes |
 | 17 | ~~Creature dreaming resolved its extractor from `ANTHROPIC_API_KEY`, which this deployment does not set, so every creature dream ran with no extractor and reported `completed`~~ | 1 | **Fixed 2026-08-21** — both paths call `build_extraction_llm`; the creature path now refuses rather than charging a credit for a cycle that cannot learn |
-| 18 | ~~The coherence shelf hardcoded `cohere_and_coordinate` and never read `teams.coordination_strategist_id`, making three shipped strategists unreachable and any non-default assignment fail as a permission denial~~ | 3a | **Fixed 2026-08-21** — resolves the registered strategist; locked by a source check, since the failure was a literal where a lookup belonged |
-| 14 | 127 workspaces have no composition identity, so Loop 4 has nothing to version | 4 | **Open.** Onboarding gap rather than loop defect |
+| 18 | ~~The coherence shelf hardcoded `cohere_and_coordinate` and never read `teams.coordination_strategist_id`, making three shipped strategists unreachable and any non-default assignment fail as a permission denial~~ | 3.A | **Fixed 2026-08-21** — resolves the registered strategist; locked by a source check, since the failure was a literal where a lookup belonged |
+| 14 | 127 workspaces have no composition identity, so Loop 4.A has nothing to version | 4.A | **Open.** Onboarding gap rather than loop defect |
 | 15 | 73 curated tool declarations remain undispatchable, quarantined in `known_debt` | all | Ratcheting down: 92 → 79 → 73. Breakdown below |
-| 10 | Valence-homophily threshold (spread < 0.25) exists only as prompt text | 3b | Compute it, or stop documenting it as a mechanism |
-| 11 | `route_outcomes` joins heuristically on `(agent_id, driver)` within a time window | 5 | Stamp `episode_id` onto the claim row (deliberately deferred) |
+| 10 | Valence-homophily threshold (spread < 0.25) exists only as prompt text | 3.B | Compute it, or stop documenting it as a mechanism |
+| 11 | `route_outcomes` joins heuristically on `(agent_id, driver)` within a time window | 4.B | Stamp `episode_id` onto the claim row (deliberately deferred) |
 
 ### The phantom-tool debt
 
@@ -1553,29 +1615,31 @@ goal, so any division of labour it invented would be a guess dressed as advice.
 ## 8. What makes this architecture coherent
 
 Each loop corrects at the appropriate timescale:
-- Fast loops (1, 2, inner-3) handle execution-level errors — the agent said the wrong thing, the team went in the wrong direction.
-- Slow loops (outer-3, 4) handle structural errors — the team is wrong for the problem, the composition needs to change.
-- Calibration loop (5) handles systematic bias — the routing classifier has persistent blind spots that need data to reveal.
-- Offline loop (A) handles parameter bias — the distribution assumptions the forecasts run on are not grounded in operational data.
+- Fast loops (1, 2, 3.A) handle execution-level errors — the agent said the wrong thing, the team went in the wrong direction.
+- Slow loops (3.B, 4.A) handle structural errors — the team is wrong for the problem, the composition needs to change.
+- Routing (4.B) handles selection bias — the right member exists but the wrong one keeps being asked.
+- Calibration measurement (5.A) handles systematic bias — persistent blind spots that need data to reveal, and which nothing else can see until they are scored.
+- Parameter correction (5.B) handles parameter bias — the distribution assumptions the forecasts run on are not grounded in operational data.
 
 Each loop uses a different corrective mechanism:
 - Loops 1 and 2: episodic memory → dreaming → semantic rules
 - Loop 3: TEC coherence → coordination observation written into member memory → semantic rule → changed behaviour next execution
-- Loop 4: Shapley attribution → composition proposals → human approval → team change
-- Loop 5: calibration scores + route provenance → routing weights → member selection
-- Loop A: observation history → posterior fit → FPL distribution parameters
+- Loop 4.A: Shapley attribution → composition proposals → human approval → team change
+- Loop 4.B: calibration scores + route provenance → routing weights → member selection
+- Loop 5.A: resolved ground truth → Brier / projection_accuracy → eval signals (no correction of its own — consumed by 1, 4.B and 5.B)
+- Loop 5.B: observation history → posterior fit → FPL distribution parameters
 
-Each online loop (1–5) is separated from the others by a human or coherence gate:
+Each online loop is separated from the others by a human or coherence gate:
 - Loop 2 requires a human reviewer (anomaly → HITL queue), and a second reviewer for agent-wide scope
-- Loop 4 requires owner approval (composition proposal → accept/reject), and proposals are suppressed below 5 forecasts of evidence
-- Loop 5's routing weights are readable by humans via the calibration endpoint, and its mechanism probe refuses to certify a score whose wiring is unsound rather than reporting the number anyway
+- Loop 4.A requires owner approval (composition proposal → accept/reject), and proposals are suppressed below 5 forecasts of evidence
+- Loop 4.B's routing weights are readable by humans via the calibration endpoint, and its mechanism probe refuses to certify a score whose wiring is unsound rather than reporting the number anyway
 
-Loop A is separated from Loop B by the operator: fitted parameters pass a Monte
-Carlo impact gate and either auto-accept or stage a pending row for review.
-Parameter changes to forecast models are reviewable before they affect
-production forecasts.
+Loop 5.B is separated from the FPL simulation loop by the operator: fitted
+parameters pass a Monte Carlo impact gate and either auto-accept or stage a
+pending row for review. Parameter changes to forecast models are reviewable
+before they affect production forecasts.
 
-No online loop can modify agent behaviour without either a human gate or the coherence gate. Loop A cannot modify forecast behaviour without passing the impact gate. These properties compound: the system learns continuously at the harness level (Loops 1–5) while requiring human acceptance of parameter-level changes (Loop A). Fast adaptation where the cost of error is low; human review where the cost is high.
+No online loop can modify agent behaviour without either a human gate or the coherence gate. Loop 5.B cannot modify forecast behaviour without passing the impact gate. These properties compound: the system learns continuously at the harness level (Loops 1–4 and 5.A) while requiring human acceptance of parameter-level changes (Loop 5.B). Fast adaptation where the cost of error is low; human review where the cost is high.
 
 ---
 
@@ -1619,7 +1683,7 @@ one made a broken hop report success, which is why none showed up in the
 
 **What is genuinely unfinished** is honest to state plainly. Every loop is
 wired, four have been observed turning on real data, and the two exceptions
-named in the previous revision are both closed: Loop 5a's attribution now
+named in the previous revision are both closed: Loop 5.A's attribution now
 resolves at write time and its probe reports `MECHANISM SOUND`, and
 `intention_coordinator`'s six tools dispatch, so Loop 3's Stage 0 exists for the
 first time. Ontology development, however, has not yet been observed to work
@@ -1627,7 +1691,7 @@ even once — the defect is understood and fixed, and §5 states the query that
 will confirm or refute it after the next deploy.
 
 What remains is not loop wiring. 127 workspaces have no composition identity, so
-Loop 4 has nothing to version — an onboarding gap. 73 curated tool declarations
+Loop 4.A has nothing to version — an onboarding gap. 73 curated tool declarations
 are still undispatchable, four of them loop-relevant, ratcheting down. And most
 loops are waiting on traffic rather than repair, which is a matter of use, not
 engineering.

@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en" class="theme-hasui">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Gates — Agent Bestiary</title>
+  <link rel="stylesheet" href="/static/css/variables.css"/>
+  <link rel="stylesheet" href="/static/css/common.css"/>
+  <link rel="stylesheet" href="/static/css/components.css"/>
+  <style>
+  body{font-family:"Berkeley Mono","JetBrains Mono",monospace;line-height:1.5;background:var(--bg0-hard);font-size:13px;margin:0;}
+  a{color:var(--fg3);text-decoration:none;}
+  a:hover{color:var(--yellow);}
+  .wrap{max-width:1100px;margin:0 auto;padding:0 20px 60px;}
+
+  .head{padding:18px 0 12px;border-bottom:1px solid var(--bg2);margin-bottom:16px;}
+  .head h1{font-size:1.05rem;color:var(--yellow);margin:0 0 3px;}
+  .head .sub{font-size:0.74rem;color:var(--fg4);}
+
+  .sec{margin-bottom:28px;}
+  .sec-head{display:flex;align-items:baseline;gap:8px;margin-bottom:7px;padding-bottom:5px;
+            border-bottom:1px solid var(--bg2);}
+  .sec-head h2{font-size:0.82rem;color:var(--fg2);margin:0;text-transform:uppercase;letter-spacing:0.08em;}
+  .sec-head .meta{font-size:0.7rem;color:var(--fg4);}
+  .note{font-size:0.71rem;color:var(--fg4);font-style:italic;margin:-1px 0 11px;line-height:1.5;}
+
+  table{width:100%;border-collapse:collapse;font-size:0.74rem;}
+  th{text-align:left;color:var(--fg4);font-weight:normal;font-size:0.63rem;text-transform:uppercase;
+     letter-spacing:0.06em;padding:5px 8px;border-bottom:1px solid var(--bg3);}
+  td{padding:6px 8px;border-bottom:1px solid var(--bg2);color:var(--fg3);vertical-align:top;}
+  tr:hover td{background:var(--bg1);}
+  .num{text-align:right;font-variant-numeric:tabular-nums;}
+  .dim{color:var(--fg4);}
+  .mono{font-size:0.68rem;color:var(--fg4);}
+
+  .gate-id{color:var(--fg2);}
+  .reading{font-size:0.62rem;text-transform:uppercase;letter-spacing:0.05em;padding:1px 5px;border:1px solid;}
+  .r-never_asked{color:var(--fg4);border-color:var(--bg3);}
+  .r-refuses_everything{color:var(--red,#fb4934);border-color:var(--red,#fb4934);}
+  .r-admits_everything{color:var(--yellow);border-color:var(--yellow);}
+  .r-ok{color:var(--green);border-color:var(--green);}
+
+  .enf{font-size:0.62rem;text-transform:uppercase;letter-spacing:0.05em;padding:1px 5px;border:1px solid;}
+  .e-control{color:var(--green);border-color:var(--green);}
+  .e-metric{color:var(--red,#fb4934);border-color:var(--red,#fb4934);}
+  .e-declared{color:var(--yellow);border-color:var(--yellow);}
+  .e-none{color:var(--fg4);border-color:var(--bg3);}
+
+  .warn{border-left:3px solid var(--red,#fb4934);background:rgba(251,73,52,0.07);padding:9px 12px;
+        margin-bottom:12px;font-size:0.74rem;color:var(--fg3);line-height:1.5;}
+  .warn b{color:var(--red,#fb4934);}
+  .info{border-left:3px solid var(--bg3);background:var(--bg1);padding:9px 12px;margin-bottom:12px;
+        font-size:0.73rem;color:var(--fg4);line-height:1.5;}
+  .ok{border-left:3px solid var(--green);background:rgba(152,151,26,0.07);padding:9px 12px;
+      margin-bottom:12px;font-size:0.74rem;color:var(--fg3);}
+  .silence{font-size:0.7rem;color:var(--fg4);line-height:1.45;margin-top:3px;
+           padding-left:10px;border-left:1px solid var(--bg3);}
+  .empty{padding:14px 8px;font-size:0.75rem;color:var(--fg4);}
+  .boot{font-size:0.66rem;color:var(--fg4);}
+  </style>
+</head>
+<body>
+  <div id="nav-root"></div>
+  <div class="wrap">
+    <div class="head">
+      <h1>Gates</h1>
+      <div class="sub">What the platform refused, and what it cannot refuse</div>
+    </div>
+    <div id="content"><div class="empty">Loading…</div></div>
+  </div>
+
+  <script src="/static/js/widgets/nav.js"></script>
+  <script src="/static/js/theme.js"></script>
+  <script>
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
+    ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+  function readingClass(r) {
+    return r ? `r-${r}` : "r-ok";
+  }
+
+  function renderEnforcement(d) {
+    const discarded = d.discarded || [];
+    const ungoverned = d.ungoverned || [];
+
+    // The finding that counting cannot produce. A gate whose verdict is thrown
+    // away is asked, answers, and changes nothing — so its counters look
+    // healthy while the caller is ungoverned.
+    const warn = discarded.length ? `
+      <div class="warn">
+        <b>${discarded.length} verb${discarded.length === 1 ? "" : "s"} run a gate and discard its verdict.</b>
+        From the caller's side that is indistinguishable from having no gate at all:
+        the gate is asked, it answers, and control flow is identical either way — so
+        the counters in the register below look healthy while nothing is actually
+        being stopped. This is the one failure counting cannot reveal.
+      </div>` : `<div class="ok">✓ Every declared gate on every declared verb can refuse it.</div>`;
+
+    const ung = ungoverned.length ? `
+      <div class="warn"><b>${ungoverned.length} write${ungoverned.length === 1 ? "" : "s"} no gate can refuse,
+      and no reason recorded:</b> ${ungoverned.map(esc).join(", ")}.</div>` : "";
+
+    const rows = (d.commands || []).map(c => {
+      const gates = (c.gates || []).length
+        ? c.gates.map(g => `
+            <div>
+              <span class="enf e-${esc(g.enforcement)}">${esc(g.enforcement)}</span>
+              <span class="gate-id">${esc(g.gate)}</span>
+              <div class="mono">${esc(g.site)}</div>
+              ${g.why_not_control ? `<div class="silence">${esc(g.why_not_control)}</div>` : ""}
+            </div>`).join("")
+        : `<span class="enf e-none">none</span>${
+             c.ungated_because ? `<div class="silence">${esc(c.ungated_because)}</div>` : ""}`;
+      return `<tr>
+        <td><span class="gate-id">${esc(c.label)}</span>
+            <div class="mono">${esc(c.id)} · ${esc(c.route)}</div></td>
+        <td class="dim">${esc(c.effect)}</td>
+        <td>${gates}</td>
+      </tr>`;
+    }).join("");
+
+    return `<div class="sec">
+      <div class="sec-head"><h2>Enforcement</h2>
+        <span class="meta">${(d.commands || []).length} declared verbs</span></div>
+      <div class="note">
+        Which verbs a gate can actually stop. <b>control</b> runs before the effect and
+        can refuse it; <b>metric</b> runs and the verdict is discarded; <b>declared</b> is
+        typed, persisted and never compared. The paper's line is the whole distinction:
+        the check that runs after the write is a metric, the check that runs before it is
+        a control.
+      </div>
+      ${warn}${ung}
+      <table><thead><tr><th>Verb</th><th>Effect</th><th>Gates</th></tr></thead>
+        <tbody>${rows}</tbody></table>
+    </div>`;
+  }
+
+  function renderRegister(d) {
+    const rows = (d.register || []).map(g => `
+      <tr>
+        <td><span class="gate-id">${esc(g.id)}</span>
+            <div class="mono">${esc(g.refuses || "")}</div></td>
+        <td class="dim">${esc(g.clock)}<div class="mono">${esc(g.retention)}</div></td>
+        <td class="num">${g.approved}</td>
+        <td class="num">${g.refused}</td>
+        <td class="num dim">${g.undetermined}</td>
+        <td>
+          ${g.reading ? `<span class="reading ${readingClass(g.reading)}">${esc(g.reading.replace(/_/g," "))}</span>` : `<span class="reading r-ok">ok</span>`}
+          ${g.reading === "never_asked" || g.reading === "admits_everything"
+            ? `<div class="silence">${esc(g.if_never_refuses)}</div>` : ""}
+          ${g.last_refusal ? `<div class="silence">last: ${esc(g.last_refusal)}</div>` : ""}
+        </td>
+      </tr>`).join("");
+
+    return `<div class="sec">
+      <div class="sec-head"><h2>Register</h2>
+        <span class="meta">${(d.register || []).length} gates ·
+        <span class="boot">counts since boot</span></span></div>
+      <div class="note">
+        Every point in the system that can refuse something. A gate that has never been
+        asked is not a pass, and a gate that has never refused is indistinguishable from
+        one that is not wired — so both readings carry the sentence, written next to the
+        gate itself, saying what that silence would mean.
+      </div>
+      <table>
+        <thead><tr><th>Gate</th><th>Clock</th><th class="num">Approved</th>
+          <th class="num">Refused</th><th class="num">Undet.</th><th>Reading</th></tr></thead>
+        <tbody>${rows}</tbody></table>
+    </div>`;
+  }
+
+  function renderReceipts(d) {
+    const l = d.ledger || {};
+    const dropped = l.dropped > 0 ? `
+      <div class="warn"><b>${l.dropped} decision(s) dropped.</b> The queue filled while the
+      recorder could not write. Those refusals are not recoverable and this list is
+      incomplete by that many rows.</div>` : "";
+
+    const scope = `
+      <div class="info">
+        Showing <b>${esc(d.receipts_scope || "your agents")}</b>.
+        Only <b>${(l.recorded_gates || []).map(esc).join(" and ")}</b> write a durable receipt;
+        the other ${(l.counted_only_gates || []).length}
+        (${(l.counted_only_gates || []).map(esc).join(", ")}) are counted in memory only and
+        never appear here at all. An empty list is therefore not a record of no refusals.
+        ${l.pending ? `${l.pending} decision(s) are queued and not yet written.` : ""}
+      </div>`;
+
+    const rows = (d.receipts || []).map(r => `
+      <tr>
+        <td class="dim">${esc((r.decided_at || "").replace("T"," ").slice(0,19))}</td>
+        <td><span class="gate-id">${esc(r.gate)}</span></td>
+        <td><span class="enf ${r.decision === "refused" ? "e-metric" : r.decision === "approved" ? "e-control" : "e-declared"}">${esc(r.decision)}</span></td>
+        <td class="dim">${esc(r.subject || "—")}</td>
+        <td>${esc(r.reason || "")}</td>
+      </tr>`).join("");
+
+    return `<div class="sec">
+      <div class="sec-head"><h2>Receipts</h2>
+        <span class="meta">${(d.receipts || []).length} recorded</span></div>
+      <div class="note">
+        The durable record of individual decisions. Before migration 214 this table did
+        not exist, and the platform had a record of every request it served and none of
+        any it refused.
+      </div>
+      ${dropped}${scope}
+      ${rows ? `<table><thead><tr><th>When</th><th>Gate</th><th>Decision</th>
+        <th>Subject</th><th>Reason</th></tr></thead><tbody>${rows}</tbody></table>`
+        : `<div class="empty">No receipt yet. The two recording gates fire on publish and on
+           an agent-wide correction; neither has happened in this window.</div>`}
+    </div>`;
+  }
+
+  async function boot() {
+    if (window.Nav) Nav.init({ current: "gates" });
+    const el = document.getElementById("content");
+    let d;
+    try {
+      const res = await fetch("/api/gates");
+      if (res.status === 401) {
+        el.innerHTML = `<div class="empty">Sign in to see the control surface.
+          <a href="/auth/google">Google</a> · <a href="/auth/github">GitHub</a></div>`;
+        return;
+      }
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      d = await res.json();
+    } catch (e) {
+      el.innerHTML = `<div class="empty">Could not load the gates: ${esc(e.message)}.
+        No register is shown rather than an empty one — a platform with no gates and a
+        platform we cannot read are different claims.</div>`;
+      return;
+    }
+    el.innerHTML = renderEnforcement(d) + renderRegister(d) + renderReceipts(d);
+  }
+
+  boot();
+  </script>
+</body>
+</html>

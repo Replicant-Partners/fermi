@@ -346,7 +346,7 @@ pub async fn resolve_workspace_handler(
     // is already durable. Per spec failure policy, refit errors are
     // log-and-continue; they never propagate to the caller.
     let pool_bg = state.db.clone();
-    let registry_bg = state.extractor_registry.clone();
+    let registry_bg = state.feed_registry.clone();
     let ws_id_bg = ws_uuid;
     let upstream_id_bg = ws_uuid;
     tokio::spawn(async move {

@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en" class="theme-hasui">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Bestiary — Agent Bestiary</title>
+  <link rel="stylesheet" href="/static/css/variables.css"/>
+  <link rel="stylesheet" href="/static/css/common.css"/>
+  <link rel="stylesheet" href="/static/css/components.css"/>
+  <style>
+  body{font-family:"Berkeley Mono","JetBrains Mono",monospace;line-height:1.5;background:var(--bg0-hard);font-size:13px;margin:0;}
+  a{color:var(--fg3);text-decoration:none;}
+  a:hover{color:var(--yellow);}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 20px 60px;}
+
+  .head{padding:18px 0 12px;border-bottom:1px solid var(--bg2);margin-bottom:14px;}
+  .head h1{font-size:1.05rem;color:var(--yellow);margin:0 0 3px;}
+  .head .sub{font-size:0.74rem;color:var(--fg4);}
+
+  /* ── Lens switch ── */
+  .lenses{display:flex;gap:0;margin:12px 0 6px;border:1px solid var(--bg2);width:fit-content;}
+  .lens{padding:5px 14px;font-size:0.75rem;color:var(--fg4);cursor:pointer;background:transparent;
+        border:none;border-right:1px solid var(--bg2);font-family:inherit;}
+  .lens:last-child{border-right:none;}
+  .lens:hover{color:var(--fg2);background:var(--bg1);}
+  .lens.active{color:var(--bg0);background:var(--yellow);}
+  .lens-note{font-size:0.71rem;color:var(--fg4);font-style:italic;margin:4px 0 12px;}
+
+  /* ── Controls ── */
+  .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;}
+  .controls input,.controls select{background:var(--bg1);color:var(--fg2);border:1px solid var(--bg3);
+        padding:4px 8px;font-family:inherit;font-size:0.76rem;}
+  .controls input{flex:1;min-width:180px;}
+  .count{font-size:0.71rem;color:var(--fg4);}
+
+  /* ── Aggregate strip ── */
+  .strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:1px;
+         background:var(--bg2);margin-bottom:14px;}
+  .cell{background:var(--bg0);padding:9px 11px;}
+  .cell-l{font-size:0.63rem;color:var(--fg4);text-transform:uppercase;letter-spacing:0.07em;}
+  .cell-v{font-size:1.05rem;color:var(--aqua);margin-top:2px;}
+  .cell-s{font-size:0.65rem;color:var(--fg4);}
+  .warn-strip{border-left:3px solid var(--yellow);background:rgba(215,153,33,0.08);
+              padding:9px 12px;margin-bottom:14px;font-size:0.74rem;color:var(--fg3);line-height:1.5;}
+  .warn-strip b{color:var(--yellow);}
+
+  /* ── Card grid (Discover) ── */
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:9px;}
+  .card{border:1px solid var(--bg2);background:var(--bg0);padding:0;display:flex;flex-direction:column;}
+  .card:hover{border-color:var(--bg3);background:var(--bg1);}
+
+  /* zone 1: identity + cost corner */
+  .c-top{display:flex;align-items:flex-start;gap:8px;padding:9px 11px 6px;}
+  .c-name{flex:1;min-width:0;}
+  .c-label{font-size:0.84rem;color:var(--fg2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .c-sys{font-size:0.65rem;color:var(--fg4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .c-cost{text-align:right;flex-shrink:0;}
+  .c-tier{font-size:0.62rem;text-transform:uppercase;letter-spacing:0.06em;padding:1px 5px;border:1px solid;}
+  .t-system{color:#d4af37;border-color:#d4af37;}
+  .t-curated{color:var(--aqua);border-color:var(--aqua);}
+  .t-community{color:var(--green);border-color:var(--green);}
+  .t-none{color:var(--fg4);border-color:var(--bg3);}
+  .c-min{font-size:0.6rem;color:var(--fg4);margin-top:2px;}
+
+  /* zone 2: type line */
+  .c-type{padding:0 11px 6px;font-size:0.68rem;color:var(--fg4);border-bottom:1px solid var(--bg2);
+          padding-bottom:7px;}
+  .c-type .gen{color:var(--purple,#d3869b);font-style:italic;}
+  .c-type .undesc{color:var(--fg4);font-style:italic;}
+
+  /* zone 3: body — studs */
+  .c-body{padding:7px 11px;flex:1;}
+  .c-desc{font-size:0.71rem;color:var(--fg3);line-height:1.45;
+          display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+  .studs{display:flex;align-items:center;gap:6px;margin-top:7px;flex-wrap:wrap;font-size:0.63rem;}
+  .stud{padding:1px 5px;border:1px solid var(--bg3);color:var(--fg4);}
+  .stud.filled{border-color:var(--green);color:var(--green);background:rgba(152,151,26,0.1);}
+  .stud.orphan{border-style:dashed;opacity:0.65;}
+  .arrow{color:var(--fg4);}
+
+  /* zone 4: evidence */
+  .c-foot{display:flex;align-items:center;gap:10px;padding:6px 11px;border-top:1px solid var(--bg2);
+          font-size:0.66rem;color:var(--fg4);}
+  .lvl{color:var(--yellow);}
+  .untried{font-style:italic;}
+  .prov{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+  .p-approved{background:var(--green);}
+  .p-curated_seed{background:var(--aqua);}
+  .p-admin_grant{background:var(--yellow);}
+  .p-implicit{background:var(--bg3);}
+  .p-none{background:transparent;border:1px solid var(--bg3);}
+  .flags{color:var(--yellow);margin-left:auto;}
+
+  /* ── Table (Population / Health) ── */
+  table{width:100%;border-collapse:collapse;font-size:0.75rem;}
+  th{text-align:left;color:var(--fg4);font-weight:normal;font-size:0.65rem;text-transform:uppercase;
+     letter-spacing:0.06em;padding:5px 8px;border-bottom:1px solid var(--bg3);}
+  td{padding:5px 8px;border-bottom:1px solid var(--bg2);color:var(--fg3);}
+  tr:hover td{background:var(--bg1);}
+  .grp{color:var(--yellow);font-size:0.7rem;padding:9px 8px 4px;letter-spacing:0.05em;}
+  .num{text-align:right;font-variant-numeric:tabular-nums;}
+  .dim{color:var(--fg4);}
+  .empty{padding:16px 8px;font-size:0.76rem;color:var(--fg4);}
+  </style>
+</head>
+<body>
+  <div id="nav-root"></div>
+  <div class="wrap">
+    <div class="head">
+      <h1>Bestiary</h1>
+      <div class="sub">One register of every specimen. The lens changes what you are asked to notice.</div>
+    </div>
+
+    <div class="lenses">
+      <button class="lens active" data-lens="discover">Discover</button>
+      <button class="lens" data-lens="population">Population</button>
+      <button class="lens" data-lens="health">Health</button>
+    </div>
+    <div class="lens-note" id="lens-note"></div>
+
+    <div class="controls">
+      <input id="q" placeholder="search name, type, taxonomy, tag, port…"/>
+      <select id="group"></select>
+      <span class="count" id="count"></span>
+    </div>
+
+    <div id="aggregate"></div>
+    <div id="body"><div class="empty">Loading…</div></div>
+  </div>
+
+  <script src="/static/js/widgets/nav.js"></script>
+  <script src="/static/js/theme.js"></script>
+  <script>
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
+    ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+  let DATA = null, LENS = "discover", SEAM = new Set();
+
+  const NOTES = {
+    discover: "Which specimens exist, and which do you want. The card is meant to be enough to decide with — cost is always the same corner, so you can scan a column of costs alone.",
+    population: "How the population is distributed and where it came from. Grouping is taxonomic; the provenance dot says whether a place was reviewed or merely taken.",
+    health: "Which specimens need attention. Sorted by open flags, then by silence — an agent nobody has run is not the same as one that is failing.",
+  };
+
+  const GROUPS = {
+    discover:   [["runs","Most run"],["name","Name"],["tier","Stratum"],["type","Niche"]],
+    population: [["family","Family"],["kingdom","Kingdom"],["genus","Genus"],["type","Niche"],["tier","Stratum"],["provenance","Provenance"]],
+    health:     [["flags","Open flags"],["silence","Longest silent"],["runs","Most run"]],
+  };
+
+  function tier(t) { return ["system","curated","community"].includes(t) ? t : "none"; }
+
+  function typeLine(s) {
+    const niche = esc(s.agent_type || "unclassified");
+    if (s.genus && s.species) {
+      return `${niche} — <span class="gen">${esc(s.genus)} ${esc(s.species)}</span>`;
+    }
+    return `${niche} — <span class="undesc">undescribed</span>`;
+  }
+
+  // A stud is filled only when a schema resolves, and dashed when its label
+  // appears on no counterpart anywhere — it cannot form a seam, so composability
+  // through it is not merely unverified but impossible.
+  function studs(s) {
+    const one = (l, filled) =>
+      `<span class="stud ${filled ? "filled" : ""} ${SEAM.has(l) ? "" : "orphan"}">${esc(l)}</span>`;
+    const a = (s.accepts || []).slice(0, 2).map(l => one(l, s.typed)).join("");
+    const p = (s.produces || []).slice(0, 2).map(l => one(l, s.typed)).join("");
+    if (!a && !p) return `<div class="studs"><span class="dim">no declared ports</span></div>`;
+    return `<div class="studs">${a || '<span class="dim">—</span>'}<span class="arrow">→</span>${p || '<span class="dim">—</span>'}</div>`;
+  }
+
+  function evidence(s) {
+    if (s.level != null) {
+      const regressed = s.peak_level != null && s.peak_level > s.level;
+      return `<span class="lvl">lv ${s.level}</span>${regressed ? ` <span class="dim">(peak ${s.peak_level})</span>` : ""}`;
+    }
+    return `<span class="untried dim">untried, not failing</span>`;
+  }
+
+  function card(s) {
+    return `<a class="card" href="/specimen/${encodeURIComponent(s.agent_name)}">
+      <div class="c-top">
+        <div class="c-name">
+          <div class="c-label">${esc(s.label)}</div>
+          ${s.label !== s.agent_name ? `<div class="c-sys">${esc(s.agent_name)}</div>` : ""}
+        </div>
+        <div class="c-cost">
+          <div class="c-tier t-${tier(s.tier)}">${esc(s.tier || "—")}</div>
+          ${s.min_tier ? `<div class="c-min">needs ${esc(s.min_tier)}</div>` : ""}
+        </div>
+      </div>
+      <div class="c-type">${typeLine(s)}</div>
+      <div class="c-body">
+        <div class="c-desc">${esc(s.description || "No description.")}</div>
+        ${studs(s)}
+      </div>
+      <div class="c-foot">
+        <span class="prov p-${esc(s.provenance || "none")}"
+              title="${esc(s.provenance || "no orchestra membership")}"></span>
+        ${evidence(s)}
+        <span class="dim">${s.runs} run${s.runs === 1 ? "" : "s"}</span>
+        ${s.open_flags > 0 ? `<span class="flags">⚑ ${s.open_flags}</span>` : ""}
+      </div>
+    </a>`;
+  }
+
+  function keyOf(s, g) {
+    switch (g) {
+      case "family":   return s.taxonomy?.family  || "Incertae sedis";
+      case "kingdom":  return s.taxonomy?.kingdom || "Incertae sedis";
+      case "genus":    return s.genus             || "Incertae sedis";
+      case "type":     return s.agent_type        || "unclassified";
+      case "tier":     return s.tier              || "unstratified";
+      case "provenance": return s.provenance      || "no membership";
+      default: return "";
+    }
+  }
+
+  function sortRows(rows, g) {
+    const by = {
+      runs:    (a, b) => b.runs - a.runs,
+      name:    (a, b) => a.label.localeCompare(b.label),
+      flags:   (a, b) => (b.open_flags - a.open_flags) || (b.runs - a.runs),
+      silence: (a, b) => (b.last_run_days ?? 1e9) - (a.last_run_days ?? 1e9),
+    }[g];
+    return by ? [...rows].sort(by) : rows;
+  }
+
+  function render() {
+    const q = document.getElementById("q").value.trim().toLowerCase();
+    const g = document.getElementById("group").value;
+
+    let rows = DATA.specimens;
+    if (q) {
+      rows = rows.filter(s => {
+        const hay = [s.agent_name, s.label, s.description, s.agent_type, s.tier,
+                     s.genus, s.species, ...(s.tags || []),
+                     ...(s.accepts || []), ...(s.produces || []),
+                     ...Object.values(s.taxonomy || {})].join(" ").toLowerCase();
+        return hay.includes(q);
+      });
+    }
+
+    document.getElementById("count").textContent =
+      `${rows.length} of ${DATA.specimens.length}`;
+    document.getElementById("lens-note").textContent = NOTES[LENS];
+
+    const el = document.getElementById("body");
+    if (!rows.length) { el.innerHTML = `<div class="empty">No specimen matches.</div>`; return; }
+
+    if (LENS === "discover") {
+      el.innerHTML = `<div class="grid">${sortRows(rows, g).map(card).join("")}</div>`;
+      return;
+    }
+
+    if (LENS === "population") {
+      const groups = {};
+      rows.forEach(s => { (groups[keyOf(s, g)] ||= []).push(s); });
+      // `Incertae sedis` sorts last: it is a real bucket, not a failure of the
+      // sort, and putting it first would bury the described population.
+      const keys = Object.keys(groups).sort((a, b) =>
+        a.startsWith("Incertae") ? 1 : b.startsWith("Incertae") ? -1
+        : groups[b].length - groups[a].length);
+      el.innerHTML = keys.map(k => `
+        <div class="grp">${esc(k)} · ${groups[k].length}</div>
+        <table><tbody>${groups[k].map(s => `
+          <tr>
+            <td><span class="prov p-${esc(s.provenance || "none")}"></span>
+                <a href="/specimen/${encodeURIComponent(s.agent_name)}">${esc(s.label)}</a></td>
+            <td class="dim">${esc(s.agent_type || "—")}</td>
+            <td class="dim">${s.genus ? esc(s.genus + " " + (s.species || "")) : "<i>undescribed</i>"}</td>
+            <td class="dim">${esc(s.tier || "—")}</td>
+            <td class="dim">${esc(s.provenance || "—")}</td>
+            <td class="num dim">${s.runs}</td>
+          </tr>`).join("")}</tbody></table>`).join("");
+      return;
+    }
+
+    // Health
+    el.innerHTML = `<table>
+      <thead><tr><th>Specimen</th><th>Niche</th><th class="num">Flags</th>
+        <th class="num">Runs</th><th class="num">Last run</th><th>Evidence</th></tr></thead>
+      <tbody>${sortRows(rows, g).map(s => `
+        <tr>
+          <td><a href="/observatory?agent=${encodeURIComponent(s.agent_name)}">${esc(s.label)}</a></td>
+          <td class="dim">${esc(s.agent_type || "—")}</td>
+          <td class="num">${s.open_flags > 0 ? `<span class="flags">⚑ ${s.open_flags}</span>` : '<span class="dim">—</span>'}</td>
+          <td class="num dim">${s.runs}</td>
+          <td class="num dim">${s.last_run_days == null ? "never" : Math.floor(s.last_run_days) + "d"}</td>
+          <td>${evidence(s)}</td>
+        </tr>`).join("")}</tbody></table>`;
+  }
+
+  function renderAggregate() {
+    const el = document.getElementById("aggregate");
+    if (LENS !== "population") { el.innerHTML = ""; return; }
+
+    const c = DATA.census, s = DATA.seams;
+    const pct = s.distinct_labels ? Math.round(100 * s.orphans / s.distinct_labels) : 0;
+
+    el.innerHTML = `
+      <div class="strip">
+        <div class="cell"><div class="cell-l">Specimens</div><div class="cell-v">${c.total}</div></div>
+        <div class="cell"><div class="cell-l">Described</div><div class="cell-v">${c.described}</div>
+          <div class="cell-s">${c.undescribed} undescribed</div></div>
+        <div class="cell"><div class="cell-l">Niches</div>
+          <div class="cell-v">${Object.keys(c.by_niche).length}</div></div>
+        <div class="cell"><div class="cell-l">Port labels</div><div class="cell-v">${s.distinct_labels}</div>
+          <div class="cell-s">${s.seam_forming} can form a seam</div></div>
+      </div>
+      <div class="warn-strip">
+        <b>Composability is a naming problem.</b>
+        ${s.orphans} of ${s.distinct_labels} declared port labels (${pct}%) appear on only one
+        side — an <i>accepts</i> with no matching <i>produces</i>, or the reverse — so they
+        cannot form a seam with anything. Of ${s.declares_contract} specimens declaring an
+        output contract, <b>${s.carries_schema}</b> carry a resolvable schema; the rest name
+        one, and a name is a contract only once something resolves it.
+        Dashed studs on a card are labels in that majority. Until this ratio moves, any
+        drag-and-snap composer would render a bin of bricks that mostly do not connect.
+      </div>`;
+  }
+
+  function setLens(l) {
+    LENS = l;
+    document.querySelectorAll(".lens").forEach(b =>
+      b.classList.toggle("active", b.dataset.lens === l));
+    const sel = document.getElementById("group");
+    sel.innerHTML = GROUPS[l].map(([v, t]) => `<option value="${v}">${t}</option>`).join("");
+    renderAggregate();
+    render();
+  }
+
+  async function boot() {
+    if (window.Nav) Nav.init({ current: "bestiary" });
+    try {
+      const res = await fetch("/api/bestiary");
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      DATA = await res.json();
+    } catch (e) {
+      document.getElementById("body").innerHTML =
+        `<div class="empty">Could not load the register: ${esc(e.message)}.
+         No list is shown rather than an empty one — an empty population and an
+         unreachable one are different claims.</div>`;
+      return;
+    }
+
+    // Labels that appear on both sides somewhere in the population. Computed
+    // once here so a card can mark a stud that cannot form a seam.
+    const acc = new Set(), prod = new Set();
+    DATA.specimens.forEach(s => {
+      (s.accepts || []).forEach(l => acc.add(l));
+      (s.produces || []).forEach(l => prod.add(l));
+    });
+    acc.forEach(l => { if (prod.has(l)) SEAM.add(l); });
+
+    document.getElementById("q").addEventListener("input", render);
+    document.getElementById("group").addEventListener("change", render);
+    document.querySelectorAll(".lens").forEach(b =>
+      b.addEventListener("click", () => setLens(b.dataset.lens)));
+
+    setLens("discover");
+  }
+
+  boot();
+  </script>
+</body>
+</html>

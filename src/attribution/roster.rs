@@ -199,7 +199,7 @@ mod tests {
         assert!(matches!(log[0], Resolution::Exact { .. }));
     }
 
-    /// The defect that broke Loop 5a. These five names are verbatim from the
+    /// The defect that broke Loop 5.A. These five names are verbatim from the
     /// London 32 °C forecast on the production database.
     #[test]
     fn fpl_statement_names_resolve_by_prefix() {

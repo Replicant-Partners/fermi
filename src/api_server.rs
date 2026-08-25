@@ -7,6 +7,15 @@
 // Raising the limit is what the compiler itself advises; `fermi-console`'s
 // binary carries the same attribute for the same class of reason.
 #![recursion_limit = "256"]
+// A refusal counted *after* the return that refuses is never counted, and the
+// gate's counter reads zero for ever while the gate works perfectly. Every
+// refusal site in this crate is an early `return`, so the window is one or two
+// statements wide and easy to get wrong.
+//
+// A text scan was written for this and could not catch its own motivating case;
+// rustc already owns the question and owns it exactly. Denied rather than
+// warned because the failure it prevents is silent — see `fermi::gate_trust`.
+#![deny(unreachable_code)]
 
 use axum::{
     extract::State,
@@ -470,6 +479,16 @@ pub(crate) struct AppState {
     /// `docs/specs/23_BAYESOPS_WORLD_CUP_DEMO.md` §3.4 and
     /// `src/handlers/workspace/refit.rs`.
     pub(crate) extractor_registry: posterior::ExtractorRegistry,
+
+    /// Spec 35: registry of `Feed`s — where BayesOps observation rows come
+    /// from. The mirror of `extractor_registry`: a feed produces the records,
+    /// an extractor flattens one record to a scalar.
+    ///
+    /// Holds the extractor registry internally (the upstream-resolutions feed
+    /// needs it), so the refit path takes this alone. Adding a data source is
+    /// a registration in `fermi::feeds::build_registry`, not a new branch in
+    /// `refit.rs`. See `docs/specs/35_BAYESOPS_PLATFORM_LAYER.md` §4.1.
+    pub(crate) feed_registry: posterior::FeedRegistry,
 
     /// Spec 23 D8 Phase 2: sqlx-backed BrierLookup for the evaluator system.
     /// Wraps a PgPool and resolves Brier scores from `fermi_forecasts` for
@@ -1221,6 +1240,37 @@ async fn run_migrations(db: &PgPool) {
         // written by none: 1 of 249 workspaces had one, so Loop 3 coordination
         // and Loop 4 were unreachable by construction.
         "migrations/211_assign_default_coordination_strategist.sql",
+        // 212 — Loop 4 proposals carry a DELTA, not an absolute roster. A
+        // roster computed when a proposal is filed and applied six weeks later
+        // evicts everyone hired in the interim, under a button labelled
+        // "accept", against a list the owner never saw change.
+        //
+        // Written, committed, and never registered here, so the column it adds
+        // does not exist in production while `composition_evolution.rs` binds
+        // to it — every derived proposal fails at the INSERT. The same shape as
+        // everything else this audit found: the repair was authored and
+        // believed, and nothing downstream noticed it had not run.
+        // `test_all_migrations_registered` did notice, and had been red.
+        "migrations/212_composition_delta.sql",
+        // 213 — `forecast_agent_claims.workspace_id` becomes nullable, with a
+        // CHECK requiring workspace_id OR forecast_id. The table had held zero
+        // rows since mig-187: the console produces driver-bound judgements with
+        // no workspace, and the NOT NULL on the WEAKER binding made the only
+        // producer that knew the forecast unable to write at all.
+        "migrations/213_forecast_agent_claims_forecast_bound.sql",
+        // 214 — `gate_decisions`, the ledger `Retention::Recorded` has promised
+        // since the gate audit and that no migration created. Until it existed
+        // the platform had a record of every request it served and none of any
+        // it refused, which is how a gate rejecting 100% of agent-wide
+        // interventions stayed invisible.
+        "migrations/214_gate_decisions.sql",
+        // 215 — `process_spacetime.committed_before_measured` compared
+        // `committed_at < resolved_at`, and `resolved_at` is NOW() at scoring
+        // time. The scorer can only score a commit it has already read, so the
+        // column carrying Loop 5.B's whole claim was true by construction for
+        // every row. Now compares against `measured_at`, which the table has
+        // carried since 141 and nothing used.
+        "migrations/215_projection_anchor_invariant.sql",
     ];
 
     // Bootstrap the ledger before anything is recorded into it.
@@ -1355,9 +1405,15 @@ async fn record_migration_attempt(
     .execute(db)
     .await;
 
-    if let Err(e) = res {
-        eprintln!("Could not record migration attempt for {}: {}", filename, e);
-    }
+    // The one table in the repository with `failures` and `consecutive_failures`
+    // columns of its own, and until now the one whose own write failure was
+    // printed to stderr at boot and forgotten. Its schema is declared twice —
+    // here and in migration 207 — so a divergence between them shows up as a
+    // `column does not exist` on exactly this statement.
+    let _ = fermi::write_accounting::observe(
+        fermi::write_accounting::Sink::SchemaMigrations,
+        res.map_err(|e| format!("{filename}: {e}")),
+    );
 }
 
 /// Belt-and-suspenders schema ensure. Each ALTER is its own single-statement
@@ -2354,6 +2410,13 @@ async fn main() {
         // binary_field_value, scalar_field_value, scalar_difference).
         // New extractors are added by code change + server restart.
         extractor_registry: posterior::ExtractorRegistry::with_builtins(),
+        // Spec 35 — built-in feeds (upstream_resolutions, workspace_output).
+        // The upstream feed owns its own extractor registry, so the refit path
+        // takes only this one. New feeds are added in build_registry.
+        feed_registry: fermi::feeds::build_registry(
+            db.clone(),
+            posterior::ExtractorRegistry::with_builtins(),
+        ),
         // Spec 23 D8 Phase 2 — sqlx-backed BrierLookup for the evaluator system.
         brier_lookup: Arc::new(crate::handlers::eval_brier::BrierLookupSqlx::new(
             db.clone(),
@@ -2456,6 +2519,12 @@ async fn main() {
     // Disable with LIVENESS_SWEEP_SECS=0.
     fermi::liveness_trust::spawn_liveness_sweeper(state.db.clone());
 
+    // Drain the gate decision queue into `gate_decisions`. Without this the
+    // table exists and nothing writes to it — the exact defect class
+    // `liveness_trust` was built to catch, and it was caught here by starting
+    // the server and noticing the recorder had never announced itself.
+    fermi::gate_trust::spawn_gate_recorder(state.db.clone());
+
     // Loop 1 — dreaming. The architecture states a cadence of hours to days and
     // nothing implemented it, so agents accumulated episodes and learned
     // nothing from them. Unlike the three sweepers above, this one SPENDS: it
@@ -2554,6 +2623,24 @@ async fn main() {
         .route(
             "/api/agents/curated",
             get(handlers::agents::list_curated_agents_handler),
+        )
+        // Whole-roster Shapley contribution scores for the console ROUTER.
+        // Deliberately literal and parameter-free: the console needs every
+        // agent's score on every decomposition, and a per-agent variant would
+        // be an N-request fan-out on the hot path.
+        //
+        // ORDERING CONSTRAINT: `contributions` is a literal segment sitting
+        // where `/api/agents/:agent_id` (declared just above) takes a path
+        // parameter. It must stay in this router, alongside `curated`, which
+        // is the same shape and proves the arrangement works: axum's matcher
+        // gives static segments priority over parameters at the same depth,
+        // so `GET /api/agents/contributions` reaches this handler rather than
+        // `get_agent_handler` with agent_id="contributions". Moving it under
+        // an `:id`-prefixed path, or renaming it to something a parameter
+        // could also match, silently reintroduces the shadowing.
+        .route(
+            "/api/agents/contributions",
+            get(handlers::agents::agent_contributions_handler),
         )
         // App registry read endpoints — catalogue is browsable without auth.
         // The handlers accept Option<AuthPrincipal>: an authenticated caller
@@ -2676,7 +2763,7 @@ async fn main() {
             "/api/observatory/fleet/agents",
             get(handlers::observatory::fleet_agents_handler),
         )
-        // Loop 5a mechanism probe — asks whether the Brier chain moves a
+        // Loop 5.A mechanism probe — asks whether the Brier chain moves a
         // signal correctly, which is a different question from whether the
         // resulting score is good. Admin-only: counts span all tenants.
         .route(
@@ -2772,6 +2859,23 @@ async fn main() {
         .route(
             "/api/me/loop-health",
             get(handlers::agents::loop_health_handler),
+        )
+        // Rounds: the decision queue, the platform's own blind spots, and
+        // resume. Ordered, unlike the dashboard it replaces.
+        .route("/api/me/rounds", get(handlers::rounds::rounds_handler))
+        // One register, three lenses. Replaces the catalogue grid, the ecology
+        // register and the Observatory's register as three separate lists of
+        // the same agents.
+        .route("/api/bestiary", get(handlers::bestiary::bestiary_handler))
+        // The control surface: the register, the enforcement map, and the
+        // durable record of refusals.
+        .route("/api/gates", get(handlers::gates::gates_handler))
+        // One specimen, three tabs. Composed server-side so there is one
+        // producer per number — the eight-tab page rendered thirteen metrics
+        // twice, several under different names.
+        .route(
+            "/api/specimen/:agent_name",
+            get(handlers::specimen::specimen_handler),
         )
         .route(
             "/api/me/apps-health",
@@ -2988,6 +3092,10 @@ async fn main() {
         // Ecology — population / habitats / provenance. The structural
         // counterpart to the Observatory's clinical view.
         .route("/ecology", get(handlers::pages::ecology_view))
+        .route("/rounds", get(handlers::pages::rounds_view))
+        .route("/bestiary", get(handlers::pages::bestiary_view))
+        .route("/gates", get(handlers::pages::gates_view))
+        .route("/specimen/:agent_name", get(handlers::pages::specimen_view))
         .route(
             "/api/ecology/overview",
             get(handlers::ecology::ecology_overview_handler),
@@ -6145,8 +6253,20 @@ pub(crate) fn spawn_dyad_observation(
                     episodes = u.state.episode_count,
                     "dyad state updated"
                 );
+                fermi::write_accounting::record(
+                    fermi::write_accounting::Sink::DyadState,
+                    true,
+                    None,
+                );
             }
-            Err(e) => tracing::warn!(dyad = %dyad_id, error = %e, "dyad observation failed"),
+            Err(e) => {
+                fermi::write_accounting::record(
+                    fermi::write_accounting::Sink::DyadState,
+                    false,
+                    Some(&e.to_string()),
+                );
+                tracing::warn!(dyad = %dyad_id, error = %e, "dyad observation failed");
+            }
         }
     });
 }

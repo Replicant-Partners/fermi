@@ -44,8 +44,10 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use fermi::{ast::Statement, Lexer, Parser};
+// NB: the `Feed` trait itself is not imported — `FeedRegistry::get` hands back
+// an `Arc<dyn Feed>`, and calling a method on a trait object needs no import.
 use posterior::{
-    fit_marginal, DistFamily, Extractor, ExtractorRegistry, FittedDistribution, WorkspaceContext,
+    fit_marginal, DistFamily, FeedRegistry, FittedDistribution, ObservationSet, WorkspaceContext,
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -132,6 +134,22 @@ pub enum RefitError {
     #[error("workspace {0} not found")]
     WorkspaceNotFound(Uuid),
 
+    /// A parameter declared a `feeds_from.source` that no feed answers to.
+    ///
+    /// This used to collect zero observations and say nothing, which reads
+    /// identically to "no data has arrived yet" — so a typo in a source name
+    /// was indistinguishable from a cold start, forever. Spec 35 §12.3.
+    //
+    // NB: the field is `declared_source`, not `source` — `thiserror` reads a
+    // field literally named `source` as the error's *cause* and requires it to
+    // implement `Error`, which a `String` does not.
+    #[error("parameter '{driver}' declares feeds_from.source '{declared_source}', which is not a registered feed (known: {known})")]
+    UnknownFeed {
+        declared_source: String,
+        driver: String,
+        known: String,
+    },
+
     #[error("internal: {0}")]
     Internal(String),
 }
@@ -164,13 +182,13 @@ const IMPACT_GATE_ITERATIONS: u32 = 10_000;
 /// with cycle detection.
 pub async fn refit_workspace(
     pool: &PgPool,
-    registry: &ExtractorRegistry,
+    feeds: &FeedRegistry,
     workspace_id: Uuid,
     triggered_by: TriggerReason,
 ) -> Result<RefitOutcome, RefitError> {
     refit_workspace_with_visited(
         pool,
-        registry,
+        feeds,
         workspace_id,
         &triggered_by,
         &mut HashSet::new(),
@@ -180,7 +198,7 @@ pub async fn refit_workspace(
 
 async fn refit_workspace_with_visited(
     pool: &PgPool,
-    registry: &ExtractorRegistry,
+    feeds: &FeedRegistry,
     workspace_id: Uuid,
     triggered_by: &TriggerReason,
     visited: &mut HashSet<Uuid>,
@@ -203,6 +221,12 @@ async fn refit_workspace_with_visited(
     let current_params = load_params(pool, workspace_id).await?;
 
     let ws_context = WorkspaceContext {
+        // Required by `WorkspaceContext` as of the field added in
+        // `crates/posterior`. Set rather than left `None`: the field's own doc
+        // says a `Feed` that takes its workspace from config "could be pointed
+        // at another workspace's data", so the refit path must state which
+        // workspace it is refitting.
+        workspace_id: Some(workspace_id.to_string()),
         entity_id: workspace.entity_id.clone(),
         metadata: HashMap::new(),
     };
@@ -210,7 +234,7 @@ async fn refit_workspace_with_visited(
     for driver in &learnable_drivers {
         let outcome_driver = refit_one_driver(
             pool,
-            registry,
+            feeds,
             workspace_id,
             &workspace,
             &linked,
@@ -262,7 +286,7 @@ async fn refit_workspace_with_visited(
         };
         if let Err(e) = Box::pin(refit_workspace_with_visited(
             pool,
-            registry,
+            feeds,
             up_id,
             &upstream_trigger,
             visited,
@@ -290,7 +314,7 @@ async fn refit_workspace_with_visited(
 #[allow(clippy::too_many_arguments)]
 async fn refit_one_driver(
     pool: &PgPool,
-    registry: &ExtractorRegistry,
+    feeds: &FeedRegistry,
     workspace_id: Uuid,
     workspace: &WorkspaceRow,
     linked: &LinkedForecast,
@@ -300,11 +324,12 @@ async fn refit_one_driver(
     current_params: &JsonValue,
     triggered_by: &TriggerReason,
 ) -> Result<DriverOutcome, RefitError> {
-    // ── Step 1: collect observations ─────────────────────────────────────
-    let observations =
-        collect_observations(pool, registry, workspace_id, driver, ws_context).await?;
+    // ── Step 1: collect observations ─────────────────────────────────
+    let observation_set = collect_observations(feeds, driver, ws_context).await?;
+    let observations = observation_set.values();
+    let weights = observation_set.weights();
 
-    if observations.is_empty() {
+    if observation_set.is_empty() {
         return Ok(DriverOutcome {
             driver_name: driver.name.clone(),
             decision: DriverDecision::Skipped {
@@ -326,7 +351,7 @@ async fn refit_one_driver(
     // the HTTP response says `errored` but workspace_messages stays
     // empty and the Trajectory tab has nothing to render.
     let family = guess_family(&observations);
-    let (fitted, fit_metadata) = match fit_marginal(&observations, None, family) {
+    let (fitted, fit_metadata) = match fit_marginal(&observations, weights.as_deref(), family) {
         Ok(r) => r,
         Err(e) => {
             let reason = format!("fit_marginal: {}", e);
@@ -390,14 +415,16 @@ async fn refit_one_driver(
     // production snapshots recorded a mean delta of 0.0000, and nothing had ever
     // looked at what happened to their p5 and p95.
     let delta_pp = match (impact_before, impact_after) {
-        (Some(b), Some(a)) => [
-            (a.mean - b.mean).abs(),
-            (a.p5 - b.p5).abs(),
-            (a.p95 - b.p95).abs(),
-        ]
-        .into_iter()
-        .fold(0.0_f64, f64::max)
-            * 100.0,
+        (Some(b), Some(a)) => {
+            [
+                (a.mean - b.mean).abs(),
+                (a.p5 - b.p5).abs(),
+                (a.p95 - b.p95).abs(),
+            ]
+            .into_iter()
+            .fold(0.0_f64, f64::max)
+                * 100.0
+        }
         // FAIL CLOSED. This was `0.0` with the comment "skip the gate, default to
         // AutoAccept" — so a fit whose impact could not be MEASURED was adopted
         // without review, which is the same defect as a cross-check that cannot run
@@ -716,111 +743,80 @@ fn collect_learnable_drivers(program: &fermi::ast::Program) -> Vec<LearnableDriv
 // HELPERS: OBSERVATION COLLECTION
 // ═════════════════════════════════════════════════════════════════════════════
 
+/// Collect this parameter's observations through the [`FeedRegistry`].
+///
+/// Both sources below were hardcoded branches before spec 35 (§4.1). Behaviour
+/// is unchanged: the same two reads, in the same order, producing the same
+/// numbers. What changed is that each is now a registered feed, so a third
+/// source is a registration rather than an `if`.
+///
+/// Two honesty fixes ride along, both required by spec 35 §12:
+///
+/// - **An unresolvable source is an error, not silence.** A `feeds_from` naming
+///   a feed nobody registered used to collect zero observations and say
+///   nothing, which is indistinguishable from "no data yet". It now surfaces.
+/// - **Provenance survives collection.** The return type carries where every
+///   number came from, so a fit can be audited after it is written.
 async fn collect_observations(
-    pool: &PgPool,
-    registry: &ExtractorRegistry,
-    workspace_id: Uuid,
+    feeds: &FeedRegistry,
     driver: &LearnableDriver,
     ws_context: &WorkspaceContext,
-) -> Result<Vec<f64>, RefitError> {
-    let mut observations: Vec<f64> = Vec::new();
+) -> Result<ObservationSet, RefitError> {
+    let mut set = ObservationSet::new();
 
-    // Source 1: explicit observations array on the workspace's outputs.
-    // Lives at workspace_outputs[ws].observations.<driver_name> as a
-    // JSON array of numbers.
-    if let Some(arr) = read_observations_array(pool, workspace_id, &driver.name).await? {
-        observations.extend(arr);
+    // Source 1: the former undeclared side door — a numeric array published at
+    // workspace_outputs.observations.<parameter_name>.
+    //
+    // It is still read unconditionally, because parameters in the wild rely on
+    // it and this port must not change behaviour. It is now a declared feed, so
+    // when bindings land (spec 35 §6) it becomes opt-in like everything else.
+    let workspace_output = feeds.get("workspace_output").ok_or_else(|| {
+        RefitError::Internal("feed 'workspace_output' not registered".to_string())
+    })?;
+    let implicit_config = json!({ "series_key": driver.name });
+    match workspace_output.fetch(ws_context, &implicit_config).await {
+        Ok(rows) => set.extend(rows),
+        Err(e) => {
+            return Err(RefitError::Internal(format!(
+                "feed 'workspace_output' failed for parameter '{}': {}",
+                driver.name, e
+            )))
+        }
     }
 
-    // Source 2: derive from upstream resolutions via the declared extractor.
+    // Source 2: whatever the parameter declares.
     if let Some(feeds_from) = &driver.feeds_from {
-        if feeds_from.source == "upstream_resolutions" {
-            let extractor = registry.get(&feeds_from.extractor).ok_or_else(|| {
-                RefitError::Internal(format!(
-                    "extractor '{}' not registered (driver '{}')",
-                    feeds_from.extractor, driver.name
-                ))
+        let feed = feeds
+            .get(&feeds_from.source)
+            .ok_or_else(|| RefitError::UnknownFeed {
+                declared_source: feeds_from.source.clone(),
+                driver: driver.name.clone(),
+                known: {
+                    let mut names: Vec<String> = feeds.list().into_iter().map(|f| f.name).collect();
+                    names.sort();
+                    names.join(", ")
+                },
             })?;
-            let upstream_outcomes = read_upstream_resolutions(pool, workspace_id).await?;
-            for outcome in upstream_outcomes {
-                match extractor.extract(&outcome, ws_context, &feeds_from.config) {
-                    Ok(Some(v)) => observations.push(v),
-                    Ok(None) => {} // legitimate skip
-                    Err(e) => {
-                        tracing::warn!(
-                            workspace = %workspace_id,
-                            driver = %driver.name,
-                            extractor = %feeds_from.extractor,
-                            error = %e,
-                            "extractor failed on one upstream outcome; skipping"
-                        );
-                    }
-                }
-            }
+
+        // The extractor name lives beside the config in the FPL block; feeds
+        // that need one read it from config, so fold it in here rather than
+        // widening the trait for one feed's benefit.
+        let mut config = feeds_from.config.clone();
+        if let Some(obj) = config.as_object_mut() {
+            obj.entry("extractor")
+                .or_insert_with(|| JsonValue::String(feeds_from.extractor.clone()));
         }
+
+        let rows = feed.fetch(ws_context, &config).await.map_err(|e| {
+            RefitError::Internal(format!(
+                "feed '{}' failed for parameter '{}': {}",
+                feeds_from.source, driver.name, e
+            ))
+        })?;
+        set.extend(rows);
     }
 
-    Ok(observations)
-}
-
-async fn read_observations_array(
-    pool: &PgPool,
-    workspace_id: Uuid,
-    driver_name: &str,
-) -> Result<Option<Vec<f64>>, RefitError> {
-    let row = sqlx::query(
-        "SELECT value FROM workspace_outputs
-         WHERE workspace_id = $1 AND key = 'observations'",
-    )
-    .bind(workspace_id)
-    .fetch_optional(pool)
-    .await?;
-
-    let Some(row) = row else { return Ok(None) };
-    let value: JsonValue = row.get("value");
-    let Some(driver_obj) = value.get(driver_name) else {
-        return Ok(None);
-    };
-    let Some(arr) = driver_obj.as_array() else {
-        return Ok(None);
-    };
-    let nums: Vec<f64> = arr.iter().filter_map(|v| v.as_f64()).collect();
-    Ok(Some(nums))
-}
-
-async fn read_upstream_resolutions(
-    pool: &PgPool,
-    workspace_id: Uuid,
-) -> Result<Vec<JsonValue>, RefitError> {
-    // Find all upstream workspaces, then for each pull their
-    // workspace_outputs.resolution.outcome.
-    let upstream_ids: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT upstream_id FROM workspace_dependencies WHERE downstream_id = $1",
-    )
-    .bind(workspace_id)
-    .fetch_all(pool)
-    .await?;
-
-    if upstream_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let rows = sqlx::query(
-        "SELECT value FROM workspace_outputs
-         WHERE workspace_id = ANY($1) AND key = 'resolution'",
-    )
-    .bind(&upstream_ids)
-    .fetch_all(pool)
-    .await?;
-
-    let mut outcomes = Vec::with_capacity(rows.len());
-    for row in rows {
-        let v: JsonValue = row.get("value");
-        if let Some(outcome) = v.get("outcome") {
-            outcomes.push(outcome.clone());
-        }
-    }
-    Ok(outcomes)
+    Ok(set)
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1334,7 +1330,7 @@ pub async fn refit_workspace_handler(
 
     let outcome = refit_workspace(
         &state.db,
-        &state.extractor_registry,
+        &state.feed_registry,
         ws_uuid,
         TriggerReason::Manual { user_id },
     )
@@ -1491,7 +1487,11 @@ mod tests {
             "an 18-point tail move must exceed the auto-accept threshold, got {delta_pp}"
         );
         assert!(matches!(
-            classify_decision(delta_pp, DEFAULT_AUTO_ACCEPT_PP, posterior::DataQuality::Sufficient),
+            classify_decision(
+                delta_pp,
+                DEFAULT_AUTO_ACCEPT_PP,
+                posterior::DataQuality::Sufficient
+            ),
             DecisionKind::Stage
         ));
     }

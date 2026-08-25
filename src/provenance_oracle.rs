@@ -51,7 +51,9 @@ use serde_json::json;
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
-use crate::grounding_trust::{response_floor, strength, EXTRACTION_CEILING, PROV_UNAVAILABLE};
+use crate::grounding_trust::{
+    extracted_floor, floor, response_floor, strength, PROVENANCE_VALUES, PROV_UNAVAILABLE,
+};
 
 /// Combines per-source verdicts into one floor, tracking unknowns separately.
 ///
@@ -62,8 +64,21 @@ use crate::grounding_trust::{response_floor, strength, EXTRACTION_CEILING, PROV_
 /// `tool_verified` (a fabrication about the other nine).
 #[derive(Debug, Default)]
 struct FloorAccumulator {
-    /// Weakest strength seen among sources we could actually grade.
-    known_worst: Option<u8>,
+    /// Verdicts we could actually grade, canonicalised.
+    ///
+    /// **Verdicts, not strengths.** This held `Option<u8>` — the weakest
+    /// *strength* — and `resolve` then reconstructed a verdict from it with
+    /// `if s >= 2 { tool_verified } else { model_inference }`. That is the
+    /// tier collapse `grounding_trust::floor` documents as a fixed bug:
+    /// a value settled by a human came back claiming a tool had run, and
+    /// `tool_no_match` ("the tool answered, and had nothing") came back as
+    /// `unavailable_no_tool_source` ("no tool exists"). Both misattribute
+    /// mechanism, and both were invisible because the strength was right.
+    ///
+    /// Keeping the verdicts means the arithmetic can be delegated to the layer
+    /// that owns the vocabulary, which is what §3.4 requires and what the trait
+    /// docs in `agent_bestiary_memory::provenance` already said this did.
+    known: Vec<&'static str>,
     /// Sources whose provenance could not be established at all.
     unknown_count: usize,
     /// Total sources considered, so an empty cluster is distinguishable from
@@ -76,8 +91,15 @@ impl FloorAccumulator {
         self.total += 1;
         match verdict {
             Some(v) => {
-                let s = strength(v);
-                self.known_worst = Some(self.known_worst.map_or(s, |w| w.min(s)));
+                // Canonicalise to the `&'static str` the runtime can emit, the
+                // same way `floor` does, so an unrecognised token cannot be
+                // echoed back as though it were vocabulary.
+                let canonical = PROVENANCE_VALUES
+                    .iter()
+                    .copied()
+                    .find(|c| *c == v)
+                    .unwrap_or(PROV_UNAVAILABLE);
+                self.known.push(canonical);
             }
             None => self.unknown_count += 1,
         }
@@ -92,31 +114,40 @@ impl FloorAccumulator {
         if self.total == 0 {
             return Some(PROV_UNAVAILABLE);
         }
-        match self.known_worst {
-            // Already at the bottom. No unknown can lower it further, so the
-            // unknowns are irrelevant and the answer is knowable.
-            Some(0) => Some(PROV_UNAVAILABLE),
-            // Some sources graded above the bottom. If anything is unknown,
-            // the true minimum could be lower and we must not guess.
-            Some(_) if self.unknown_count > 0 => None,
-            Some(s) => {
-                let base = if s >= 2 {
-                    crate::grounding_trust::PROV_TOOL
-                } else {
-                    crate::grounding_trust::PROV_INFERRED
-                };
-                // The extraction ceiling: reading well-sourced episodes and
-                // writing a generalisation about them is judgement, and
-                // judgement does not inherit retrieval.
-                Some(if strength(base) > strength(EXTRACTION_CEILING) {
-                    EXTRACTION_CEILING
-                } else {
-                    base
-                })
-            }
-            // Nothing gradeable at all.
-            None => None,
+        // Nothing gradeable at all.
+        if self.known.is_empty() {
+            return None;
         }
+
+        // The raw floor decides whether an unknown could still move the answer,
+        // and it has to be the raw one: the ceiling can clamp a strength-2 floor
+        // down to 1, and asking the clamped value whether it is at the bottom
+        // would say no when the unknowns are in fact irrelevant.
+        let raw = floor(self.known.iter().copied());
+        if self.unknown_count > 0 && strength(raw) > 0 {
+            // Some sources graded above the bottom and something is ungradeable:
+            // the true minimum could be lower and we must not guess.
+            return None;
+        }
+
+        // Floor and extraction ceiling, both from `grounding_trust`. This module
+        // computes neither: reading well-sourced episodes and generalising over
+        // them is judgement, and judgement does not inherit retrieval — but that
+        // rule belongs to the layer that owns the vocabulary.
+        Some(extracted_floor(self.known.iter().copied()))
+    }
+
+    /// Did the extraction ceiling actually clamp the answer?
+    ///
+    /// Reported in the basis so a reader can tell "the sources were weak" from
+    /// "the sources were strong and extraction is judgement". Both produce
+    /// `model_inference`, and they are completely different facts.
+    fn ceiling_bit(&self) -> bool {
+        if self.known.is_empty() {
+            return false;
+        }
+        let raw = floor(self.known.iter().copied());
+        strength(raw) > strength(crate::grounding_trust::EXTRACTION_CEILING)
     }
 }
 
@@ -203,9 +234,12 @@ impl ProvenanceOracle for DbProvenanceOracle {
                 "resolved_sources": rows.len(),
                 "missing_sources": missing,
                 "ungradeable_sources": acc.unknown_count,
-                "ceiling": EXTRACTION_CEILING,
-                "ceiling_applied": resolved == Some(EXTRACTION_CEILING)
-                    && acc.known_worst.unwrap_or(0) >= 2,
+                "ceiling": crate::grounding_trust::EXTRACTION_CEILING,
+                // Was the ceiling the thing that decided the answer? True only
+                // when the unclamped floor was stronger than the ceiling — asked
+                // of the raw floor rather than of a reconstructed strength, so
+                // the basis says what actually happened.
+                "ceiling_applied": acc.ceiling_bit(),
                 "reason": if resolved.is_some() {
                     "min_over_sources_capped_at_extraction_ceiling"
                 } else {
@@ -289,6 +323,80 @@ mod tests {
             ])
             .resolve(),
             Some(PROV_INFERRED)
+        );
+    }
+
+    /// The mechanism must survive, not just the strength.
+    ///
+    /// The regression this module was carrying. `FloorAccumulator` kept the
+    /// weakest *strength* and `resolve` rebuilt a verdict from it with
+    /// `if s >= 2 { tool_verified } else { model_inference }`. Both cases below
+    /// came back naming a mechanism that never ran, and both looked right
+    /// because the strength was right — the exact error
+    /// `grounding_trust::floor` documents as fixed, reintroduced one layer out.
+    #[test]
+    fn the_floor_names_a_mechanism_that_actually_occurred() {
+        use crate::grounding_trust::{PROV_HUMAN_ENDORSED, PROV_NO_MATCH, PROV_UNAVAILABLE};
+
+        // Strength 1. The old code produced `model_inference` — a model was
+        // never involved; a person was.
+        assert_eq!(
+            acc(&[Some(PROV_TOOL), Some(PROV_HUMAN_ENDORSED)]).resolve(),
+            Some(PROV_HUMAN_ENDORSED),
+            "a floor set by a person's endorsement must not report as a model's \
+             inference"
+        );
+
+        // Strength 0. The old code produced `unavailable_no_tool_source` — "no
+        // tool exists" — for a source whose tool ran and found nothing.
+        assert_eq!(
+            acc(&[Some(PROV_TOOL), Some(PROV_NO_MATCH)]).resolve(),
+            Some(PROV_NO_MATCH),
+            "`the tool answered and had nothing` must not report as `no tool \
+             exists`"
+        );
+
+        // And the genuinely absent case still reports absence.
+        assert_eq!(acc(&[]).resolve(), Some(PROV_UNAVAILABLE));
+    }
+
+    /// This module owns no arithmetic.
+    ///
+    /// §3.4: a trust calculation must have exactly one implementation, and the
+    /// layer that owns the vocabulary must own it. With no ungradeable sources
+    /// there is nothing for this module to decide, so its answer must be
+    /// `extracted_floor`'s answer — for every combination, not for the handful
+    /// someone thought to write a case for.
+    #[test]
+    fn with_nothing_ungradeable_the_answer_is_exactly_extracted_floor() {
+        use crate::grounding_trust::{extracted_floor, PROVENANCE_VALUES};
+        for a in PROVENANCE_VALUES {
+            for b in PROVENANCE_VALUES {
+                let mine = acc(&[Some(a), Some(b)]).resolve();
+                let theirs = extracted_floor([*a, *b]);
+                assert_eq!(
+                    mine,
+                    Some(theirs),
+                    "({a}, {b}): this module disagreed with the layer that owns \
+                     the calculation"
+                );
+            }
+        }
+    }
+
+    /// The basis must distinguish "weak sources" from "strong sources, and
+    /// extraction is judgement". Both yield `model_inference`.
+    #[test]
+    fn the_basis_says_whether_the_ceiling_was_what_decided_it() {
+        assert!(
+            acc(&[Some(PROV_TOOL), Some(PROV_TOOL)]).ceiling_bit(),
+            "two tool-verified sources clamp to the ceiling, and the basis \
+             should say the ceiling is why"
+        );
+        assert!(
+            !acc(&[Some(PROV_TOOL), Some(PROV_INFERRED)]).ceiling_bit(),
+            "the floor was already at the ceiling's strength; the ceiling \
+             changed nothing"
         );
     }
 }

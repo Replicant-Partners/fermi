@@ -1928,10 +1928,104 @@ pub async fn admin_schema_health_handler(
 //   * It does not report `never_run` as healthy. `status` is `never_run` until
 //     the first sweep completes — absence is not a verdict.
 pub async fn admin_liveness_handler(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     principal: AuthPrincipal,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     require_admin(&principal)?;
+
+    // Read at request time, not from the sweep snapshot.
+    //
+    // The counters are in-process and free to read, and they move continuously
+    // while the sweep is hourly. Serving an hour-old attempt count beside a
+    // live one would answer "is anything being refused right now" with a number
+    // from before the deploy that broke it — and this is the one surface where
+    // that question is asked.
+    let attempts = fermi::write_accounting::accounts();
+    let refused: Vec<_> = attempts
+        .iter()
+        .filter(|a| a.is_totally_rejected())
+        .collect();
+
+    // What every refusal point decided since boot. Read live for the same
+    // reason as the write counters, and reported alongside them because the two
+    // answer halves of one question: `gates` is what the system declined to do,
+    // `write_accounting` is what it tried to do and could not.
+    let gates = fermi::gate_trust::accounts();
+    let gates_refusing_everything = fermi::gate_trust::refusing_everything();
+
+    // Where each feedback loop stops, and why. The one query on this endpoint,
+    // and it is worth it: everything else here reports a rung, and this reports
+    // the chains those rungs are rungs of. A stage-by-stage view makes ten
+    // findings out of two — only the first empty link in a chain is actionable,
+    // and the ones below it are empty because of it.
+    let loops = fermi::loop_model::evaluate(&state.db).await;
+
+    // The native evaluators read the same instant everything else on this
+    // endpoint reports, and turn it into verdicts with remedies. They are the
+    // reason this endpoint is worth reading rather than parsing: `gates` is a
+    // table of counters, `native` is what those counters mean.
+    // One snapshot, read by everything below it, so the evaluators and the
+    // panel resolver cannot disagree about what instant they are describing.
+    let observation = fermi::native_evaluators::Observation {
+        writes: attempts.clone(),
+        gates: gates.clone(),
+        loops: loops.clone(),
+        liveness: fermi::liveness_trust::latest(),
+        // Which of the counters above can say more than "since boot".
+        gate_ledger: Some(fermi::gate_trust::ledger_status()),
+    };
+    let native = fermi::native_evaluators::run(&observation);
+
+    // Why each UI surface that can be blank is blank, routed to the contract
+    // that knows. Served here rather than from the page handlers because the
+    // answer is a property of the platform, not of the request: a panel that
+    // renders its own guess at emptiness is the defect this resolves.
+    // What the platform lets a person do, and what stands in front of it. Two
+    // findings rather than the whole table: a write nobody has justified
+    // leaving ungated, and a gate whose verdict is computed and thrown away.
+    // The second is the audit's §3 as a live query — on the surface a caller
+    // sees, a discarded verdict and an absent gate are the same thing.
+    let commands_ungoverned = fermi::command_registry::ungoverned_writes();
+    let commands_discarded: Vec<_> = fermi::command_registry::gates_computed_and_discarded()
+        .into_iter()
+        .map(|(cmd, gate)| format!("{cmd}: {gate} runs and is discarded"))
+        .collect();
+
+    let panels = fermi::panel_absence::resolve_all(&observation);
+    let panels_unexplained: Vec<_> = panels
+        .iter()
+        .filter(|a| a.reading == fermi::panel_absence::Reading::Unknown)
+        .map(|a| a.panel)
+        .collect();
+    let stalled_in_code: Vec<_> = loops
+        .iter()
+        .filter(|l| {
+            matches!(
+                l.reason,
+                Some("no_trigger") | Some("writes_refused") | Some("gate_refuses_everything")
+            )
+        })
+        .map(|l| {
+            format!(
+                "{}.{}: {}",
+                l.id,
+                l.stops_at.unwrap_or("?"),
+                l.reason.unwrap_or("?")
+            )
+        })
+        .collect();
+
+    // Loops carrying a stage whose count query did not run. Named beside
+    // `loops_stalled_in_code` for the same reason `gates_refusing_everything`
+    // is named beside `gates`: the reading that matters must not require a
+    // consumer to scan the array for it. These are neither turning nor stalled,
+    // and folding them into either column is how an observer failure comes to
+    // present as a healthy system.
+    let loops_unread: Vec<_> = loops
+        .iter()
+        .filter(|l| !l.measured())
+        .map(|l| format!("{}.{}: probe_failed", l.id, l.stops_at.unwrap_or("?")))
+        .collect();
 
     let Some(report) = crate::liveness_trust::latest() else {
         return Ok(Json(serde_json::json!({
@@ -1939,10 +2033,43 @@ pub async fn admin_liveness_handler(
             "detail": "No sweep has completed since boot. This is not a pass: an inert \
                        check and a passing check are indistinguishable from outside.",
             "contracts_declared": crate::liveness_trust::LIVENESS_CONTRACTS.len(),
+            // Available immediately, and worth having before the first sweep:
+            // the counters need no database and start at boot.
+            "write_accounting": attempts,
+            "refused": refused,
+            "gates": gates,
+            "gates_refusing_everything": gates_refusing_everything,
+            "loops": loops,
+            "loops_stalled_in_code": stalled_in_code,
+            "loops_unread": loops_unread,
+            "native": native,
+            "panels": panels,
+            "panels_unexplained": panels_unexplained,
+            "commands_ungoverned": commands_ungoverned,
+            "commands_gate_discarded": commands_discarded,
+            "native": native,
         })));
     };
 
-    let status = if report.is_healthy() {
+    let status = if !gates_refusing_everything.is_empty() {
+        // A gate that has been asked and has approved nothing. Ranked with the
+        // refused writes and above `degraded`, because it is the signature of
+        // the longest-lived defect this system has had: a control that rejects
+        // everything for reasons unrelated to its input looks, from every other
+        // surface, exactly like a strict control working well.
+        //
+        // The inverse — a gate that has never refused anything — is reported in
+        // `gates[].reading` and deliberately does NOT change the status. A gate
+        // legitimately refuses nothing when nothing warranted refusal, and
+        // asserting otherwise would assert that violations must exist.
+        "gate_refusing_everything"
+    } else if !refused.is_empty() {
+        // Ranked above `degraded` and above the positive-control check, because
+        // it is the only one of the three that admits no benign reading. A
+        // silent sink may be unused; a refused write is a statement the
+        // database will not accept.
+        "writes_refused"
+    } else if report.is_healthy() {
         "healthy"
     } else if !report.has_positive_control() {
         // 0 live cannot distinguish "every path is broken" from "the sweep is
@@ -1956,6 +2083,19 @@ pub async fn admin_liveness_handler(
     Ok(Json(serde_json::json!({
         "status": status,
         "report": report,
+        "write_accounting": attempts,
+        "refused": refused,
+        "gates": gates,
+        "gates_refusing_everything": gates_refusing_everything,
+        "loops": loops,
+        "loops_stalled_in_code": stalled_in_code,
+        "loops_unread": loops_unread,
+        "native": native,
+        "panels": panels,
+        "panels_unexplained": panels_unexplained,
+        "commands_ungoverned": commands_ungoverned,
+        "commands_gate_discarded": commands_discarded,
+        "native": native,
     })))
 }
 

@@ -2818,7 +2818,7 @@ pub async fn get_agent_dependencies_handler(
 /// rate on every question scores near-perfectly while demonstrating no skill at
 /// all. The 48 World Cup tournament-winner forecasts are exactly that shape —
 /// 47 NO, one YES — where a zero-knowledge flat `p = 1/48` earns a mean Brier of
-/// 0.0204, i.e. "98% calibrated". Loop 5a was reporting that as a closed loop.
+/// 0.0204, i.e. "98% calibrated". Loop 5.A was reporting that as a closed loop.
 ///
 /// The reference forecaster predicts the observed base rate `b` on every
 /// question. Its mean Brier reduces exactly to `b(1-b)`:
@@ -2836,10 +2836,10 @@ pub async fn get_agent_dependencies_handler(
 /// reference to score against (undefined, not infinite).
 /// How much the Loop 5 signal currently means, as a machine-readable class.
 ///
-/// Loop 5a closed recently, so every score it emits is provisional. Consumers
-/// (notably `moe_router_strategist`, which turns these into routing weights)
-/// need that stated rather than inferred from `confidence`, which is a bare
-/// ratio and reads as authoritative. Mirrors the `verdict` column in
+/// Loop 5.A (Brier) closed recently, so every score it emits is provisional.
+/// Consumers (notably `moe_router_strategist`, which turns these into routing
+/// weights) need that stated rather than inferred from `confidence`, which is
+/// a bare ratio and reads as authoritative. Mirrors the `verdict` column in
 /// `scripts/loop5_brier_mechanical_check.sql` so the API and the probe agree.
 ///
 /// Deliberately independent of whether the *mechanism* works: a mechanically
@@ -2885,6 +2885,153 @@ pub async fn get_agent_calibration_handler(
         .await
         .map(Json)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
+}
+
+/// GET /api/agents/contributions
+///
+/// Whole-roster Shapley contribution scores, one row per agent that has any
+/// valid credit. This is the ROUTER's tie-break signal: when several agents
+/// declare the same question domain, rank the one with the best *measured*
+/// record first rather than trusting card declarations.
+///
+/// Roster-wide by design. The per-agent `/api/agents/:id/calibration` already
+/// reports the same credit, but the console needs every agent on every
+/// decomposition, and calling that route per agent is an N-request fan-out on
+/// the hot path — the exact shape the console was just fixed for.
+///
+/// SIBLING TO KEEP IN SYNC: `src/calibration.rs`
+/// (`compute_agent_calibration`, credit query ~line 310). The three predicates
+/// below — `neutralisation = 'identity'`, `efficiency_residual < 1e-6`, and
+/// the `reconstruction_error` gate — are copied from it verbatim, and the
+/// `cluster_key` expression and `cluster_bootstrap_ci` arguments are too. They
+/// are not cosmetic: `efficiency_residual` excludes attributions whose value
+/// function was not deterministic (Monte Carlo noise redistributed as credit)
+/// and `reconstruction_error` excludes attributions of a forecast that never
+/// existed. If the two sites ever disagree about which credit rows count, or
+/// about the seed, the console and the agent detail page will report different
+/// scores for the same agent and neither will be obviously wrong.
+///
+/// Grouping is on the agent's CURRENT identity, not on the name frozen into
+/// each credit row. A renamed agent has credit rows carrying its old
+/// `agent_name`, and grouping on that column alone would split one agent's
+/// record into two partial ones, each with a smaller `n_forecasts`, a mean
+/// drawn from a subset of its work, and fewer clusters (so more likely to fall
+/// under MIN_BOOTSTRAP_CLUSTERS and report a null interval). The console's
+/// router ranks on exactly this number, so a genuinely good agent would be
+/// silently under-ranked with nothing in the response to indicate it. Filing
+/// by current identity also keeps the emitted `agent_name` the one the console
+/// matches its roster against, and makes `stable_seed` agree with the
+/// per-agent route, which seeds on the agent's present name.
+pub async fn agent_contributions_handler(
+    State(state): State<AppState>,
+    // Optional for the same reason as `get_agent_calibration_handler`: this
+    // route sits under optional_auth_middleware and requiring AuthPrincipal
+    // would 401 the anonymous console read with "missing authentication
+    // context".
+    _principal: Option<AuthPrincipal>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    // Rows, not SQL aggregates: the cluster bootstrap resamples whole clusters
+    // of individual shapley values, so the per-row values and their cluster
+    // keys have to reach Rust intact.
+    let rows = sqlx::query(
+        "SELECT COALESCE(ag.agent_name, c.agent_name) AS agent_name,
+                c.shapley_value,
+                COALESCE(
+                  NULLIF(f.domain, '') || ':' ||
+                    to_char(COALESCE(f.resolved_at, f.created_at), 'YYYY-MM'),
+                  c.forecast_id
+                ) AS cluster_key
+           FROM forecast_agent_credit c
+           JOIN forecast_attributions a
+             ON a.forecast_id = c.forecast_id
+            AND a.neutralisation = c.neutralisation
+           JOIN fermi_forecasts f ON f.id = c.forecast_id
+           -- LEFT, never INNER: `forecast_agent_credit.agent_id` is nullable
+           -- and is set to NULL when the agent row is deleted, so an inner
+           -- join would drop that credit entirely instead of falling back to
+           -- the name recorded on the credit row. The join is on agent_id
+           -- only; matching on name as well would re-file credit under a
+           -- different agent that happens to have taken the old name.
+           LEFT JOIN public.agents ag ON ag.agent_id = c.agent_id
+          WHERE c.neutralisation = 'identity'
+            AND a.efficiency_residual < 1e-6
+            AND (a.reconstruction_error IS NULL OR a.reconstruction_error < 0.01)",
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, "agent contributions credit query failed");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to load agent contributions: {e}"),
+        )
+    })?;
+
+    // BTreeMap: iteration order is by agent name, which makes the sort below a
+    // total order once ties on mean are broken by name.
+    let mut per_agent: std::collections::BTreeMap<String, (Vec<f64>, Vec<String>)> =
+        std::collections::BTreeMap::new();
+    for r in &rows {
+        let (name, value) = match (
+            r.try_get::<String, _>("agent_name"),
+            r.try_get::<f64, _>("shapley_value"),
+        ) {
+            (Ok(n), Ok(v)) => (n, v),
+            _ => continue,
+        };
+        let entry = per_agent.entry(name).or_default();
+        entry.0.push(value);
+        entry
+            .1
+            .push(r.try_get::<String, _>("cluster_key").unwrap_or_default());
+    }
+
+    let mut contributions: Vec<Value> = Vec::with_capacity(per_agent.len());
+    for (agent_name, (values, clusters)) in &per_agent {
+        let n_forecasts = values.len();
+        let mean_shapley = values.iter().sum::<f64>() / n_forecasts as f64;
+        let n_clusters = clusters
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        // Seeded on the agent name, so the same credit rows always yield the
+        // same interval — and the same one `/api/agents/:id/calibration`
+        // reports. Returns None below MIN_BOOTSTRAP_CLUSTERS distinct
+        // clusters; that null is the answer ("not enough independent episodes
+        // of the world to say"), not a gap to paper over with a naive
+        // within-cluster interval.
+        let ci = fermi::attribution::cluster_bootstrap_ci(
+            values,
+            clusters,
+            2000,
+            fermi::attribution::stable_seed(agent_name),
+            0.10,
+        );
+        contributions.push(json!({
+            "agent_name": agent_name,
+            "mean_shapley": mean_shapley,
+            "n_forecasts": n_forecasts,
+            "n_clusters": n_clusters,
+            "ci_low": ci.map(|(lo, _)| lo),
+            "ci_high": ci.map(|(_, hi)| hi),
+        }));
+    }
+
+    // Best contributor first — the order the router consumes. Ties fall back to
+    // agent name so the payload is byte-stable across calls.
+    contributions.sort_by(|a, b| {
+        let am = a["mean_shapley"].as_f64().unwrap_or(f64::MIN);
+        let bm = b["mean_shapley"].as_f64().unwrap_or(f64::MIN);
+        bm.partial_cmp(&am)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a["agent_name"].as_str().cmp(&b["agent_name"].as_str()))
+    });
+
+    let count = contributions.len();
+    Ok(Json(json!({
+        "contributions": contributions,
+        "count": count,
+    })))
 }
 
 // ─── Loop health summary (GET /api/me/loop-health) ────────────────────────────

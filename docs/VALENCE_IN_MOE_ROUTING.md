@@ -1,12 +1,12 @@
-# Valence as a Diversity Guard in MoE Routing (Loop 5)
+# Valence as a Diversity Guard in MoE Routing (Loop 4.B)
 
-> **Companion to:** `docs/VALENCE_IN_ABW.md` · `docs/architecture/FEEDBACK_LOOPS.md` Loop 5 · `agents/curated/moe_router_strategist/agent_card.json`.
+> **Companion to:** `docs/VALENCE_IN_ABW.md` · `docs/architecture/FEEDBACK_LOOPS.md` Loop 4.B · `agents/curated/moe_router_strategist/agent_card.json`.
 
 ---
 
-## What the strategist is doing in Loop 5
+## What the strategist is doing in Loop 4.B
 
-Loop 5 is the **calibration-and-routing** loop. The strategist on the hook is
+Loop 4.B is the **routing accuracy** loop. The strategist on the hook is
 `moe_router_strategist`, a Mixture-of-Experts coordinator. Its job, per its
 card, is *"route each input to the most capable expert, then synthesise"*. It
 does **not** try to make the experts agree — it tries to make each expert
@@ -14,14 +14,14 @@ right on the slice of the problem it owns.
 
 The first-order signal is empirical, not affective: `get_agent_calibration`
 returns a per-member `calibration_score` (Brier-derived for forecasters,
-projection-accuracy-derived for SimOps), a `trend`, and a `domain_calibration`
-breakdown. The strategist's Stage 0 ranks candidates primarily on that signal,
-then on semantic/skill match. Calibration is what closes Loop 5
-(`src/handlers/forecasts.rs:700` annotates routing episodes when forecasts
-resolve).
+projection-accuracy-derived for SimOps — Loop 5.A's two signal paths), a
+`trend`, and a `domain_calibration` breakdown. The strategist's Stage 0 ranks
+candidates primarily on that signal, then on semantic/skill match. Calibration
+is what closes Loop 4.B (`src/handlers/forecasts.rs:700` annotates routing
+episodes when forecasts resolve).
 
 So where does **valence** come in? Not as a routing score. Valence enters
-Loop 5 as a **diversity guard** that prevents the calibration signal from
+Loop 4.B as a **diversity guard** that prevents the calibration signal from
 silently collapsing the team.
 
 ## The failure mode valence prevents
@@ -71,7 +71,7 @@ selected experts, using the same fields and threshold as Composition Dreaming:
      have synthesis explicitly weight the disagreement.
    - **Flag and proceed**: if no broadening member is available, log a
      `routing-record` episode tagged `homophily_unresolved`. That episode
-     becomes evidence for Loop 4 (Composition Evolution) — the team itself
+     becomes evidence for Loop 4.A (Composition Evolution) — the team itself
      needs to change, which is *not* the strategist's authority to fix.
 
 The choice between these is conditioned on calibration confidence: if the
@@ -89,16 +89,16 @@ who else gets a seat, with what role, on which sub-query. The result is an MoE
 team that is calibration-greedy *within* each routing slot and
 diversity-guarded *across* slots.
 
-That is the distinction worth holding onto: Loop 5 optimises for accuracy;
-valence keeps Loop 5 from achieving that accuracy by silently collapsing into a
-monoculture. Calibration tells the strategist *who is right*; valence reminds
-it that the team it routes to today is the same team whose calibration data it
-will be reading tomorrow.
+That is the distinction worth holding onto: Loop 4.B optimises for accuracy;
+valence keeps Loop 4.B from achieving that accuracy by silently collapsing
+into a monoculture. Calibration tells the strategist *who is right*; valence
+reminds it that the team it routes to today is the same team whose calibration
+data it will be reading tomorrow.
 
 ## One-line summary
 
-In Loop 5, calibration scores choose the experts; valence spreads decide
+In Loop 4.B, calibration scores choose the experts; valence spreads decide
 whether that choice is allowed to stand, or whether the routing plan must
 broaden — by sub-query decomposition, by adding a contrasting voice, or by
-escalating the imbalance to Loop 4 as evidence that the team itself needs to
+escalating the imbalance to Loop 4.A as evidence that the team itself needs to
 change.

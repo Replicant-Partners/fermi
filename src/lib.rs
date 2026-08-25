@@ -1,3 +1,9 @@
+// See the note in `src/api_server.rs`: a gate decision or a write-accounting
+// record placed after the `return` it is meant to describe is never taken, and
+// the counter reads zero while the code around it works. rustc catches this
+// precisely; nothing else does.
+#![deny(unreachable_code)]
+
 /// Fermi - Forecasting Programming Language (FPL)
 ///
 /// This library implements the FPL language processing engine,
@@ -53,6 +59,12 @@ pub mod email;
 // Declared here, not `#[path]`-included into `api_server.rs`, so that
 // `cargo test` can see it. It previously lived in the binary only, which
 // is why an unsatisfiable contract survived eight releases unnoticed.
+// The verification ladder, as the paper names it. Three of the five modules are
+// named for their mechanism rather than their rung, and each declares its own
+// position relative to whatever existed when it was written — a chronology, not
+// a ladder, and the two disagree on three of five. This is the map, with tests.
+pub mod ladder;
+
 pub mod schema_trust;
 
 // Rollup trust contract — the sibling that asks whether a column is
@@ -145,6 +157,87 @@ pub mod hud_contract;
 // routes to its basis instead.
 pub mod assertions;
 
+// Write accounting — the rung beneath liveness. Liveness asks whether a sink
+// has rows; this asks whether anybody ever tried to write one. Both are
+// `Silent` from outside, and they have opposite remedies: a missing scheduler
+// versus a statement the database refuses. An audit found 30 swallowed write
+// sites across 15 feedback-loop sinks and no failure counter anywhere in the
+// repository, which is how one INSERT hid two consecutive silent rejections.
+//
+// In memory on purpose: a failure ledger that is itself a fallible database
+// write is most silent exactly when it is most needed.
+pub mod write_accounting;
+
+// Gate accounting — what every refusal point decided, and how often. No gate
+// decision was persisted anywhere: the coherence gate returned a 422 and
+// nothing, credit refusals returned before the ledger INSERT, the rate limiter
+// was an in-memory map with no export. The platform had a record of every
+// request it served and none of any it refused, which is how a gate that
+// rejected 100% of agent-wide interventions for arithmetic reasons survived.
+//
+// The reading nobody checks is the inverse: a gate that has never refused is
+// indistinguishable from a gate that is not wired.
+pub mod gate_trust;
+
+// Seam vocabularies — every closed token set a column accepts, indexed once and
+// checked both ways against the live schema. Postgres holds one opinion in a
+// CHECK constraint and Rust holds another in a string literal at the write
+// site; each is independently correct, nothing compares them, and the drift is
+// silent in both directions. `severity = "L1"` was one direction; migration
+// 200 widening `anomaly_events.kind` for a producer nobody wrote was the other.
+pub mod seam_vocabulary;
+
+// The five feedback loops, declared as chains rather than measured stage by
+// stage. Two of five turn; Loop 2 and Loop 4 have produced zero rows at every
+// stage. Read per stage that is ten findings, read as chains it is two, and
+// only the first link of each is actionable. The interpretation is delegated:
+// `no_trigger` from this model, `writes_refused` from write_accounting,
+// `gate_refuses_everything` from gate_trust.
+pub mod loop_model;
+
+// Native evaluators — the pluggable registry scores an agent's OUTPUT; this one
+// scores the platform's own machinery. Separate on purpose: mixing "is this
+// response harmful" with "is Loop 4 turning" gives two different questions one
+// health verdict. And none of the pluggable scores mean anything if the loops
+// they feed are not closing.
+pub mod native_evaluators;
+
+// Why is this panel empty? A routing table from each UI surface that can be
+// blank to the contract that explains it, so no frontend authors its own empty
+// state. Four of the nine defect classes in FEEDBACK_LOOPS.md are invisible at
+// the surface by construction and render identically as "No data yet" — a
+// severed read path, a loop that is closed but not turning, a gate that
+// declined correctly 248 times, and a callee that has failed non-fatally since
+// inception. Collapsing them is how a verification signal becomes a shrug.
+//
+// It owns no arithmetic: liveness answers unused-vs-broken, loop_model answers
+// which link a chain stops at, gate_trust answers what was refused. The panels
+// nothing can answer are listed with reasons and the list may only shrink.
+pub mod panel_absence;
+
+// One stamp, three densities. The server decides what a panel says on a desk, a
+// phone and a waveguide, and every surface copies it — the split the glasses
+// shell already documents: "It decides nothing. […] The glasses are I/O."
+//
+// It owns the density ladder and delegates every treatment decision to
+// hud_contract, which keeps one vocabulary for the provenance question and
+// gives that module its first production caller. Two rules are load-bearing and
+// both are tests: an absence may never render as the unmarked trustworthy case,
+// and dropping detail may never buy confidence.
+pub mod panel_contract;
+
+// Every verb the platform offers, and what governs it. The router knows every
+// route; what it cannot say is which of them change something and which gate
+// stands in front of that change — the question the gate audit had to answer by
+// reading code, and whose answer nothing kept current.
+//
+// It declares the audit's §3 table as a live query: grounding is a control on
+// the creature handlers and a metric on the two execute endpoints a third party
+// actually calls, and on the surface a caller sees, a metric and an absent gate
+// are the same thing. A write must name a gate that can refuse it or say why it
+// needs none; the list of discarded verdicts is pinned and may only shrink.
+pub mod command_registry;
+
 // Liveness trust contract — the fifth sibling, and the one that would have
 // caught the other four. Every contract above examines data that EXISTS; none
 // of them can see a table that is empty because nothing ever wrote to it.
@@ -161,6 +254,51 @@ pub mod assertions;
 // disambiguator is the OPPORTUNITY count: zero claims beside fourteen
 // multiplier-bearing episodes is broken; zero beside zero is merely unused.
 pub mod liveness_trust;
+
+// One definition of "this observation is a model projection, not a
+// measurement". There were two, and they selected disjoint sets: the dynamics
+// runner tags `extra.source_kind = "dynamics_projection"` (12,167 rows) and
+// every consumer matched `extra.source = "simops_simulation"` (0 rows).
+// Loop 5.A (projection accuracy) read the empty set and its liveness rung
+// reported the mismatch as 12,167 missed opportunities at the trigger site,
+// which is not where the break is.
+pub mod projection_kind;
+
+// What `anomaly_events` will accept. Loop 2's seed — the grounding anomaly that
+// was supposed to break the loop's deadlock — wrote `severity = "L1"` against a
+// CHECK of ('info','warning','critical'). Every insert was rejected, in a
+// spawned task, with the error only logged, so the table stayed at zero and the
+// handover said to watch for rows that could never arrive.
+pub mod anomaly_vocabulary;
+
+// The one way a grounding violation becomes a Loop 2 input. Nine files call
+// `grounding_trust::enforce`; one raised an anomaly, and that one carries ~1%
+// of the traffic from agents that have contracts. The creature paths run the
+// control — they strip the fabricated field — and then say nothing to Loop 2.
+pub mod grounding_anomaly;
+
+// The commitment anchor for a projection — the row that proves a prediction
+// pre-dated the measurement it is scored against. It lived in the api-server
+// binary, which the library cannot reach, so the agent tool that writes
+// projections had a `let _ = (…every argument…)` where the call belongs and
+// returned a null commitment hash on both arms of the branch. 0 rows written
+// against 61 projections on file.
+pub mod projection_commit;
+
+// Why a run produced no quantified claim. Same boundary as `projection_commit`
+// above and moved for the same reason: the decision lives in the api-server's
+// handler tree, which an integration test cannot reach, so it could not be
+// registered in `tests/falsification_registry.rs` — and the rule that registry
+// enforces is that a decision without a falsification does not get added.
+pub mod claim_outcome;
+
+// Does what a loop produces carry the signal its claim needs? `loop_model`
+// reports a loop as turning when every stage has produced rows; that is
+// compatible with the loop producing a number which cannot distinguish the
+// things it is named after, and Loop 5.A is in exactly that state — the
+// forecast's Brier, written once per contributing agent, identical every time.
+// Turning is not closed, and nothing until now asked the difference.
+pub mod outcome_trust;
 
 // Port trust contract — whether the caller is sending what the agent said it
 // takes. `negotiate::bind_input` in the console answered this correctly and
@@ -208,6 +346,16 @@ pub mod pipeline;
 pub mod calibration;
 pub mod episodes;
 pub mod intentions;
+
+// Where BayesOps observations come from. The `Feed` trait and its contract
+// types live in `crates/posterior`; the implementations live here because they
+// read Postgres and that crate is transport-neutral. Before this existed the
+// intake was a single `if feeds_from.source == "upstream_resolutions"` plus an
+// undeclared side door that read `workspace_outputs.observations` for every
+// parameter whether or not one was bound — which is why Loop 5.B could only
+// ever learn from other Fermi forecast workspaces, and why a fit could draw on
+// data nobody had pointed it at. See docs/specs/35_BAYESOPS_PLATFORM_LAYER.md.
+pub mod feeds;
 
 // Re-export main types
 pub use ast::*;

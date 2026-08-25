@@ -115,7 +115,7 @@ pub async fn compute_agent_calibration(
     // `handlers::eval_brier::BrierLookupSqlx::latest_for_agent` (which carries
     // the full shape inventory). Keep the two predicates in sync: when this
     // endpoint and the BrierEvaluator disagree about which forecasts belong to
-    // an agent, the Observatory reports Loop 5a as closed on one tab and
+    // an agent, the Observatory reports Loop 5.A as closed on one tab and
     // inactive on another. Matching only `agent_id` — the previous behaviour —
     // relied on mig-170's one-shot backfill and so missed every forecast
     // written by the live path after that backfill ran.
@@ -490,9 +490,9 @@ pub async fn compute_agent_calibration(
 
         // How much this signal currently means:
         //   none | undiscriminating | no_skill | provisional | thin | usable
-        // Loop 5a closed recently, so most agents sit at provisional/thin.
-        // Mechanism soundness is a separate question — verify it with
-        // scripts/loop5_brier_mechanical_check.sql.
+        // Loop 5.A (Brier) closed recently, so most agents sit at
+        // provisional/thin. Mechanism soundness is a separate question —
+        // verify it with scripts/loop5_brier_mechanical_check.sql.
         "evidence_class": evidence_class(n_resolved, brier_baseline, brier_skill_score),
 
         // ── Per-agent contribution (Loop 5's real signal) ────────────────

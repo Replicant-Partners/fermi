@@ -1,6 +1,47 @@
 # Handoff — closing the loops and gates
 
+> **Terminology note (2026-08-23):** loop numbering in this document predates the settled taxonomy. Routing is now Loop 4.B (was Loop 5); BayesOps parameter fitting is now Loop 5.B (was "Loop A"); SimOps projection accuracy is now a signal path of Loop 5.A (was 5b). See `docs/architecture/FEEDBACK_LOOPS.md`.
+
 **Date:** 2026-08-22 · **Branch:** `main` · **Commits:** `014e0a58`, `ba398849`, `dc39df72`, `3e6c9e08`
+
+> ## Session 2 addendum — the rung was measuring the wrong population
+>
+> §4.3 below sets out a two-step plan for Loop 5b and warns that the order is
+> forced. **Do not follow it.** Both steps address the last link in a chain of
+> five, and three of the earlier links were broken. Following it would have
+> wired a trigger that fires zero times, into a reader that selects the empty
+> set, for want of an anchor that nothing writes — and the suite would still
+> have said `0 / 12,167` afterwards.
+>
+> The plan was derived from that 12,167, and **the 12,167 was wrong**. The
+> contract's `opportunity_sql` counted
+> `sosa_observations WHERE extra ? 'projection_id'` and its comment called each
+> row "a real observation carrying a projection_id … exactly the event that
+> triggers scoring". Every one of those rows is a *projection*: 61 runs sampled
+> at ~200 trajectory points each, zero measurements. The rung whose entire
+> purpose is to make `count(*) = 0` mean something was itself asserting a proxy
+> — §5's defect, on the check that exists to catch §5's defect.
+>
+> What the row counts actually say, once the chain is separated:
+>
+> | link | writer | state |
+> |---|---|---|
+> | 1 · projection written | external `kask:dynamics` runner → `POST /api/observations` | 61 runs / 12,167 points |
+> | 2 · commitment anchored | `commit_projection` | **had no callers at all** |
+> | 3 · projection recognised | `extra->>'source' = 'simops_simulation'` | **matched 0 rows, ever** |
+> | 4 · measurement resolves | `resolve_against_projection` | reached, nothing to resolve |
+> | 5 · accuracy scored | `ProjectionScoringEvaluator` | never triggered |
+>
+> Links 2 and 3 are fixed. Link 5 is still open and is now correctly reported as
+> `INERT` rather than `SILENT`, because **Loop 5b has never had an input**: the
+> projections cover thirteen `chem:`/`bio:` properties and the 7,576 measurements
+> on file cover fourteen different ones, with a single overlapping row. No amount
+> of triggering produces a signal until those two streams overlap. That is a
+> deployment fact, not a wiring defect, and it is the thing the phantom 12,167
+> was hiding.
+>
+> Detail in §9. §4.3 is superseded and retained only so the reasoning is
+> auditable.
 
 An audit of the five verification rungs and five feedback loops against what
 `verification_for_agent_ecologies.md` and `abw_logical_architecture.md` claim,
@@ -109,6 +150,12 @@ contract's `remediation`:
 2. the binding is workspace-only, so standalone evaluations lose the output entirely; that needs the assertion layer.
 
 ### 4.3 Loop 5b — two ordered steps, ordering is forced
+
+> ⚠️ **Superseded — see §9.** The premise of this item (12,167 opportunities at
+> the trigger site) was an artefact of an opportunity query that counted
+> predictions. The ordering hazard described below is real and is now enforced
+> in code rather than by this paragraph: the 30-day fallback is off unless a
+> caller asks for it by name.
 0 writes / **12,167 opportunities**.
 1. **Stamp `projection_id` onto the dynamics_runner episode** when a projection is written. The evaluator reads `bundle.context.get("projection_id")` and nothing puts it there.
 2. **Trigger scoring from the real-observation branch**, loading that episode via the link from (1). `EpisodeBundle::from_parts(episode, agent, …)` is the constructor.
@@ -187,3 +234,235 @@ system* — is what §5.8 means by "reading the code proves nothing", and it
 applies to reading one's own tooling too.
 
 **Everything in §3 is now verified against production. Everything in §4 is not.**
+
+---
+
+## 9. Session 2 — what was found and what changed
+
+**Date:** 2026-08-22 (later) · database reachable throughout, every number below
+measured against it.
+
+### 9.1 The finding
+
+Three independent breaks in Loop 5b, none visible from either side alone.
+
+**The producer and every reader disagreed about what a projection looks like.**
+The dynamics runner tags `extra.source_kind = "dynamics_projection"`. All three
+readers — `eval_projection`, `simops_benchmark`, `observations` — matched
+`extra.source = "simops_simulation"`, which is written only by an agent tool
+that has produced **zero** observations. 12,167 projection rows on file, 0
+carrying the tag every reader looked for. No reader was wrong on its own terms;
+the defect exists only across files, and only against row counts.
+
+**The commitment anchor had no callers.** `commit_projection` writes the row
+that proves a prediction pre-dated its measurement — the thing that makes Loop
+5b a verification rather than a transcription. The site that should have called
+it was a `let _ = (…every argument…)` in `simops_tools`, annotated "hooks for an
+observability path that may or may not be live", and both arms of the enclosing
+`if` returned `None`, so the tool reported the same null commitment hash whether
+a clock had started or not. It was also on the wrong path: projections arrive
+over HTTP, not through the agent tool.
+
+**Both lookup queries were unrunnable.** The primary bound a `Uuid` against
+`produced_by_agent_id`, which is `TEXT`; the fallback bound a `TIMESTAMPTZ`
+against `phenomenon_time`, which is `BIGINT`. Both are hard Postgres errors.
+Neither had ever surfaced, because the `source` predicate above them matched no
+rows, so the comparison was never reached with anything to filter.
+
+### 9.2 Fixed
+
+| Area | Was | Now |
+|---|---|---|
+| **Projection predicate** | three hand-rolled copies, all matching a tag with 0 rows | `src/projection_kind.rs` — one Rust predicate and one SQL macro from the same constants; `tests/projection_predicate_coverage.rs` fences the literals |
+| **Commitment anchor** | dead code behind a module boundary | `src/projection_commit.rs` in the lib; called from **both** the HTTP ingest (where the projections actually arrive) and the agent tool |
+| **Lookup queries** | two latent type errors, never executed | fixed, and `both_lookup_queries_execute_against_the_real_schema` runs them against the live schema |
+| **The 30-day fallback** | on by default; would score a measurement against a projection it never answered | off unless requested by name. §4.3's ordering rule is now a control instead of a sentence in a document |
+| **Loop 5b liveness** | one contract, `0 / 12,167`, remediation pointing at the wrong link | three contracts, one per link; `report_where_projection_calibration_stops` prints the chain |
+| **Migration 212** | on disk, **never registered** in `run_migrations()`, so `member_delta` does not exist in production while `composition_evolution.rs` binds to it | registered; validated by applying and rolling back against production |
+| **Γ threshold** | `abw_logical_architecture.md` §3.2 stated `Γ(C) ≥ 0.5` | corrected to what the gate tests, with the measurement that settles it |
+
+### 9.3 Baseline after the change
+
+```
+6 live · 5 inert · 0 excused · 0 silent · 0 unrunnable
+```
+
+The suite passes, and that is a stronger statement than it looks: the one
+`SILENT` it used to carry was the phantom. The five `INERT`s are honest — no
+opportunity has occurred — and `INERT` is still not a pass.
+
+| sink | writes | opps | status |
+|---|---|---|---|
+| consolidation_jobs (Loop 1 cadence) | 31 | 49 | OK |
+| process_projection_commits (5b · anchor) | 0 | 0 | INERT |
+| process_spacetime (5b · resolution) | 0 | 0 | INERT |
+| eval_signals.projection_accuracy (5b · scoring) | 0 | 0 | INERT |
+| forecast_agent_claims | 0 | 0 | INERT |
+| semantic_rules.application_count | 27 | 2,098 | OK |
+| episodes.assertions | 144 | 65 | OK |
+| assertion_verifications | 0 | 0 | INERT |
+| schema_migrations | 214 | 3,544 | OK |
+| agent_timeline_entries | 1,411 | 3,544 | OK |
+| semantic_rules | 248 | 2,326 | OK |
+| anomaly_events | 0 | 1,411 | SILENT (conditional) |
+
+The anchor rung counts only projections generated after the commit call site
+existed (`COMMIT_HOOK_LIVE_FROM`). The 61 historical runs are deliberately not
+counted as missed: an anchor written after the measurement proves nothing, so
+backfilling them would manufacture precisely the evidence Loop 5b exists to make
+unmanufacturable.
+
+### 9.4 §5's rule, applied
+
+Every check added or changed was broken and watched go red:
+
+- `the_shape_that_fills_the_table_is_recognised_as_a_projection` — reverted the
+  predicate to `source`-only; failed.
+- `the_scoring_rung_counts_resolved_pairs_and_not_projections` — restored the
+  old `opportunity_sql`; failed with the 12,167 query quoted back.
+- `both_lookup_queries_execute_against_the_real_schema` — restored the `Uuid`
+  bind; failed with `operator does not exist: text = uuid`, the original defect
+  verbatim.
+- `only_one_module_names_the_projection_tags` — needed no deliberate break: it
+  went red on its first run against a real hit (prose in a contract quoting the
+  tag).
+
+### 9.5 Still open
+
+1. **Loop 5b link 5** — nothing triggers the evaluator from the resolution hook.
+   Both observations are in hand there. Worth doing, but it produces nothing
+   until a measurement stream overlaps a projected property, so it is no longer
+   the top of the list.
+2. **Loop 5b's real blocker** — no measurement exists for anything projected.
+   This is an operational question (which sensors, which twin), not a code one.
+3. **`produced_by_agent_id` is NULL on all 19,743 observations.** The reader
+   scopes projections to the producing agent, so `n_prior` reads 0 for every
+   projection and the heuristic path selects nothing whatever the binding. A
+   provenance gap in the writers.
+4. **`anomaly_events`** — addressed in §10.
+5. **§4.1, §4.2, §4.4** — unchanged. Note that §4.2's regex half is already
+   done: the live census reports 51 of 65 lines parseable by the *old* pattern,
+   which is the measurement, not the current behaviour; `assertions.rs` v2
+   recovers all of them and 144 episodes carry assertions.
+6. **Migration 212 applies at next deploy.** Validated in a rolled-back
+   transaction; not applied to production by hand, because the boot path is the
+   thing that should be shown to work.
+
+### 9.6 A note on §8
+
+§8 records mistaking an unreadable measurement for an absent database. The
+symmetric error is in this session's finding: a *readable* number, correctly
+computed, answering a question nobody had checked it was answering. 12,167 was
+never wrong as a count. It was wrong as evidence, and it had already shaped a
+plan by the time anyone looked at what it counted.
+
+The habit that catches it is cheap and was not expensive here: before believing
+an opportunity count, `GROUP BY` the population it draws from and read one row
+of it.
+
+---
+
+## 10. The Loop 2 seed was rejected by the database
+
+### 10.1 The finding
+
+§4.1 says to watch `anomaly_events` after the next traffic, and gives the chain
+to expect. The rows were never going to arrive.
+
+`3e6c9e08` — "the loop required its own output as its input" — raises a
+`grounding` anomaly when the grounding contract finds a violation. It builds the
+event with:
+
+```rust
+kind:     "grounding".to_string(),
+severity: "L1".to_string(),   // "a reviewable defect in one output"
+```
+
+The column says:
+
+```sql
+severity TEXT NOT NULL DEFAULT 'warning'
+    CHECK (severity IN ('info', 'warning', 'critical'))
+```
+
+**`L1` is not in that set.** Verified against production — the exact row the
+handler constructs fails on `anomaly_events_severity_check`, and the same row
+with `warning` inserts. The write is `tokio::spawn`ed and its error is
+`tracing::warn!`ed, so the request succeeded, the log line scrolled past, and
+the table stayed at zero.
+
+The seed planted to break Loop 2's deadlock could not germinate, and the
+handover recorded the remedy as "wait and see".
+
+`L1` was not careless. It is a coherent severity scheme, and it is a *second*
+scheme for a column that already had one — `assertions.rs`'s "One ladder, not
+two", with a CHECK constraint as the thing that disagreed.
+
+### 10.2 What the zero actually means
+
+With the write path repaired, the row count still reads 0 / 1,417, and that is
+now a finding about the world rather than about the code:
+
+- **262 of 1,417** timeline entries carry a flag.
+- Every one of them is `social:observed` — bookkeeping, matched by no detector,
+  by design.
+- The four detector prefixes (`safety:`, `drift:`, `conflict:`, `rupture:`) have
+  **never** appeared. `RollingConflict` is structurally impossible at the
+  deterministic evaluator set (disjoint dimensions, documented in
+  `live_observability`); the other three have simply never triggered.
+- The scanner is healthy: 94 agents, latest scan minutes old, **zero** unscanned
+  backlog.
+
+So the detectors are working and nothing actionable has ever been flagged. The
+open question moved upstream: **WildGuard has never returned a safety flag on
+live traffic**, and that should be settled by feeding it something it must flag,
+not by waiting.
+
+### 10.3 What was built
+
+`src/anomaly_vocabulary.rs` — one declared vocabulary for kinds, severities and
+flag prefixes, with the bookkeeping exemptions carrying reasons.
+
+`tests/anomaly_firing_probe.rs` — the probe the `anomaly_events` remediation
+asked for. It does **not** assert that anomalies exist. It asserts that *if one
+occurred it would be recorded*, which is the only half a test can own and the
+half that was false:
+
+| test | what it settles |
+|---|---|
+| `every_declared_kind_and_severity_is_accepted_by_the_table` | no writer can construct a row the database refuses — the incident |
+| `the_invented_severity_is_still_rejected` | the fix was to use the platform's vocabulary, not to widen the CHECK |
+| `the_table_accepts_nothing_the_vocabulary_omits` | the reverse drift — migration 200 widened the CHECK for `grounding` and no `AnomalyKind` variant was ever added |
+| `every_flag_written_is_one_a_detector_reads_or_a_declared_no_op` | a producer emitting `harmful:` where the detector reads `safety:` has no symptom at all; this is the symptom |
+| `the_flag_census_has_something_to_look_at` | positive control — 262 flagged entries, so the census is not a check over an empty set |
+
+All five run from `scripts/liveness_contract_live.sh` as a third "firing tier",
+after the offline and live tiers.
+
+### 10.4 §5's rule, applied
+
+- added `L1` to `SEVERITIES` → `every_declared_kind_and_severity_is_accepted_by_the_table`
+  and `the_invented_severity_is_still_rejected` both failed, quoting the exact
+  production constraint error five times over;
+- removed `KIND_GROUNDING` from `KINDS` → `the_table_accepts_nothing_the_vocabulary_omits`
+  failed with `the table accepts ["grounding"], which fermi::anomaly_vocabulary
+  does not declare`;
+- renamed the `social:` bookkeeping exemption →
+  `every_flag_written_is_one_a_detector_reads_or_a_declared_no_op` failed with
+  `social:observed 262 -> NO DETECTOR`.
+
+### 10.5 What this says about `Conditional`
+
+`Conditional` is the right expectation for a detector sink and it has a cost
+that was not being paid: it makes the sink's zero **unfalsifiable**, which is
+the same standing as a scan that cannot go red. The resolution is not to assert
+the row count — that would assert anomalies must exist — but to assert the
+*recordability* separately. Any future `Conditional` contract should ship with
+its firing tier, or its zero means nothing.
+
+### 10.6 Still open on Loop 2
+
+The deadlock in §4.1 is intact until a grounding violation actually occurs on
+live traffic. The seed can now write; nothing has yet given it something to
+write. Watch `anomaly_events` — and this time the instruction is sound, because
+the path underneath it has been shown to carry a row.

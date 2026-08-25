@@ -62,6 +62,12 @@ pub enum ExtractorError {
 /// only what's relevant for evidence mapping.
 #[derive(Debug, Clone, Default)]
 pub struct WorkspaceContext {
+    /// Which workspace this is. Extractors have no use for it — they are handed
+    /// a single record and must not go looking for more. `Feed`s need it,
+    /// because "which rows" is a question about a workspace, and a feed that
+    /// took it via config could be pointed at another workspace's data.
+    pub workspace_id: Option<String>,
+
     /// The entity this workspace represents — e.g. team identifier, batch SKU,
     /// asset ticker. None if the workspace doesn't represent a single entity.
     pub entity_id: Option<String>,
@@ -74,9 +80,26 @@ pub struct WorkspaceContext {
 impl WorkspaceContext {
     pub fn with_entity(entity_id: impl Into<String>) -> Self {
         Self {
+            workspace_id: None,
             entity_id: Some(entity_id.into()),
             metadata: HashMap::new(),
         }
+    }
+
+    /// Set the workspace this context belongs to. Required by every `Feed`.
+    pub fn in_workspace(mut self, workspace_id: impl Into<String>) -> Self {
+        self.workspace_id = Some(workspace_id.into());
+        self
+    }
+
+    /// The workspace id, or a `FeedError` naming the feed that needed it.
+    pub fn require_workspace_id(&self, feed: &str) -> Result<&str, crate::feeds::FeedError> {
+        self.workspace_id.as_deref().ok_or_else(|| {
+            crate::feeds::FeedError::Internal(format!(
+                "feed '{}' requires WorkspaceContext.workspace_id, which was not set",
+                feed
+            ))
+        })
     }
 }
 

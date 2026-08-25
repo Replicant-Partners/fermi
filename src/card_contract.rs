@@ -52,6 +52,32 @@ pub const MIN_WHY: usize = 40;
 /// a metadata value.
 pub const GROUNDING_STATUSES: &[&str] = &["sourced", "inferred", "narrative", "unavailable"];
 
+/// Runtime dispositions with no authoring token, and why.
+///
+/// The card vocabulary is a **strict subset** of what
+/// [`crate::grounding_trust::Grounding`] can express, and until this was
+/// written down that was an accident nobody could see: the runtime stamps
+/// `platform_derived` on fields a card author has no way to declare, which is
+/// the same shape as the `gbif_verified` / `tool_verified` divergence — cards
+/// naming a value the runtime never emits, in the other direction.
+///
+/// Recorded rather than closed, because the gap may be correct.
+/// `platform_derived` says *the platform computed this reproducibly*, which is
+/// an assertion the platform makes about its own work, not one an agent's
+/// author makes about the agent's output. Adding it to the authoring set would
+/// let a card claim a mechanism it does not control.
+///
+/// `author_vocabulary_is_a_declared_subset_of_the_runtime` holds the list, so
+/// a new runtime variant cannot appear without someone deciding which side of
+/// this line it sits on.
+pub const PLATFORM_ASSIGNED_ONLY: &[(&str, &str)] = &[(
+    "derived",
+    "`platform_derived` asserts that the PLATFORM computed the value \
+     reproducibly. An agent's author cannot make that claim about the agent's \
+     own output, so there is deliberately no authoring token for it — the \
+     runtime assigns it, in `grounding_trust::enforce`.",
+)];
+
 /// One violation of the card contract, phrased for the person who has to
 /// fix it rather than for the person who wrote the checker.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -556,6 +582,66 @@ mod tests {
         oc["grounding"]["genome"]["status"] = json!("estimated");
         let v = validate(Some(&oc), &produces(), &tools());
         assert!(v.iter().any(|x| x.check == "grounding_status_valid"));
+    }
+
+    /// The authoring set and the runtime set must differ only by decisions
+    /// somebody has recorded.
+    ///
+    /// Four card tokens, five runtime dispositions. That gap existed for the
+    /// life of the feature and was invisible from either side: a card author
+    /// reading `GROUNDING_STATUSES` sees a closed set that looks complete, and
+    /// a reader of `Grounding` sees five variants with no hint that one of them
+    /// is unreachable from a card.
+    ///
+    /// Now every difference must appear in [`PLATFORM_ASSIGNED_ONLY`] with a
+    /// reason, so a sixth variant cannot be added without somebody deciding
+    /// whether authors may declare it.
+    #[test]
+    fn author_vocabulary_is_a_declared_subset_of_the_runtime() {
+        // The runtime's dispositions, by their authoring spelling. Kept beside
+        // the enum's variant names so the mapping is visible: the runtime says
+        // `Unsourced` where a card says `unavailable`, which is one concept
+        // under two words and is worth seeing in one place.
+        let runtime: &[(&str, &str)] = &[
+            ("Sourced", "sourced"),
+            ("Inferred", "inferred"),
+            ("Narrative", "narrative"),
+            ("Unsourced", "unavailable"),
+            ("Derived", "derived"),
+        ];
+
+        for (variant, token) in runtime {
+            let declarable = GROUNDING_STATUSES.contains(token);
+            let excused = PLATFORM_ASSIGNED_ONLY.iter().any(|(t, _)| t == token);
+            assert!(
+                declarable ^ excused,
+                "`Grounding::{variant}` (`{token}`) must be either declarable by \
+                 an author or listed in PLATFORM_ASSIGNED_ONLY with a reason — \
+                 not both, and not neither."
+            );
+        }
+
+        // And nothing may be excused that is not a real runtime disposition; a
+        // stale entry would silently widen the exemption.
+        for (token, why) in PLATFORM_ASSIGNED_ONLY {
+            assert!(
+                runtime.iter().any(|(_, t)| t == token),
+                "`{token}` is excused and is not a runtime disposition"
+            );
+            assert!(
+                why.len() > 80,
+                "`{token}`: an exemption without a reason is a permanent one"
+            );
+        }
+
+        // No card token may name something the runtime cannot express.
+        for t in GROUNDING_STATUSES {
+            assert!(
+                runtime.iter().any(|(_, rt)| rt == t),
+                "a card may declare `{t}` and the runtime has no disposition for \
+                 it — which is the `gbif_verified` divergence exactly"
+            );
+        }
     }
 
     /// `scripts/port_migrate.py` emits `NEEDS_AUTHOR` for every decision it

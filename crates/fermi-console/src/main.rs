@@ -58,6 +58,15 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 /// `FermiConsole::start_background_refresh`.
 const BACKGROUND_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// Resolved forecasts needed before the server will assign a global rank.
+///
+/// Mirrors the `HAVING COUNT(*) >= 5` in `my_stats_handler`'s rank
+/// subquery (`src/handlers/forecasts.rs`) and the same clause baked into
+/// the `fermi_leaderboard` matview. Named because it was previously a
+/// bare `5` inline in the Global Rank stat card, where nothing connected
+/// it to the server-side threshold it has to track.
+const RANK_QUALIFY_RESOLVED: u32 = 5;
+
 // ─── Keyboard-chord labels ──────────────────────────────────────────────────────────
 
 /// How we *spell* the shortcuts we bind.
@@ -674,6 +683,16 @@ struct FermiConsole {
     // Leaderboard data (from /api/leaderboard)
     leaderboard: Vec<LeaderboardEntry>,
     leaderboard_loading: bool,
+    /// The `min_forecasts` threshold the *server* actually applied, as
+    /// reported by `LeaderboardResponse.min_forecasts`.
+    ///
+    /// The footer used to hardcode "Min 3 resolved forecasts to rank",
+    /// which was never true: `fermi_leaderboard` bakes in
+    /// `HAVING COUNT(*) >= 5`, so the handler's `WHERE total_resolved >= $1`
+    /// can filter the view down but can never let anyone below 5 in. The
+    /// server has always told us the real number and nothing read it.
+    /// `None` until the first successful fetch.
+    leaderboard_min_forecasts: Option<i64>,
 
     // Workspace forecasts (from ABW fermi_forecast app)
     workspace_forecasts: Vec<WorkspaceForecast>,
@@ -1305,6 +1324,7 @@ impl FermiConsole {
             hire_modal: None,
             leaderboard: Vec::new(),
             leaderboard_loading: false,
+            leaderboard_min_forecasts: None,
 
             workspace_forecasts: Vec::new(),
             workspace_forecasts_loading: false,
@@ -3646,7 +3666,13 @@ impl FermiConsole {
             let query = LeaderboardQuery {
                 domain: None,
                 team_id: None,
-                min_forecasts: Some(3),
+                // Was `Some(3)`, which asserted a threshold the server
+                // cannot honour: the matview's own `HAVING COUNT(*) >= 5`
+                // floors it at 5, so asking for 3 got 5 anyway and only
+                // desynced the footer from reality. `None` lets the
+                // handler apply its documented default (5) and report it
+                // back in `min_forecasts`, which we then render.
+                min_forecasts: None,
                 limit: Some(50),
                 offset: None,
             };
@@ -3655,6 +3681,7 @@ impl FermiConsole {
                 Ok(resp) => {
                     this.update(cx, |this, cx| {
                         this.leaderboard = resp.leaderboard;
+                        this.leaderboard_min_forecasts = Some(resp.min_forecasts);
                         this.leaderboard_loading = false;
                         cx.notify();
                     })
@@ -8488,7 +8515,17 @@ impl FermiConsole {
                         } else {
                             "—".into()
                         },
-                        &format!("{} resolved to qualify", 5_u32.saturating_sub(resolved)),
+                        // Once you qualify, `threshold - resolved` saturates
+                        // to 0 and the card read "0 resolved to qualify"
+                        // beside a rank of #1. Branch instead of subtracting.
+                        &if resolved >= RANK_QUALIFY_RESOLVED {
+                            format!("qualified · {} resolved", resolved)
+                        } else {
+                            format!(
+                                "{} more resolved to qualify",
+                                RANK_QUALIFY_RESOLVED - resolved
+                            )
+                        },
                         theme::GOLD,
                     )),
             )
@@ -18934,7 +18971,13 @@ impl FermiConsole {
                     .text_size(ui::TEXT_SM)
                     .text_color(theme::fg_muted())
                     .child("Brier score: 0.0 = perfect, 0.25 = coin flip, lower is better")
-                    .child("Min 3 resolved forecasts to rank"),
+                    // Rendered from the server's reported threshold, not a
+                    // literal — the console does not get to decide this
+                    // number, the matview does.
+                    .child(match self.leaderboard_min_forecasts {
+                        Some(n) => format!("Min {n} resolved forecasts to rank"),
+                        None => "Minimum resolved forecasts to rank set by server".to_string(),
+                    }),
             )
     }
 
@@ -18968,11 +19011,14 @@ impl FermiConsole {
             theme::RED
         };
 
-        // Simple calibration indicator from calibration data
+        // Simple calibration indicator from calibration data. Both "no
+        // calibration field" and "field present but every bucket null"
+        // collapse to the same dash — render_calibration_mini returns
+        // None for the latter rather than faking a perfect profile.
         let cal_indicator = entry
             .calibration
             .as_ref()
-            .map(|c| render_calibration_mini(c))
+            .and_then(render_calibration_mini)
             .unwrap_or_else(|| "—".to_string());
 
         div()
@@ -23165,8 +23211,19 @@ fn render_detail_kv(key: &str, value: &str) -> impl IntoElement {
 
 /// Render a mini calibration indicator from calibration bucket data.
 /// Shows a 5-char string like "▁▃▅▇█" representing how well-calibrated
-/// each probability bucket is (closer to diagonal = better).
-fn render_calibration_mini(cal: &CalibrationData) -> String {
+/// each probability bucket is (closer to diagonal = better). A bucket
+/// with no resolved forecasts renders as `·` — absence, not accuracy.
+///
+/// Returns `None` when every bucket is empty, so the caller can fall back
+/// to the same "—" it shows for a missing `calibration` field: "the
+/// server sent no buckets" and "the server sent five nulls" are the same
+/// statement and must not look different.
+///
+/// This used to `unwrap_or(*ideal)` a NULL bucket, which computed an
+/// error of exactly zero and drew the *tallest* bar. An operator with no
+/// resolved forecasts in any bucket got "▇▇▇▇▇" — the glyph for flawless
+/// calibration — rendered entirely out of missing data.
+fn render_calibration_mini(cal: &CalibrationData) -> Option<String> {
     let buckets = [
         (cal.bucket_0_20, 0.10),   // ideal: 10% of 0-20 bucket resolve true
         (cal.bucket_20_40, 0.30),  // ideal: 30%
@@ -23175,29 +23232,37 @@ fn render_calibration_mini(cal: &CalibrationData) -> String {
         (cal.bucket_80_100, 0.90), // ideal: 90%
     ];
 
+    if buckets.iter().all(|(actual, _)| actual.is_none()) {
+        return None;
+    }
+
     let bars = ["▁", "▂", "▃", "▅", "▇"];
 
-    buckets
-        .iter()
-        .map(|(actual, ideal)| {
-            let actual = actual.unwrap_or(*ideal);
-            let error = (actual - ideal).abs();
-            // Lower error = taller bar (better calibration)
-            let idx = if error < 0.05 {
-                4
-            } else if error < 0.10 {
-                3
-            } else if error < 0.15 {
-                2
-            } else if error < 0.25 {
-                1
-            } else {
-                0
-            };
-            bars[idx]
-        })
-        .collect::<Vec<_>>()
-        .join("")
+    Some(
+        buckets
+            .iter()
+            .map(|(actual, ideal)| {
+                let Some(actual) = actual else {
+                    return "·";
+                };
+                let error = (actual - ideal).abs();
+                // Lower error = taller bar (better calibration)
+                let idx = if error < 0.05 {
+                    4
+                } else if error < 0.10 {
+                    3
+                } else if error < 0.15 {
+                    2
+                } else if error < 0.25 {
+                    1
+                } else {
+                    0
+                };
+                bars[idx]
+            })
+            .collect::<Vec<_>>()
+            .join(""),
+    )
 }
 
 // ─── OAuth localhost callback handler ─────────────────────────────────────────

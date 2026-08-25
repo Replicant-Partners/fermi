@@ -97,6 +97,18 @@ A Feedback Loop is a cyclic causal structure in which an Agent or Composition's 
 
 The formal property that distinguishes ABW's feedback loops from ad-hoc learning is that each loop has a defined *target*, a defined *signal*, a defined *correction path*, and a defined *gate* that prevents arbitrary modification of agent behavior. The gate is the mechanism by which the system remains trustworthy: no loop can produce unbounded adaptation, because every significant behavioral change requires either human review or a coherence check.
 
+> **A gate that is declared is not a gate.** Each of the five was audited against
+> its implementation in August 2026. A defined gate turns out to have three
+> failure modes that are observationally identical to it working: it can be
+> *absent* (declared here, scheduled nowhere), *fatal* (rejecting every input for
+> arithmetic reasons — Loop 2's coherence gate did this to 100% of agent-wide
+> interventions, which made the two-reviewer consensus path downstream of it
+> unreachable), or *proxied* (asserting something cheaper than the property it
+> claims). None of the three is visible from this document, and none was visible
+> from the source either; all three required counting rows. The claim above
+> should be read as a specification of what the gates are *for*, and
+> `docs/HANDOFF_loops_and_gates.md` for which of them currently hold.
+
 ---
 
 ## 3. The RSI Primitive: Five Feedback Loops
@@ -134,11 +146,32 @@ Execution → Episode → EvaluatorRegistry → eval_signals
 ```
 Anomaly detected → HITL review queue
   → Reviewer: Intervene
-  → CoherenceGate: Γ(C) ≥ 0.5 required (correction must cohere with agent's world model)
+  → CoherenceGate: settle the correction against the agent's world model
+       · insufficient world model      ⟹ Undetermined (not a pass)
+       · correction rejected by settling ⟹ Blocked
+       · Γ(C) < 0.5                    ⟹ Blocked
   → SyntheticCorrection episode (authority_weight = 1.0)
   → Enters Loop 1 at highest authority weight
   → persona_version incremented (new drift baseline)
 ```
+
+**On the gate condition.** This section previously stated the gate as `Γ(C) ≥
+0.5` alone. That is not what discriminates, and the difference was measured
+rather than reasoned about: **Γ is identical (0.632) whether the world model
+absorbs the correction or rejects it**, because a system that rejects a
+contradicting proposition stays perfectly coherent. Γ answers "is the resulting
+belief set tidy", and a correction that bounces off leaves a very tidy one.
+
+The discriminator is the correction's *own* post-settling activation: zero nodes
+rejected when the model absorbs it, the correction itself rejected with mass
+0.89 when it does not. Γ is retained as a secondary floor — it still catches a
+correction that is absorbed but wrecks everything around it — but it is not the
+primary condition and a gate written from it alone passes corrections the agent
+has thrown out.
+
+A third outcome exists and is not a verdict: if the agent has too little history
+to settle against, the gate returns `Undetermined`. An unrunnable check must not
+read as a pass.
 
 **What changes:** The agent's effective belief system as encoded in its episodic memory. The correction is preserved in an immutable audit trail (`episode_corrections`). Agent-wide corrections require a second independent reviewer.
 
@@ -152,7 +185,7 @@ Anomaly detected → HITL review queue
 
 **Signal:** Γ(C) — the global coherence score from TEC settling (Thagard, 1989; Thagard & Verbeurgt, 1998) — plus per-principle scores distinguishing productive incoherence (competing hypotheses both grounded in evidence) from destructive incoherence (disconnected utterances with no evidential engagement).
 
-**Correction path (inner — per session):**
+**Correction path (3.A, inner — per session):**
 ```
 Workspace messages accumulate
   → TEC settling engine → Γ(C) + per-principle scores
@@ -163,7 +196,7 @@ Workspace messages accumulate
   → Agents read brief in next turn context
 ```
 
-**Correction path (outer — across sessions):**
+**Correction path (3.B, outer — across sessions):**
 ```
 Session patterns accumulate in strategist memory
   → Composition Dreaming: detect chronic incoherence, valence homophily
@@ -177,13 +210,13 @@ Session patterns accumulate in strategist memory
 
 **Critical design decision:** The taxonomy of incoherence types is essential. Naive coherence optimisation drives compositions toward agreement, suppressing the productive disagreement that improves collective epistemic performance (Page, 2007; Sunstein, 2002). The framework distinguishes four incoherence types by their formal signatures in TEC principle scores, ensuring that structurally productive disagreement is not penalised.
 
-### 3.4 Loop 4 — Composition Evolution
+### 3.4 Loop 4 — Team Shape
 
-**Target:** The composition's team structure improves over time to reduce chronic coordination failures.
+**Target:** The composition's team structure improves over time to reduce chronic coordination failures (4.A, composition evolution), and each query reaches the member best able to answer it (4.B, routing accuracy — see §5.2).
 
 **Signal:** Recurring patterns in the strategist's consolidated memory — which TEC principles are chronically weak, whether the team's valence distribution has collapsed, whether destructive incoherence is persistent.
 
-**Correction path:**
+**Correction path (4.A):**
 ```
 Session episodes → ConsolidationWorker → team-effectiveness rules
   → Composition Dreaming: classify chronic pattern
@@ -195,30 +228,30 @@ Session episodes → ConsolidationWorker → team-effectiveness rules
 
 **Timescale:** Weeks to months. The strategist needs sufficient session history to distinguish persistent patterns from noise.
 
-### 3.5 Loop 5 — Calibration and Routing Accuracy
+### 3.5 Loop 5 — Calibration
 
-**Target:** The platform's routing layer selects the most accurate agent for each query type.
+**Target:** The platform measures how accurate its predictions were against resolved ground truth, so that the layers acting on that measurement — routing (Loop 4.B), model selection, parameter fitting — have something to act on.
 
-**Signal:** Two hard-verified signal sources:
+**Signal:** 5.A (calibration measurement) has two hard-verified signal paths:
 - *Forecast calibration*: Brier score on resolved `fermi_forecasts`
 - *Projection accuracy*: SOSA observation delta against prior cascade projections
 
 **Correction path:**
 ```
-5a (forecast): forecast resolves → BrierEvaluator → eval_signals → calibration endpoint
+5.A (forecast path): forecast resolves → BrierEvaluator → eval_signals → calibration endpoint
   → moe_router_strategist reads calibration via get_agent_calibration tool
-  → routing decisions annotated with outcome_quality on resolution
+  → Loop 4.B: routing decisions annotated with outcome_quality on resolution
   → Loop 1: strategist consolidates routing episodes → routing rules in KG
 
-5b (projection): real batch completes → ProjectionScoringEvaluator
+5.A (projection path): real batch completes → ProjectionScoringEvaluator
   → projection_accuracy EvalSignal → ConsolidationWorker
   → semantic rules ("model X unreliable at condition Y") in dynamics_runner KG
   → model selection influenced on next execution
 ```
 
-**What changes:** Which agent the routing strategist selects; which dynamics model is used in SimOps projections.
+**What changes:** The calibration profiles the routing strategist reads when it selects an agent (Loop 4.B); which dynamics model is used in SimOps projections.
 
-**Timescale:** 5a: months (forecast resolution cadence). 5b: days to weeks (batch cycle cadence).
+**Timescale:** Forecast path: months (forecast resolution cadence). Projection path: days to weeks (batch cycle cadence).
 
 **Key insight:** Loop 5 closes through Loop 1. The MoE routing strategist is itself an Agent that learns via dreaming. The calibration signal is a new dimension of evidence that its episodic memory can consolidate. No separate routing table or classifier training is needed — the architecture reuses the existing memory and consolidation pipeline.
 
@@ -232,7 +265,7 @@ Every feedback loop consumes eval signals. Two signal classes exist, with differ
 
 Produced by evaluators that use a language model to assess output quality: relevance, accuracy, completeness, persona fidelity. These signals are fast, domain-general, and scalable. Their limitation is that they inherit LLM non-determinism — the same output may receive different scores on different invocations — and they are potentially gameable by an agent that learns to produce outputs that score well without achieving the underlying quality target.
 
-*Gate requirement:* LLM-judged signals that trigger anomaly events require human review (Loop 2) before propagating into permanent behavior change. The coherence gate (Γ(C) ≥ 0.5) provides an additional structural filter.
+*Gate requirement:* LLM-judged signals that trigger anomaly events require human review (Loop 2) before propagating into permanent behavior change. The coherence gate provides an additional structural filter — see §3.2 for what it actually tests, which is whether the agent's world model rejects the correction, not Γ(C) alone.
 
 ### 4.2 Hard-Verified Signals
 
@@ -258,7 +291,7 @@ ABW's routing architecture instantiates a Mixture-of-Experts (MoE) model (Jacobs
 - A set of *expert agents*, each with declared capability contracts (`accepts`, `produces`, `skills`) and measured calibration profiles
 - A *routing strategist* that classifies each incoming query against member capabilities and routes to the most appropriate expert(s)
 - An *output contract* that defines the typed schema all member outputs must satisfy, enabling deterministic synthesis
-- A *calibration signal* (Brier score or projection accuracy) that scores routing decisions against ground truth, feeding Loop 5
+- A *calibration signal* (Brier score or projection accuracy) that scores routing decisions against ground truth, feeding Loop 5.A
 
 The domain constraint distinguishes this from general MoE: the output contract pins the output space, making routing decisions scorable against a common ground truth. An unconstrained composition produces whatever format its members produce; a domain-constrained MoE produces outputs that resolve against a common evaluation criterion.
 
@@ -272,7 +305,7 @@ The routing strategist operates in three stages:
 
 **Stage 2 — Synthesise:** The strategist combines member outputs according to its synthesis protocol, producing an output that satisfies the composition's output contract.
 
-**Stage 3 — Record:** The strategist records the routing decision as an episode tagged `moe_routing_decision`, including the query type, selected member, rationale, and confidence. When the query resolves, the outcome quality is written back to this episode, enabling Loop 5 consolidation.
+**Stage 3 — Record:** The strategist records the routing decision as an episode tagged `moe_routing_decision`, including the query type, selected member, rationale, and confidence. When the query resolves, the outcome quality is written back to this episode, enabling Loop 4.B consolidation.
 
 ### 5.3 Calibration and cold start
 
@@ -304,10 +337,10 @@ The five ABW feedback loops map directly onto Beer's VSM functions:
 | VSM Function | ABW Equivalent |
 |---|---|
 | System 1 — Operations | Individual agent execution |
-| System 2 — Coordination | Workspace + coherence evaluator (Loop 3 inner) |
+| System 2 — Coordination | Workspace + coherence evaluator (Loop 3.A) |
 | System 3 — Control | eval_signals + anomaly events + HITL (Loops 1, 2) |
-| System 4 — Intelligence | ADM dreaming + ontology snapshots + calibration (Loop 5) |
-| System 5 — Policy | persona_version governance + composition evolution (Loop 4) |
+| System 4 — Intelligence | ADM dreaming + ontology snapshots + calibration (Loop 5.A) |
+| System 5 — Policy | persona_version governance + composition evolution (Loop 4.A) |
 
 The correspondence is structural: ABW was not designed by consulting the VSM, but by solving the same engineering problem Beer addressed — how to build a system that maintains its identity and improves under environmental pressure. The VSM is the theoretical articulation of the conditions that make this possible; ABW is an engineering instantiation of those conditions in software.
 
@@ -333,7 +366,7 @@ The application of TEC to multi-agent discourse is novel. TEC was developed for 
 
 ### 7.1 Monad structure of the feedback composition
 
-The five feedback loops can be described as a pipeline where the output of each loop becomes an input to downstream loops (Loop 2 feeds Loop 1; Loop 3 outer feeds Loop 4; Loop 5 feeds Loop 1). This has the shape of a monadic composition. Whether the composition satisfies the monad laws — left identity, right identity, associativity — is not verified. If it does, the pipeline is safe to refactor; if it does not, the order of composition matters and must be preserved. Verification in a proof assistant (Lean 4, Coq) would strengthen the architecture's formal guarantees.
+The five feedback loops can be described as a pipeline where the output of each loop becomes an input to downstream loops (Loop 2 feeds Loop 1; Loop 3.B feeds Loop 4.A; Loop 5.A feeds Loop 1). This has the shape of a monadic composition. Whether the composition satisfies the monad laws — left identity, right identity, associativity — is not verified. If it does, the pipeline is safe to refactor; if it does not, the order of composition matters and must be preserved. Verification in a proof assistant (Lean 4, Coq) would strengthen the architecture's formal guarantees.
 
 ### 7.2 Convergence of the dreaming cycle
 
@@ -349,7 +382,7 @@ The allosteric paper (Labra, 2026a, §8) identifies three classes of behaviour p
 
 ### 7.5 Parameter-level learning (BayesOps)
 
-The five feedback loops are all harness-level changes: they modify context, configuration, and routing. They do not modify the distribution parameters that govern the probabilistic simulations the system runs. BayesOps (Labra, 2026d) specifies a Loop A that operates at the parameter level — fitting posterior distributions from operational data and updating FPL Driver parameters accordingly. Whether harness-level learning and parameter-level learning are compositionally sound — whether they can operate simultaneously without interfering — is an open question that depends on the relative timescales of the two loops and the degree to which parameter changes affect the signal quality of the harness loops.
+The harness-level loops (Loops 1–4 and 5.A) make harness-level changes: they modify context, configuration, and routing. They do not modify the distribution parameters that govern the probabilistic simulations the system runs. BayesOps (Labra, 2026d) specifies Loop 5.B, which operates at the parameter level — fitting posterior distributions from operational data and updating FPL Driver parameters accordingly. Whether harness-level learning and parameter-level learning are compositionally sound — whether they can operate simultaneously without interfering — is an open question that depends on the relative timescales of the two loops and the degree to which parameter changes affect the signal quality of the harness loops.
 
 ---
 
@@ -359,10 +392,10 @@ ABW presents a coherent logical architecture for recursive self-improving multi-
 
 1. **Five gated feedback loops** operating at individual, composition, and routing levels, each with a defined target, signal, correction path, and gate
 2. **Two signal classes** (LLM-judged and hard-verified) with asymmetric epistemic properties and gate requirements
-3. **Domain-constrained MoE** routing that calibrates itself against ground truth through Loop 5
+3. **Domain-constrained MoE** routing that calibrates itself against ground truth through Loop 5.A and Loop 4.B
 4. **Grounding in CAS, cybernetic, and ULS theory** — the architecture instantiates Holland's adaptive classifier system, Beer's viable system, and Northrop's ULS architectural targets in a single coherent design
 
-The architecture was designed to be *trustworthy under adaptation*: every path by which an agent's behavior can change permanently is gated by either human review or a formal coherence check. Fast adaptation (Loop 1 dreaming, Loop 3 inner coordination) operates at timescales where errors are recoverable. Slow adaptation (Loop 4 composition mutation, parameter-level BayesOps changes) requires human acceptance. The architecture's trustworthiness follows structurally from these gate requirements, not from post-hoc safety measures.
+The architecture was designed to be *trustworthy under adaptation*: every path by which an agent's behavior can change permanently is gated by either human review or a formal coherence check. Fast adaptation (Loop 1 dreaming, Loop 3.A inner coordination) operates at timescales where errors are recoverable. Slow adaptation (Loop 4.A composition mutation, parameter-level Loop 5.B changes) requires human acceptance. The architecture's trustworthiness follows structurally from these gate requirements, not from post-hoc safety measures.
 
 The open questions in Section 7 are the research agenda that ABW's operational deployments will generate data to answer. The theoretical framework is in place; the empirical programme begins with deployment.
 

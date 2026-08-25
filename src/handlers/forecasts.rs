@@ -1290,6 +1290,45 @@ pub async fn delete_forecast_handler(
 // FORECAST RESOLUTION
 // ═══════════════════════════════════════════════════════════════════
 
+/// Kick off a background refresh of the `fermi_leaderboard`
+/// materialized view.
+///
+/// `fermi_leaderboard` is a matview, so the board shows whatever the last
+/// REFRESH captured — not the current contents of `fermi_forecasts`.
+/// Every write that changes the resolved population therefore has to call
+/// this, or the leaderboard silently freezes.
+///
+/// This used to be inlined in `resolve_forecast_handler` and nowhere
+/// else, which meant the two paths that resolve the *majority* of
+/// forecasts — `check_resolutions_handler` and the 15-minute
+/// `spawn_resolution_sweeper`, both going through
+/// `polymarket::apply_settlement` — wrote `status='resolved'` +
+/// `brier_score` and left the board stale. That is the whole reason the
+/// leaderboard "hadn't moved" while the dashboard climbed.
+///
+/// Non-blocking: `REFRESH MATERIALIZED VIEW` is expensive and no caller
+/// needs its result, so it is spawned. Callers that resolve in a loop
+/// must call this ONCE after the batch, never per row.
+///
+/// Unlike the previous fire-and-forget `let _ = ...`, a failure is logged.
+/// A missing `refresh_fermi_leaderboard()` in prod presents exactly as
+/// this bug did — a frozen board with no error anywhere — so the silence
+/// was part of the defect.
+pub(crate) fn refresh_leaderboard_async(pool: &PgPool) {
+    let pool_bg = pool.clone();
+    tokio::spawn(async move {
+        if let Err(e) = sqlx::query("SELECT refresh_fermi_leaderboard()")
+            .execute(&pool_bg)
+            .await
+        {
+            tracing::warn!(
+                error = %e,
+                "[leaderboard] refresh_fermi_leaderboard() failed — board will serve stale ranks"
+            );
+        }
+    });
+}
+
 /// POST /api/forecasts/:id/resolve
 ///
 /// Resolves a forecast with an actual outcome and computes the Brier score.
@@ -1417,14 +1456,9 @@ pub async fn resolve_forecast_handler(
     .await;
 
     // Refresh leaderboard in background (non-blocking)
-    let pool_bg = pool.clone();
-    tokio::spawn(async move {
-        let _ = sqlx::query("SELECT refresh_fermi_leaderboard()")
-            .execute(&pool_bg)
-            .await;
-    });
+    refresh_leaderboard_async(pool);
 
-    // ── Loop 5: annotate routing-decision episodes with this outcome ─────────
+    // ── Loop 4.B: annotate routing-decision episodes with this outcome ───────
     //
     // When a forecast resolves, look for routing-decision episodes (tagged
     // "moe_routing_decision") from the agents used in this forecast, written
@@ -1851,7 +1885,7 @@ pub async fn record_forecast_calibration_signals(
             "INSERT INTO eval_signals
                   (agent_id, evaluator_name, evaluator_version, evaluator_tier,
                    dimension, score, confidence, rationale, created_at)
-             SELECT $1, 'brier_forecast_resolver', 'v1', 'dimensional',
+             SELECT $1, 'brier_forecast_resolver', 'v1', $4,
                     'forecast_calibration', $2, 1.0, $3, NOW()
               WHERE NOT EXISTS (
                   SELECT 1 FROM eval_signals
@@ -1863,19 +1897,25 @@ pub async fn record_forecast_calibration_signals(
         .bind(aid)
         .bind(calibration)
         .bind(&rationale)
+        // See the note in `handlers::consolidation`: bound, and typed, so the
+        // token cannot be a third independent copy of the literal.
+        .bind(fermi::seam_vocabulary::EvaluatorTier::Dimensional)
         .execute(pool)
         .await;
 
-        match res {
-            Ok(r) if r.rows_affected() > 0 => tracing::info!(
-                agent = %aid, forecast = %forecast_id, calibration = calibration,
-                "[brier-moe] forecast_calibration signal recorded"
-            ),
-            Ok(_) => {} // already existed — idempotent skip
-            Err(e) => tracing::warn!(
-                agent = %aid, error = %e,
-                "[brier-moe] failed to record calibration signal"
-            ),
+        // Loop 5.A's per-agent calibration signal (Brier), and what Loop 4.B's
+        // MoE router reads at Stage 0. The enclosing function returns `()`, so
+        // neither resolution caller can tell whether any of this landed.
+        if let Some(r) =
+            fermi::write_accounting::observe(fermi::write_accounting::Sink::EvalSignals, res)
+        {
+            if r.rows_affected() > 0 {
+                tracing::info!(
+                    agent = %aid, forecast = %forecast_id, calibration = calibration,
+                    "[brier-moe] forecast_calibration signal recorded"
+                );
+            }
+            // else: already existed — idempotent skip
         }
     }
 }
@@ -1958,6 +1998,12 @@ pub async fn void_forecast_handler(
 
     crate::handlers::forecast_git::commit_for(&state, &forecast_id, &principal, "voided forecast")
         .await;
+
+    // A void removes a row from the leaderboard population, so the matview
+    // is stale for the same reason a resolve makes it stale. Voiding a
+    // forecast that already carried a brier_score would otherwise leave the
+    // owner's ranked average counting a question they retired.
+    refresh_leaderboard_async(pool);
 
     Ok(Json(json!({
         "forecast_id": forecast_id,
@@ -3072,6 +3118,19 @@ pub async fn my_stats_handler(
     let user_id = principal.user_id();
     let pool = &state.db;
 
+    // The Brier and calibration aggregates below are deliberately
+    // restricted to `status = 'resolved'`, matching
+    // `fermi_leaderboard`'s `WHERE status='resolved' AND brier_score IS
+    // NOT NULL`. Without that predicate this query pooled in every row
+    // that merely *carries* a brier_score — drafts, still-active
+    // forecasts, voided questions — so the dashboard tile and the
+    // leaderboard row for the same user were computed over different
+    // populations and disagreed (0.029 vs 0.014 over 54 vs 51 rows).
+    // The two numbers are presented side by side in the console, so they
+    // have to be measured the same way or one of them is a lie.
+    //
+    // resolved_count / active_count / draft_count stay as they are:
+    // those are status counts, not score aggregates.
     let stats = sqlx::query(
         "SELECT
             COUNT(*) AS total_forecasts,
@@ -3080,19 +3139,19 @@ pub async fn my_stats_handler(
             COUNT(*) FILTER (WHERE status = 'draft') AS draft_count,
             -- v0.10.19: cast MIN/MAX to float8 (see portfolio_stats_handler
             -- and resolve_forecast_handler for the same substrate rule).
-            AVG(brier_score) FILTER (WHERE brier_score IS NOT NULL) AS avg_brier,
-            (MIN(brier_score) FILTER (WHERE brier_score IS NOT NULL))::float8 AS best_brier,
-            (MAX(brier_score) FILTER (WHERE brier_score IS NOT NULL))::float8 AS worst_brier,
+            AVG(brier_score) FILTER (WHERE brier_score IS NOT NULL AND status = 'resolved') AS avg_brier,
+            (MIN(brier_score) FILTER (WHERE brier_score IS NOT NULL AND status = 'resolved'))::float8 AS best_brier,
+            (MAX(brier_score) FILTER (WHERE brier_score IS NOT NULL AND status = 'resolved'))::float8 AS worst_brier,
             -- Calibration
-            AVG(CASE WHEN predicted_probability < 0.2 AND brier_score IS NOT NULL
+            AVG(CASE WHEN predicted_probability < 0.2 AND brier_score IS NOT NULL AND status = 'resolved'
                      THEN actual_outcome::int END) AS cal_0_20,
-            AVG(CASE WHEN predicted_probability >= 0.2 AND predicted_probability < 0.4 AND brier_score IS NOT NULL
+            AVG(CASE WHEN predicted_probability >= 0.2 AND predicted_probability < 0.4 AND brier_score IS NOT NULL AND status = 'resolved'
                      THEN actual_outcome::int END) AS cal_20_40,
-            AVG(CASE WHEN predicted_probability >= 0.4 AND predicted_probability < 0.6 AND brier_score IS NOT NULL
+            AVG(CASE WHEN predicted_probability >= 0.4 AND predicted_probability < 0.6 AND brier_score IS NOT NULL AND status = 'resolved'
                      THEN actual_outcome::int END) AS cal_40_60,
-            AVG(CASE WHEN predicted_probability >= 0.6 AND predicted_probability < 0.8 AND brier_score IS NOT NULL
+            AVG(CASE WHEN predicted_probability >= 0.6 AND predicted_probability < 0.8 AND brier_score IS NOT NULL AND status = 'resolved'
                      THEN actual_outcome::int END) AS cal_60_80,
-            AVG(CASE WHEN predicted_probability >= 0.8 AND brier_score IS NOT NULL
+            AVG(CASE WHEN predicted_probability >= 0.8 AND brier_score IS NOT NULL AND status = 'resolved'
                      THEN actual_outcome::int END) AS cal_80_100,
             -- Streak: consecutive days with at least one forecast created or resolved
             -- (simplified — just count distinct active days in last 30)

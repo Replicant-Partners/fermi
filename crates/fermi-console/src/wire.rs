@@ -127,6 +127,150 @@ impl RevisionAttribution {
     }
 }
 
+
+// ═══════════════════════════════════════════════════════════════════
+// Per-agent measured contribution
+// ═══════════════════════════════════════════════════════════════════
+
+/// Read `GET /api/agents/contributions` into the router's record type.
+///
+/// Lives here rather than beside the other API structs because the API
+/// client is in the BINARY target, where `#[cfg(test)]` modules cannot be
+/// compiled (see the crate docs). This conversion has three ways to be
+/// silently wrong — a renamed field, a null read as zero, a negative count
+/// coerced — and all three would degrade specialist ranking without
+/// erroring, so it belongs where it can be asserted.
+///
+/// The wire shape, from `handlers::agents::agent_contributions_handler`:
+///
+/// ```json
+/// { "contributions": [ { "agent_name": "weather_oracle",
+///                        "mean_shapley": 0.031,
+///                        "n_forecasts": 14,
+///                        "n_clusters": 5,
+///                        "ci_low": 0.004,
+///                        "ci_high": 0.058 } ],
+///   "count": 1 }
+/// ```
+///
+/// Rows without an `agent_name` or a numeric `mean_shapley` are dropped:
+/// there is nothing to rank and nothing to rank it by. `ci_low` is carried
+/// through as `Option` and MUST NOT be defaulted — see
+/// [`crate::routing::Proven::is_established`].
+pub fn agent_contributions_from_json(payload: &serde_json::Value) -> Vec<crate::routing::Proven> {
+    payload
+        .get("contributions")
+        .and_then(|c| c.as_array())
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|row| {
+            Some(crate::routing::Proven {
+                agent: row.get("agent_name")?.as_str()?.trim().to_string(),
+                mean_shapley: row.get("mean_shapley")?.as_f64()?,
+                // A count is informational, not load-bearing; a missing or
+                // nonsensical one must not discard an otherwise usable row.
+                n_forecasts: row
+                    .get("n_forecasts")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0)
+                    .max(0) as u32,
+                // Deliberately NOT `.unwrap_or(0.0)`. A null interval means
+                // the server had too few independent clusters to say
+                // anything; defaulting it to zero would make every thin
+                // record read as "exactly at the threshold" and, with a
+                // `>` test, is only saved from promoting them by the
+                // strictness of the comparison. Keep the absence.
+                ci_low: row.get("ci_low").and_then(|v| v.as_f64()),
+            })
+            .filter(|p| !p.agent.is_empty())
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod contribution_wire_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn the_documented_shape_round_trips() {
+        let payload = json!({
+            "contributions": [
+                { "agent_name": "weather_oracle", "mean_shapley": 0.031,
+                  "n_forecasts": 14, "n_clusters": 5,
+                  "ci_low": 0.004, "ci_high": 0.058 }
+            ],
+            "count": 1
+        });
+        let got = agent_contributions_from_json(&payload);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].agent, "weather_oracle");
+        assert_eq!(got[0].n_forecasts, 14);
+        assert_eq!(got[0].ci_low, Some(0.004));
+        assert!(got[0].is_established());
+    }
+
+    #[test]
+    fn a_null_interval_stays_absent() {
+        // The whole point of carrying an Option. `ci_low: null` is the
+        // server saying it had too few independent clusters to speak;
+        // reading it as 0.0 would turn "no evidence" into "exactly
+        // borderline".
+        let payload = json!({
+            "contributions": [
+                { "agent_name": "thin", "mean_shapley": 0.9,
+                  "n_forecasts": 2, "n_clusters": 1,
+                  "ci_low": null, "ci_high": null }
+            ]
+        });
+        let got = agent_contributions_from_json(&payload);
+        assert_eq!(got[0].ci_low, None);
+        assert!(
+            !got[0].is_established(),
+            "a two-forecast record was promoted over a declared specialist"
+        );
+    }
+
+    #[test]
+    fn a_row_with_nothing_to_rank_by_is_dropped() {
+        let payload = json!({
+            "contributions": [
+                { "agent_name": "no_score" },
+                { "mean_shapley": 0.1 },
+                { "agent_name": "   ", "mean_shapley": 0.1 },
+                { "agent_name": "ok", "mean_shapley": 0.1, "ci_low": 0.01 }
+            ]
+        });
+        let got = agent_contributions_from_json(&payload);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].agent, "ok");
+    }
+
+    #[test]
+    fn a_missing_or_absurd_count_does_not_discard_the_row() {
+        let payload = json!({
+            "contributions": [
+                { "agent_name": "a", "mean_shapley": 0.1, "ci_low": 0.01 },
+                { "agent_name": "b", "mean_shapley": 0.1, "n_forecasts": -3, "ci_low": 0.01 }
+            ]
+        });
+        let got = agent_contributions_from_json(&payload);
+        assert_eq!(got.len(), 2);
+        assert!(got.iter().all(|p| p.n_forecasts == 0 && p.is_established()));
+    }
+
+    #[test]
+    fn an_empty_or_malformed_payload_is_no_record_rather_than_a_panic() {
+        // A server without the endpoint answers 404 and the caller never
+        // gets here, but a proxy returning something shaped differently
+        // must degrade to "rank on declarations", not take the app down.
+        for payload in [json!({}), json!({"contributions": null}), json!([])] {
+            assert!(agent_contributions_from_json(&payload).is_empty());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -63,7 +63,7 @@ The SOSA vocabulary serves three functions in SimOps:
 
 2. **Synthetic observation production**: The cascade physics engine produces synthetic SOSA observations (predicted values at modelled process conditions), tagged with `source: simops_simulation` to distinguish them from real measurements.
 
-3. **Ground-truth comparison**: When a real observation arrives for the same `(observable_property, feature_of_interest)` as a prior synthetic observation, the delta between predicted and actual becomes the hard-verified calibration signal that feeds Loop 5 (§4.2).
+3. **Ground-truth comparison**: When a real observation arrives for the same `(observable_property, feature_of_interest)` as a prior synthetic observation, the delta between predicted and actual becomes the hard-verified calibration signal that feeds Loop 5.A (§4.2).
 
 ### 2.2 The ProcessConfig
 
@@ -127,11 +127,11 @@ The oracle resolves bill-of-materials pricing for process inputs using market da
 
 ## 4. The SimOps Feedback Loop Architecture
 
-SimOps instantiates all five ABW feedback loops, but Loop 5 is qualitatively different from the general ABW case because the ground truth signal is physical measurement rather than market resolution.
+SimOps instantiates all five ABW feedback loops, but Loop 5.A is qualitatively different from the general ABW case because the ground truth signal is physical measurement rather than market resolution.
 
-### 4.1 Loop 1 in SimOps: Projection-accuracy-grounded learning
+### 4.1 Loop 1.B in SimOps: Projection-accuracy-grounded learning
 
-In general ABW, Loop 1 consolidates LLM-judged eval signals. In SimOps, Loop 1 additionally consolidates `projection_accuracy` signals — hard-verified deltas between the dynamics runner's predictions and real batch measurements.
+In general ABW, Loop 1.A consolidates LLM-judged eval signals. In SimOps, Loop 1.B additionally consolidates `projection_accuracy` signals — hard-verified deltas between the dynamics runner's predictions and real batch measurements.
 
 The mechanism (Labra, 2026e, Spec 20):
 
@@ -145,9 +145,9 @@ The mechanism (Labra, 2026e, Spec 20):
 
 The critical property: **the batch does not know what was predicted**. The ground truth is physically independent of the agent's output. This is the same epistemic structure as Brier scoring on resolved forecasts — the future resolves independently — but at the timescale of cultivation batch cycles (days to weeks) rather than forecast resolution (months).
 
-### 4.2 Loop 5 in SimOps: Model selection calibration
+### 4.2 Loops 5.A and 4.B in SimOps: Model selection calibration
 
-Loop 5 in SimOps routes queries to the most accurate dynamics model for the current operating conditions. The routing strategist reads `projection_accuracy` calibration profiles per model URI from the `get_agent_calibration` endpoint, which aggregates `projection_accuracy` eval signals per model via the `model_accuracy` breakdown in the response.
+Loop 5.A in SimOps measures how accurate each dynamics model was under the operating conditions it was used in; Loop 4.B uses that measurement to route queries to the most accurate dynamics model for the current operating conditions. The routing strategist reads `projection_accuracy` calibration profiles per model URI from the `get_agent_calibration` endpoint, which aggregates `projection_accuracy` eval signals per model via the `model_accuracy` breakdown in the response.
 
 Over time, the routing strategist accumulates evidence about which model is most accurate for which conditions:
 
@@ -159,14 +159,14 @@ batch 12: bc_optimization at 30°C, projection_accuracy = 0.91 → reinforce
 
 The strategist's dreaming cycle consolidates these episodes into routing rules: "for cultivation at temperature > 60°C, bc_optimization has historically outperformed kombucha_fermentation by 0.15 accuracy points." These rules enter the strategist's KG context and inform future routing decisions.
 
-### 4.3 Loop A in SimOps: BayesOps parameter fitting
+### 4.3 Loop 5.B in SimOps: BayesOps parameter fitting
 
-Loop A (BayesOps, Labra, 2026d) is not yet implemented. When it is, it provides the mechanism for updating ProcessConfig parameters from operational data:
+Loop 5.B (BayesOps, Labra, 2026d) is not yet implemented. When it is, it provides the mechanism for updating ProcessConfig parameters from operational data:
 
 - `fit_marginal(yield_observations, weights=real:1.0/synthetic:0.2)` → `FittedDistribution` for the yield base rate
 - `fit_conditional(observations_with_inputs)` → `ConditionalPosterior` supporting `predict(query_inputs)`, `input_sensitivity()`, `compare_scenarios()`, `prob_exceeds(threshold)`
 
-Loop A operates offline (triggered by data accumulation) and produces parameters that are written into FPL Driver declarations, feeding Loop B (the Fermi MC executor). The composition of Loop A (parameter fitting), Loop 1 (semantic rule accumulation), and Loop B (probabilistic simulation) is the full SimOps intelligence stack.
+Loop 5.B operates offline (triggered by data accumulation) and produces parameters that are written into FPL Driver declarations, feeding the simulation loop (the Fermi MC executor). The composition of Loop 5.B (parameter fitting), Loop 1 (semantic rule accumulation), and the simulation loop (probabilistic simulation) is the full SimOps intelligence stack.
 
 ---
 
@@ -199,7 +199,7 @@ The comparison is grounded: it does not rely on LLM-generated narrative alone. T
 
 The fundamental architectural distinction between SimOps and a domain-agnostic ABW deployment is the availability of physical ground truth. When a cultivation batch completes, the real yield is a fact — not an opinion, not an LLM judgment, not a preference. This fact can be compared to any prior prediction, and the comparison is meaningful regardless of how the prediction was produced.
 
-This changes the epistemic properties of the feedback loops. In a general ABW deployment, Loop 5's calibration signal (Brier score on resolved forecasts) requires months to accumulate because forecast resolution cadences are slow. In SimOps, Loop 5b's calibration signal (projection accuracy on completed batches) accumulates on a batch cycle timescale — typically days to weeks. The feedback is faster, harder to game, and more directly connected to operational decisions.
+This changes the epistemic properties of the feedback loops. In a general ABW deployment, Loop 5.A's forecast-calibration signal (Brier score on resolved forecasts) requires months to accumulate because forecast resolution cadences are slow. In SimOps, Loop 5.A's other signal path (projection accuracy on completed batches) accumulates on a batch cycle timescale — typically days to weeks. The feedback is faster, harder to game, and more directly connected to operational decisions.
 
 ### 6.2 The sensor-to-learning pipeline
 
@@ -238,7 +238,7 @@ A model calibrated on one strain of bacterial cellulose may not generalise to a 
 
 ## 8. Conclusion
 
-SimOps demonstrates the ABW instantiation pattern for a physical-process domain. Its distinctive contribution is the grounding of ABW's feedback loops in physical measurement: the `ProjectionScoringEvaluator` closes Loop 1 and Loop 5 against real batch outcomes rather than LLM judgment, producing hard-verified calibration signals at batch-cycle timescales. The SOSA/SSN observation vocabulary provides the interoperability layer that makes this grounding standard-compliant and portable across sensor types and deployments.
+SimOps demonstrates the ABW instantiation pattern for a physical-process domain. Its distinctive contribution is the grounding of ABW's feedback loops in physical measurement: the `ProjectionScoringEvaluator` closes Loop 1.B and Loop 5.A against real batch outcomes rather than LLM judgment, producing hard-verified calibration signals at batch-cycle timescales. The SOSA/SSN observation vocabulary provides the interoperability layer that makes this grounding standard-compliant and portable across sensor types and deployments.
 
 The architecture is modular: the cascade physics engine, the SOSA vocabulary, and the BayesOps parameter-fitting layer are each independently useful and independently verifiable against physical ground truth. Their composition produces a system that learns from operational data, improves its model selection under changing conditions, and supports calibrated probabilistic scenario analysis — capabilities that deterministic process simulation alone cannot provide.
 

@@ -282,8 +282,15 @@ fn record_rule_retrievals(memory_store: &Arc<MemoryStore>, rule_ids: Vec<Uuid>) 
         .execute(store.pool())
         .await;
 
-        match res {
-            Ok(r) if r.rows_affected() as usize != rule_ids.len() => {
+        // Counted before it is interpreted, so "the UPDATE was refused" and
+        // "the UPDATE matched fewer rows than expected" stay distinguishable —
+        // and neither is reachable from `application_count` itself, which reads
+        // the same either way.
+        let applied =
+            crate::write_accounting::observe(crate::write_accounting::Sink::SemanticRules, res);
+
+        if let Some(r) = applied {
+            if r.rows_affected() as usize != rule_ids.len() {
                 // Retrieved a rule that no longer exists. Worth a line: it
                 // means a reader served knowledge that has since been deleted.
                 tracing::warn!(
@@ -292,12 +299,6 @@ fn record_rule_retrievals(memory_store: &Arc<MemoryStore>, rule_ids: Vec<Uuid>) 
                     "kg_retrieval_credit_partial"
                 );
             }
-            Ok(_) => {}
-            Err(e) => tracing::warn!(
-                error = %e,
-                rules = rule_ids.len(),
-                "kg_retrieval_credit_failed — extraction utility will understate these rules"
-            ),
         }
     });
 }

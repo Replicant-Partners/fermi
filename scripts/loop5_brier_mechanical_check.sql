@@ -1,17 +1,17 @@
 -- ═══════════════════════════════════════════════════════════════════════
--- Loop 5a (Brier calibration) — MECHANICAL check — READ ONLY
+-- Loop 5.A (Brier calibration) — MECHANICAL check — READ ONLY
 -- ═══════════════════════════════════════════════════════════════════════
 --
 -- WHAT THIS IS
 --
--- Loop 5a is the chain
+-- Loop 5.A is the chain
 --
 --   forecast resolves
 --     → brier_score written on fermi_forecasts          (resolution path)
 --     → attributed to agents via agents_used            (attribution)
 --     → forecast_calibration row in eval_signals        (signal emission)
 --     → read back by BrierEvaluator + /calibration      (read path)
---     → consumed as moe_router_strategist weights       (design intent)
+--     → consumed as moe_router_strategist weights       (Loop 4.B intent)
 --
 -- This script asks ONE question: does that chain move a signal correctly
 -- from end to end? It deliberately does NOT ask whether the resulting
@@ -603,7 +603,7 @@ SELECT pg_temp.chk(
         FROM fingerprints GROUP BY fp, n HAVING count(*) > 1 ORDER BY n DESC LIMIT 5
     ) s
   $q$,
-  'DESIGN INTENT WARNING. Agents whose attributed forecast set is byte-identical to another agent''s. Loop 5 exists to weight moe_router_strategist routing, which requires RANKING agents against each other — and agents scored on an identical question set with identical outcomes receive identical scores forever, no matter how much data accumulates. This is structural, not thin-data: a 6-factor model that cites all 6 agents on every forecast can never discriminate between them. Discrimination needs either per-agent sub-forecasts or per-agent weights recorded at forecast time.'
+  'DESIGN INTENT WARNING. Agents whose attributed forecast set is byte-identical to another agent''s. Loop 5.A''s scores exist to be consumed as moe_router_strategist weights by Loop 4.B, which requires RANKING agents against each other — and agents scored on an identical question set with identical outcomes receive identical scores forever, no matter how much data accumulates. This is structural, not thin-data: a 6-factor model that cites all 6 agents on every forecast can never discriminate between them. Discrimination needs either per-agent sub-forecasts or per-agent weights recorded at forecast time.'
 );
 
 SELECT pg_temp.chk(

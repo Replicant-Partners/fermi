@@ -467,7 +467,7 @@ async fn emit_extraction_utility_signal(state: &AppState, extractor_id: uuid::Uu
         "INSERT INTO eval_signals
               (agent_id, evaluator_name, evaluator_version, evaluator_tier,
                dimension, score, confidence, rationale, created_at)
-         SELECT $1, 'extraction_utility_resolver', 'v1', 'dimensional',
+         SELECT $1, 'extraction_utility_resolver', 'v1', $5,
                 'extraction_utility', $2, $3, $4, NOW()
           WHERE NOT EXISTS (
               SELECT 1 FROM eval_signals
@@ -480,16 +480,25 @@ async fn emit_extraction_utility_signal(state: &AppState, extractor_id: uuid::Uu
     .bind(score)
     .bind(confidence)
     .bind(&rationale)
+    // Bound rather than inlined, and a variant rather than a constant, so this
+    // cannot become a fourth independent spelling. It was a bare `'dimensional'`
+    // here and in two other files, none referencing the others;
+    // `seam_vocabulary_contract` checks the type against the live CHECK.
+    .bind(fermi::seam_vocabulary::EvaluatorTier::Dimensional)
     .execute(&state.db)
     .await;
 
-    match res {
-        Ok(r) if r.rows_affected() > 0 => tracing::info!(
-            extractor = %extractor_id, score, resolved, retrieved,
-            "[extraction-utility] signal emitted — Loop 1 now has a signal half for the extractor"
-        ),
-        Ok(_) => {}
-        Err(e) => tracing::warn!(error = %e, "[extraction-utility] emit failed"),
+    // This is the extractor's own Loop 1 signal half. A lost write means the
+    // ontologist runs open-loop and nothing says so.
+    if let Some(r) =
+        fermi::write_accounting::observe(fermi::write_accounting::Sink::EvalSignals, res)
+    {
+        if r.rows_affected() > 0 {
+            tracing::info!(
+                extractor = %extractor_id, score, resolved, retrieved,
+                "[extraction-utility] signal emitted — Loop 1 now has a signal half for the extractor"
+            );
+        }
     }
 }
 
@@ -1413,10 +1422,17 @@ pub async fn consolidate_agent_handler(
             }
             Err(e) => {
                 tracing::error!(agent_id = %spawn_agent_id, error = %e, "consolidation failed");
-                let _ = spawn_state
-                    .memory_store
-                    .complete_consolidation_job(job_id, "failed", Some(e.to_string()))
-                    .await;
+                // If this terminal UPDATE is itself lost the job stays
+                // `running` for ever, and the Loop 1 cadence contract — which
+                // counts completions in a window — cannot see the difference
+                // between a cycle that failed and one still in flight.
+                let _ = fermi::write_accounting::observe(
+                    fermi::write_accounting::Sink::ConsolidationJobs,
+                    spawn_state
+                        .memory_store
+                        .complete_consolidation_job(job_id, "failed", Some(e.to_string()))
+                        .await,
+                );
             }
         }
     });

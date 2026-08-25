@@ -72,9 +72,7 @@ use uuid::Uuid;
 
 use crate::handlers::rabble_workspace;
 use crate::AppState;
-use agent_bestiary_memory::{
-    ConsolidationLock, ConsolidationWorker,
-};
+use agent_bestiary_memory::{ConsolidationLock, ConsolidationWorker};
 use fermi::gas::charge_gas;
 use fermi_auth::{get_or_create_wallet, AuthPrincipal};
 use std::sync::Arc;
@@ -273,6 +271,18 @@ pub async fn enemy_sensor_handler(
             // one thing that would be a fabrication: a threat naming a
             // creature the scan never returned.
             let grounding = crate::grounding_trust::enforce("enemy_sensor", &mut parsed);
+            // Tell Loop 2. This path RUNS the control — the fabricated field is
+            // stripped before it renders — and until now said nothing, so a
+            // violation on the path where violations are most likely was caught,
+            // corrected and forgotten. `None` for the episode: this handler's
+            // episode is written by a background task elsewhere, and an anomaly
+            // with no episode is worth far more than no anomaly.
+            fermi::grounding_anomaly::spawn_raise(
+                std::sync::Arc::clone(&state.memory_store),
+                "enemy_sensor",
+                None,
+                grounding.clone(),
+            );
             if !grounding.is_clean() {
                 tracing::warn!(
                     creature_id = %creature_id,
@@ -568,6 +578,18 @@ pub async fn genome_profiler_handler(
                 // call. Migration 200 quarantines the stored copies.
                 let mut profile = cached.unwrap();
                 let report = crate::grounding_trust::enforce("genome_profiler", &mut profile);
+                // Tell Loop 2. This path RUNS the control — the fabricated field is
+                // stripped before it renders — and until now said nothing, so a
+                // violation on the path where violations are most likely was caught,
+                // corrected and forgotten. `None` for the episode: this handler's
+                // episode is written by a background task elsewhere, and an anomaly
+                // with no episode is worth far more than no anomaly.
+                fermi::grounding_anomaly::spawn_raise(
+                    std::sync::Arc::clone(&state.memory_store),
+                    "genome_profiler",
+                    None,
+                    report.clone(),
+                );
                 if !report.is_clean() {
                     tracing::warn!(
                         creature_id = %creature_id,
@@ -679,6 +701,18 @@ pub async fn genome_profiler_handler(
             // validator. Mixing the two would make the grounding rules
             // invisible to anyone reading either call site.
             let mut grounding = crate::grounding_trust::enforce("genome_profiler", &mut parsed);
+            // Tell Loop 2. This path RUNS the control — the fabricated field is
+            // stripped before it renders — and until now said nothing, so a
+            // violation on the path where violations are most likely was caught,
+            // corrected and forgotten. `None` for the episode: this handler's
+            // episode is written by a background task elsewhere, and an anomaly
+            // with no episode is worth far more than no anomaly.
+            fermi::grounding_anomaly::spawn_raise(
+                std::sync::Arc::clone(&state.memory_store),
+                "genome_profiler",
+                None,
+                grounding.clone(),
+            );
 
             // Reconcile against the creature's own GBIF-verified taxonomy.
             //
@@ -956,6 +990,12 @@ pub async fn prey_locator_handler(
             // entry, which names this the cheapest Unsourced field in the
             // corpus to retire.
             let grounding = crate::grounding_trust::enforce("prey_locator", &mut parsed);
+            fermi::grounding_anomaly::spawn_raise(
+                std::sync::Arc::clone(&state.memory_store),
+                "prey_locator",
+                None,
+                grounding.clone(),
+            );
             if !grounding.is_clean() {
                 tracing::warn!(
                     creature_id = %creature_id,
@@ -1104,6 +1144,12 @@ pub async fn prey_locator_handler(
             // in a document meant to be flown rather than read. The strategy
             // and the difficulty rating survive; the geometry does not.
             let grounding = crate::grounding_trust::enforce("prey_locator", &mut parsed);
+            fermi::grounding_anomaly::spawn_raise(
+                std::sync::Arc::clone(&state.memory_store),
+                "prey_locator",
+                None,
+                grounding.clone(),
+            );
             if !grounding.is_clean() {
                 tracing::warn!(
                     creature_id = %creature_id,
@@ -1625,7 +1671,8 @@ pub async fn creature_dream_handler(
                 // episodes "processed", 0 entities, 0 facts, 0 rules, 0
                 // episodes consumed. It has 93 episodes and no semantic memory
                 // at all.
-                let llm_opt = crate::handlers::consolidation::build_extraction_llm(&spawn_state).await;
+                let llm_opt =
+                    crate::handlers::consolidation::build_extraction_llm(&spawn_state).await;
 
                 // Refuse rather than run. The guard already prevents the data
                 // loss (episodes are not consumed), but a cycle that cannot
@@ -2237,7 +2284,7 @@ pub async fn forage_handler(
                 _ => None,
             };
 
-            let document = crate::handlers::wild::identify_specimen(
+            let (document, grounding) = crate::handlers::wild::identify_specimen(
                 photo_url,
                 locality.as_deref(),
                 req.habitat.as_deref(),
@@ -2245,6 +2292,13 @@ pub async fn forage_handler(
             )
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+            fermi::grounding_anomaly::spawn_raise(
+                std::sync::Arc::clone(&state.memory_store),
+                "forage_identify",
+                None,
+                grounding,
+            );
 
             Ok(Json(json!({
                 "creature_id": creature_id,

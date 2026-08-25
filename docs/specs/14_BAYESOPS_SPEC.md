@@ -6,6 +6,11 @@
 **Date:** 2026-05-23, revised 2026-06-03, revised 2026-06-16  
 **Replaces:** v0.2 (Spec 20 status updated; migration 140 dependency added; JSONB
 persistence sub-task added to Phase 1)
+**Partly superseded by:** `35_BAYESOPS_PLATFORM_LAYER.md` — §5.6 (surfaces) below
+assumed a single Fermi-shaped consumer. Spec 35 lifts the data intake to a
+`Feed` registry, makes the impact gate and accept hook App-supplied, and gives
+BayesOps a second consumer outside forecasting. The contract in §3 and the
+architecture in §2 are unchanged by it.
 
 > **Current state (2026-06-16):** Neither `crates/posterior` nor `crates/posterior-reg` exists
 > yet in code. Phase 1 implementation begins this session. Spec 14 architecture and contract
@@ -38,19 +43,26 @@ persistence sub-task added to Phase 1)
 There are **two completely separate Monte Carlo loops** in this system. Conflating them was the core error in v0.1.
 
 ```
-Loop A — Parameter Fitting (offline, runs once per dataset)
+The fitting loop — Parameter Fitting (offline, runs once per dataset)
   Historical observations → fit a posterior → produce distribution parameters
   This is BayesOps. It uses MCMC internally.
   Output: Beta(9.4, 13.6)  or  Normal(4.8, 0.7)  or  Triangular(3.1, 4.8, 6.9)
 
-Loop B — Forecast Simulation (online, runs per question)
+The simulation loop — Forecast Simulation (online, runs per question)
   FPL Driver distributions → executor.rs samples → model expression → outcome distribution
   This is the EXISTING executor.rs. It is UNCHANGED.
-  Input: Beta(9.4, 13.6)  ← came from Loop A, or from a human, doesn't matter
+  Input: Beta(9.4, 13.6)  ← came from the fitting loop, or a human, doesn't matter
 ```
 
-BayesOps is entirely Loop A. It produces parameters that feed Loop B as `Driver` values.
-Loop B never knows or cares whether its parameters came from BayesOps or from a human.
+BayesOps is entirely the fitting loop. It produces parameters that feed the
+simulation loop as `Driver` values. The simulation loop never knows or cares
+whether its parameters came from BayesOps or from a human.
+
+> **Naming note.** These two are *Monte Carlo* loops, not feedback loops. An
+> earlier revision called them "Loop A" and "Loop B", which collided with the
+> platform feedback-loop numbering in `docs/architecture/FEEDBACK_LOOPS.md`;
+> the letters are retired. BayesOps as a platform feedback loop is **Loop 5.B**
+> (the correction arm of calibration).
 The seam between them is the `Distribution` type in the FPL AST.
 
 ---

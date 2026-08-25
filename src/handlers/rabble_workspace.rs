@@ -423,26 +423,36 @@ pub async fn dispatch_rabble_action(
                 "workspace_id": workspace_id,
                 "action_type": action_bg,
             });
-            let _ = state_bg
-                .memory_store
-                .store_episode_with_provenance(
-                    episode.clone(),
-                    provenance.as_ref(),
-                    Some(source_ref),
-                )
-                .await;
+            // Counted, and guarded. `agent_timeline_entries.episode_id` is a
+            // foreign key to this row; when this write failed — swallowed by the
+            // `let _ =` this replaces — the timeline write below was attempted
+            // anyway, violated the key, and was swallowed in turn. One failure,
+            // two loop sinks lost, and no signal anywhere.
+            let stored = fermi::write_accounting::observe(
+                fermi::write_accounting::Sink::Episodes,
+                state_bg
+                    .memory_store
+                    .store_episode_with_provenance(
+                        episode.clone(),
+                        provenance.as_ref(),
+                        Some(source_ref),
+                    )
+                    .await,
+            );
 
             // Make this turn visible to drift + anomaly detection.
-            crate::handlers::live_observability::spawn_live_observation(
-                &state_bg,
-                crate::handlers::live_observability::LiveObservation {
-                    episode,
-                    agent: db_agent_bg.clone(),
-                    response: response_bg.clone(),
-                    session_id: Some("live:rabble".to_string()),
-                    rupture_detected: false,
-                },
-            );
+            if stored.is_some() {
+                crate::handlers::live_observability::spawn_live_observation(
+                    &state_bg,
+                    crate::handlers::live_observability::LiveObservation {
+                        episode,
+                        agent: db_agent_bg.clone(),
+                        response: response_bg.clone(),
+                        session_id: Some("live:rabble".to_string()),
+                        rupture_detected: false,
+                    },
+                );
+            }
 
             // 2. Workspace message
             let msg = WorkspaceMessage {

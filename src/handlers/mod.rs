@@ -35,6 +35,7 @@ pub mod attribution;
 pub mod auth;
 pub mod bayesops;
 pub mod beacons;
+pub mod bestiary;
 pub mod billing;
 /// Team collaboration surfaces — share provenance, actor attribution,
 /// activity feeds. See docs/specs/SPEC_26_TEAM_COLLABORATION.md.
@@ -64,6 +65,11 @@ pub mod forecast_benchmark;
 /// diff, revert. See docs/specs/SPEC_31_FORECAST_HISTORY.md.
 pub mod forecast_git;
 pub mod forecasts;
+// Gates — what the platform refused, and what it cannot refuse. The register,
+// the enforcement map (which verbs a gate can actually stop), and the durable
+// receipt record. Before this the platform had a record of every request it
+// served and none of any it refused.
+pub mod gates;
 pub mod governance;
 /// Admin "view as user" — short-lived, read-only, fully audited
 /// impersonation for support and debugging.
@@ -94,11 +100,23 @@ pub mod qr_codes;
 pub mod rabble_chat;
 pub mod rabble_workspace;
 pub mod rbac_self_check;
+
+// Rounds — what needs you, in what order. The dashboard is a directory with ~30
+// actions at equal weight; a round is an ordered visit to whoever needs
+// attention. Also the first surface that shows the platform's own blind spots,
+// by rendering panel_absence through panel_contract at scan density.
 pub mod relationships;
+pub mod rounds;
 pub mod shares;
 pub mod simops;
 pub mod simops_benchmark;
 pub mod social;
+
+// One specimen, three tabs. Replaces the eight-tab agent page, whose inventory
+// found thirteen metrics rendered in more than one place and several under
+// different names for the same number. Composed server-side so there is one
+// producer per number, and absent rather than zero where nothing was measured.
+pub mod specimen;
 pub mod streams;
 pub mod swarm_algorithms;
 pub mod swarm_telemetry;

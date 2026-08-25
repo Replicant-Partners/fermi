@@ -476,7 +476,28 @@ pub async fn record_hitl_action_handler(
     // consensus path, which sits downstream, with it.
     let world = build_agent_world_model(&state.db, event.agent_id, event.episode_id).await;
     let gate = CoherenceGate::default();
-    let gate_outcome = gate.check_against(&encoded, &world).map_err(|e| match e {
+    let gate_result = gate.check_against(&encoded, &world);
+
+    // Counted before it is turned into an HTTP status. Until now a `Blocked`
+    // verdict produced a 422 and nothing else — no row, no log, no counter — so
+    // the gate's refusal rate was unobservable. That is how it came to refuse
+    // 100% of agent-wide interventions for arithmetic reasons, for the life of
+    // the feature, with the two-reviewer consensus path stranded behind it.
+    //
+    // `Undetermined` is recorded as neither approved nor refused, because it is
+    // neither: the gate declined to form an opinion.
+    {
+        use fermi::gate_trust::{decided, Decision, Gate};
+        match &gate_result {
+            Ok(o) if o.verdict == agent_bestiary_coherence_gate::GateVerdict::Undetermined => {
+                decided(Gate::Coherence, Decision::Undetermined, None)
+            }
+            Ok(_) => decided(Gate::Coherence, Decision::Approved, None),
+            Err(e) => decided(Gate::Coherence, Decision::Refused, Some(&e.to_string())),
+        }
+    }
+
+    let gate_outcome = gate_result.map_err(|e| match e {
         GateError::Blocked {
             gamma,
             threshold,
@@ -1663,7 +1684,7 @@ pub async fn patch_dyad_profile_handler(
     ))
 }
 
-// ─── Loop 5a mechanism probe (GET /api/observatory/loops/brier/mechanism) ────
+// ─── Loop 5.A mechanism probe (GET /api/observatory/loops/brier/mechanism) ───
 //
 // The in-product twin of `scripts/loop5_brier_mechanical_check.sql`. Same nine
 // MECHANISM checks, same SQL, same IDs — see that file for the full rationale
@@ -1673,7 +1694,7 @@ pub async fn patch_dyad_profile_handler(
 //
 // Calibration answers "what is this agent's score". This answers "is the
 // machinery that produced that score actually working". They fail
-// independently, and conflating them is what let Loop 5a report itself closed
+// independently, and conflating them is what let Loop 5.A report itself closed
 // while the BrierEvaluator could not see a single forecast.
 //
 // The distinction that makes this usable on a young loop: MECHANISM checks are
@@ -2060,7 +2081,7 @@ const LOOP5_AGENT_CHECKS: &[AgentCheck] = &[
     ),
 ];
 
-/// Outcome of the MECHANISM probe: whether the Loop 5a chain moves a signal
+/// Outcome of the MECHANISM probe: whether the Loop 5.A chain moves a signal
 /// correctly, independent of whether the resulting numbers are impressive.
 ///
 /// Extracted from the handler so the per-agent loops endpoint can reach the same
@@ -2267,7 +2288,7 @@ pub async fn probe_loop5_mechanism_for_agent(db: &sqlx::PgPool, agent_id: Uuid) 
 
 /// GET /api/observatory/loops/brier/mechanism
 ///
-/// Structured verdict on whether the Loop 5a chain moves a signal correctly,
+/// Structured verdict on whether the Loop 5.A chain moves a signal correctly,
 /// independent of whether the resulting numbers are impressive.
 ///
 /// Admin-only: the checks aggregate across every tenant's forecasts, so the
@@ -2953,7 +2974,7 @@ pub async fn agent_loops_handler(
                 json!({ "projection_accuracy_mean": proj, "n_projection_observations": n_proj }),
             ));
 
-            // Loop 5a — Brier calibration. Gated on skill over the base rate,
+            // Loop 5.A — Brier calibration. Gated on skill over the base rate,
             // never on the raw score: on the 48 World Cup tournament-winner
             // forecasts (47 NO, 1 YES) a forecaster that knows nothing scores
             // ~98% raw, and gating on that reported base-rate skew as a closed

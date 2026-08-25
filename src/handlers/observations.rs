@@ -578,9 +578,29 @@ pub async fn ingest_observations_handler(
         .into_iter()
         .collect();
 
-    // Hook 2: resolve real readings against SimOps predictions (fire-and-forget).
-    // For each real observation (not simops_simulation), check if a committed
-    // synthetic prediction exists and write process_spacetime rows.
+    // Loop 5.A (projection accuracy), both directions (fire-and-forget).
+    //
+    // A projection gets COMMITTED — the anchor proving the prediction pre-dated
+    // any measurement. A measurement gets RESOLVED against prior commitments.
+    // Which one an observation is comes from `projection_kind`, shared with
+    // every other reader; this site used to decide it inline with
+    // `source == "simops_simulation"`, which classified all 12,167 dynamics
+    // projections as measurements and every one of them fell through to the
+    // resolution branch.
+    //
+    // The commit branch is new here, and it is the link that was missing.
+    // `commit_projection` had **no callers at all**: the only site that was
+    // supposed to call it is a `let _ = (...)` stub in
+    // `simops_tools::execute_simops_write_observation`, whose own comment calls
+    // it "hooks for an observability path that may or may not be live". It was
+    // not live, and it was on the wrong path anyway — the agent tool has
+    // written zero observations. The projections arrive here, through the HTTP
+    // ingest, so this is where the clock has to start.
+    //
+    // `process_projection_commits`: 0 rows against 61 distinct projections on
+    // file. Everything downstream of it — `process_spacetime`,
+    // `eval_signals.projection_accuracy` — was INERT for want of this write,
+    // and reported as though the trigger site were the problem.
     {
         let pool_bg = state.db.clone();
         let obs_copy = batch.observations.clone();
@@ -590,19 +610,27 @@ pub async fn ingest_observations_handler(
 
         tokio::spawn(async move {
             for (i, obs) in obs_copy.iter().enumerate() {
-                // Skip synthetic observations — only process real sensor readings
-                let source = obs
-                    .extra
-                    .as_ref()
-                    .and_then(|e| e.get("source"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                if source == "simops_simulation" {
+                let (oid, extra) = &derived_copy[i];
+
+                if fermi::projection_kind::is_projection(extra) {
+                    let str_field = |k: &str| extra.get(k).and_then(|v| v.as_str());
+                    let _ = crate::handlers::simops_benchmark::commit_projection(
+                        &pool_bg,
+                        *oid,
+                        sid,
+                        wid,
+                        &obs.observable_property,
+                        obs.feature_of_interest.as_deref(),
+                        obs.result_value,
+                        str_field("model_uri"),
+                        str_field("stage_id"),
+                        str_field("projection_id"),
+                        obs.phenomenon_time,
+                        Some(extra),
+                    )
+                    .await;
                     continue;
                 }
-
-                let (oid, _) = &derived_copy[i];
-                let conditions = obs.extra.clone();
 
                 let reading = crate::handlers::simops_benchmark::RealReading {
                     observation_id: *oid,
@@ -612,7 +640,7 @@ pub async fn ingest_observations_handler(
                     feature_of_interest: obs.feature_of_interest.clone(),
                     actual_value: obs.result_value,
                     measured_at: chrono::Utc::now(),
-                    conditions,
+                    conditions: obs.extra.clone(),
                 };
                 let _ = crate::handlers::simops_benchmark::resolve_against_projection(
                     &pool_bg, &reading,

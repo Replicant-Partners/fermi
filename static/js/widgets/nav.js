@@ -23,9 +23,12 @@ const Nav = {
       </div>
       <div class="nav-right">
         <nav class="nav-links">
-          <a href="/catalogue" class="${current === "catalogue" ? "active" : ""}">Catalogue</a>
+          <a href="/rounds" class="${current === "rounds" ? "active" : ""}">Rounds</a>
+          <a href="/bestiary" class="${current === "bestiary" ? "active" : ""}">Bestiary</a>
+          <a href="/observatory" class="${current === "observatory" ? "active" : ""}">Observatory</a>
+          <a href="/gates" class="${current === "gates" ? "active" : ""}">Gates</a>
+          <a href="/ecology" class="${current === "ecology" ? "active" : ""}">Ecology</a>
           <a href="/apps" class="${current === "apps" ? "active" : ""}">Apps</a>
-          <a href="/marketplace" class="${current === "similarity-lab" ? "active" : ""}">Similarity Lab</a>
           <a href="/docs" class="${current === "docs" ? "active" : ""}">Docs</a>
         </nav>
         <div class="nav-bell" id="nav-bell" style="display:none">

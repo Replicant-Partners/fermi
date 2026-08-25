@@ -255,7 +255,16 @@ pub async fn evaluate_coherence_handler(
                     format!(
                         "Coherence score: {:.0}% ({}). Principle scores: {:?}. Health indicators: {:?}.\n\n\
                          Recent conversation:\n{}\n\n\
-                         Run Stage 2 (Diagnose) and Stage 3 (Coordinate): identify which TEC principles \
+                         Run Stage 0 (Pre-flight), Stage 2 (Diagnose) and Stage 3 (Coordinate).\n\n\
+                         Stage 0 first, and with the platform tools rather than a file: call \
+                         `get_intention_map` to see what the members have already declared, then \
+                         `declare_intention` for each agent whose next action you are about to \
+                         recommend — that agent's id, an `action_type`, and a one-line description. \
+                         A recommendation registered before it is acted on can be checked for \
+                         overlap; one written only into the brief cannot. Each declaration returns \
+                         a signal; on OVERLAP_WARNING call `suggest_differentiation` for the two \
+                         agents and fold the answer into Stage 3.\n\n\
+                         Then Stage 2 and Stage 3: identify which TEC principles \
                          are weak and provide specific actionable recommendations.\n\n\
                          The incoherence has ALREADY been classified from the principle scores \
                          (`incoherence_type` in the health indicators above) - do not re-derive it and \

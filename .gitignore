@@ -117,3 +117,5 @@ forecasts/*.evidence.md
 # with `git commit --only <paths>`, which commits the named paths regardless of
 # what else the index has picked up.
 .git-msg-*.txt
+
+.gitmsg-ux

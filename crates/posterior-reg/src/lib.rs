@@ -23,10 +23,10 @@
 //!
 //! ## Two-loop separation
 //!
-//! Like `crates/posterior`, this crate is entirely Loop A (parameter fitting).
-//! The output [`posterior::FittedDistribution`] feeds Loop B (executor.rs) as a
-//! Driver distribution. The executor never knows whether the parameters came
-//! from a human, a marginal fit, or a conditional fit.
+//! Like `crates/posterior`, this crate is entirely the fitting loop (parameter
+//! fitting). The output [`posterior::FittedDistribution`] feeds the simulation
+//! loop (executor.rs) as a Driver distribution. The executor never knows whether
+//! the parameters came from a human, a marginal fit, or a conditional fit.
 //!
 //! ## Async model
 //!

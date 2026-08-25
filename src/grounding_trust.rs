@@ -1,6 +1,6 @@
 //! # Grounding trust contract — the fields that have no source
 //!
-//! Third sibling to [`crate::schema_trust`] and [`crate::rollup_trust`]:
+//! **Rung 4 of the verification ladder** (`crate::ladder`). Written third to [`crate::schema_trust`] and [`crate::rollup_trust`]:
 //!
 //! | Contract | Question |
 //! | --- | --- |

@@ -562,15 +562,37 @@ pub async fn post_workspace_message_handler(
                             "agent_id": db_agent.agent_id,
                             "workspace_id": ws_uuid2,
                         });
-                        let _ = state2
-                            .memory_store
-                            .store_episode_with_provenance(
-                                episode.clone(),
-                                provenance.as_ref(),
-                                Some(source_ref),
-                            )
-                            .await;
+                        // Counted. Note what happens next if this fails: the
+                        // timeline write below references this episode's id, and
+                        // `agent_timeline_entries.episode_id` is a foreign key,
+                        // so one lost episode silently costs two loop sinks.
+                        // `execution_stream` guards its equivalent spawn on the
+                        // episode having landed; this site and
+                        // `rabble_workspace` do not. Instrumented first so the
+                        // guard can be shown to have changed something.
+                        let stored = fermi::write_accounting::observe(
+                            fermi::write_accounting::Sink::Episodes,
+                            state2
+                                .memory_store
+                                .store_episode_with_provenance(
+                                    episode.clone(),
+                                    provenance.as_ref(),
+                                    Some(source_ref),
+                                )
+                                .await,
+                        );
 
+
+                        // Guarded on the episode having landed.
+                        //
+                        // `agent_timeline_entries.episode_id` is a foreign key
+                        // to the row above. When that write failed — swallowed,
+                        // as this one is — the timeline write was attempted
+                        // anyway, violated the key, and was swallowed in turn:
+                        // one failure, two loop sinks lost, no signal anywhere.
+                        // `execution_stream` has always guarded its equivalent
+                        // spawn; this site and `rabble_workspace` did not.
+                        if stored.is_some() {
                         // Make this turn visible to drift + anomaly detection.
                         crate::handlers::live_observability::spawn_live_observation(
                             &state2,
@@ -586,6 +608,7 @@ pub async fn post_workspace_message_handler(
                                 rupture_detected: false,
                             },
                         );
+                        }
 
                         // Charge execution gas from workspace wallet
                         let tokens = output.tokens_used.unwrap_or(0) as i32;
@@ -833,7 +856,15 @@ pub async fn post_workspace_message_handler(
                 created_at: chrono::Utc::now(),
             };
 
-            if let Ok(eval_id) = store.store_coherence_evaluation(&eval).await {
+            // The `Err` was not bound at all here, so a failed automatic
+            // evaluation left no trace of any kind — while the on-demand twin in
+            // `workspace::coherence` propagates. Loop 3's trend was therefore
+            // built from whichever of the two happened to succeed.
+            let stored = fermi::write_accounting::observe(
+                fermi::write_accounting::Sink::CoherenceEvaluations,
+                store.store_coherence_evaluation(&eval).await,
+            );
+            if let Some(eval_id) = stored {
                 let update_msg = WorkspaceMessage {
                     message_id: uuid::Uuid::new_v4(),
                     workspace_id: ws_uuid,

@@ -18,8 +18,8 @@
 //!
 //! ## Two-loop separation
 //!
-//! Loop A (this crate): `observations → fit → FittedDistribution::Beta(α, β)`
-//! Loop B (executor.rs, UNCHANGED): `Beta(α, β) → MC samples → outcome distribution`
+//! The fitting loop (this crate): `observations → fit → FittedDistribution::Beta(α, β)`
+//! The simulation loop (executor.rs, UNCHANGED): `Beta(α, β) → MC samples → outcome distribution`
 //!
 //! The seam is the FPL `Distribution` type. `FittedDistribution::to_fpl_params()` emits
 //! a string that is valid FPL `Driver` syntax (e.g. `"Beta(9.4000, 13.6000)"`).
@@ -55,6 +55,7 @@ pub mod auto;
 pub mod beta;
 pub mod bootstrap;
 pub mod extractors;
+pub mod feeds;
 pub mod lognormal;
 pub mod normal;
 pub mod triangular;
@@ -66,6 +67,9 @@ pub use bootstrap::bootstrap_ci;
 pub use extractors::{
     BinaryFieldValue, BinaryWinnerIdMatch, Extractor, ExtractorDescription, ExtractorError,
     ExtractorRegistry, ScalarDifference, ScalarFieldValue, WorkspaceContext,
+};
+pub use feeds::{
+    Feed, FeedDescription, FeedError, FeedRegistry, ObservationRow, ObservationSet, Series,
 };
 pub use lognormal::fit_lognormal_moments;
 pub use normal::fit_normal_conjugate;

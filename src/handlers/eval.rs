@@ -692,9 +692,10 @@ pub async fn run_eval_cases(
                 episode.provenance.to_string(),
                 episode.persona_version_at_write,
             );
-            if let Err(e) = state.memory_store.create_eval_signals(&signals).await {
-                eprintln!("Failed to persist eval signals for run {}: {}", run_id, e);
-            }
+            let _ = fermi::write_accounting::observe(
+                fermi::write_accounting::Sink::EvalSignals,
+                state.memory_store.create_eval_signals(&signals).await,
+            );
 
             // Phase 3 — inline timeline-entry write. Cheap; lets the
             // observatory dashboard render without lag. Drift +
@@ -710,6 +711,17 @@ pub async fn run_eval_cases(
                 .await
             {
                 eprintln!("Failed to write timeline entry for run {}: {}", run_id, e);
+                fermi::write_accounting::record(
+                    fermi::write_accounting::Sink::AgentTimelineEntries,
+                    false,
+                    Some(&e.to_string()),
+                );
+            } else {
+                fermi::write_accounting::record(
+                    fermi::write_accounting::Sink::AgentTimelineEntries,
+                    true,
+                    None,
+                );
             }
 
             // Pull the legacy avg_judge_score signal so the Phase 1
@@ -816,9 +828,12 @@ pub async fn run_eval_cases(
         duration_ms: None,
     };
 
-    if let Err(e) = state.memory_store.complete_eval_run(&completed_run).await {
-        eprintln!("Failed to complete eval run {}: {}", run_id, e);
-    }
+    // A lost terminal UPDATE leaves the run `running` with a NULL
+    // `completed_at` for ever, and no contract looks for that.
+    let _ = fermi::write_accounting::observe(
+        fermi::write_accounting::Sink::EvalRuns,
+        state.memory_store.complete_eval_run(&completed_run).await,
+    );
 
     // Notify the agent owner when a regression is detected so the stored
     // flag actually becomes actionable, not just write-only dead storage.
@@ -1010,6 +1025,12 @@ fn registry_outcome_to_signals(
                 agent_id,
                 evaluator_name: eval.evaluator_name.clone(),
                 evaluator_version: eval.evaluator_version.clone(),
+                // `EvalSignal.evaluator_tier` is a `String` in
+                // `agent-bestiary-memory`, which cannot depend on this crate,
+                // so the type ends here. What it buys is that the token is
+                // produced by `EvaluatorTier` rather than typed at the call
+                // site — this is the last remaining hop where a literal could
+                // be substituted, and it is one hop, in one file.
                 evaluator_tier: tier_label(r.tier).to_string(),
                 dimension: dim.as_str().to_string(),
                 score: *score,
@@ -1028,10 +1049,19 @@ fn registry_outcome_to_signals(
     out
 }
 
-fn tier_label(tier: agent_bestiary_evaluators::EvalTier) -> &'static str {
+/// The one place an evaluator's `EvalTier` becomes the vocabulary
+/// `eval_signals.evaluator_tier` stores.
+///
+/// Two enums, deliberately: `EvalTier` is the evaluator crate's idea of how a
+/// score was produced, [`fermi::seam_vocabulary::EvaluatorTier`] is the
+/// column's. Mapping them here is the whole of the translation, and it is
+/// exhaustive — a new `EvalTier` variant fails this match rather than reaching
+/// the column as a token the CHECK would refuse.
+fn tier_label(tier: agent_bestiary_evaluators::EvalTier) -> fermi::seam_vocabulary::EvaluatorTier {
+    use fermi::seam_vocabulary::EvaluatorTier;
     match tier {
-        agent_bestiary_evaluators::EvalTier::PreFilter => "pre_filter",
-        agent_bestiary_evaluators::EvalTier::Dimensional => "dimensional",
+        agent_bestiary_evaluators::EvalTier::PreFilter => EvaluatorTier::PreFilter,
+        agent_bestiary_evaluators::EvalTier::Dimensional => EvaluatorTier::Dimensional,
     }
 }
 

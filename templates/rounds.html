@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en" class="theme-hasui">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Rounds — Agent Bestiary</title>
+  <link rel="stylesheet" href="/static/css/variables.css"/>
+  <link rel="stylesheet" href="/static/css/common.css"/>
+  <link rel="stylesheet" href="/static/css/components.css"/>
+  <style>
+  body{font-family:"Berkeley Mono","JetBrains Mono",monospace;line-height:1.5;background:var(--bg0-hard);font-size:13px;margin:0;}
+  a{color:var(--fg3);text-decoration:none;}
+  a:hover{color:var(--yellow);}
+
+  .wrap{max-width:1000px;margin:0 auto;padding:0 20px 60px;}
+
+  /* ── Head ── */
+  .rounds-head{padding:18px 0 12px;border-bottom:1px solid var(--bg2);margin-bottom:18px;}
+  .rounds-head h1{font-size:1.05rem;color:var(--yellow);margin:0 0 3px;}
+  .rounds-head .sub{font-size:0.74rem;color:var(--fg4);}
+  .rounds-head .nav{font-size:0.75rem;margin-top:8px;display:flex;gap:14px;}
+
+  /* ── Section ── */
+  .sec{margin-bottom:26px;}
+  .sec-head{display:flex;align-items:baseline;gap:8px;margin-bottom:8px;padding-bottom:5px;border-bottom:1px solid var(--bg2);}
+  .sec-head h2{font-size:0.82rem;color:var(--fg2);margin:0;text-transform:uppercase;letter-spacing:0.08em;}
+  .sec-head .meta{font-size:0.7rem;color:var(--fg4);}
+  .sec-note{font-size:0.71rem;color:var(--fg4);font-style:italic;margin:-2px 0 10px;line-height:1.45;}
+
+  /* ── Decision rows ── */
+  .dec{display:flex;align-items:flex-start;gap:10px;padding:8px 10px;border-bottom:1px solid var(--bg2);}
+  .dec:hover{background:var(--bg1);}
+  .dec-sev{width:3px;align-self:stretch;flex-shrink:0;}
+  .sev-critical{background:var(--red,#fb4934);}
+  .sev-warning{background:var(--yellow);}
+  .sev-info{background:var(--bg3);}
+  .dec-body{flex:1;min-width:0;}
+  .dec-what{font-size:0.8rem;color:var(--fg2);}
+  .dec-sub{font-size:0.7rem;color:var(--fg4);margin-top:2px;}
+  .dec-age{font-size:0.7rem;color:var(--fg4);white-space:nowrap;}
+  .dec-age.stale{color:var(--yellow);}
+  .kind{display:inline-block;font-size:0.62rem;text-transform:uppercase;letter-spacing:0.06em;
+        border:1px solid var(--bg3);padding:1px 5px;margin-right:6px;color:var(--fg4);}
+
+  /* ── Instrument ── */
+  .inst{display:flex;align-items:flex-start;gap:9px;padding:7px 10px;border-bottom:1px solid var(--bg2);cursor:pointer;}
+  .inst:hover{background:var(--bg1);}
+  .inst-marker{font-weight:bold;width:14px;flex-shrink:0;text-align:center;}
+  .m-fault{color:var(--red,#fb4934);}
+  .m-idle{color:var(--fg4);}
+  .m-unknown{color:var(--purple,#d3869b);}
+  .inst-body{flex:1;min-width:0;}
+  .inst-shows{font-size:0.78rem;color:var(--fg2);}
+  .inst-line{font-size:0.71rem;color:var(--fg4);margin-top:2px;}
+  .inst-token{font-size:0.65rem;color:var(--fg4);border:1px solid var(--bg3);padding:1px 5px;white-space:nowrap;}
+  .inst-detail{display:none;padding:8px 10px 10px 33px;background:var(--bg1);border-bottom:1px solid var(--bg2);
+               font-size:0.73rem;color:var(--fg3);line-height:1.55;}
+  .inst-detail.open{display:block;}
+  .inst-src{color:var(--fg4);margin-top:5px;font-size:0.7rem;}
+  .inst-rem{color:var(--aqua);margin-top:5px;}
+  .inst-tabs{display:flex;gap:6px;margin-bottom:8px;}
+
+  /* ── Resume ── */
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px;}
+  .tile{border:1px solid var(--bg2);padding:9px 11px;background:var(--bg0);}
+  .tile:hover{border-color:var(--bg3);background:var(--bg1);}
+  .tile-name{font-size:0.8rem;color:var(--fg2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .tile-meta{font-size:0.68rem;color:var(--fg4);margin-top:3px;}
+
+  .empty{padding:14px 10px;font-size:0.75rem;color:var(--fg4);}
+  .clear{padding:14px 10px;font-size:0.78rem;color:var(--green);}
+  .btn-xs{background:transparent;border:1px solid var(--bg3);padding:3px 8px;font-size:0.7rem;
+          color:var(--fg4);cursor:pointer;font-family:inherit;}
+  .btn-xs:hover{border-color:var(--yellow);color:var(--yellow);}
+  .btn-xs.active{border-color:var(--aqua);color:var(--aqua);}
+  .boot{font-size:0.66rem;color:var(--fg4);margin-left:6px;}
+  </style>
+</head>
+<body>
+  <div id="nav-root"></div>
+  <div class="wrap">
+    <div class="rounds-head">
+      <h1>Rounds</h1>
+      <div class="sub">What needs you, in what order</div>
+      <div class="nav">
+        <a href="/observatory">Observatory &rarr;</a>
+        <a href="/observatory/hitl">Review queue &rarr;</a>
+        <a href="/ecology">Ecology &rarr;</a>
+        <a href="/dashboard">Dashboard (old)</a>
+      </div>
+    </div>
+
+    <!-- ── 1. Decisions ─────────────────────────────────────────────── -->
+    <div class="sec">
+      <div class="sec-head">
+        <h2>Decisions</h2>
+        <span class="meta" id="dec-meta">loading…</span>
+      </div>
+      <div class="sec-note">
+        Blocked on a person. Ordered by severity, then by how long it has waited —
+        a critical thing that has sat for a week outranks one from this morning.
+      </div>
+      <div id="decisions"><div class="empty">Loading…</div></div>
+    </div>
+
+    <!-- ── 2. Instrument ────────────────────────────────────────────── -->
+    <div class="sec">
+      <div class="sec-head">
+        <h2>Instrument</h2>
+        <span class="meta" id="inst-meta"></span>
+      </div>
+      <div class="sec-note">
+        What this platform can and cannot currently tell you. An empty panel is a
+        claim, and these are the claims: <b>fault</b> means something should have
+        happened and did not, <b>idle</b> means nothing has happened that should
+        have, <b>unknown</b> means no contract can say which. Nothing here is a
+        guess — every reading names the contract that produced it.
+      </div>
+      <div class="inst-tabs">
+        <button class="btn-xs active" data-filter="all">All</button>
+        <button class="btn-xs" data-filter="fault">Faults</button>
+        <button class="btn-xs" data-filter="unknown">Unanswerable</button>
+        <button class="btn-xs" data-filter="idle">Idle</button>
+      </div>
+      <div id="instrument"><div class="empty">Loading…</div></div>
+    </div>
+
+    <!-- ── 3. Resume ────────────────────────────────────────────────── -->
+    <div class="sec">
+      <div class="sec-head"><h2>Resume</h2><span class="meta" id="res-meta"></span></div>
+      <div id="resume"><div class="empty">Loading…</div></div>
+    </div>
+  </div>
+
+  <script src="/static/js/widgets/nav.js"></script>
+  <script src="/static/js/theme.js"></script>
+  <script>
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
+    ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+  const age = d => {
+    if (d == null) return "";
+    if (d < 1) return "today";
+    const n = Math.floor(d);
+    return n === 1 ? "1 day" : `${n} days`;
+  };
+
+  let INSTRUMENT = [];
+  let FILTER = "all";
+
+  function renderDecisions(rows, unreadable) {
+    const meta = document.getElementById("dec-meta");
+    const el = document.getElementById("decisions");
+
+    // A source that could not be read is reported before anything else. "Nothing
+    // is waiting" and "I could not ask" are different claims, and only one of
+    // them means you can stop looking.
+    const warn = (unreadable || []).length
+      ? `<div class="dec"><div class="dec-sev sev-critical"></div><div class="dec-body">
+           <div class="dec-what"><span class="kind">unreadable</span>
+             ${unreadable.length} source(s) could not be read — this queue is incomplete
+             by an unknown amount</div>
+           <div class="dec-sub">${unreadable.map(esc).join(" · ")}</div>
+         </div></div>`
+      : "";
+
+    if (!rows.length) {
+      meta.textContent = unreadable.length ? "incomplete" : "nothing waiting";
+      el.innerHTML = warn + (unreadable.length
+        ? ""
+        : `<div class="clear">✓ Nothing is waiting for you.</div>`);
+      return;
+    }
+    meta.textContent = `${rows.length} waiting`;
+    el.innerHTML = warn + rows.map(d => `
+      <div class="dec">
+        <div class="dec-sev sev-${esc(d.severity)}"></div>
+        <div class="dec-body">
+          <div class="dec-what"><span class="kind">${esc(d.kind)}</span>${esc(d.what)}</div>
+          <div class="dec-sub"><a href="${esc(d.subject_href)}">${esc(d.subject)}</a></div>
+        </div>
+        <div class="dec-age ${d.age_days > 7 ? "stale" : ""}">${esc(age(d.age_days))}</div>
+      </div>`).join("");
+  }
+
+  function renderInstrument() {
+    const el = document.getElementById("instrument");
+    const rows = FILTER === "all"
+      ? INSTRUMENT
+      : INSTRUMENT.filter(r => r.reading === FILTER);
+
+    const counts = INSTRUMENT.reduce((a, r) => (a[r.reading] = (a[r.reading] || 0) + 1, a), {});
+    document.getElementById("inst-meta").textContent =
+      `${INSTRUMENT.length} panels · ${counts.fault || 0} fault · ` +
+      `${counts.unknown || 0} unanswerable · ${counts.idle || 0} idle`;
+
+    if (!rows.length) {
+      el.innerHTML = `<div class="empty">No panel in that state.</div>`;
+      return;
+    }
+
+    el.innerHTML = rows.map((r, i) => `
+      <div class="inst" data-i="${i}">
+        <div class="inst-marker m-${esc(r.reading)}">${esc(r.marker.trim() || "·")}</div>
+        <div class="inst-body">
+          <div class="inst-shows">${esc(r.shows)}</div>
+          <div class="inst-line">${esc(r.lines[1] || r.lines[0] || "")}</div>
+        </div>
+        <div class="inst-token">${esc(r.token)}</div>
+      </div>
+      <div class="inst-detail" id="d-${i}">
+        ${esc(r.detail)}
+        <div class="inst-src">← ${esc(r.answered_by)} · reading: ${esc(r.marker_word)}</div>
+        ${r.remediation ? `<div class="inst-rem">→ ${esc(r.remediation)}</div>` : ""}
+      </div>`).join("");
+
+    el.querySelectorAll(".inst").forEach(node => {
+      node.addEventListener("click", () => {
+        document.getElementById("d-" + node.dataset.i)?.classList.toggle("open");
+      });
+    });
+  }
+
+  function renderResume(r) {
+    const el = document.getElementById("resume");
+    const agents = (r.agents || []).map(a => `
+      <a class="tile" href="/specimen/${encodeURIComponent(a.agent_name)}">
+        <div class="tile-name">${esc(a.label)}</div>
+        <div class="tile-meta">${a.runs} run${a.runs === 1 ? "" : "s"}${a.status && a.status !== "published" ? " · " + esc(a.status) : ""}</div>
+      </a>`).join("");
+    const ws = (r.workspaces || []).map(w => `
+      <a class="tile" href="/workspace/${esc(w.id)}">
+        <div class="tile-name">${esc(w.name)}</div>
+        <div class="tile-meta">${w.members} member${w.members === 1 ? "" : "s"}</div>
+      </a>`).join("");
+
+    const n = (r.agents || []).length + (r.workspaces || []).length;
+    document.getElementById("res-meta").textContent = n ? `${n} recent` : "";
+    el.innerHTML = n
+      ? `<div class="grid">${agents}${ws}</div>`
+      : `<div class="empty">Nothing yet. <a href="/agents/new">Create an agent</a> or <a href="/catalogue">browse the bestiary</a>.</div>`;
+  }
+
+  async function boot() {
+    if (window.Nav) Nav.init({ current: "rounds" });
+
+    let r;
+    try {
+      const res = await fetch("/api/me/rounds");
+      if (res.status === 401) {
+        document.querySelector(".wrap").innerHTML =
+          `<div class="rounds-head"><h1>Rounds</h1></div>
+           <div class="empty">Sign in to start your rounds.
+           <a href="/auth/google">Google</a> · <a href="/auth/github">GitHub</a></div>`;
+        return;
+      }
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      r = await res.json();
+    } catch (e) {
+      document.getElementById("decisions").innerHTML =
+        `<div class="empty">Could not load rounds: ${esc(e.message)}.
+         No queue is shown rather than an empty one — an empty queue and an
+         unreachable one are different claims.</div>`;
+      document.getElementById("instrument").innerHTML = "";
+      document.getElementById("resume").innerHTML = "";
+      return;
+    }
+
+    renderDecisions(r.decisions || [], r.unreadable || []);
+    INSTRUMENT = r.instrument || [];
+    renderInstrument();
+    renderResume(r.resume || {});
+
+    if (r.counters_since_boot) {
+      const m = document.getElementById("inst-meta");
+      m.insertAdjacentHTML("afterend",
+        `<span class="boot">· some counters are in-memory and reset on restart</span>`);
+    }
+
+    document.querySelectorAll("[data-filter]").forEach(b => {
+      b.addEventListener("click", () => {
+        document.querySelectorAll("[data-filter]").forEach(x => x.classList.remove("active"));
+        b.classList.add("active");
+        FILTER = b.dataset.filter;
+        renderInstrument();
+      });
+    });
+  }
+
+  boot();
+  </script>
+</body>
+</html>

@@ -42,6 +42,9 @@ pub enum ApiError {
     #[error("Rate limited — retry after {retry_after_secs}s")]
     RateLimited { retry_after_secs: u64 },
 
+    #[error("Rate limited — no retry delay given")]
+    RateLimitedUnknown,
+
     #[error("Server error: {0}")]
     Server(String),
 }
@@ -60,7 +63,7 @@ impl ApiError {
             ApiError::NotAuthenticated => Some(401),
             ApiError::Forbidden(_) => Some(403),
             ApiError::NotFound(_) => Some(404),
-            ApiError::RateLimited { .. } => Some(429),
+            ApiError::RateLimited { .. } | ApiError::RateLimitedUnknown => Some(429),
             ApiError::Server(_) => Some(500),
             ApiError::Network(_) | ApiError::Json(_) => None,
         }
@@ -76,7 +79,7 @@ impl ApiError {
             ApiError::NotAuthenticated => "unauthenticated",
             ApiError::Forbidden(_) => "forbidden",
             ApiError::NotFound(_) => "not_found",
-            ApiError::RateLimited { .. } => "rate_limited",
+            ApiError::RateLimited { .. } | ApiError::RateLimitedUnknown => "rate_limited",
             ApiError::Server(_) => "server",
         }
     }
@@ -87,17 +90,55 @@ impl ApiError {
     pub fn is_transient(&self) -> bool {
         matches!(
             self,
-            ApiError::Network(_) | ApiError::RateLimited { .. } | ApiError::Server(_)
+            ApiError::Network(_)
+                | ApiError::RateLimited { .. }
+                | ApiError::RateLimitedUnknown
+                | ApiError::Server(_)
         )
     }
 
-    fn from_status(status: u16, body: &str) -> Self {
+    /// How long this error asks the caller to wait, if it says.
+    ///
+    /// `None` means either "not a rate limit" or "a rate limit that
+    /// declined to name a delay" — the caller applies
+    /// [`abw_pacing::FALLBACK_RETRY`] for the latter rather than
+    /// inventing a number and then reporting it as the server's.
+    ///
+    /// [`abw_pacing::FALLBACK_RETRY`]: fermi_console::abw_pacing::FALLBACK_RETRY
+    pub fn retry_after(&self) -> Option<std::time::Duration> {
+        match self {
+            ApiError::RateLimited { retry_after_secs } => {
+                Some(std::time::Duration::from_secs(*retry_after_secs))
+            }
+            _ => None,
+        }
+    }
+
+    /// Classify a failed response, reading the retry delay it carries.
+    ///
+    /// The 429 arm used to be `retry_after_secs: 5` — a literal, with the
+    /// body discarded even though every other arm kept it. ABW puts the
+    /// real delay in that body and sets no `Retry-After` header, so the
+    /// console printed its own invented 5 alongside the server's actual
+    /// 28 in a single sentence:
+    ///
+    /// ```text
+    /// ABW API: Rate limited — retry after 5s
+    ///   (after SSE HTTP 429: LLM rate limit exceeded (10/min).
+    ///    Retry after 28 seconds.)
+    /// ```
+    ///
+    /// Nothing read the 5 either, so both numbers were decoration. Now
+    /// the delay is parsed, and [`ApiError::retry_after`] is what the
+    /// agent-run retry actually waits.
+    pub fn from_response(status: u16, retry_after_header: Option<&str>, body: &str) -> Self {
         match status {
             401 => ApiError::NotAuthenticated,
             403 => ApiError::Forbidden(body.to_string()),
             404 => ApiError::NotFound(body.to_string()),
-            429 => ApiError::RateLimited {
-                retry_after_secs: 5,
+            429 => match fermi_console::abw_pacing::retry_after_secs(retry_after_header, body) {
+                Some(retry_after_secs) => ApiError::RateLimited { retry_after_secs },
+                None => ApiError::RateLimitedUnknown,
             },
             500..=599 => ApiError::Server(body.to_string()),
             _ => ApiError::Http {
@@ -106,6 +147,25 @@ impl ApiError {
             },
         }
     }
+}
+
+/// Turn a failed response into a typed error WITHOUT losing its headers.
+///
+/// `Response::text` consumes the response, so every call site that wanted
+/// a body had to drop the headers one line before it constructed the
+/// error. All seven of them did, which is how a `Retry-After` would have
+/// been discarded if ABW ever sent one, and how the 429 arm came to
+/// fabricate its own delay instead. Reading both in one place makes that
+/// impossible to repeat.
+async fn error_from_response(response: reqwest::Response) -> ApiError {
+    let status = response.status().as_u16();
+    let retry_after = response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let body = response.text().await.unwrap_or_default();
+    ApiError::from_response(status, retry_after.as_deref(), &body)
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2024,10 +2084,8 @@ impl ApiClient {
 
         let response = self.http.get(&url).headers(headers).send().await?;
 
-        let status = response.status().as_u16();
         if !response.status().is_success() {
-            let body = response.text().await.unwrap_or_default();
-            return Err(ApiError::from_status(status, &body));
+            return Err(error_from_response(response).await);
         }
 
         let body = response.text().await?;
@@ -2050,10 +2108,8 @@ impl ApiClient {
             .send()
             .await?;
 
-        let status = response.status().as_u16();
         if !response.status().is_success() {
-            let body = response.text().await.unwrap_or_default();
-            return Err(ApiError::from_status(status, &body));
+            return Err(error_from_response(response).await);
         }
 
         let body = response.text().await?;
@@ -2110,11 +2166,9 @@ impl ApiClient {
             }
         })?;
 
-        let status = response.status().as_u16();
-        log::debug!("[api] POST {} → {}", url, status);
+        log::debug!("[api] POST {} → {}", url, response.status().as_u16());
         if !response.status().is_success() {
-            let body = response.text().await.unwrap_or_default();
-            return Err(ApiError::from_status(status, &body));
+            return Err(error_from_response(response).await);
         }
 
         let body = response.text().await?;
@@ -2137,10 +2191,8 @@ impl ApiClient {
             .send()
             .await?;
 
-        let status = response.status().as_u16();
         if !response.status().is_success() {
-            let body = response.text().await.unwrap_or_default();
-            return Err(ApiError::from_status(status, &body));
+            return Err(error_from_response(response).await);
         }
 
         let body = response.text().await?;
@@ -2153,10 +2205,8 @@ impl ApiClient {
 
         let response = self.http.delete(&url).headers(headers).send().await?;
 
-        let status = response.status().as_u16();
         if !response.status().is_success() {
-            let body = response.text().await.unwrap_or_default();
-            return Err(ApiError::from_status(status, &body));
+            return Err(error_from_response(response).await);
         }
 
         Ok(())
@@ -2182,10 +2232,8 @@ impl ApiClient {
             .send()
             .await?;
 
-        let status = response.status().as_u16();
         if !response.status().is_success() {
-            let body = response.text().await.unwrap_or_default();
-            return Err(ApiError::from_status(status, &body));
+            return Err(error_from_response(response).await);
         }
 
         let text = response.text().await?;
@@ -2282,6 +2330,24 @@ impl ApiClient {
     /// Get the authenticated user's personal forecasting stats.
     pub async fn my_stats(&self) -> Result<MyStats, ApiError> {
         self.get("/api/forecasts/my-stats").await
+    }
+
+    /// Per-agent measured contribution, for the WHOLE roster, in one call.
+    ///
+    /// Deliberately not `/api/agents/:id/calibration` in a loop. The
+    /// router needs a score for every agent that claims a domain before it
+    /// can rank them, and one HTTP call per agent on every decomposition
+    /// is the same fan-out that produced three dead runs and a 429
+    /// cascade — see [`fermi_console::abw_pacing`].
+    ///
+    /// Returns raw JSON on purpose. The shape is interpreted by
+    /// [`fermi_console::wire::agent_contributions_from_json`], in the lib
+    /// target, because a typed struct here would put the null-interval and
+    /// missing-field rules in the binary where no test can reach them —
+    /// and those rules decide whether a thin record outranks a declared
+    /// specialist.
+    pub async fn agent_contributions(&self) -> Result<JsonValue, ApiError> {
+        self.get("/api/agents/contributions").await
     }
 
     /// Browse public forecasts (no auth required, but auth adds personalization).
@@ -2732,10 +2798,8 @@ impl ApiClient {
         let url = self.url("/api/health").await;
         let response = self.http.get(&url).send().await?;
 
-        let status = response.status().as_u16();
         if !response.status().is_success() {
-            let body = response.text().await.unwrap_or_default();
-            return Err(ApiError::from_status(status, &body));
+            return Err(error_from_response(response).await);
         }
 
         let body = response.text().await?;
@@ -3567,23 +3631,41 @@ mod tests {
     #[test]
     fn test_error_mapping() {
         assert!(matches!(
-            ApiError::from_status(401, ""),
+            ApiError::from_response(401, None, ""),
             ApiError::NotAuthenticated
         ));
         assert!(matches!(
-            ApiError::from_status(403, "nope"),
+            ApiError::from_response(403, None, "nope"),
             ApiError::Forbidden(_)
         ));
         assert!(matches!(
-            ApiError::from_status(404, "gone"),
+            ApiError::from_response(404, None, "gone"),
             ApiError::NotFound(_)
         ));
+        // A 429 with nothing to read says so, rather than inventing a
+        // delay and reporting it as the server's.
         assert!(matches!(
-            ApiError::from_status(429, ""),
-            ApiError::RateLimited { .. }
+            ApiError::from_response(429, None, ""),
+            ApiError::RateLimitedUnknown
         ));
+        // ABW's actual message. The delay lives in the body because the
+        // server sets no `Retry-After` header.
         assert!(matches!(
-            ApiError::from_status(500, "boom"),
+            ApiError::from_response(
+                429,
+                None,
+                "LLM rate limit exceeded (10/min). Retry after 28 seconds."
+            ),
+            ApiError::RateLimited {
+                retry_after_secs: 28
+            }
+        ));
+        assert_eq!(
+            ApiError::from_response(429, Some("9"), "").retry_after(),
+            Some(std::time::Duration::from_secs(9))
+        );
+        assert!(matches!(
+            ApiError::from_response(500, None, "boom"),
             ApiError::Server(_)
         ));
     }

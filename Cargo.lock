@@ -7203,6 +7203,7 @@ dependencies = [
 name = "posterior"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "chrono",
  "rand 0.8.5",
  "rand_distr",

@@ -1,6 +1,12 @@
 //! Does the write path ever actually run?
 //!
-//! The fifth trust contract, and the one that would have caught the other four.
+//! **Rung 2 of the verification ladder** (`crate::ladder`), and the one that
+//! would have caught the other four.
+//!
+//! Written fifth, which is why this line used to read "the fifth trust
+//! contract". That is a chronology and it is not the ladder: liveness sits
+//! BENEATH truth, grounding and binding, because a fabricated value in a table
+//! nothing writes is not a grounding problem — it is an empty table.
 //!
 //! # Why it exists
 //!
@@ -46,6 +52,29 @@
 //! becoming a vague "does this number look plausible" check that nobody can act
 //! on — the shape of check that gets ignored and then deleted.
 
+use crate::is_projection_sql;
+use crate::write_accounting::{self, Sink, SinkAccount};
+
+/// When the projection-commit call site began to exist.
+///
+/// Projections generated before this cannot be anchored: a commitment written
+/// after the measurement it precedes proves nothing, so backfilling the 61
+/// historical runs would manufacture exactly the evidence Loop 5.A exists to
+/// make unmanufacturable. They are therefore not counted as missed
+/// opportunities, and this rung stays INERT until the next projection arrives.
+///
+/// A macro rather than a `const` because [`LIVENESS_CONTRACTS`] is a `const`
+/// built with `concat!`, which takes literals. Quoting the date in the query
+/// instead would put the authoritative value somewhere no reader looks.
+macro_rules! commit_hook_live_from {
+    () => {
+        "2026-08-22T00:00:00Z"
+    };
+}
+
+/// The same instant, readable, and asserted against the query below.
+pub const COMMIT_HOOK_LIVE_FROM: &str = commit_hook_live_from!();
+
 /// How often a writer is supposed to fire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Expectation {
@@ -90,6 +119,17 @@ pub struct LivenessContract {
     /// failure, where a probe that could never return healthy was ignored for
     /// eight releases.
     pub requires: Option<(&'static str, &'static str)>,
+    /// The write-accounting sink for this contract's writer, when the writer is
+    /// instrumented.
+    ///
+    /// A typed link rather than a string match on [`Self::sink`], which is a
+    /// human label and not a table name. Deriving one from the other would be a
+    /// proxy assertion of exactly the kind this module exists to catch.
+    ///
+    /// `None` means the writer propagates its errors, so there is nothing to
+    /// count — or that it swallows them and has not been instrumented yet,
+    /// which is a different thing and is reported as such.
+    pub accounted: Option<Sink>,
     /// What is lost while the path is silent. Not what the path does — what
     /// stops being knowable.
     pub why: &'static str,
@@ -184,6 +224,7 @@ pub const LIVENESS_CONTRACTS: &[LivenessContract] = &[
                           ) overdue",
         expectation: Expectation::EveryOpportunity,
         requires: Some(("consolidation_jobs", "completed_at")),
+        accounted: Some(Sink::ConsolidationJobs),
         why: "Loop 1 is the only path by which an agent's own experience changes \
               how it reasons — episodes cluster into semantic rules and \
               `kg_context` injects those rules into the next prompt. The \
@@ -207,73 +248,188 @@ pub const LIVENESS_CONTRACTS: &[LivenessContract] = &[
                       this contract counts completed jobs in a window rather \
                       than ever.",
     },
+    // ── Loop 5.A (projection accuracy), as the three links it actually is ──
+    //
+    // This was ONE contract, and it read: 0 writes, **12,167 opportunities**.
+    // Both numbers were right and the pairing was not. The opportunity query
+    // counted `sosa_observations WHERE extra ? 'projection_id'` and its comment
+    // said "a real observation carrying a projection_id is a batch that
+    // completed against a prior projection". Measured: all 12,167 of those rows
+    // are the *projections themselves* — 61 distinct runs sampled at ~200
+    // trajectory points each — and **zero** are measurements. Not one
+    // projection_id has both a projection and a measurement against it.
+    //
+    // So the rung whose entire job is to make `count(*) = 0` mean something
+    // was itself asserting a proxy: it counted predictions and called them
+    // chances to score. The remediation it printed named the trigger site at
+    // the far end of the chain, and following it would have wired a trigger
+    // that fires zero times, against a reader that selects the empty set,
+    // for want of an anchor that no code writes. Three breaks, and the one
+    // number could not distinguish them.
+    //
+    // Splitting the chain is the fix, and it is what the rest of this module
+    // already claims to do: a Silent verdict should point at a file rather
+    // than start an investigation. Each link below can break alone, and the
+    // first one that is SILENT with a live link above it is the break.
     LivenessContract {
-        sink: "eval_signals.projection_accuracy (Loop 5b)",
+        sink: "process_projection_commits (Loop 5.A · 1. anchor)",
+        writer: "projection_commit::commit_projection, from handlers::observations::ingest \
+                 and agent_backend::simops_tools",
+        sink_sql: "SELECT count(*)::bigint AS writes FROM process_projection_commits",
+        // Distinct projection RUNS, not trajectory points: one commitment per
+        // projected value, but a contract that compared a run count to a point
+        // count would read as 60/12,167 the moment it started working.
+        //
+        // Bounded by `generated_at` because a commitment written after the
+        // measurement proves nothing, so the 61 historical projections cannot
+        // be honestly backfilled and must not be counted as missed. A row with
+        // no `generated_at` is not counted either — the conservative direction,
+        // and the rule this module states: never claim an opportunity that
+        // cannot be shown to have happened.
+        opportunity_sql: concat!(
+            "SELECT count(DISTINCT extra->>'projection_id')::bigint AS opportunities \
+               FROM sosa_observations \
+              WHERE extra ? 'projection_id' AND ",
+            is_projection_sql!(),
+            "    AND (extra->>'generated_at')::timestamptz > TIMESTAMPTZ '",
+            commit_hook_live_from!(),
+            "'"
+        ),
+        expectation: Expectation::EveryOpportunity,
+        requires: Some(("process_projection_commits", "commitment_hash")),
+        accounted: Some(Sink::ProcessProjectionCommits),
+        why: "The anchor is what makes Loop 5.A a verification rather than a \
+              transcription: it records that a value was predicted BEFORE any \
+              measurement of it existed. Without it a score is just a \
+              comparison of two numbers with no established order, which is \
+              precisely the claim Loop 5.A is supposed to be immune to. \
+              Nothing downstream can run — resolution joins against this \
+              table, and scoring joins against resolution.",
+        remediation: "`commit_projection` had NO callers. The site that should \
+                      have called it was a `let _ = (…every argument…)` in \
+                      `simops_tools`, described in its own comment as 'hooks for \
+                      an observability path that may or may not be live', and it \
+                      was on the wrong path regardless: the agent tool has \
+                      written zero observations and the projections arrive over \
+                      HTTP. Both call it now. SILENT here means the ingest hook \
+                      is not firing on rows the shared predicate calls \
+                      projections — check `projection_commit_failed` in the logs \
+                      before suspecting the predicate.",
+    },
+    LivenessContract {
+        sink: "process_spacetime (Loop 5.A · 2. resolution)",
+        writer: "handlers::simops_benchmark::resolve_against_projection, \
+                 from handlers::observations::ingest",
+        sink_sql: "SELECT count(*)::bigint AS writes FROM process_spacetime",
+        // A measurement is an opportunity only if there is something committed
+        // for it to resolve against. Counting every measurement would make this
+        // red for the absence of the link ABOVE it, which is the mistake the
+        // single 12,167 contract made.
+        opportunity_sql: concat!(
+            "SELECT count(*)::bigint AS opportunities FROM sosa_observations r \
+              WHERE NOT ",
+            is_projection_sql!("r"),
+            "  AND EXISTS (SELECT 1 FROM process_projection_commits c \
+                            WHERE c.observable_property = r.observable_property)"
+        ),
+        expectation: Expectation::EveryOpportunity,
+        requires: Some(("process_spacetime", "accuracy_score")),
+        accounted: Some(Sink::ProcessSpacetime),
+        why: "One row per point where the physical world spoke back to the \
+              model. This is the research artefact the SimOps benchmark exists \
+              to produce, and the input the scoring evaluator reads.",
+        remediation: "INERT here with the anchor live means no measurement has \
+                      yet been taken of anything that was projected. That is a \
+                      fact about the deployment, not a bug: today the \
+                      projections cover thirteen `chem:`/`bio:` properties and \
+                      the measurement stream covers fourteen entirely different \
+                      ones, with a single overlapping row. Loop 5.A cannot \
+                      close until something measures what something else \
+                      predicted.",
+    },
+    LivenessContract {
+        sink: "eval_signals.projection_accuracy (Loop 5.A · 3. scoring)",
         writer: "evaluators::ProjectionScoringEvaluator, via handlers::eval::run_eval_cases",
         sink_sql: "SELECT count(*)::bigint AS writes FROM eval_signals \
                     WHERE evaluator_name ILIKE '%projection%'",
-        // A real observation carrying a projection_id is a batch that completed
-        // against a prior projection — exactly the event the architecture says
-        // triggers scoring. Migration 130 indexes this lookup, so the
-        // opportunity is both real and cheap to count.
-        opportunity_sql: "SELECT count(*)::bigint AS opportunities FROM sosa_observations \
-                           WHERE extra ? 'projection_id'",
+        // A resolved pair IS the scoreable event, and it is the only thing that
+        // is. This is the number the old contract should have used; it was
+        // unavailable because nothing had ever written the table.
+        opportunity_sql: "SELECT count(*)::bigint AS opportunities FROM process_spacetime",
         expectation: Expectation::EveryOpportunity,
-        requires: Some(("sosa_observations", "extra")),
-        why: "Loop 5b is the hard-verified half of calibration: a physical \
-              measurement scored against what the model projected, which is the \
-              one signal an agent cannot talk its way out of. The reader is \
-              fully wired — `calibration.rs` surfaces projection_accuracy and \
-              the observatory displays it — so from a dashboard the loop looks \
-              closed. The producing edge does not exist: writing a real \
-              observation does not invoke the evaluator, and the arc the \
-              architecture describes as 'real batch completes -> \
-              ProjectionScoringEvaluator' is not present in code.",
-        remediation: "The hook site already exists and already has every value it \
-                      needs in scope, including `projection_id`: see the \
-                      `let _ = (...)` in `simops_tools::execute_simops_write_observation`, \
-                      whose comment calls it 'hooks for an observability path that \
-                      may or may not be live'. It is not live. Either connect it \
-                      to the evaluator registry, or delete the stub and stop \
-                      claiming 5b — a maybe in a comment is how this stayed \
-                      unresolved. Note also that `projection_id` is never placed \
-                      into the eval bundle context, so even a manual eval run \
-                      falls back to the 30-day heuristic rather than matching \
-                      the projection it is scoring.",
+        requires: Some(("eval_signals", "evaluator_name")),
+        accounted: Some(Sink::EvalSignals),
+        why: "The hard-verified half of calibration, and the one signal an agent \
+              cannot talk its way out of. The reader is fully wired — \
+              `calibration.rs` surfaces projection_accuracy and the observatory \
+              displays it — so from a dashboard the loop has always looked \
+              closed.",
+        remediation: "Two things must be true and only one is now. (1) The \
+                      lookup must recognise a projection: it matched only the \
+                      agent-tool tag on `extra->>'source'`, which no row in the \
+                      table has ever carried, and now uses the shared \
+                      `projection_kind` predicate. (2) A real observation must \
+                      TRIGGER the evaluator with the `projection_id` in the \
+                      bundle context; nothing does that yet. Wire it from the \
+                      resolution hook, where both observations are already in \
+                      hand. The 30-day heuristic that used to cover a missing \
+                      id is now off unless a caller asks for it by name, so a \
+                      trigger wired without the link scores nothing rather than \
+                      scoring the wrong projection.",
     },
     LivenessContract {
         sink: "forecast_agent_claims",
         writer: "handlers::workspace::agent_params_hook::apply_agent_multipliers",
         sink_sql: "SELECT count(*)::bigint AS writes FROM forecast_agent_claims",
-        // Both conditions are load-bearing. The hook is gated on a workspace
-        // (`execution.rs`: `if let Some(ws_id) = ws_id_opt`) because
-        // `forecast_agent_claims.workspace_id` is NOT NULL, so a standalone
-        // evaluation genuinely cannot produce a claim and must not be counted
-        // as a missed one. Counting bare multiplier lines instead would make
-        // this contract permanently red for a reason the code is not able to
-        // fix, and a permanently red check is one people learn to scroll past.
+        // This clause used to read `context ->> 'workspace_id' IS NOT NULL`,
+        // and the exemption was correct at the time: the hook was gated on a
+        // workspace because `forecast_agent_claims.workspace_id` was NOT
+        // NULL, so a standalone evaluation genuinely could not produce a
+        // claim and counting it as a missed one would have made this
+        // contract permanently red for a reason the code could not fix.
         //
-        // The 14 multiplier lines produced OUTSIDE a workspace are a real
-        // finding, but a different one: the platform discards an agent's
-        // quantified output when there is no forecast to bind it to. That
-        // belongs in the report, not in this assertion.
+        // Migration 213 removed that constraint. A run bound to a
+        // (forecast, driver) can now write a claim — and the forecast id is
+        // the STRONGER binding, the one `load_agent_claims` already prefers.
+        // So the exemption became the thing it was guarding against: an
+        // opportunity query that excludes the console, which is the platform's
+        // main producer of quantified judgements, would have kept this
+        // contract green while every one of those judgements was dropped.
+        // The narrow query said 0 opportunities and reported INERT — "nothing
+        // has tried yet" — for a path that had discarded 61 of 61.
+        //
+        // Either binding now counts as an opportunity. A multiplier produced
+        // with NEITHER still does not: there is nothing to attach it to, and
+        // `forecast_agent_claims_has_binding` would reject the row.
         opportunity_sql: "SELECT count(*)::bigint AS opportunities FROM episodes \
                            WHERE response_text ~ 'Suggested p50' \
-                             AND context ->> 'workspace_id' IS NOT NULL",
+                             AND (context ->> 'workspace_id' IS NOT NULL \
+                              OR context #>> '{invocation,forecast_id}' IS NOT NULL)",
         expectation: Expectation::EveryOpportunity,
         requires: None,
+        accounted: Some(Sink::ForecastAgentClaims),
         why: "Without claims there is no input to the Shapley attribution engine, \
               so no forecast is attributable to the agents that moved it and no \
               agent has a track record. Every downstream idea that depends on \
               agent quality — recommendation, routing, pricing — rests on this \
               table, and it has been empty since it was created.",
-        remediation: "Fix both breaks. (1) The `Suggested p50` regex cannot match \
-                      the markdown the model actually emits: 8 of 14 lines carry \
-                      `**1.15**` and `[\\d.]+` will not match an asterisk. (2) The \
-                      binding is workspace-only, so standalone evaluations lose \
-                      the output entirely — that needs the assertion layer, where \
-                      the assertion is recorded per episode and a claim is an \
-                      assertion bound to a driver.",
+        remediation: "Both original breaks are now fixed; if this is still red, \
+                      the cause is downstream of them. (1) The `Suggested p50` \
+                      regex could not match the markdown the model emits — \
+                      `[\\d.]+` will not match the asterisk in `**1.15**`, losing \
+                      12 of 22 lines. `assertions::MULTIPLIER_RE` (multiplier_v2) \
+                      tolerates the emphasis and recovers 22 of 22. (2) The \
+                      binding was workspace-only, so every console run lost its \
+                      output; mig-213 makes `workspace_id` nullable and accepts a \
+                      (forecast, driver) binding instead, and both execute routes \
+                      now pass one through from `invocation`. What to check next, \
+                      in order: does the console actually send `invocation.\
+                      forecast_id` (it only can for a SAVED forecast — a draft has \
+                      no id and correctly produces no claim); does the agent's \
+                      response contain a `Suggested p50` line at all; and is \
+                      `write_accounting` recording refusals against \
+                      Sink::ForecastAgentClaims, which distinguishes 'never tried' \
+                      from 'tried and rejected by the CHECK'.",
     },
     LivenessContract {
         sink: "semantic_rules.application_count",
@@ -292,6 +448,7 @@ pub const LIVENESS_CONTRACTS: &[LivenessContract] = &[
                                             AND r.embedding IS NOT NULL)",
         expectation: Expectation::EveryOpportunity,
         requires: None,
+        accounted: Some(Sink::SemanticRules),
         why: "`application_count` is how the platform knows whether a rule it \
               spent a dream cycle extracting was ever wanted back. While it is \
               zero, every rule looks equally useful, so the ontologist cannot be \
@@ -319,6 +476,7 @@ pub const LIVENESS_CONTRACTS: &[LivenessContract] = &[
                            WHERE response_text ~ 'Suggested p50'",
         expectation: Expectation::EveryOpportunity,
         requires: Some(("episodes", "assertions")),
+        accounted: Some(Sink::Episodes),
         why: "Without assertions an agent evaluated outside a workspace leaves no \
               trace of what it quantified, so it can never accumulate a track \
               record and the recommendation problem has no data underneath it. \
@@ -345,6 +503,7 @@ pub const LIVENESS_CONTRACTS: &[LivenessContract] = &[
                                                         'pending_human_check')",
         expectation: Expectation::EveryOpportunity,
         requires: Some(("assertion_verifications", "verdict")),
+        accounted: None,
         why: "A queue nobody works is indistinguishable from trusting everything \
               in it. While this is empty, every pending assertion is presented \
               with a badge and never resolved, which is the failure mode the \
@@ -366,6 +525,7 @@ pub const LIVENESS_CONTRACTS: &[LivenessContract] = &[
         opportunity_sql: "SELECT count(*)::bigint AS opportunities FROM episodes",
         expectation: Expectation::EveryOpportunity,
         requires: Some(("schema_migrations", "filename")),
+        accounted: Some(Sink::SchemaMigrations),
         why: "The ledger is what makes a failing migration answerable. Without it \
               `run_migrations` prints the failure and continues, which is how a \
               CHECK constraint was declared by seventeen migrations and applied by \
@@ -395,6 +555,7 @@ pub const LIVENESS_CONTRACTS: &[LivenessContract] = &[
         opportunity_sql: "SELECT count(*)::bigint AS opportunities FROM episodes",
         expectation: Expectation::EveryOpportunity,
         requires: None,
+        accounted: Some(Sink::AgentTimelineEntries),
         why: "The scanner behind every per-agent observability surface, including               the timeline the agent's owner reads. If it stopped, drift and               persona-version tracking would silently freeze at their last good               value rather than erroring, and the panels would keep rendering.",
         remediation: "Check the sweeper is scheduled and that                       `agent_observability_state.last_scan_completed_at` is                       advancing; a stalled sweeper leaves both tables readable                       and stale.",
     },
@@ -406,6 +567,7 @@ pub const LIVENESS_CONTRACTS: &[LivenessContract] = &[
                             FROM episodes WHERE consolidated = true",
         expectation: Expectation::EveryOpportunity,
         requires: None,
+        accounted: Some(Sink::SemanticRules),
         why: "Extraction is the write half of Loop 1, and the provenance floor is               computed here. If dream cycles stopped producing rules, the floor               would report a clean corpus for the most literal reason possible —               nothing new to grade — and the improvement would look like progress.",
         remediation: "Check `consolidation_jobs` for failures and confirm the                       dreaming budget has not been exhausted.",
     },
@@ -415,24 +577,61 @@ pub const LIVENESS_CONTRACTS: &[LivenessContract] = &[
         sink_sql: "SELECT count(*)::bigint AS writes FROM anomaly_events",
         opportunity_sql: "SELECT count(*)::bigint AS opportunities \
                             FROM agent_timeline_entries",
-        // Conditional: a detector that finds nothing may be right. 1,275
-        // scanned entries and zero events is suspicious but not proof, and
-        // asserting on it would be asserting that anomalies must exist.
+        // Conditional: a detector that finds nothing may be right. Asserting on
+        // the row count would be asserting that anomalies must exist.
+        //
+        // That is still the correct expectation and it is no longer the whole
+        // story. `tests/anomaly_firing_probe.rs` now establishes the part a
+        // test can own — that an anomaly, if one occurred, would be recorded —
+        // so the zero below is a finding about the world rather than an
+        // unfalsifiable claim about the code.
         expectation: Expectation::Conditional,
         requires: None,
+        accounted: Some(Sink::AnomalyEvents),
         why: "`anomaly_events` is where drift, rupture, safety and grounding \
-              findings surface for review. 1,275 timeline entries have been \
-              scanned and it has never held a row. Either the platform has been \
-              flawless or the detectors do not reach it — and the grounding kind \
-              added in migration 200 has certainly never fired, because \
-              `grounding_trust` violations are currently logged rather than \
-              raised as events.",
-        remediation: "Do not chase the row count. Write a firing probe per \
-                      detector — feed it input it must flag and assert an event \
-                      lands — the way the taxonomy cross-check proves it can go \
-                      red before its zero is believed.",
+              findings surface for review, and it is Loop 2's ONLY input: with \
+              none, the HITL queue is empty, no reviewer intervenes, no \
+              AgentWide correction is made, `bump_persona_version` never fires, \
+              every agent stays at v1, and the drift detector skips every entry \
+              it scans because drift at v1 is undefined. The loop requires its \
+              own output as its input, so an empty table is not one missing \
+              feature but a stalled cycle.",
+        remediation: "Do not chase the row count — the probe exists now and \
+                      answers the part that is answerable. What it established: \
+                      (1) the seed committed to break the deadlock wrote \
+                      `severity = 'L1'` against a CHECK of \
+                      ('info','warning','critical'), so every grounding anomaly \
+                      was REJECTED BY THE DATABASE in a spawned task with the \
+                      error only logged — fixed; (2) 262 of 1,417 timeline \
+                      entries carry a flag and every one is `social:observed`, \
+                      which is bookkeeping that no detector matches, by design. \
+                      So nothing actionable has ever been flagged and the zero \
+                      is honest. The open question is upstream of this table: \
+                      WildGuard has never returned a safety flag on live \
+                      traffic. Confirm that by feeding it something it must \
+                      flag, not by waiting.",
     },
 ];
+
+/// Is a `Silent` verdict on this contract an actionable finding?
+///
+/// The one implementation. It was two: `sweep` pushed every silent sink into
+/// `undocumented_silent`, and the runner in `tests/liveness_contract.rs`
+/// additionally excused `Conditional` ones. So the library's report listed
+/// `anomaly_events` as silent with no excuse while the script that runs the
+/// same contracts reported `0 silent`.
+///
+/// Nothing noticed until `native_evaluators::UndocumentedSilence` read the
+/// library's report rather than the test's, on its first production run. That
+/// is §3.4 exactly — *a trust calculation must have exactly one
+/// implementation* — and the copy that was believed was the one nearest the
+/// reader.
+pub fn is_actionable_silence(c: &LivenessContract) -> bool {
+    // A `Conditional` writer fires only when it detects something, so an empty
+    // sink may be perfectly correct; asserting on it would assert that
+    // anomalies must exist.
+    c.expectation != Expectation::Conditional && known_silent(c.sink).is_none()
+}
 
 /// Contracts whose expectation is asserted rather than merely reported.
 pub fn asserted() -> impl Iterator<Item = &'static LivenessContract> {
@@ -506,8 +705,42 @@ pub struct ContractOutcome {
     pub opportunities: i64,
     /// Set when this sink is a documented exception in [`KNOWN_SILENT`].
     pub known_silent_reason: Option<&'static str>,
+    /// Attempt counts for this contract's writer, when it is instrumented.
+    ///
+    /// This is the axis liveness cannot see. `writes = 0` is `Silent` whether
+    /// the writer never ran or ran and was refused every time, and those have
+    /// opposite remedies.
+    pub accounting: Option<SinkAccount>,
+    /// Why the sink is empty, in one word, when the counters can say.
+    ///
+    /// Deliberately **not** a fourth [`Status`]. The paper defines three
+    /// liveness verdicts and they are answers about rows; attempts are a
+    /// different question, and folding them into the same enum is how five
+    /// verdicts came to occupy four report buckets.
+    pub diagnosis: Option<&'static str>,
     pub why: &'static str,
     pub remediation: &'static str,
+}
+
+/// Read the counters and say what they add to a row-count verdict.
+fn diagnose(status: Status, acct: Option<&SinkAccount>) -> Option<&'static str> {
+    if status == Status::Ok {
+        return None;
+    }
+    match acct {
+        // The finding this whole layer was built for: the writer runs and the
+        // database refuses it. Not ambiguous, not "maybe unused", and invisible
+        // from the row count alone.
+        Some(a) if a.is_totally_rejected() => Some("rejected"),
+        Some(a) if a.failures > 0 => Some("partially_rejected"),
+        Some(a) if a.attempts == 0 => Some("never_attempted"),
+        Some(_) => None,
+        // No counters at all. Not a clean bill: it means the writer swallows its
+        // failures and has not been instrumented, so they are still going
+        // nowhere. Naming it is what stops the gap being read as an absence of
+        // problems.
+        None => Some("uninstrumented"),
+    }
 }
 
 /// The result of one sweep across every declared write path.
@@ -521,6 +754,21 @@ pub struct LivenessReport {
     /// Silent sinks that are **not** in [`KNOWN_SILENT`]. This is the actionable
     /// list; everything else is context.
     pub undocumented_silent: Vec<&'static str>,
+    /// Sinks whose writer has been attempted and refused **every** time.
+    ///
+    /// Reported separately from `undocumented_silent` because it is a stronger
+    /// statement and it escapes the ambiguity the rest of this module is built
+    /// to manage. `Silent` may mean unused; `Inert` may mean nothing has
+    /// happened yet; `Conditional` may mean the detector was right to find
+    /// nothing. **None of those readings survive a rejected write.** The code
+    /// ran, the row was refused, and no interpretation of the sink's emptiness
+    /// is honest.
+    ///
+    /// This is also what makes a `Conditional` contract falsifiable. Asserting
+    /// on `anomaly_events`' row count would assert that anomalies must exist;
+    /// asserting that its writer is not being refused asserts nothing about the
+    /// world.
+    pub rejected: Vec<&'static str>,
     pub outcomes: Vec<ContractOutcome>,
 }
 
@@ -534,10 +782,17 @@ impl LivenessReport {
         self.ok > 0
     }
 
-    /// Healthy means: something is proven to run, and nothing is silently
-    /// broken without a written reason.
+    /// Healthy means: something is proven to run, nothing is silently broken
+    /// without a written reason, and **no writer is being refused.**
+    ///
+    /// The last clause is not subject to the exemption list. A sink may be
+    /// excused for being empty; nothing excuses a statement the database will
+    /// not accept.
     pub fn is_healthy(&self) -> bool {
-        self.has_positive_control() && self.undocumented_silent.is_empty() && self.unrunnable == 0
+        self.has_positive_control()
+            && self.undocumented_silent.is_empty()
+            && self.unrunnable == 0
+            && self.rejected.is_empty()
     }
 }
 
@@ -598,14 +853,26 @@ pub async fn sweep(pool: &sqlx::PgPool) -> LivenessReport {
     let mut outcomes = Vec::with_capacity(LIVENESS_CONTRACTS.len());
     let (mut ok, mut silent, mut inert, mut unrunnable) = (0, 0, 0, 0);
     let mut undocumented_silent = Vec::new();
+    let mut rejected = Vec::new();
 
     for c in LIVENESS_CONTRACTS {
         let (status, writes, opportunities) = evaluate_one(pool, c).await;
+        let accounting = c.accounted.map(write_accounting::account);
+        let diagnosis = diagnose(status, accounting.as_ref());
+
+        // Independent of the row-count verdict, and deliberately so. A refused
+        // statement is broken whether the sink reads Ok, Silent or Inert.
+        if accounting
+            .as_ref()
+            .is_some_and(SinkAccount::is_totally_rejected)
+        {
+            rejected.push(c.sink);
+        }
         match status {
             Status::Ok => ok += 1,
             Status::Silent => {
                 silent += 1;
-                if known_silent(c.sink).is_none() {
+                if is_actionable_silence(c) {
                     undocumented_silent.push(c.sink);
                 }
             }
@@ -620,6 +887,8 @@ pub async fn sweep(pool: &sqlx::PgPool) -> LivenessReport {
             writes,
             opportunities,
             known_silent_reason: known_silent(c.sink),
+            accounting,
+            diagnosis,
             why: c.why,
             remediation: c.remediation,
         });
@@ -632,6 +901,7 @@ pub async fn sweep(pool: &sqlx::PgPool) -> LivenessReport {
         inert,
         unrunnable,
         undocumented_silent,
+        rejected,
         outcomes,
     }
 }
@@ -738,7 +1008,119 @@ mod tests {
             inert: 0,
             unrunnable,
             undocumented_silent: silent,
+            rejected: Vec::new(),
             outcomes: Vec::new(),
+        }
+    }
+
+    /// A conditional sink's silence is reported, never asserted — and the
+    /// library must say so as loudly as the test runner does.
+    ///
+    /// The regression: `sweep` and the test applied different rules, so
+    /// `anomaly_events` was `0 silent` on the script and "silent with no
+    /// excuse" in the library's own report. Whichever a reader reached first
+    /// was the answer they got.
+    #[test]
+    fn a_conditional_sink_is_never_an_undocumented_silence() {
+        let conditional: Vec<_> = LIVENESS_CONTRACTS
+            .iter()
+            .filter(|c| c.expectation == Expectation::Conditional)
+            .collect();
+        assert!(
+            !conditional.is_empty(),
+            "no contract is Conditional, so this test proves nothing"
+        );
+        for c in conditional {
+            assert!(
+                !is_actionable_silence(c),
+                "`{}` is Conditional and would still be reported as an \
+                 unexplained silence — which asserts that its detector must \
+                 find something",
+                c.sink
+            );
+        }
+        // And an ordinary silent sink still is one, or the fix has simply
+        // switched the check off.
+        let asserted = LIVENESS_CONTRACTS
+            .iter()
+            .find(|c| c.expectation == Expectation::EveryOpportunity)
+            .expect("at least one asserted contract");
+        assert!(is_actionable_silence(asserted));
+    }
+
+    /// A refused write fails the report whatever the row counts say.
+    ///
+    /// The escape hatches in this module all address one ambiguity: an empty
+    /// sink may be unused. None of them apply here. `rejected` means the writer
+    /// ran and the database would not take the row, so there is no reading of
+    /// the emptiness that is honest — which is why it is checked outside
+    /// `KNOWN_SILENT` and outside the `Conditional` exemption.
+    #[test]
+    fn a_rejected_write_is_never_healthy_however_clean_the_counts() {
+        let mut r = report(3, vec![], 0);
+        assert!(r.is_healthy());
+        r.rejected.push("anomaly_events");
+        assert!(
+            !r.is_healthy(),
+            "a sink whose writer is refused every time reported healthy because \
+             its row count was excused elsewhere"
+        );
+    }
+
+    /// The diagnosis distinguishes the two readings of `Silent` — which is the
+    /// entire reason the accounting layer exists.
+    #[test]
+    fn silence_is_diagnosed_as_untried_or_refused() {
+        use crate::write_accounting::{LastError, SinkAccount};
+        let acct = |attempts, failures| SinkAccount {
+            table: "anomaly_events",
+            writer: "x::y",
+            attempts,
+            failures,
+            last_error: failures.gt(&0).then(|| LastError {
+                at: "1970-01-01T00:00:00Z".into(),
+                message: "violates foreign key constraint".into(),
+            }),
+        };
+
+        // Nobody tried: a missing scheduler or an unexercised feature.
+        assert_eq!(
+            diagnose(Status::Silent, Some(&acct(0, 0))),
+            Some("never_attempted")
+        );
+        // Everybody tried and the database refused: a broken statement.
+        assert_eq!(
+            diagnose(Status::Silent, Some(&acct(340, 340))),
+            Some("rejected")
+        );
+        // Same row count, three different meanings — the point of the layer.
+        assert_eq!(
+            diagnose(Status::Silent, Some(&acct(340, 12))),
+            Some("partially_rejected")
+        );
+        // Not instrumented is not a clean bill: the failures still go nowhere.
+        assert_eq!(diagnose(Status::Silent, None), Some("uninstrumented"));
+        // A working path needs no diagnosis.
+        assert_eq!(diagnose(Status::Ok, Some(&acct(10, 0))), None);
+    }
+
+    /// Every instrumented contract must point at a sink whose table matches the
+    /// sink label it watches.
+    ///
+    /// The link is typed, so it cannot be misspelled — but it can still be
+    /// wired to the wrong variant, which would attribute one writer's failures
+    /// to another contract and would look entirely plausible in the report.
+    #[test]
+    fn each_contract_is_accounted_against_the_table_it_watches() {
+        for c in LIVENESS_CONTRACTS {
+            let Some(sink) = c.accounted else { continue };
+            let table = sink.table();
+            assert!(
+                c.sink.starts_with(table) || c.sink_sql.contains(table),
+                "`{}` is accounted against `{table}`, which appears in neither \
+                 its label nor its query",
+                c.sink
+            );
         }
     }
 
@@ -886,6 +1268,52 @@ mod tests {
             asserted().count() >= 1,
             "every contract is Conditional, so nothing is asserted and the \
              suite is decoration"
+        );
+    }
+
+    /// An opportunity query must count chances to write, not things already
+    /// written by somebody else.
+    ///
+    /// The regression this is here for: Loop 5.A's single contract counted
+    /// `sosa_observations WHERE extra ? 'projection_id'` as "chances to score a
+    /// measurement against a projection". Every one of those 12,167 rows is a
+    /// projection. It was comparing the sink to a census of the *predictions*,
+    /// so it reported 12,167 missed scorings in a world where nothing had ever
+    /// been measured against a projection at all — and it named a remediation
+    /// at the wrong end of the chain.
+    ///
+    /// The scoreable event is a resolved pair, which is a `process_spacetime`
+    /// row and nothing else. Asserting the query's *source table* is a crude
+    /// check and it is the one that would have caught this: no reading of
+    /// `sosa_observations` can tell you a measurement met a prediction.
+    #[test]
+    fn the_scoring_rung_counts_resolved_pairs_and_not_projections() {
+        let scoring = LIVENESS_CONTRACTS
+            .iter()
+            .find(|c| c.sink.starts_with("eval_signals.projection_accuracy"))
+            .expect("the Loop 5.A scoring contract");
+
+        assert!(
+            scoring.opportunity_sql.contains("process_spacetime"),
+            "the scoring rung must count resolved pairs; got `{}`",
+            scoring.opportunity_sql
+        );
+        assert!(
+            !scoring.opportunity_sql.contains("sosa_observations"),
+            "the scoring rung is counting raw observations again. A projection \
+             is not a chance to score one; it is the thing being scored."
+        );
+
+        // And the anchor rung is bounded by the instant its call site began to
+        // exist, so historical projections are not reported as missed writes
+        // that could only be supplied dishonestly.
+        let anchor = LIVENESS_CONTRACTS
+            .iter()
+            .find(|c| c.sink.starts_with("process_projection_commits"))
+            .expect("the Loop 5.A anchor contract");
+        assert!(
+            anchor.opportunity_sql.contains(COMMIT_HOOK_LIVE_FROM),
+            "the anchor rung must bound its opportunities by {COMMIT_HOOK_LIVE_FROM}"
         );
     }
 

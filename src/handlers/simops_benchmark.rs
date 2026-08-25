@@ -2,17 +2,18 @@
 //!
 //! ## Two hooks, two directions
 //!
-//! **Hook 1 — on synthetic write (simops_tools.rs)**
-//! When the dynamics runner / cascade writes a synthetic SOSA observation
-//! (source = simops_simulation), `commit_projection()` is called immediately.
-//! This is the immutable clock: the predicted value is anchored before any
-//! real measurement can arrive. The commitment_hash proves the prediction
-//! pre-existed the measurement.
+//! **Hook 1 — on projection write**
+//! `commit_projection()` anchors the predicted value before any measurement can
+//! arrive; the commitment_hash proves the prediction pre-existed it. It now
+//! lives in [`fermi::projection_commit`] and is re-exported here, because the
+//! library-side agent tool is one of its two callers and could not reach a
+//! function inside this binary. It had **no callers at all** until then, and
+//! `process_projection_commits` held 0 rows against 61 projections.
 //!
 //! **Hook 2 — on real observation ingest (observations.rs)**
-//! When a real sensor reading arrives (`procedure != simops_simulation`),
-//! `resolve_against_projection()` checks for a matching committed prediction
-//! and writes a `process_spacetime` row if found. Two resolution modes:
+//! When a real sensor reading arrives, `resolve_against_projection()` checks
+//! for a matching committed prediction and writes a `process_spacetime` row if
+//! found. Two resolution modes:
 //!
 //!   - `any_reading`   — every real reading that matches a prediction
 //!   - `sample_point`  — readings at configured intervals (default 1 hour)
@@ -31,104 +32,15 @@
 //! The spacetime table is the evidence base for all three claims.
 
 use chrono::Utc;
-use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
-// ── Commitment hash ───────────────────────────────────────────────────────
-
-fn projection_commitment_hash(
-    observation_id: &Uuid,
-    predicted_value: f64,
-    model_uri: Option<&str>,
-    phenomenon_time_ms: i64,
-) -> String {
-    let mut h = Sha256::new();
-    h.update(observation_id.to_string().as_bytes());
-    h.update(b"|");
-    h.update(format!("{:.8}", predicted_value).as_bytes());
-    h.update(b"|");
-    h.update(model_uri.unwrap_or("").as_bytes());
-    h.update(b"|");
-    h.update(phenomenon_time_ms.to_string().as_bytes());
-    format!("{:x}", h.finalize())
-}
-
-// ── Hook 1: commit a synthetic projection ────────────────────────────────
-
-/// Called immediately after a synthetic SOSA observation is written.
-/// Idempotent — safe to call even if the table doesn't exist yet.
-pub async fn commit_projection(
-    pool: &PgPool,
-    observation_id: Uuid,
-    session_id: Uuid,
-    workspace_id: Option<Uuid>,
-    observable_property: &str,
-    feature_of_interest: Option<&str>,
-    predicted_value: f64,
-    model_uri: Option<&str>,
-    stage_id: Option<&str>,
-    projection_id: Option<&str>,
-    phenomenon_time_ms: i64,
-    process_context: Option<&serde_json::Value>,
-) -> Option<String> {
-    // Table existence check — non-fatal if migration 141 pending
-    let exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM information_schema.tables
-         WHERE table_name='process_projection_commits')",
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap_or(false);
-    if !exists {
-        return None;
-    }
-
-    let hash = projection_commitment_hash(
-        &observation_id,
-        predicted_value,
-        model_uri,
-        phenomenon_time_ms,
-    );
-
-    // Idempotent
-    let already: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM process_projection_commits WHERE commitment_hash=$1)",
-    )
-    .bind(&hash)
-    .fetch_one(pool)
-    .await
-    .unwrap_or(false);
-    if already {
-        return Some(hash);
-    }
-
-    let _ = sqlx::query(
-        r#"INSERT INTO process_projection_commits
-           (sosa_observation_id, projection_id, workspace_id, session_id,
-            observable_property, feature_of_interest, predicted_value,
-            model_uri, stage_id, commitment_hash, committed_at,
-            phenomenon_time_ms, process_context)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),$11,$12)"#,
-    )
-    .bind(observation_id)
-    .bind(projection_id)
-    .bind(workspace_id)
-    .bind(session_id)
-    .bind(observable_property)
-    .bind(feature_of_interest)
-    .bind(predicted_value)
-    .bind(model_uri)
-    .bind(stage_id)
-    .bind(&hash)
-    .bind(phenomenon_time_ms)
-    .bind(process_context)
-    .execute(pool)
-    .await
-    .ok()?;
-
-    Some(hash)
-}
+// ── Hook 1: commit a projection ──────────────────────────────────────────
+//
+// Re-exported, not reimplemented. Two copies of the anchor would be two
+// answers to "when was this predicted", and the one that gets believed is
+// whichever the reader reaches first.
+pub use fermi::projection_commit::commit_projection;
 
 // ── Hook 2: resolve a real reading against prior predictions ─────────────
 
@@ -201,12 +113,20 @@ pub async fn resolve_against_projection(pool: &PgPool, reading: &RealReading) ->
     let abs_err = (predicted - actual).abs();
     let rel_err = abs_err / actual.abs().max(1e-9);
     let accuracy = (1.0 - rel_err.min(1.0)).clamp(0.0, 1.0);
+    // Types, not literals and no longer even constants. Both of this table's
+    // CHECK vocabularies were supplied as bare strings a few lines apart, in a
+    // function whose INSERT failure was neither logged nor returned — the `L1`
+    // setup with the alarm removed as well. Constants fixed the spelling; these
+    // close the slot, because the value that reaches `.bind` can only be a
+    // variant. `seam_vocabulary_contract` checks the variants against the live
+    // constraint in both directions.
+    use fermi::seam_vocabulary::{DeltaDirection, ResolutionMode};
     let direction = if (predicted - actual).abs() < 1e-9 {
-        "exact"
+        DeltaDirection::Exact
     } else if predicted > actual {
-        "over"
+        DeltaDirection::Over
     } else {
-        "under"
+        DeltaDirection::Under
     };
 
     // Load sample config for this workspace/property
@@ -214,11 +134,12 @@ pub async fn resolve_against_projection(pool: &PgPool, reading: &RealReading) ->
         load_sample_config(pool, reading.workspace_id, &reading.observable_property).await;
 
     // Determine which resolution modes apply
-    let mut modes: Vec<(&str, Option<f64>, Option<f64>)> = vec![("any_reading", None, None)];
+    let mut modes: Vec<(ResolutionMode, Option<f64>, Option<f64>)> =
+        vec![(ResolutionMode::AnyReading, None, None)];
 
     // Anomaly delta mode: rel_err exceeds threshold
     if rel_err > anomaly_threshold {
-        modes.push(("anomaly_delta", Some(anomaly_threshold), None));
+        modes.push((ResolutionMode::AnomalyDelta, Some(anomaly_threshold), None));
     }
 
     // Sample point mode: check if this reading falls at a sample interval
@@ -236,7 +157,7 @@ pub async fn resolve_against_projection(pool: &PgPool, reading: &RealReading) ->
             let remainder = hours_since_pred % sample_interval;
             let near_boundary = remainder < 0.25 || (sample_interval - remainder) < 0.25;
             if near_boundary && hours_since_pred > 0.0 {
-                modes.push(("sample_point", None, Some(sample_interval)));
+                modes.push((ResolutionMode::SamplePoint, None, Some(sample_interval)));
             }
         }
     }
@@ -305,7 +226,14 @@ pub async fn resolve_against_projection(pool: &PgPool, reading: &RealReading) ->
         .execute(pool)
         .await;
 
-        if r.is_ok() {
+        // Was `if r.is_ok() { written += 1 }` — the error dropped without even
+        // a log line, and the returned count then discarded by a `let _ =` at
+        // the only call site. Of every loop sink in the system this was the one
+        // with no observability of any kind on failure, and it writes two CHECK
+        // vocabularies supplied as bare string literals.
+        if fermi::write_accounting::observe(fermi::write_accounting::Sink::ProcessSpacetime, r)
+            .is_some()
+        {
             written += 1;
         }
     }
@@ -366,7 +294,12 @@ use fermi_auth::AuthPrincipal;
 pub struct ProcessSpacetimeQuery {
     pub model_uri: Option<String>,
     pub observable_property: Option<String>,
-    pub resolution_mode: Option<String>, // all | any_reading | sample_point | anomaly_delta
+    /// `all`, or any [`fermi::seam_vocabulary::ResolutionMode`]. Stays a
+    /// `String` because `all` is the absence of a filter rather than a mode,
+    /// and because a query string that fails to deserialise is a 400 with no
+    /// useful body; it is parsed into the type below, where an unrecognised
+    /// value can be named in a log line.
+    pub resolution_mode: Option<String>,
     pub days: Option<i64>,
     pub limit: Option<i64>,
 }
@@ -386,6 +319,22 @@ pub async fn process_spacetime_handler(
     let days = q.days.unwrap_or(30).max(1).min(365);
     let limit = q.limit.unwrap_or(200).min(1000);
     let mode_filter = q.resolution_mode.as_deref().unwrap_or("all");
+    // `all` is the absence of a filter, not a token. Anything else must parse
+    // into the type the write path binds, so the filter and the stored value
+    // cannot be two different vocabularies.
+    let mode: Option<fermi::seam_vocabulary::ResolutionMode> = match mode_filter {
+        "all" => None,
+        other => match other.parse() {
+            Ok(m) => Some(m),
+            Err(e) => {
+                // Was `_ => "AND TRUE"`: an unrecognised mode silently returned
+                // every row, which reads as a working filter. Same behaviour,
+                // now with a line saying so.
+                tracing::warn!("process_spacetime: ignoring resolution_mode filter — {e}");
+                None
+            }
+        },
+    };
 
     let table_exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM information_schema.tables
@@ -404,22 +353,32 @@ pub async fn process_spacetime_handler(
         })));
     }
 
-    let mode_clause = match mode_filter {
-        "all" => "AND TRUE",
-        "any_reading" => "AND resolution_mode = 'any_reading'",
-        "sample_point" => "AND resolution_mode = 'sample_point'",
-        "anomaly_delta" => "AND resolution_mode = 'anomaly_delta'",
-        _ => "AND TRUE",
+    // Placeholder numbers are assigned as the binds are added, because binds
+    // are positional. The previous version hard-coded `$4` for the property and
+    // `$5` for the model, so a request carrying `model_uri` and no
+    // `observable_property` bound four parameters against SQL that referenced
+    // five. Reproduced against production before this change:
+    // `bind message supplies 4 parameters, but prepared statement requires 5`
+    // — a 500 on a filter combination the UI can send, and the shape had been
+    // there since the handler was written.
+    let mut param = 3; // workspace_id, days, limit
+    let mode_clause = if mode.is_some() {
+        param += 1;
+        format!("AND resolution_mode = ${param}")
+    } else {
+        "AND TRUE".to_string()
     };
     let prop_clause = if q.observable_property.is_some() {
-        "AND observable_property = $4"
+        param += 1;
+        format!("AND observable_property = ${param}")
     } else {
-        "AND TRUE"
+        "AND TRUE".to_string()
     };
     let model_clause = if q.model_uri.is_some() {
-        "AND model_uri = $5"
+        param += 1;
+        format!("AND model_uri = ${param}")
     } else {
-        "AND TRUE"
+        "AND TRUE".to_string()
     };
 
     let sql = format!(
@@ -442,6 +401,9 @@ pub async fn process_spacetime_handler(
 
     let mut query = sqlx::query(&sql).bind(workspace_id).bind(days).bind(limit);
 
+    if let Some(m) = mode {
+        query = query.bind(m);
+    }
     if let Some(ref prop) = q.observable_property {
         query = query.bind(prop);
     }
@@ -480,7 +442,9 @@ pub async fn process_spacetime_handler(
     let n = spacetime.len();
     let anomalies: Vec<&Value> = spacetime
         .iter()
-        .filter(|r| r["resolution_mode"] == "anomaly_delta")
+        .filter(|r| {
+            r["resolution_mode"] == fermi::seam_vocabulary::ResolutionMode::AnomalyDelta.as_str()
+        })
         .collect();
     let accuracy_vals: Vec<f64> = spacetime
         .iter()
@@ -519,7 +483,7 @@ pub async fn process_spacetime_handler(
         "summary": {
             "mean_accuracy": mean_accuracy,
             "n_anomalies": anomalies.len(),
-            "n_sample_points": spacetime.iter().filter(|r| r["resolution_mode"]=="sample_point").count(),
+            "n_sample_points": spacetime.iter().filter(|r| r["resolution_mode"]==fermi::seam_vocabulary::ResolutionMode::SamplePoint.as_str()).count(),
             "model_accuracy": model_accuracy,
         },
         "spacetime": spacetime,

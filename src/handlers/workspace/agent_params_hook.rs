@@ -10,6 +10,12 @@
 //! hook writes `{ <driver>_p5, <driver>_p50, <driver>_p95 }` to the
 //! workspace's `params` output and triggers a refit.
 //!
+//! A workspace is no longer required to reach the hook at all. See
+//! [`ClaimBinding`] and migration 213: a run bound to an explicit
+//! `(forecast_id, driver)` records its claim and skips the params half, which
+//! it has no workspace to write to. That path is the one the Fermi Console
+//! takes, and it produced 61 judgements that were all discarded before 213.
+//!
 //! # Binding an agent to the drivers it researches
 //!
 //! The FPL already states this, authoritatively:
@@ -220,10 +226,22 @@ pub fn extract_multiplier(summary: &str) -> Option<(f64, f64, f64)> {
         .map(|a| (a.value.p5, a.value.p50, a.value.p95))
 }
 
-/// Write an agent's multiplier evidence into the workspace's params output.
+// The claim binding, the outcome enum and the classification all live in
+// `fermi::claim_outcome`. They were defined here and could not be reached by an
+// integration test, because this file is in the `api-server` binary — the same
+// module boundary that left `commit_projection` with a `let _ = (..)` where its
+// call belonged. Re-exported rather than re-declared so every existing
+// `agent_params_hook::ClaimBinding` path keeps resolving.
+pub use fermi::claim_outcome::{classify_claim, ClaimBinding, ClaimOutcome};
+
+/// Write an agent's multiplier evidence into the ledger, and — when the run is
+/// in a workspace — into that workspace's params output.
 ///
-/// Called after a successful agent execution. Returns true if params were
-/// actually updated.
+/// Called after a successful agent execution. The [`ClaimOutcome`] says what
+/// happened; a forecast-bound run has no `workspace_outputs` row to update and
+/// nothing to refit, so for it `Recorded` means the claim was attempted and
+/// nothing further was owed.
+///
 /// `episode_id` correlates the claim to the execution that produced it
 /// (migration 197). Allocated by the caller *before* this hook is spawned,
 /// because the hook and the episode write race and the claim usually lands
@@ -232,14 +250,22 @@ pub fn extract_multiplier(summary: &str) -> Option<(f64, f64, f64)> {
 pub async fn apply_agent_multipliers(
     pool: &PgPool,
     registry: &posterior::ExtractorRegistry,
-    workspace_id: Uuid,
+    binding: &ClaimBinding,
     agent_name: &str,
     evidence: &[fermi::ast::EvidenceStmt],
     episode_id: Option<Uuid>,
-) -> Result<bool, String> {
-    let driver_prefixes = resolve_driver_prefixes(pool, workspace_id, agent_name).await;
+) -> Result<ClaimOutcome, String> {
+    // Declaration by the caller, then declaration by the FPL, then the legacy
+    // table — in descending order of how directly the source knows the answer.
+    let driver_prefixes: Vec<String> = match (binding.driver.as_deref(), binding.workspace_id) {
+        (Some(driver), _) => vec![param_prefix_for_driver(driver)],
+        (None, Some(ws_id)) => resolve_driver_prefixes(pool, ws_id, agent_name).await,
+        // No workspace to read a program from and no driver stated: there is
+        // nothing to bind the multiplier to and nowhere to put it.
+        (None, None) => Vec::new(),
+    };
     if driver_prefixes.is_empty() {
-        return Ok(false);
+        return Ok(classify_claim(binding, 0, 0, evidence.len()));
     }
 
     // Recover the agent's quantified judgements through the shared extractor
@@ -276,7 +302,12 @@ pub async fn apply_agent_multipliers(
     // WHICH judgement it was, so the day an agent emits one assertion per factor
     // this binds them separately without a schema change.
     let Some(primary) = assertions.first().cloned() else {
-        return Ok(false);
+        return Ok(classify_claim(
+            binding,
+            driver_prefixes.len(),
+            0,
+            evidence.len(),
+        ));
     };
     let (p5, p50, p95) = (primary.value.p5, primary.value.p50, primary.value.p95);
     let assertion_id = primary.assertion_id;
@@ -325,11 +356,15 @@ pub async fn apply_agent_multipliers(
             "INSERT INTO forecast_agent_claims
                  (workspace_id, agent_id, agent_name, driver,
                   p5, p50, p95, neutral_value, source, raw_evidence, episode_id,
-                  assertion_id)
+                  assertion_id, forecast_id)
              VALUES ($1, $2, $3, $4, $5, $6, $7, 1.0, 'multiplier_hook', $8, $9,
-                     $10)",
+                     $10, $11)",
         )
-        .bind(workspace_id)
+        // mig-213: nullable, and the CHECK requires the other one when it is
+        // NULL. The column list did not carry `forecast_id` at all before,
+        // which is why the stronger binding the reader prefers was never
+        // written by the only writer this table has.
+        .bind(binding.workspace_id)
         .bind(claim_agent_id)
         .bind(agent_name)
         .bind(prefix)
@@ -346,17 +381,34 @@ pub async fn apply_agent_multipliers(
         // bound to a driver, so the same assertion appearing on three drivers is
         // now visibly one judgement rather than three.
         .bind(assertion_id)
+        .bind(binding.forecast_id.as_deref())
         .execute(pool)
         .await;
 
-        if let Err(e) = res {
-            tracing::warn!(
-                workspace = %workspace_id, agent = %agent_name, driver = %prefix, error = %e,
-                "[claims] failed to record agent claim — this forecast will not be \
-                 attributable per-agent and cannot be backfilled"
-            );
-        }
+        // Counted. The comment above says a lost claim cannot be reconstructed
+        // after the fact, which makes "how many did we lose" a question the
+        // platform has to be able to answer, and a log line cannot.
+        let _ = fermi::write_accounting::observe(
+            fermi::write_accounting::Sink::ForecastAgentClaims,
+            res,
+        );
     }
+
+    // Everything below is workspace-scoped: `workspace_outputs` is keyed by
+    // workspace and there is no program to refit without one. A forecast-bound
+    // run stops here having done the thing that matters — the claim above is
+    // what attribution reads, and the params UPSERT is current state that the
+    // next write overwrites (mig-187's header says so).
+    let outcome = classify_claim(
+        binding,
+        driver_prefixes.len(),
+        assertions.len(),
+        evidence.len(),
+    );
+
+    let Some(workspace_id) = binding.workspace_id else {
+        return Ok(outcome);
+    };
 
     // Build the update: { <driver>_p5, <driver>_p50, <driver>_p95 } for each driver.
     let mut update = JsonValue::Object(serde_json::Map::new());
@@ -421,7 +473,7 @@ pub async fn apply_agent_multipliers(
         }
     });
 
-    Ok(true)
+    Ok(outcome)
 }
 
 #[cfg(test)]

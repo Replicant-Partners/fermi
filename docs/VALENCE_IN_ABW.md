@@ -171,7 +171,7 @@ Defined in `src/handlers/composition.rs:256-360`. The handler:
 3. The strategist's reply, if it contains a proposal, becomes a row in
    `composition_versions` (status `pending`) for owner accept/reject.
 
-This is Loop 4 of the feedback architecture
+This is Loop 4.A of the feedback architecture
 (`docs/architecture/FEEDBACK_LOOPS.md` lines 158–185): the team's **shape**
 mutates over time as a function of its own valence distribution and accumulated
 coherence outcomes.

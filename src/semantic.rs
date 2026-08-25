@@ -1022,9 +1022,7 @@ fn static_number(expr: &Expression) -> Option<f64> {
 /// the family the reference forecast uses.
 fn distribution_bounds(dist: &Distribution) -> Option<(f64, f64)> {
     match dist {
-        Distribution::Triangular { p5, p95, .. } => {
-            Some((static_number(p5)?, static_number(p95)?))
-        }
+        Distribution::Triangular { p5, p95, .. } => Some((static_number(p5)?, static_number(p95)?)),
         Distribution::Uniform { low, high } => Some((static_number(low)?, static_number(high)?)),
         Distribution::Normal { mean, stddev } => {
             let (m, s) = (static_number(mean)?, static_number(stddev)?);
@@ -1474,7 +1472,11 @@ simulate 1000 iterations
         assert!(
             analysis.is_valid(),
             "a single-space product must pass: {:?}",
-            analysis.errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+            analysis
+                .errors
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1512,13 +1514,14 @@ simulate 1000 iterations
         assert!(
             analysis.is_valid(),
             "an indicator over a quantity must pass: {:?}",
-            analysis.errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+            analysis
+                .errors
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
         );
         assert!(
-            !analysis
-                .warnings
-                .iter()
-                .any(|w| w.contains("applies_to")),
+            !analysis.warnings.iter().any(|w| w.contains("applies_to")),
             "a declared driver must not warn about being undeclared: {:?}",
             analysis.warnings
         );
@@ -1612,7 +1615,15 @@ simulate 1000 iterations
         assert!(about[0].contains("first_factor") && about[0].contains("second_factor"));
         // Undeclared is a warning, never an error: the stored corpus predates the
         // field and absence is honest ignorance rather than a mistake.
-        assert!(analysis.is_valid(), "{:?}", analysis.errors.iter().map(|e| e.to_string()).collect::<Vec<_>>());
+        assert!(
+            analysis.is_valid(),
+            "{:?}",
+            analysis
+                .errors
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+        );
     }
 
     /// A prior that can produce values its own constraint forbids.
@@ -1655,7 +1666,8 @@ simulate 1000 iterations
         // The driver and the offending end are named: "a constraint is violated"
         // is not actionable in a six-driver model.
         assert!(
-            msgs.iter().any(|m| m.contains("adjustment") && m.contains("low")),
+            msgs.iter()
+                .any(|m| m.contains("adjustment") && m.contains("low")),
             "the driver and the end of its range must be named; got {msgs:?}"
         );
     }
@@ -1690,7 +1702,11 @@ simulate 1000 iterations
         assert!(
             analysis.is_valid(),
             "{:?}",
-            analysis.errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+            analysis
+                .errors
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1768,7 +1784,11 @@ simulate 1000 iterations
         assert!(
             analysis.is_valid(),
             "param-bounded priors cannot be statically checked and must not error: {:?}",
-            analysis.errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+            analysis
+                .errors
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
         );
     }
 

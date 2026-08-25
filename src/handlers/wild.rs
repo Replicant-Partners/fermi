@@ -230,7 +230,7 @@ pub async fn identify_specimen(
     locality: Option<&str>,
     habitat: Option<&str>,
     api_key: &str,
-) -> Result<Value, String> {
+) -> Result<(Value, fermi::grounding_trust::Report), String> {
     let habitat_hint = habitat.unwrap_or("unknown habitat");
     let location_hint = locality.unwrap_or("unknown");
 
@@ -377,7 +377,14 @@ pub async fn identify_specimen(
         );
     }
 
-    Ok(document)
+    // The report travels with the document.
+    //
+    // It used to be consumed here: the violations were summarised into a field
+    // of the response body and the `Report` was dropped, so the only record
+    // that the control had fired lived in a JSON blob nobody aggregates. This
+    // is a pure helper with no store, so it cannot raise the anomaly itself —
+    // it hands the report to callers that can.
+    Ok((document, grounding))
 }
 
 // ─── the workspace action ──────────────────────────────────────────────
@@ -424,7 +431,7 @@ pub async fn identify_action_handler(
         )
     })?;
 
-    let document = identify_specimen(
+    let (document, grounding) = identify_specimen(
         &req.photo_url,
         req.locality.as_deref(),
         req.habitat.as_deref(),
@@ -432,6 +439,14 @@ pub async fn identify_action_handler(
     )
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    // Tell Loop 2. `None` for the episode: this path persists nothing.
+    fermi::grounding_anomaly::spawn_raise(
+        std::sync::Arc::clone(&state.memory_store),
+        "forage_identify",
+        None,
+        grounding,
+    );
 
     Ok(Json(json!({
         "workspace_id": ws_uuid,

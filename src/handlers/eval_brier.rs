@@ -92,7 +92,7 @@ impl BrierLookup for BrierLookupSqlx {
         // Matching only `agent_name` — the previous behaviour — made every
         // forecast written by the live path invisible here, while
         // `GET /api/agents/:id/calibration` (which matches `agent_id`) saw
-        // them fine. That split is why the Observatory could show Loop 5a
+        // them fine. That split is why the Observatory could show Loop 5.A
         // "closed" on the Loops tab and `brier: inactive` on the Overview for
         // the same agent at the same moment. Matching all three closes the
         // gap; all three predicates use `@>` so the mig-168 GIN index still

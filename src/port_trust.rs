@@ -1,6 +1,7 @@
 //! # Port trust contract — does the invocation match the declared interface?
 //!
-//! Fourth in the family:
+//! **Rung 5 of the verification ladder** (`crate::ladder`) — the top of it.
+//! Written fourth:
 //!
 //! | Contract | Question |
 //! | --- | --- |

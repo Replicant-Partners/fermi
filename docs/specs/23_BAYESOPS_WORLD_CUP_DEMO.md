@@ -35,7 +35,7 @@ One declaration per forecast (or per forecast template, if forecasts inherit fro
 
 ### 1.3 BayesOps is two things, but one is on the critical path
 
-**BayesOps as a posterior fitter** is the demo. Historical observations → `fit_marginal()` → `FittedDistribution` → injected as FPL `Driver` parameters → tighter Monte Carlo → updated rate. This is Loop A from `FEEDBACK_LOOPS.md §4`. We ship the wiring for this on the critical path.
+**BayesOps as a posterior fitter** is the demo. Historical observations → `fit_marginal()` → `FittedDistribution` → injected as FPL `Driver` parameters → tighter Monte Carlo → updated rate. This is Loop 5.B from `FEEDBACK_LOOPS.md §4`. We ship the wiring for this on the critical path.
 
 **BayesOps as a synthetic-data generator** is the same library called in a different mode (sample from a fitted `ConditionalPosterior`, fold the samples back as weighted observations). The capability is shipped — `crates/posterior-reg` exposes it via MCP and HTTP today. We document the pattern and put the audit infrastructure in place (one column on the snapshot ledger; one event type) so the demo can show it if an agent uses it, but **it is not on the critical path**. The demo's headline is the fitter wired into the loop, not the synthesizer.
 
@@ -45,7 +45,7 @@ One declaration per forecast (or per forecast template, if forecasts inherit fro
 
 ### 2.1 What already exists
 
-- **The five-loop infrastructure** (`FEEDBACK_LOOPS.md`). Loops 1, 2, 3-inner, 5 are closed and running. Loop 5's calibration signals already flow through to the routing classifier and the consolidation worker's semantic rules.
+- **The five-loop infrastructure** (`FEEDBACK_LOOPS.md`). Loops 1, 2, 3.A, 5 are closed and running. Loop 5.A's calibration signals already flow through to the Loop 4.B routing classifier and the consolidation worker's semantic rules.
 - **The workspace resolution lifecycle** (`migrations/147`, `WORKSPACE_RESOLUTION.md`). `POST /api/workspaces/:id/resolve` writes the outcome, publishes to `workspace_outputs.resolution`, fans out via `workspace_messages`, and has a labeled TODO insertion point at `src/handlers/workspace/resolution.rs:286` waiting for the refit hook.
 - **The learnable-driver contract** (commits `889ca58`, `981eeda`, `BAYESOPS_CONTRACT.md`). FPL drivers can be marked `learnable: true`. The executor reads `params.<driver_name>_fitted` and substitutes for the static prior. The console has the toggle UX.
 - **The BayesOps libraries** (commits `89747bc`, `8f3ef51`). `fit_marginal`, `fit_conditional`, `ConditionalPosterior`, HTTP surface, MCP tools. 106 tests passing.
@@ -386,7 +386,7 @@ Three discrete phases, each independently demoable. Estimated effort: 4 days tot
 
 ## 10. References
 
-- `docs/architecture/FEEDBACK_LOOPS.md` — the loop framework. This paper is its Loop A wiring.
+- `docs/architecture/FEEDBACK_LOOPS.md` — the loop framework. This paper is its Loop 5.B wiring.
 - `docs/specs/14_BAYESOPS_SPEC.md` — the BayesOps library spec.
 - `docs/fermi/BAYESOPS_CONTRACT.md` — the learnable-driver wire format.
 - `docs/fermi/WORKSPACE_RESOLUTION.md` — the resolution endpoint and TODO insertion point.

@@ -587,6 +587,41 @@ pub async fn ecology_view() -> Response {
     app_shell("templates/ecology.html")
 }
 
+/// Rounds — what needs you, in what order.
+///
+/// Served alongside `/dashboard` rather than replacing it, so the two can be
+/// compared before anything is deleted. The dashboard is a directory; a round is
+/// ordered by who needs you most.
+pub async fn rounds_view() -> Response {
+    app_shell("templates/rounds.html")
+}
+
+/// The Bestiary — one register, three lenses.
+///
+/// Replaces three separately-implemented lists of the same agents: the
+/// catalogue grid, the ecology register, and the Observatory's patient
+/// register. A lens changes columns and sort, not the page.
+pub async fn bestiary_view() -> Response {
+    app_shell("templates/bestiary.html")
+}
+
+/// Gates — what the platform refused, and what it cannot refuse.
+///
+/// The control-system surface. Rounds owns the personal decision queue; this
+/// owns the register, the enforcement map and the receipt record.
+pub async fn gates_view() -> Response {
+    app_shell("templates/gates.html")
+}
+
+/// One specimen, three tabs.
+///
+/// The collapse of the eight-tab agent page: Profile (what it is), Record (what
+/// it has done), Health (is it working). Editing is a drawer rather than a tab,
+/// because it is a different activity from reading.
+pub async fn specimen_view() -> Response {
+    app_shell("templates/specimen.html")
+}
+
 pub async fn observatory_hitl_view() -> Response {
     app_shell("templates/observatory_hitl.html")
 }
