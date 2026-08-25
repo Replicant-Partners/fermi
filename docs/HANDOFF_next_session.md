@@ -141,6 +141,67 @@ what remains is volume, adoption, and two product decisions:
 
 ---
 
+## Loop 4 — wired end to end, and its seam is now closed
+
+There was nothing to build. The chain is complete: all three console paths chain
+`.for_forecast(...)` and pass the driver; `InvocationProvenance` carries both
+halves; `execution_stream.rs` retains claims (added last session, never
+exercised); `classify_claim` resolves a prefix from a stated driver with no
+workspace. **It is awaiting a run on a saved forecast.** An unsaved draft
+correctly yields no claim.
+
+What *was* missing is a guard on the seam it travels through. The two keys had
+**four independent spellings across two crates** — serde field names in
+`negotiate.rs`, string literals typed separately in `execution.rs` and
+`execution_stream.rs` — and nothing compared them. A rename on either side
+yields zero claims silently, which is **exactly the observation the platform
+already has**: `forecast_agent_claims` has been empty since mig-187, so there is
+no alarm to fall silent and no state to compare against.
+
+Now one declaration and one reader: `fermi::claim_outcome::{KEY_FORECAST_ID,
+KEY_DRIVER, binding_from_invocation}`, used by both handlers, pinned by
+`crates/fermi-console/tests/invocation_envelope.rs` — which serialises a real
+`InvocationProvenance` and reads it with the server's own parser. Verified from
+both sides: renaming the console's field and renaming the server's constant each
+turn it red.
+
+The envelope read was the one piece of the two handlers' deliberate mirroring
+worth de-duplicating: two independent reads of two JSON keys can diverge, the
+divergence is invisible, and there is nothing for a shared function to paper
+over. The surrounding episode/credit/royalty logic stays mirrored.
+
+## Loop 1 — reach, and a two-way ratchet
+
+The second `OutcomeContract`. `loop1.retrieved` promises the rules come back to
+the agent that made them; **7 of 84 agents that own a rule have ever had one
+retrieved.** A rule nobody retrieves is a dream cycle nobody woke from: the
+agent paid for the consolidation, the row sits in `semantic_rules`, and the next
+prompt is built without it.
+
+The floor is **8%, the measured value** — not a target. Falling below it is a
+regression; rising above it fails too, demanding the floor be raised. That is
+`uninstrumented_swallows_may_only_decrease` pointed the other way, and it is
+what lets this assert something without anyone inventing a number. Verified all
+three ways: stale floor, fallen reach, and zero reach.
+
+`Open` (nothing receives) is the only arm asserted outright. `reach_pct(0, 0)`
+returns 0, registered as a falsification: every other emptiness in this codebase
+has had a version that read as success, and `0/0 = 100%` would make a loop that
+has produced nothing report perfect reach on the rung built to catch that.
+
+### What is still not measured, precisely
+
+Reach is the weaker claim and the honest one. **Whether retrieval changed the
+agent's output is unmeasured, and cannot be taken from stored data:** it needs a
+control arm, and forming one means suppressing rule injection for a turn, which
+nothing does. `loop1.retrieved`'s `does_not_show` says so. Loop 1's own
+`extraction_utility` signal has fired twice.
+
+That is the remaining build, and it is now the *only* thing on this list that
+needs new machinery rather than a run.
+
+---
+
 ## Start here
 
 ### 1. Loop 4 is the keystone, and it is one gate
@@ -210,3 +271,9 @@ has fired twice. That is still the build, and it now has a place to live.
 * **Turning is not closed.** A chain that produces rows every stage is entirely
   compatible with producing a number that cannot distinguish the things it is
   named after, and two of six loops are in that state.
+* **A threshold must be a measurement or a ratchet, never a target.** The reach
+  floor is what was measured, and the check fails in *both* directions so the
+  number cannot go stale. A target set after taking a reading is fitted to it.
+* **The seam nobody guards is the one whose failure looks like the status quo.**
+  Four spellings of two JSON keys survived because a break in them produces an
+  empty table, and the table was already empty.

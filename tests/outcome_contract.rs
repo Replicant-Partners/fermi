@@ -37,8 +37,8 @@
 //! stop reading.
 
 use fermi::outcome_trust::{
-    classify_discrimination, classify_producers, known_gap, shared_metric, Discrimination,
-    EventSpread, Producers, KNOWN_GAPS, OUTCOME_CONTRACTS,
+    classify_discrimination, classify_producers, classify_reach, known_gap, reach_pct,
+    shared_metric, Discrimination, EventSpread, Producers, Reach, KNOWN_GAPS, OUTCOME_CONTRACTS,
 };
 use sqlx::PgPool;
 
@@ -184,6 +184,87 @@ async fn every_outcome_metric_has_one_producer_or_a_stated_reason() {
         findings.len(),
         findings.join("\n\n  ")
     );
+}
+
+/// Does the loop's output come back to the subject that fed it?
+///
+/// Two-way ratchet, and neither direction is a target. The floor on each
+/// contract is what was **measured**; falling below it is a regression and
+/// rising above it means the floor is stale and must be raised. That is
+/// `uninstrumented_swallows_may_only_decrease`, pointed the other way, and it is
+/// what lets this assert something without anyone inventing a number.
+#[tokio::test]
+#[ignore = "needs DATABASE_URL"]
+async fn every_loop_that_promises_a_return_makes_one() {
+    let pool = pool().await;
+    let mut findings: Vec<String> = Vec::new();
+    let mut stale: Vec<String> = Vec::new();
+    let mut checked = 0usize;
+
+    for c in OUTCOME_CONTRACTS {
+        let Some((producing_sql, receiving_sql, floor)) = c.reach else {
+            continue;
+        };
+        let label = format!("{}.{}", c.loop_id, c.stage);
+        let producing: i64 = sqlx::query_scalar(producing_sql)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or(-1);
+        let receiving: i64 = sqlx::query_scalar(receiving_sql)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or(-1);
+        if producing < 0 || receiving < 0 {
+            findings.push(format!("{label}: a reach query could not run"));
+            continue;
+        }
+        checked += 1;
+
+        let (p, r) = (producing as usize, receiving as usize);
+        let pct = reach_pct(p, r);
+        let verdict = classify_reach(p, r, floor);
+        println!("\n  {label}");
+        println!("    proposition {}", c.proposition);
+        println!("    reach       {r} of {p} ({pct}%), floor {floor}%");
+        println!("    verdict     {verdict:?}");
+
+        match verdict {
+            // The only unambiguous arm, and the only one asserted as a finding.
+            Reach::Open { producing } => findings.push(format!(
+                "{label}: OPEN — {producing} subject(s) produced and none \
+                 received.\n         proposition: {}\n         cost: {}",
+                c.proposition, c.why
+            )),
+            Reach::Narrow { .. } => findings.push(format!(
+                "{label}: reach has FALLEN to {pct}%, below the {floor}% \
+                 measured when this contract was written.\n         cost: {}",
+                c.why
+            )),
+            // Improvement must not pass silently, or the floor becomes a
+            // permission nobody re-examines — the `KNOWN_SILENT` failure mode.
+            Reach::Closes { .. } if pct > floor => stale.push(format!(
+                "{label}: reach is now {pct}%, above the {floor}% floor. Raise \
+                 the floor — that is the ratchet working, and leaving it means \
+                 the next regression to {floor}% passes."
+            )),
+            Reach::Closes { .. } => {}
+            Reach::NoProducers => {
+                println!("    (nothing has produced — the liveness rung's question)")
+            }
+        }
+    }
+
+    assert!(
+        checked > 0,
+        "no contract declares a reach, so this check ran over nothing"
+    );
+    assert!(
+        findings.is_empty(),
+        "\n{} loop(s) do not return to what fed them:\n\n  {}\n",
+        findings.len(),
+        findings.join("\n\n  ")
+    );
+    assert!(stale.is_empty(), "\n  {}\n", stale.join("\n  "));
 }
 
 /// A declared gap must still be a gap.

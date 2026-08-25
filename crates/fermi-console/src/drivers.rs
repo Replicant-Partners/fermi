@@ -498,6 +498,10 @@ mod tests {
     fn an_unknown_agent_attaches_nothing() {
         let mut p = program_with(&["ensemble_spread"], &["ensemble_spread"]);
         assert!(attach_evidence_to_drivers(&mut p, "nobody", "e_0").is_empty());
-        assert!(p.driver("ensemble_spread").unwrap().evidence_refs.is_empty());
+        assert!(p
+            .driver("ensemble_spread")
+            .unwrap()
+            .evidence_refs
+            .is_empty());
     }
 }

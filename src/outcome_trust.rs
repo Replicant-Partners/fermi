@@ -79,6 +79,19 @@ pub struct OutcomeContract {
     pub producer_sql: &'static str,
     /// Fewest multi-subject events for the spread reading to mean anything.
     pub min_events: usize,
+    /// Reach, when the claim says the output returns to its producer.
+    ///
+    /// `(producing_sql, receiving_sql, floor_pct)`. `None` when the claim makes
+    /// no such promise — Loop 5.A's does not; a forecast's score is not owed
+    /// back to the forecast.
+    ///
+    /// **The floor is the measured value, not a target.** Setting a target
+    /// after taking a measurement is fitting the threshold to the data, and
+    /// this codebase has the instrument for the alternative:
+    /// `uninstrumented_swallows_may_only_decrease` records what is true and
+    /// insists it improve. So the live tier fails if reach falls below the
+    /// floor *and* if it rises above it without the floor being raised.
+    pub reach: Option<(&'static str, &'static str, u32)>,
     /// What goes wrong when the signal is absent. Specific to this metric.
     pub why: &'static str,
 }
@@ -217,6 +230,62 @@ pub enum Producers {
     Conflated { producers: usize },
 }
 
+/// Does the loop's output come back to the subject that fed it?
+///
+/// The other half of "carries the signal its claim needs". A metric can
+/// discriminate perfectly and still never reach the thing it is about: Loop 1
+/// distils rules for 84 agents and 7 of them have ever had one retrieved, so
+/// for the other 77 the loop consumes their experience and returns nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reach {
+    /// At or above the declared floor.
+    Closes { producing: usize, receiving: usize },
+    /// Some subjects receive, and fewer than the floor.
+    ///
+    /// Reported against a **measured** floor rather than a target, so no number
+    /// here was chosen after seeing the data — see [`OutcomeContract::reach_floor_pct`].
+    Narrow { producing: usize, receiving: usize },
+    /// Nothing comes back to anything.
+    ///
+    /// Unambiguous, and the only arm this module asserts on: a loop that
+    /// returns to no producer at all is open, whatever its row counts say.
+    Open { producing: usize },
+    /// Nothing has produced, so the question does not arise. Not a pass.
+    NoProducers,
+}
+
+/// Percent of producing subjects that receive.
+///
+/// Integer percent on purpose: a float here invites a threshold expressed to
+/// two decimal places, which is a target fitted to a measurement.
+pub fn reach_pct(producing: usize, receiving: usize) -> u32 {
+    if producing == 0 {
+        return 0;
+    }
+    ((receiving * 100) / producing) as u32
+}
+
+/// Classify reach against the contract's measured floor.
+pub fn classify_reach(producing: usize, receiving: usize, floor_pct: u32) -> Reach {
+    if producing == 0 {
+        return Reach::NoProducers;
+    }
+    if receiving == 0 {
+        return Reach::Open { producing };
+    }
+    if reach_pct(producing, receiving) >= floor_pct {
+        Reach::Closes {
+            producing,
+            receiving,
+        }
+    } else {
+        Reach::Narrow {
+            producing,
+            receiving,
+        }
+    }
+}
+
 /// Classify producer count against the declared expectation.
 ///
 /// Two producers are not automatically wrong — they are automatically
@@ -329,14 +398,15 @@ pub fn shared_metric(key: &str) -> Option<&'static str> {
 ///
 /// Rule for adding one: **if a loop's claim would be false when the metric is
 /// uniform across its subjects, it belongs here.**
-pub const OUTCOME_CONTRACTS: &[OutcomeContract] = &[OutcomeContract {
-    loop_id: "loop5a",
-    stage: "scored",
-    claim: "A prediction is scored against an outcome that resolves \
+pub const OUTCOME_CONTRACTS: &[OutcomeContract] = &[
+    OutcomeContract {
+        loop_id: "loop5a",
+        stage: "scored",
+        claim: "A prediction is scored against an outcome that resolves \
             independently of it.",
-    proposition: "The per-agent calibration signal takes different values for \
+        proposition: "The per-agent calibration signal takes different values for \
                   different agents on the same forecast.",
-    does_not_show: "Nothing about whether any agent is well calibrated, and \
+        does_not_show: "Nothing about whether any agent is well calibrated, and \
                     nothing about whether the outcome resolved independently. \
                     Discrimination is a property of the instrument: it says the \
                     number could differ between agents, not that the agents \
@@ -344,49 +414,90 @@ pub const OUTCOME_CONTRACTS: &[OutcomeContract] = &[OutcomeContract {
                     `forecast_spacetime` and the commitment hash are what \
                     address independence; this addresses only whether the \
                     signal is about an agent at all.",
-    // `rationale` identifies the event: `brier_forecast_resolver` writes one
-    // distinct rationale per forecast, so grouping on it groups by forecast
-    // without needing a column the table does not have. Stated because it is a
-    // proxy, and a proxy that stops holding when a producer changes its wording.
-    //
-    // **Scoped to one producer, and that correction took two passes.**
-    //
-    // Grouping on `rationale` across the whole dimension merged rows from the
-    // two producers and produced one "event" with 18 subjects and 2 distinct
-    // values, which the check read as discrimination. Adding the producer to
-    // the GROUP BY did not fix it: `brier v1` writes `Brier 0.000 over 1
-    // forecasts` for *every* agent-aggregate that scores that way, so 18 rows
-    // from three unrelated agents still collapsed into one bucket.
-    //
-    // `brier v1`'s rationale is not an event key at all — it identifies neither
-    // the agent nor the forecast — so its rows cannot be grouped into events by
-    // any column this table has, and no spread reading over them means
-    // anything. That is not a gap in this check; it is part of the `Conflated`
-    // finding the producer test reports, and the remedy is the same one.
-    //
-    // So this reads only `brier_forecast_resolver`, whose rationale carries the
-    // forecast id and therefore is an event key. Scoping it is stated here
-    // rather than done quietly, because a filter that silently drops a
-    // producer is how a check comes to report on a third of its subject.
-    spread_sql: "SELECT count(*)::bigint AS subjects, \
+        // `rationale` identifies the event: `brier_forecast_resolver` writes one
+        // distinct rationale per forecast, so grouping on it groups by forecast
+        // without needing a column the table does not have. Stated because it is a
+        // proxy, and a proxy that stops holding when a producer changes its wording.
+        //
+        // **Scoped to one producer, and that correction took two passes.**
+        //
+        // Grouping on `rationale` across the whole dimension merged rows from the
+        // two producers and produced one "event" with 18 subjects and 2 distinct
+        // values, which the check read as discrimination. Adding the producer to
+        // the GROUP BY did not fix it: `brier v1` writes `Brier 0.000 over 1
+        // forecasts` for *every* agent-aggregate that scores that way, so 18 rows
+        // from three unrelated agents still collapsed into one bucket.
+        //
+        // `brier v1`'s rationale is not an event key at all — it identifies neither
+        // the agent nor the forecast — so its rows cannot be grouped into events by
+        // any column this table has, and no spread reading over them means
+        // anything. That is not a gap in this check; it is part of the `Conflated`
+        // finding the producer test reports, and the remedy is the same one.
+        //
+        // So this reads only `brier_forecast_resolver`, whose rationale carries the
+        // forecast id and therefore is an event key. Scoping it is stated here
+        // rather than done quietly, because a filter that silently drops a
+        // producer is how a check comes to report on a third of its subject.
+        spread_sql: "SELECT count(*)::bigint AS subjects, \
                         count(DISTINCT score)::bigint AS distinct_values \
                    FROM eval_signals \
                   WHERE dimension = 'forecast_calibration' \
                     AND evaluator_name = 'brier_forecast_resolver' \
                   GROUP BY rationale",
-    producer_sql: "SELECT (evaluator_name || ' ' || evaluator_version) AS producer, \
+        producer_sql: "SELECT (evaluator_name || ' ' || evaluator_version) AS producer, \
                           count(*)::bigint AS n \
                      FROM eval_signals \
                     WHERE dimension = 'forecast_calibration' \
                     GROUP BY 1",
-    min_events: 5,
-    why: "Loop 4's MoE router reads this at Stage 0 to weight agents, and \
+        min_events: 5,
+        reach: None,
+        why: "Loop 4's MoE router reads this at Stage 0 to weight agents, and \
           composition evolution proposes roster changes from it. A metric that \
           is uniform across agents on every forecast routes and re-rosters on \
           no information while looking like measured contribution — which is \
           worse than having no metric, because a missing number invites a \
           question and a uniform one does not.",
-}];
+    },
+    OutcomeContract {
+        loop_id: "loop1",
+        stage: "retrieved",
+        claim: "An agent's own experience changes how it reasons: episodes \
+                cluster into semantic rules, and those rules are retrieved into \
+                the next prompt.",
+        proposition: "An agent that distilled a rule has had one retrieved.",
+        does_not_show: "Nothing about whether retrieval changed the agent's \
+                        output. That is the measurement this platform does not \
+                        have and cannot take from stored data: it needs a \
+                        control arm, and forming one means suppressing rule \
+                        injection for a turn, which nothing does. Reach is the \
+                        weaker claim and the honest one — the rules came back \
+                        to the agent that made them. Whether the agent was any \
+                        different for it is unmeasured, and its own \
+                        `extraction_utility` signal has fired twice.",
+        // Discrimination is the other half here, and it is reported rather than
+        // asserted: does one agent's rules differ in how often they are
+        // retrieved, or is retrieval blanket? Either answer is legitimate, so
+        // there is no finding to raise — which is why this stage carries a
+        // `reach` and Loop 5.A does not.
+        spread_sql: "SELECT count(*)::bigint AS subjects, \
+                            count(DISTINCT application_count)::bigint AS distinct_values \
+                       FROM semantic_rules \
+                      GROUP BY agent_id",
+        producer_sql: "SELECT 'consolidation' AS producer, count(*)::bigint AS n \
+                         FROM semantic_rules",
+        min_events: 5,
+        reach: Some((
+            "SELECT count(DISTINCT agent_id)::bigint FROM semantic_rules",
+            "SELECT count(DISTINCT agent_id)::bigint FROM semantic_rules \
+              WHERE application_count > 0",
+            8,
+        )),
+        why: "A rule nobody retrieves is a dream cycle nobody woke from. The \
+              agent paid for the consolidation, the rule sits in the table, and \
+              the next prompt is built without it — so the loop's cost is real \
+              and its effect is zero, for 77 of the 84 agents that have fed it.",
+    },
+];
 
 /// The contract for a loop stage, if one is declared.
 pub fn contract_for(loop_id: &str, stage: &str) -> Option<&'static OutcomeContract> {
@@ -552,6 +663,58 @@ mod tests {
         assert_eq!(classify_producers(0, false), Producers::None);
         // Declared, with a reason on file: reported as one.
         assert_eq!(classify_producers(2, true), Producers::Single);
+    }
+
+    /// Reach is asserted only where it is unambiguous.
+    #[test]
+    fn reach_is_open_at_zero_and_narrow_below_the_floor() {
+        // No producer receives: the loop returns to nothing.
+        assert_eq!(classify_reach(84, 0, 8), Reach::Open { producing: 84 });
+        // The measured state: 7 of 84 is 8%, which is the declared floor.
+        assert_eq!(
+            classify_reach(84, 7, 8),
+            Reach::Closes {
+                producing: 84,
+                receiving: 7
+            }
+        );
+        // One fewer and it has fallen below what was measured.
+        assert_eq!(
+            classify_reach(84, 6, 8),
+            Reach::Narrow {
+                producing: 84,
+                receiving: 6
+            }
+        );
+        // Nothing produced is not a pass.
+        assert_eq!(classify_reach(0, 0, 8), Reach::NoProducers);
+        assert!(!matches!(classify_reach(0, 0, 8), Reach::Closes { .. }));
+    }
+
+    /// The floor is a measurement, so it must match one.
+    ///
+    /// 7 receiving of 84 producing is 8%, and the contract declares 8. If a
+    /// later session raises the floor without the ratchet having demanded it,
+    /// this is where the invented target shows up.
+    #[test]
+    fn the_reach_floor_is_integer_percent_of_the_measurement_it_came_from() {
+        assert_eq!(reach_pct(84, 7), 8);
+        assert_eq!(
+            reach_pct(0, 0),
+            0,
+            "no producers must not read as full reach"
+        );
+        assert_eq!(reach_pct(84, 84), 100);
+        for c in OUTCOME_CONTRACTS {
+            if let Some((_, _, floor)) = c.reach {
+                assert!(
+                    floor > 0 && floor <= 100,
+                    "{}.{}: a reach floor of {floor}% is not a percentage",
+                    c.loop_id,
+                    c.stage
+                );
+            }
+        }
     }
 
     /// A baseline entry must say what would remove it.

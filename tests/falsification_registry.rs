@@ -80,13 +80,16 @@
 use fermi::gate_trust::GateAccount;
 use fermi::grounding_trust as gt;
 use fermi::liveness_trust::{self as lt, Expectation, LivenessContract, LivenessReport, Status};
+use fermi::loop_api;
 use fermi::loop_model::{self as lm, LoopState, Stage, StageState, Trigger, Upstream};
 use fermi::native_evaluators::{Observation, Severity, Verdict};
 use fermi::outcome_trust::{
-    classify_discrimination as disc, classify_producers, known_gap, Discrimination, EventSpread,
-    Producers,
+    classify_discrimination as disc, classify_producers, classify_reach, known_gap, reach_pct,
+    Discrimination, EventSpread, Producers, Reach,
 };
 use fermi::panel_absence::{self as pa, Kind, Panel, Reading, Resolver, Scope};
+// `loop_api` is in `TRUST_MODULES`, so its public decisions must be registered
+// or exempted — the same coverage scan that owns the other ten.
 use fermi::projection_kind as pk;
 use fermi::write_accounting::SinkAccount;
 use std::path::Path;
@@ -636,6 +639,61 @@ const FALSIFICATIONS: &[Falsification] = &[
                  would put two different orderings in one column, and a reader \
                  sorting by it would get a sequence that means nothing.",
     },
+    // ── loop_api ──────────────────────────────────────────────────
+    Falsification {
+        check: "loop_api::view",
+        owner: "src/loop_api.rs",
+        // Permissive reading: "this panel may be rendered as correctly empty."
+        passes: || {
+            loop_api::view(&LoopState {
+                id: "l",
+                name: "N",
+                scope: "platform",
+                claim: "C",
+                stages: vec![StageState {
+                    id: "x",
+                    what: "w",
+                    writer: "a::b",
+                    trigger: Trigger::Request,
+                    rows: 0,
+                }],
+                stops_at: Some("x"),
+                reason: Some("no_input"),
+                status: "stalled",
+            })
+            .reading
+                == Reading::Idle
+        },
+        fires: || {
+            loop_api::view(&LoopState {
+                id: "l",
+                name: "N",
+                scope: "platform",
+                claim: "C",
+                stages: vec![StageState {
+                    id: "x",
+                    what: "w",
+                    writer: "a::b",
+                    trigger: Trigger::Request,
+                    // The probe did not run. `rows == 0` reading as success is
+                    // the defect `loop_model` was given a tri-state to prevent.
+                    rows: -1,
+                }],
+                stops_at: Some("x"),
+                reason: Some("probe_failed"),
+                status: "unmeasured",
+            })
+            .reading
+                == Reading::Idle
+        },
+        models: "An assembly layer is exactly where the tri-state gets \
+                 flattened back to a boolean. `rows == 0` was once the only \
+                 condition that stopped a chain, so a loop whose first probe \
+                 errored while its later stages held rows reported `turning` \
+                 with no stall and no reason — and a UI that renders \
+                 `reading: idle` over an unread loop shows a green panel for a \
+                 measurement that never happened.",
+    },
     // ── outcome_trust ────────────────────────────────────────────────
     Falsification {
         check: "outcome_trust::classify_discrimination",
@@ -738,6 +796,32 @@ const FALSIFICATIONS: &[Falsification] = &[
                  those to call a verdict, and either choice turns ‘we could not \
                  look’ into an answer — which is exactly how `_ => Idle` in \
                  `panel_absence` turned `unobserved` into an idle system.",
+    },
+    Falsification {
+        check: "outcome_trust::classify_reach",
+        owner: "src/outcome_trust.rs",
+        // Permissive reading: "the loop returns to what fed it."
+        passes: || matches!(classify_reach(84, 7, 8), Reach::Closes { .. }),
+        fires: || matches!(classify_reach(84, 0, 8), Reach::Closes { .. }),
+        models: "Loop 1 distils rules for 84 agents and 7 have ever had one \
+                 retrieved. A rule nobody retrieves is a dream cycle nobody \
+                 woke from: the agent paid for the consolidation, the row sits \
+                 in `semantic_rules`, and the next prompt is built without it — \
+                 so the loop's cost is real and its effect is zero. `turning` \
+                 says nothing about this, because the rows are all there.",
+    },
+    Falsification {
+        check: "outcome_trust::reach_pct",
+        owner: "src/outcome_trust.rs",
+        // Permissive reading: "reach is total."
+        passes: || reach_pct(84, 84) == 100,
+        fires: || reach_pct(0, 0) == 100,
+        models: "A ratio with no denominator. Every other emptiness in this \
+                 codebase has had a version that read as success — `rows == 0` \
+                 as a turning chain, an empty `floor()` returning the strongest \
+                 verdict, `0 live` as healthy — and `0/0 = 100%` would make a \
+                 loop that has produced nothing report perfect reach, on the \
+                 rung built to catch exactly that.",
     },
     Falsification {
         check: "outcome_trust::known_gap",
@@ -1057,6 +1141,25 @@ const EXEMPT: &[(&str, &str)] = &[
          exempted. `classify_producers`, which consumes it, is registered.",
     ),
     ("outcome_trust::contract_for", ENUMERATOR),
+    // loop_api
+    (
+        "loop_api::views",
+        "Maps `view` over a walked set. The judgement is `view`'s, registered \
+         above, and `only_the_first_empty_stage_is_flagged` pins the mapping.",
+    ),
+    (
+        "loop_api::view_of",
+        "`views` narrowed to one id. Same judgement; the 404 shape it enables \
+         is the handler's business.",
+    ),
+    ("loop_api::action_for", ENUMERATOR),
+    (
+        "loop_api::tally",
+        "Three counts over verdicts `view` already assigned. Registered \
+         indirectly: `a_loop_that_could_not_be_read_is_unknown_not_idle` \
+         asserts an unread loop lands in `unmeasured` and not `turning`, which \
+         is the only judgement this makes.",
+    ),
     // panel_absence
     ("panel_absence::label", ACCESSOR),
     ("panel_absence::panel", ENUMERATOR),
@@ -1139,6 +1242,10 @@ const SCANS: &[(&str, Proof)] = &[
         Proof::Falsifier("the_linter_sees_a_non_atomic_constraint_migration"),
     ),
     (
+        "tests/loop_api_contract.rs",
+        Proof::Falsifier("the_scan_sees_a_path_the_router_does_not_have"),
+    ),
+    (
         "tests/taxonomy_parity.rs",
         Proof::Parity {
             why: "It runs `fermi::taxonomy` and `scripts/taxonomy.py` over the \
@@ -1164,6 +1271,7 @@ const TRUST_MODULES: &[&str] = &[
     "panel_absence",
     "anomaly_vocabulary",
     "outcome_trust",
+    "loop_api",
 ];
 
 // ── assertions ──────────────────────────────────────────────────────────

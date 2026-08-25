@@ -162,7 +162,8 @@ impl BaseRateAgreement {
 /// routed to, ran, measured the number, and had its answer discarded.
 pub fn extract_measured_base_rate(response: &serde_json::Value) -> Option<f64> {
     fn as_rate(v: &serde_json::Value) -> Option<f64> {
-        v.as_f64().filter(|f| f.is_finite() && (0.0..=1.0).contains(f))
+        v.as_f64()
+            .filter(|f| f.is_finite() && (0.0..=1.0).contains(f))
     }
 
     /// The path `grounding_trust::FIELD_CONTRACTS` declares for this value.
@@ -607,7 +608,10 @@ mod tests {
     /// cannot mistake "nothing to compare" for "compared and agreed".
     #[test]
     fn no_measurement_is_unmeasured_rather_than_agreement() {
-        assert_eq!(base_rate_agreement(0.083, None), BaseRateAgreement::Unmeasured);
+        assert_eq!(
+            base_rate_agreement(0.083, None),
+            BaseRateAgreement::Unmeasured
+        );
         assert_eq!(
             base_rate_agreement(0.083, Some(f64::NAN)),
             BaseRateAgreement::Unmeasured

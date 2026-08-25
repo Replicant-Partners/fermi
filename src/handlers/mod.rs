@@ -85,6 +85,10 @@ pub mod metrics;
 pub mod misc;
 pub mod notebooks;
 pub mod observations;
+// The loop surface, for people. One shape over `loop_model` +
+// `panel_absence` + `outcome_trust`, replacing an admin diagnostics blob and a
+// 610-line second answer to the first one's question.
+pub mod loops;
 pub mod observatory;
 pub mod ontology;
 /// The ops board — detected coordination work for a team.

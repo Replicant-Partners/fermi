@@ -300,6 +300,14 @@ pub mod claim_outcome;
 // Turning is not closed, and nothing until now asked the difference.
 pub mod outcome_trust;
 
+// One shape for "where does this loop stand, and what can a person do about
+// it". Assembly only — `loop_model`, `panel_absence` and `outcome_trust` keep
+// their answers. It exists because those answers were reachable only through
+// an admin diagnostic blob and through a 610-line handler giving a second
+// answer to the first one's question, and because nothing anywhere declared
+// the endpoint a person uses to work a human-gated stage.
+pub mod loop_api;
+
 // Port trust contract — whether the caller is sending what the agent said it
 // takes. `negotiate::bind_input` in the console answered this correctly and
 // was wired only into the desktop client, so every HTTP execute path went

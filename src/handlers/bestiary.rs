@@ -86,6 +86,14 @@ pub async fn bestiary_handler(
                 ev.peak_level                                AS peak_level,
                 (SELECT count(*) FROM episodes e
                   WHERE e.agent_id = a.agent_id)             AS runs,
+                -- What it has actually cost, and the mean per run. `cost_usd` is
+                -- NUMERIC, so the cast is at the query: decoding a numeric as
+                -- f64 fails and the usual `.ok()` turns a real number into a
+                -- silent absence.
+                (SELECT sum(e.cost_usd)::float8 FROM episodes e
+                  WHERE e.agent_id = a.agent_id)             AS cost_usd,
+                (SELECT avg(e.cost_usd)::float8 FROM episodes e
+                  WHERE e.agent_id = a.agent_id)             AS cost_per_run,
                 (SELECT max(e.created_at) FROM episodes e
                   WHERE e.agent_id = a.agent_id)             AS last_run,
                 (SELECT count(*) FROM anomaly_events ae
@@ -143,6 +151,8 @@ pub async fn bestiary_handler(
                 "level": r.try_get::<Option<i32>, _>("level").ok().flatten(),
                 "peak_level": r.try_get::<Option<i32>, _>("peak_level").ok().flatten(),
                 "runs": r.try_get::<Option<i64>, _>("runs").ok().flatten().unwrap_or(0),
+                "cost_usd": r.try_get::<Option<f64>, _>("cost_usd").ok().flatten(),
+                "cost_per_run": r.try_get::<Option<f64>, _>("cost_per_run").ok().flatten(),
                 "last_run_days": last_run.map(|t| {
                     (chrono::Utc::now() - t).num_seconds() as f64 / 86400.0
                 }),

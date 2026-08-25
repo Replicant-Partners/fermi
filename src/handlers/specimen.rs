@@ -107,7 +107,7 @@ pub async fn specimen_handler(
                   WHERE agent_id = $1 AND execution_status = 'success')                   AS succeeded,
                 (SELECT count(*) FROM episodes
                   WHERE agent_id = $1 AND execution_status <> 'success')                  AS failed,
-                (SELECT sum(cost_usd) FROM episodes WHERE agent_id = $1)                  AS cost_usd,
+                (SELECT sum(cost_usd)::float8 FROM episodes WHERE agent_id = $1) AS cost_usd,
                 (SELECT max(created_at) FROM episodes WHERE agent_id = $1)                AS last_run,
                 (SELECT count(*) FROM entities WHERE agent_id = $1)                       AS entities,
                 (SELECT count(*) FROM facts WHERE agent_id = $1)                          AS facts,
@@ -116,10 +116,10 @@ pub async fn specimen_handler(
                   WHERE agent_id = $1 AND application_count > 0)                          AS rules_retrieved,
                 (SELECT count(*) FROM consolidation_jobs
                   WHERE agent_id = $1 AND status = 'completed')                           AS dream_cycles,
-                (SELECT max(created_at) FROM consolidation_jobs
+                (SELECT max(completed_at) FROM consolidation_jobs
                   WHERE agent_id = $1 AND status = 'completed')                           AS last_dreamt,
                 (SELECT count(*) FROM eval_runs WHERE agent_id = $1)                      AS eval_runs,
-                (SELECT max(created_at) FROM eval_runs WHERE agent_id = $1)               AS last_eval",
+                (SELECT max(started_at) FROM eval_runs WHERE agent_id = $1)               AS last_eval",
     )
     .bind(agent_id)
     .fetch_one(db)
@@ -131,7 +131,7 @@ pub async fn specimen_handler(
 
     // ── Recent episodes ──────────────────────────────────────────────────
     let episodes = sqlx::query(
-        "SELECT query, execution_status, error_details, cost_usd, created_at
+        "SELECT query, execution_status, error_details, cost_usd::float8 AS cost_usd, created_at
            FROM episodes WHERE agent_id = $1
           ORDER BY created_at DESC LIMIT 15",
     )

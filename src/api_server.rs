@@ -2823,9 +2823,34 @@ async fn main() {
         // Per-agent RSI loop health. Replaces the observatory Loops tab's
         // client-side assembly, two rows of which were hardcoded constants
         // rendered under a live status column.
+        //
+        // Kept, and now the *second* answer to a question `/api/loops` answers
+        // from the contracts. It is per-agent where the new surface is
+        // platform-wide, which is the only reason it survives this commit;
+        // `loop_api_contract::the_two_loop_surfaces_do_not_disagree` holds them
+        // together until it is repointed.
         .route(
             "/api/observatory/agents/:agent_id/loops",
             get(handlers::observatory::agent_loops_handler),
+        )
+        // ── The loop surface ─────────────────────────────────────────────
+        //
+        // `loop_model` walked once, dressed by `loop_api`: the first empty
+        // link, whether its emptiness is idle / faulty / unknowable, what a
+        // person can do about it, and what a green tick does not mean.
+        //
+        // Not under /api/admin: this is the surface the UX team builds on, and
+        // putting the only honest account of the loops behind an admin scope is
+        // how it stayed invisible.
+        .route("/api/loops", get(handlers::loops::list_loops_handler))
+        // Before `/:loop_id`, or axum matches `actions` as a loop id.
+        .route(
+            "/api/loops/actions",
+            get(handlers::loops::list_loop_actions_handler),
+        )
+        .route(
+            "/api/loops/:loop_id",
+            get(handlers::loops::get_loop_handler),
         )
         .route(
             "/api/observatory/agents/:agent_id/scan",
