@@ -187,6 +187,48 @@ pub fn build(
         (Some(_), None) => ("unverified_no_payload", vec![], vec![]),
     };
 
+    // Report the verdict to `Gate::OutputSchema`.
+    //
+    // Until this line the verdict was computed and told to nobody: a document
+    // contradicting its producer's own declared type produced a JSON field and
+    // no consequence anywhere. `gate_trust`'s own premise is that a refusal
+    // nobody counted is the state it exists to make impossible, so the gap sat
+    // awkwardly against the module it should have been using.
+    //
+    // The three validation outcomes map onto the three-state `Decision`
+    // exactly, which is the reason `Undetermined` is first-class:
+    //
+    //   valid        Approved      checked, and it conforms
+    //   invalid      Refused       the document contradicts its declared type
+    //   unverified_* Undetermined  no schema, no payload, or a keyword the
+    //                              validator cannot evaluate
+    //
+    // Folding `unverified_*` into `Approved` would be the defect this whole
+    // module exists to close, restated one layer up: `admits_everything` would
+    // then read as "nothing was ever wrong" when it means "nothing was ever
+    // checked".
+    let decision = decision_for(validation_status);
+    // The reason names the producer and the first violated path, because a
+    // count of refusals with no path tells an operator that something is
+    // wrong and not which field to look at.
+    let reason = match (&decision, schema_violations.first()) {
+        (crate::gate_trust::Decision::Refused, Some(v)) => format!(
+            "{agent_name}: {} contradicts declared type {} at {}",
+            v.get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("document"),
+            ty.as_deref().unwrap_or("(none)"),
+            v.get("path").and_then(|p| p.as_str()).unwrap_or("<root>")
+        ),
+        _ => format!("{agent_name}: {validation_status}"),
+    };
+    crate::gate_trust::decided_about(
+        crate::gate_trust::Gate::OutputSchema,
+        decision,
+        Some(&reason),
+        Some(agent_name),
+    );
+
     json!({
         "type": ty,
         // Stated rather than inferred from `type == null`, so a consumer does
@@ -227,6 +269,34 @@ pub fn build(
     })
 }
 
+/// Map a validation outcome onto a gate decision.
+///
+/// Extracted and pure so the property can be asserted directly. The counters
+/// in `gate_trust` are process-global and every test in this binary writes to
+/// them, so a delta assertion over them is a race, not a test — and the thing
+/// worth pinning is this table, not the arithmetic.
+///
+///   valid          Approved      checked, and it conforms
+///   invalid        Refused       contradicts its producer's declared type
+///   unverified_*   Undetermined  no schema, no payload, or a keyword the
+///                                validator cannot evaluate
+///
+/// The third row is the load-bearing one. Folding `unverified_*` into
+/// `Approved` would make `admits_everything` read as "nothing was ever wrong"
+/// when it means "nothing was ever checked" — the exact indistinguishability
+/// this module exists to remove, restated one layer up. And it is the COMMON
+/// case: 98 of 101 curated cards declare no schema, so getting it wrong would
+/// have the gate report near-perfect health forever.
+pub(crate) fn decision_for(validation_status: &str) -> crate::gate_trust::Decision {
+    match validation_status {
+        "valid" => crate::gate_trust::Decision::Approved,
+        "invalid" => crate::gate_trust::Decision::Refused,
+        // Everything else is an absence of a check. Deliberately a catch-all:
+        // a new `unverified_*` variant must not silently become a pass.
+        _ => crate::gate_trust::Decision::Undetermined,
+    }
+}
+
 fn ty_is_some(ty: &Option<String>) -> bool {
     ty.as_deref().is_some_and(|s| !s.trim().is_empty())
 }
@@ -248,7 +318,7 @@ mod tests {
     use super::*;
     use crate::agent_backend::executor::{AgentMetadata, AgentStatus};
 
-    fn output_with(raw: Option<&str>) -> AgentOutput {
+    pub(super) fn output_with(raw: Option<&str>) -> AgentOutput {
         AgentOutput {
             agent_name: "genome_profiler".into(),
             agent_type: "research".into(),
@@ -270,7 +340,7 @@ mod tests {
 
     /// The `output_contract` from a real card on disk, so these tests break
     /// if a card stops declaring its type rather than passing on a fixture.
-    fn contract_for(agent_id: &str) -> Option<Value> {
+    pub(super) fn contract_for(agent_id: &str) -> Option<Value> {
         let path = format!("agents/curated/{agent_id}/agent_card.json");
         let json = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path}: {e}"));
         let card: Value = serde_json::from_str(&json).unwrap();
@@ -565,5 +635,187 @@ mod tests {
             Uuid::new_v4(),
         );
         assert_eq!(empty["payload_status"], json!("empty_response"));
+    }
+}
+
+/// The gate the hop reports to.
+///
+/// Separate from `mod tests` because these assert on process-global counters
+/// in `gate_trust`, which every other test in this binary also writes to. They
+/// therefore check *deltas* rather than absolute values, and must not assume
+/// they run alone.
+#[cfg(test)]
+mod gate_tests {
+    use super::*;
+    use crate::gate_trust::{Decision, Gate};
+
+    /// Every validation status the hop can produce, mapped. Exhaustive by
+    /// construction: the list is the one `build` assigns.
+    #[test]
+    fn the_decision_table_is_what_it_claims() {
+        assert_eq!(decision_for("valid"), Decision::Approved);
+        assert_eq!(decision_for("invalid"), Decision::Refused);
+        for absent in [
+            "unverified_no_schema",
+            "unverified_no_payload",
+            "unverified_unsupported_schema",
+        ] {
+            assert_eq!(
+                decision_for(absent),
+                Decision::Undetermined,
+                "`{absent}` is the absence of a check, not the passing of one"
+            );
+        }
+    }
+
+    /// **The load-bearing property.** An unrecognised status must never be a
+    /// pass.
+    ///
+    /// This is not hypothetical: `unverified_no_schema` is the status for 98 of
+    /// 101 curated cards. A future author adding a fourth `unverified_*`
+    /// variant, or renaming one, must not turn the common case green. The
+    /// catch-all arm is what guarantees it, and this is what stops someone
+    /// "tidying" it into an explicit list that a new variant then falls past.
+    #[test]
+    fn an_unknown_status_is_never_approved() {
+        for weird in ["", "unverified_something_new", "VALID", "ok", "skipped"] {
+            assert_eq!(
+                decision_for(weird),
+                Decision::Undetermined,
+                "`{weird}` was treated as a verdict when it is not one"
+            );
+        }
+    }
+
+    /// The gate must be declared, or its counters render on the surface as a
+    /// number with no statement of what it refuses.
+    #[test]
+    fn the_gate_is_declared_and_explains_its_own_silence() {
+        let spec = Gate::OutputSchema.spec();
+        assert_eq!(spec.id, "output_schema");
+        assert!(
+            spec.site.contains("envelope"),
+            "a count must point at a file"
+        );
+        // `if_never_refuses` is what makes `admits_everything` actionable, and
+        // for this gate the honest reading is unusual: silence most likely
+        // means almost nothing declares a type at all, so `undetermined` has
+        // to be checked before `approved` is believed.
+        assert!(
+            spec.if_never_refuses.contains("undetermined"),
+            "this gate's silence is ambiguous in a specific way and the spec \
+             has to say so"
+        );
+    }
+
+    /// The hop really does report — not just compute a decision it drops.
+    /// Asserted as "the gate has been asked at least once after a hop", which
+    /// is all a shared global counter can honestly support under parallel
+    /// tests. The mapping is pinned above; this pins that it is wired.
+    #[test]
+    fn the_hop_actually_reports_to_the_gate() {
+        build(
+            "anomaly_triager",
+            None,
+            &tests::output_with(Some(r#"{"a":1}"#)),
+            Uuid::new_v4(),
+        );
+        let a = crate::gate_trust::account(Gate::OutputSchema);
+        assert!(
+            !a.never_asked(),
+            "the gate was never asked, so `build` is computing a verdict and \
+             dropping it — which is the state this gate was added to end"
+        );
+    }
+}
+
+/// The guidance that tells a coordinator to read this envelope.
+///
+/// The verdict reaching the coordinator was never the hard part — it has been
+/// in the delegation result since the envelope landed. What was missing was
+/// any instruction to look at it, so every coordinator in the corpus received
+/// `validation.status` and ignored it. `envelope.rs` said "producers go first,
+/// consumers follow"; the consumers did not follow.
+///
+/// The fix is the `execute_agent` tool description, because that is the one
+/// surface every delegating agent reads — better than editing six strategist
+/// prompts and forgetting the seventh. Which makes the description load-bearing
+/// documentation, and load-bearing documentation drifts. Hence these.
+#[cfg(test)]
+mod delegation_guidance {
+    /// The `execute_agent` description as the model receives it.
+    fn description() -> String {
+        crate::agent_backend::tools::builtin_tool_catalogue()
+            .into_iter()
+            .find(|(n, _)| *n == "execute_agent")
+            .map(|(_, d)| d.split_whitespace().collect::<Vec<_>>().join(" "))
+            .expect("execute_agent is a builtin")
+    }
+
+    /// Every status `build` can emit must be explained, or a coordinator meets
+    /// a value it has no instruction for and does the default thing: ignore it.
+    #[test]
+    fn every_status_a_hop_can_emit_is_explained() {
+        let d = description();
+        for status in [
+            "valid",
+            "invalid",
+            "unverified_no_schema",
+            "unverified_no_payload",
+            "unverified_unsupported_schema",
+        ] {
+            assert!(
+                d.contains(status),
+                "the delegation guidance never mentions `{status}`, so a \
+                 coordinator receiving it has no instruction"
+            );
+        }
+    }
+
+    /// The one sentence that matters. A coordinator treating `unverified_*` as
+    /// a pass has reintroduced the defect this module exists to close, and it
+    /// is the *common* case — 98 of 101 cards declare no schema, so the
+    /// permissive reading is also the frequent one.
+    #[test]
+    fn unverified_is_stated_not_to_be_a_pass() {
+        let d = description();
+        assert!(
+            d.contains("NOT a pass"),
+            "the guidance must say plainly that an unverified document is not a \
+             verified one. Anything softer gets read as a pass by a model \
+             optimising for a helpful answer."
+        );
+    }
+
+    /// An invalid document must not be silently averaged in. Naming the
+    /// behaviour matters more than naming the status: "discount it and say you
+    /// did" is actionable, "be careful" is not.
+    #[test]
+    fn an_invalid_document_has_a_prescribed_behaviour() {
+        let d = description();
+        assert!(
+            d.contains("Do not silently average it in"),
+            "the guidance names `invalid` but not what to do about it"
+        );
+        assert!(
+            d.contains("say in your output that you did"),
+            "a discount a coordinator does not disclose is invisible to \
+             everything downstream, including the credit model"
+        );
+    }
+
+    /// The provenance half. A `tool_verified` value and a `model_inference`
+    /// value are different kinds of number, and combining them as if they were
+    /// the same is how a coordinator launders a judgement into a result.
+    #[test]
+    fn it_tells_a_coordinator_to_weigh_provenance_not_just_validity() {
+        let d = description();
+        assert!(d.contains("tool_verified"), "measurement side missing");
+        assert!(d.contains("model_inference"), "judgement side missing");
+        assert!(
+            d.contains("grounding_enforced"),
+            "a missing grounding contract reads as a clean pass at the call \
+             site, so the guidance has to name it as an absence"
+        );
     }
 }

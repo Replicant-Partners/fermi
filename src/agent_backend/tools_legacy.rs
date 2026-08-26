@@ -847,7 +847,34 @@ fn builtin_tools_core() -> Vec<BuiltinToolDef> {
         },
         BuiltinToolDef {
              name: "execute_agent",
-             description: "Invoke another agent with a query and get its response. When workspace_id is provided, the sub-agent runs inside that workspace's full context (cross-workspace delegation — used for Rabble creatures to consume kask-app workspaces). Without workspace_id, the sub-agent runs a single turn without tools.",
+             description: "Invoke another agent with a query and get its response. When workspace_id is provided, the sub-agent runs inside that workspace's full context (cross-workspace delegation — used for Rabble creatures to consume kask-app workspaces). Without workspace_id, the sub-agent runs a single turn without tools.\n\n\
+                           READ `envelope` BEFORE YOU WEIGH THE ANSWER. The \
+                           result carries an `envelope` describing what actually \
+                           crossed the hop, and `envelope.validation.status` is \
+                           the member's document checked against the type that \
+                           member itself declared:\n\
+                           · `valid` — checked and conforming. Use \
+                           `envelope.payload`, which is the member's own typed \
+                           document and is better than re-reading its prose.\n\
+                           · `invalid` — the document CONTRADICTS the type its \
+                           producer declared; `violations` names the paths. Do \
+                           not silently average it in. Discount it, say in your \
+                           output that you did, and prefer another member or \
+                           another route for this kind of task.\n\
+                           · `unverified_no_schema` / `unverified_no_payload` / \
+                           `unverified_unsupported_schema` — NOT a pass. Nothing \
+                           was checked, because the member declares no type, \
+                           returned prose, or declared a schema the validator \
+                           cannot evaluate. Treat it as unverified evidence and \
+                           weight it below a `valid` member.\n\
+                           Also check `envelope.provenance.blocks`: a \
+                           `tool_verified` value is a measurement, \
+                           `model_inference` is a judgement, and combining them \
+                           as if they were the same kind of number is how a \
+                           coordinator launders a guess into a result. \
+                           `grounding_enforced: false` means nobody has written a \
+                           grounding contract for that member — an absence, not a \
+                           clean bill of health.",
              input_schema: json!({
                  "type": "object",
                  "properties": {

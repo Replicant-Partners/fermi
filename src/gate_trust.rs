@@ -110,6 +110,8 @@ pub enum Gate {
     RateLimit = 5,
     /// A frame the model cannot see, or the provider cannot carry.
     Attachment = 6,
+    /// A delegated document that contradicts its producer's own declared type.
+    OutputSchema = 7,
 }
 
 /// One gate's declaration.
@@ -223,6 +225,29 @@ pub const GATES: &[GateSpec] = &[
         if_never_refuses: "No caller has sent an attachment the model could not \
                            read — or attachments are not reaching this check.",
     },
+    GateSpec {
+        gate: Gate::OutputSchema,
+        id: "output_schema",
+        clock: Clock::Invocation,
+        // Counted rather than Recorded, for now. Promotion needs a widened
+        // `gate_decision_reviews` CHECK and a door in `gate_api::GATE_DOORS`,
+        // and an unreviewable ledger row is not obviously better than a
+        // counter. The counter answers the question this gate was added for:
+        // is a declared type ever actually contradicted, or is every contract
+        // in the corpus inert?
+        retention: Retention::Counted,
+        site: "agent_backend::envelope::build, at every delegation hop",
+        refuses: "a delegated document that contradicts the schema its own \
+                  producer declared",
+        if_never_refuses: "The likely reading, and the one this gate exists to \
+                           distinguish from health: almost no agent declares a \
+                           schema, so there is nothing to contradict. Check \
+                           `undetermined` before believing `approved` — an \
+                           untyped producer, a prose-only answer and a schema \
+                           keyword the validator cannot evaluate all land there, \
+                           and all three are the absence of a check rather than \
+                           the passing of one.",
+    },
 ];
 
 impl Gate {
@@ -280,6 +305,7 @@ pub const GATE_IDS: &[&str] = &[
     "credit",
     "rate_limit",
     "attachment",
+    "output_schema",
 ];
 
 const N: usize = GATES.len();

@@ -1271,6 +1271,16 @@ async fn run_migrations(db: &PgPool) {
         // every row. Now compares against `measured_at`, which the table has
         // carried since 141 and nothing used.
         "migrations/215_projection_anchor_invariant.sql",
+        // 217 — widens `gate_decisions_gate_check` for `output_schema`.
+        // `Gate::OutputSchema` counts documents that contradict the schema
+        // their own producer declared, decided at every delegation hop in
+        // `envelope::build`. That verdict was computed and reported to nobody
+        // before this. Counted rather than Recorded for now, so the constraint
+        // is not exercised yet — widened anyway because `GATE_IDS` is
+        // registered as this column's vocabulary, and a Rust constant naming a
+        // token Postgres rejects is a swallowed insert waiting for whoever
+        // promotes the retention.
+        "migrations/217_gate_decisions_output_schema.sql",
     ];
 
     // Bootstrap the ledger before anything is recorded into it.

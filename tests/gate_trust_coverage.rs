@@ -80,10 +80,17 @@ fn gate_call_sites(repo: &Path) -> Vec<String> {
                 }
                 let lo = i.saturating_sub(4);
                 let hi = (i + 4).min(lines.len());
-                if lines[lo..hi]
-                    .iter()
-                    .any(|l| l.contains("decided(") || l.contains("decided_ok("))
-                {
+                // Every reporting entry point in `gate_trust`, not just the
+                // two that existed when this was written. `decided_about` was
+                // public and unused outside the module, so the omission was
+                // latent until the first caller appeared — and it failed as
+                // "this gate records nothing", which is the opposite of true.
+                // Note `decided(` is not a substring of `decided_about(`.
+                if lines[lo..hi].iter().any(|l| {
+                    l.contains("decided(")
+                        || l.contains("decided_ok(")
+                        || l.contains("decided_about(")
+                }) {
                     found.push(line.clone());
                 }
             }
