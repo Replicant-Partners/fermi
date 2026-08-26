@@ -496,6 +496,200 @@
         color: var(--yellow);
         border-color: var(--yellow);
       }
+      /* Compose-from palette */
+      .cb-palette-wrap {
+        margin: 14px 0;
+      }
+      .cb-sub {
+        font-size: 0.72rem;
+        color: var(--aqua);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 6px;
+      }
+      .cb-hintlet {
+        color: var(--fg3);
+        text-transform: none;
+        letter-spacing: 0;
+        font-size: 0.68rem;
+        margin-left: 6px;
+      }
+      .cb-palette {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .cb-chip {
+        border: 1px solid var(--bg2);
+        background: var(--bg1);
+        color: var(--fg2);
+        font-size: 0.72rem;
+        padding: 6px 10px;
+        cursor: pointer;
+        text-align: left;
+        max-width: 260px;
+      }
+      .cb-chip:hover {
+        border-color: var(--yellow);
+        color: var(--fg0);
+      }
+      .cb-chip.used {
+        opacity: 0.4;
+      }
+      .cb-chip .cb-chip-k {
+        display: block;
+        font-size: 0.62rem;
+        color: var(--fg3);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      .cb-chip.tool {
+        border-left: 3px solid var(--green);
+      }
+      .cb-chip.judgement {
+        border-left: 3px solid var(--blue);
+      }
+      .cb-chip.prose {
+        border-left: 3px solid var(--purple);
+      }
+      .cb-chip.gap {
+        border-left: 3px solid var(--orange);
+      }
+
+      /* Two columns: what you are editing, and what it produces */
+      .cb-split {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+        margin-top: 14px;
+      }
+      @media (max-width: 900px) {
+        .cb-split {
+          grid-template-columns: 1fr;
+        }
+      }
+      .cb-col {
+        min-width: 0;
+      }
+
+      /* Live document preview */
+      .cb-doc {
+        background: var(--bg0-hard);
+        border: 1px solid var(--bg2);
+        padding: 10px;
+        font-size: 0.7rem;
+        line-height: 1.6;
+        white-space: pre-wrap;
+        overflow-x: auto;
+        min-height: 120px;
+      }
+      .cb-doc .k {
+        color: var(--fg1);
+      }
+      .cb-doc .stamp-sourced {
+        color: var(--green);
+      }
+      .cb-doc .stamp-inferred {
+        color: var(--blue);
+      }
+      .cb-doc .stamp-unavailable {
+        color: var(--orange);
+      }
+      .cb-doc .prose {
+        color: var(--purple);
+      }
+      .cb-doc .nul {
+        color: var(--gray);
+      }
+      .cb-doc-legend {
+        font-size: 0.66rem;
+        color: var(--fg3);
+        margin-top: 6px;
+        line-height: 1.6;
+      }
+
+      /* Composition panel */
+      .cb-compose {
+        border: 1px solid var(--bg2);
+        padding: 10px;
+        margin: 14px 0;
+        background: var(--bg0);
+      }
+      .cb-type-row {
+        display: flex;
+        gap: 8px;
+        align-items: baseline;
+        font-size: 0.72rem;
+        padding: 4px 0;
+        border-bottom: 1px dashed var(--bg2);
+      }
+      .cb-type-row:last-child {
+        border-bottom: none;
+      }
+      .cb-type-row .t {
+        color: var(--yellow);
+        font-family: monospace;
+        cursor: pointer;
+      }
+      .cb-type-row .t:hover {
+        text-decoration: underline;
+      }
+      .cb-type-row .b {
+        color: var(--fg3);
+        flex: 1;
+      }
+      .cb-type-row .c {
+        color: var(--aqua);
+      }
+
+      /* Collapsed block summary */
+      .cb-sum {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        cursor: pointer;
+        font-size: 0.75rem;
+      }
+      .cb-sum .nm {
+        font-weight: bold;
+        color: var(--fg1);
+      }
+      .cb-pill {
+        font-size: 0.62rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        padding: 2px 6px;
+        border: 1px solid var(--bg3);
+        color: var(--fg3);
+      }
+      .cb-pill.sourced {
+        color: var(--green);
+        border-color: var(--green);
+      }
+      .cb-pill.inferred {
+        color: var(--blue);
+        border-color: var(--blue);
+      }
+      .cb-pill.narrative {
+        color: var(--purple);
+        border-color: var(--purple);
+      }
+      .cb-pill.unavailable {
+        color: var(--orange);
+        border-color: var(--orange);
+      }
+      .cb-todo {
+        color: var(--orange);
+        font-size: 0.68rem;
+      }
+      .cb-ok {
+        color: var(--green);
+        font-size: 0.68rem;
+      }
+      .cb-body {
+        margin-top: 10px;
+      }
+
       .cb-block {
         border: 1px solid var(--bg2);
         border-left: 3px solid var(--bg3);
@@ -1005,7 +1199,6 @@
               <button class="btn" onclick="cbLoadExample()">
                 Load worked example
               </button>
-              <button class="btn" onclick="cbAddBlock()">+ Add block</button>
               <button class="btn" onclick="cbClear()">Clear</button>
               <span class="cb-spacer"></span>
               <span class="cb-status" id="cb-status">No contract yet</span>
@@ -1027,7 +1220,7 @@
                   type="text"
                   id="cb-type"
                   placeholder="myapp/risk_assessment"
-                  oninput="cbTouch()"
+                  oninput="cbTouch(); cbRenderCompose()"
                 />
                 <div class="hint">
                   Namespaced <code>namespace/type</code>, so two teams can both
@@ -1042,7 +1235,7 @@
                 type="text"
                 id="cb-tools"
                 placeholder="fmp_company_profile, fmp_ratios"
-                oninput="cbTouch()"
+                oninput="cbToolsChanged()"
               />
               <div class="hint">
                 Comma-separated, and saved onto the card. A block marked
@@ -1053,7 +1246,35 @@
             </div>
 
             <datalist id="cb-tool-list"></datalist>
-            <div id="cb-blocks"></div>
+
+            <!-- Compositional clues: what already exists to compose with. -->
+            <div id="cb-compose"></div>
+
+            <!-- Compose from what you HAVE, rather than from an empty form.
+                 Every chip is either a tool you declared (so the `sourced`
+                 cross-check passes by construction) or one of the two things
+                 no tool can give you. -->
+            <div class="cb-palette-wrap">
+              <div class="cb-sub">Compose the document from</div>
+              <div class="cb-palette" id="cb-palette"></div>
+            </div>
+
+            <div class="cb-split">
+              <div class="cb-col">
+                <div class="cb-sub">
+                  Blocks
+                  <span class="cb-hintlet">click to expand</span>
+                </div>
+                <div id="cb-blocks"></div>
+              </div>
+              <div class="cb-col">
+                <div class="cb-sub">
+                  The document your agent returns
+                  <span class="cb-hintlet">live</span>
+                </div>
+                <div id="cb-doc"></div>
+              </div>
+            </div>
 
             <div class="collapsible-header" onclick="toggleCollapsible(this)">
               <span class="arrow">&#9654;</span> Advanced: ontology vocabulary
@@ -1224,6 +1445,7 @@
         loadPopularTags();
         loadCatalogue();
         cbLoadToolNames();
+        cbLoadTypes();
         cbRender();
       })();
 
@@ -1824,13 +2046,330 @@
         el.classList.toggle("short", n < 40);
       }
 
+      // ─── Compose-from palette ───
+      //
+      // The first version of this step opened on an empty block form, which
+      // is the wrong question: it asks the author to invent structure before
+      // telling them what they already have. Every value an agent can put in
+      // a document comes from exactly one of three places — a tool it
+      // declared, its own reasoning, or prose — so those are the chips.
+      //
+      // A block added from a tool chip is `sourced` against a tool the agent
+      // really declares, so the check with teeth passes by construction.
+
+      let cbProposals = [];
+      let cbTypes = [];
+      let cbOpen = new Set();
+
+      async function cbLoadProposals() {
+        const tools = cbToolNames();
+        if (!tools.length) {
+          cbProposals = [];
+          cbRenderPalette();
+          return;
+        }
+        try {
+          const res = await fetch("/api/contracts/suggest", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tool_names: tools }),
+          });
+          cbProposals = res.ok ? (await res.json()).blocks || [] : [];
+        } catch {
+          cbProposals = [];
+        }
+        cbRenderPalette();
+      }
+
+      function cbRenderPalette() {
+        const used = new Set(cbBlocks.map((b) => (b.tool || "").trim()));
+        const chips = [];
+
+        cbProposals.forEach((p, i) => {
+          const tool = p.source.tool;
+          chips.push(`
+            <button class="cb-chip tool ${used.has(tool) ? "used" : ""}"
+                    onclick="cbAddFromProposal(${i})"
+                    title="${esc(p.source.response_field)}">
+              <span class="cb-chip-k">retrieved · ${used.has(tool) ? "added" : "tool"}</span>
+              ${esc(tool)}
+            </button>`);
+        });
+
+        if (!cbProposals.length) {
+          chips.push(`
+            <div class="hint" style="max-width:420px">
+              No tools declared yet. Add some above and they appear here as
+              retrieved blocks — which is the only kind whose values a tool can
+              actually vouch for.
+            </div>`);
+        }
+
+        chips.push(`
+          <button class="cb-chip judgement" onclick="cbAddJudgement()">
+            <span class="cb-chip-k">reasoned · no tool can give you this</span>
+            assessment
+          </button>`);
+        chips.push(`
+          <button class="cb-chip prose" onclick="cbAddProse()">
+            <span class="cb-chip-k">prose · for a human</span>
+            summary
+          </button>`);
+        chips.push(`
+          <button class="cb-chip gap" onclick="cbAddGap()">
+            <span class="cb-chip-k">refused · nothing can supply it</span>
+            declare a gap
+          </button>`);
+
+        document.getElementById("cb-palette").innerHTML = chips.join("");
+      }
+
+      function cbAddFromProposal(i) {
+        const p = cbProposals[i];
+        const b = cbNewBlock(p.name);
+        b.status = "sourced";
+        b.tool = p.source.tool;
+        // The tool's own sentence, for the author to cut down. Left long on
+        // purpose: it is visibly a starting point rather than an answer.
+        b.response_field = p.source.response_field;
+        b.coverage = p.source.coverage || "complete";
+        b.fields = (p.candidate_fields || []).map((f) => ({
+          name: f.name,
+          type: f.type,
+        }));
+        if (!b.fields.length) b.fields = [{ name: "", type: "string?" }];
+        cbBlocks.push(b);
+        cbOpen.add(b.name);
+        cbRender();
+        cbTouch();
+      }
+
+      function cbAddJudgement() {
+        const b = cbNewBlock("assessment");
+        b.status = "inferred";
+        b.from = cbBlocks
+          .filter((x) => x.status === "sourced" && x.name)
+          .map((x) => x.name)
+          .join(", ");
+        b.fields = [
+          { name: "direction", type: "enum:up|flat|down" },
+          { name: "confidence", type: "number?" },
+        ];
+        cbBlocks.push(b);
+        cbOpen.add(b.name);
+        cbRender();
+        cbTouch();
+      }
+
+      function cbAddProse() {
+        const b = cbNewBlock("summary");
+        b.status = "narrative";
+        b.shape = "value";
+        b.value = "string";
+        b.fields = [];
+        cbBlocks.push(b);
+        cbOpen.add(b.name);
+        cbRender();
+        cbTouch();
+      }
+
+      function cbAddGap() {
+        const b = cbNewBlock("");
+        b.status = "unavailable";
+        cbBlocks.push(b);
+        cbRender();
+        cbTouch();
+      }
+
+      // ─── Compositional clues ───
+      //
+      // `produces_schema` exists so ANOTHER agent can match on identity. So
+      // the two questions worth answering while authoring are: what types
+      // already exist, and what shape do agents like mine actually return.
+      // Both are answerable from the corpus, and answering them from the
+      // corpus beats an author guessing from an empty form.
+      async function cbLoadTypes() {
+        try {
+          const res = await fetch("/api/contracts/types");
+          if (!res.ok) return;
+          cbTypes = (await res.json()).types || [];
+        } catch {
+          cbTypes = [];
+        }
+        cbRenderCompose();
+      }
+
+      function cbRenderCompose() {
+        const el = document.getElementById("cb-compose");
+        const mine = document.getElementById("cb-type").value.trim();
+        const consumers = cbTypes
+          .filter((t) => mine && t.type === mine)
+          .flatMap((t) => t.consumers);
+
+        if (!cbTypes.length) {
+          el.innerHTML = `<div class="cb-compose"><div class="cb-sub">Compose with</div>
+            <div class="hint">No typed agents reachable yet — either none are
+            published or the server is not up. Your type will be the first,
+            which is fine; it just means nothing can match on it yet.</div></div>`;
+          return;
+        }
+
+        el.innerHTML = `
+          <div class="cb-compose">
+            <div class="cb-sub">Compose with <span class="cb-hintlet">${cbTypes.length} type(s) declared in this ecosystem · click one to borrow its block names</span></div>
+            ${cbTypes
+              .slice(0, 8)
+              .map(
+                (t) => `
+              <div class="cb-type-row">
+                <span class="t" onclick="cbBorrow('${esc(t.type)}')">${esc(t.type)}</span>
+                <span class="b">${esc((t.blocks || []).join(" · ")) || "—"}</span>
+                <span class="c">${esc(t.producer)}</span>
+              </div>`,
+              )
+              .join("")}
+            ${
+              mine
+                ? `<div class="cb-gen" style="margin-top:8px">
+                     Your type <code>${esc(mine)}</code> — ${
+                       consumers.length
+                         ? `accepted by <strong>${esc(consumers.join(", "))}</strong>`
+                         : `nothing declares it in <code>accepts</code> yet. Not a
+                            problem while you are the only producer, but it is the
+                            thing that makes the type worth having.`
+                     }
+                   </div>`
+                : ""
+            }
+          </div>`;
+      }
+
+      // Borrow another type's block NAMES — never its grounding or its `why`.
+      // Shape is the part an author legitimately learns from a neighbour;
+      // where your values come from is not transferable, so those blocks
+      // arrive unanswered and the compiler will say so.
+      function cbBorrow(type) {
+        const t = cbTypes.find((x) => x.type === type);
+        if (!t) return;
+        const have = new Set(cbBlocks.map((b) => b.name));
+        (t.blocks || []).forEach((name) => {
+          if (have.has(name)) return;
+          const b = cbNewBlock(name);
+          b.status = name === "summary" ? "narrative" : "inferred";
+          if (b.status === "narrative") {
+            b.shape = "value";
+            b.value = "string";
+            b.fields = [];
+          }
+          cbBlocks.push(b);
+        });
+        cbRender();
+        cbTouch();
+      }
+
+      // ─── The document, as the primary artefact ───
+      //
+      // A form tells you what you are filling in; this tells you what the
+      // agent will actually return, coloured by where each value came from.
+      // That is the thing being designed, so it should be the thing on screen.
+      function cbRenderDoc() {
+        const el = document.getElementById("cb-doc");
+        const named = cbBlocks.filter((b) => b.name.trim());
+        if (!named.length) {
+          el.innerHTML = `<div class="cb-doc"><span class="nul">// nothing composed yet</span></div>`;
+          return;
+        }
+
+        const lines = ["{"];
+        named.forEach((b, i) => {
+          const last = i === named.length - 1;
+          const name = esc(b.name.trim());
+          if (b.shape === "value" || b.status === "narrative") {
+            const cls = b.status === "narrative" ? "prose" : "k";
+            lines.push(`  <span class="k">"${name}"</span>: <span class="${cls}">"…"</span>${last ? "" : ","}`);
+          } else {
+            const fields = b.fields.filter((f) => f.name.trim());
+            const inner = fields.length
+              ? fields
+                  .map(
+                    (f) =>
+                      `    <span class="k">"${esc(f.name.trim())}"</span>: <span class="nul">${esc(cbTypeHint(f.type))}</span>`,
+                  )
+                  .join(",\n")
+              : `    <span class="nul">// no fields yet</span>`;
+            lines.push(`  <span class="k">"${name}"</span>: {`);
+            lines.push(inner);
+            lines.push("  },");
+          }
+
+          // The derived stamp, shown inline because it is the half of the
+          // document the author never types and would otherwise be surprised
+          // by at runtime.
+          if (b.status !== "narrative") {
+            const cls =
+              b.status === "sourced"
+                ? "stamp-sourced"
+                : b.status === "inferred"
+                  ? "stamp-inferred"
+                  : "stamp-unavailable";
+            const v =
+              b.status === "sourced"
+                ? "tool_verified | tool_no_match" +
+                  (b.coverage === "partial"
+                    ? " | unavailable_no_tool_source"
+                    : b.coverage === "deferred"
+                      ? " | pending_tool_check"
+                      : "")
+                : b.status === "inferred"
+                  ? "model_inference"
+                  : "unavailable_no_tool_source";
+            lines.push(
+              `  <span class="k">"${name}_provenance"</span>: <span class="${cls}">${esc(v)}</span>${last ? "" : ","}`,
+            );
+          }
+        });
+        lines.push("}");
+
+        el.innerHTML =
+          `<div class="cb-doc">${lines.join("\n")}</div>
+           <div class="cb-doc-legend">
+             <span class="stamp-sourced">■</span> retrieved ·
+             <span class="stamp-inferred">■</span> reasoned ·
+             <span class="prose">■</span> prose ·
+             <span class="stamp-unavailable">■</span> refused.
+             The <code>_provenance</code> lines are written by the platform, not
+             by your agent — which is why a judgement can never present itself
+             as a lookup.
+           </div>`;
+      }
+
+      function cbTypeHint(t) {
+        const s = (t || "").trim();
+        if (s.startsWith("enum:")) return '"' + s.slice(5).split("|")[0] + '"';
+        if (s.startsWith("const:")) return '"' + s.slice(6) + '"';
+        if (s.endsWith("[]") || s.endsWith("[]?")) return "[ … ]";
+        if (s.endsWith("?")) return "null";
+        if (s.startsWith("number") || s.startsWith("integer")) return "0";
+        if (s.startsWith("boolean")) return "false";
+        return '"…"';
+      }
+
+      function cbToggle(name) {
+        if (cbOpen.has(name)) cbOpen.delete(name);
+        else cbOpen.add(name);
+        cbRender();
+      }
+
       function cbRender() {
+        cbRenderPalette();
+        cbRenderCompose();
+        cbRenderDoc();
         const wrap = document.getElementById("cb-blocks");
         if (!cbBlocks.length) {
           wrap.innerHTML = `<div class="hint" style="padding:12px 0">
-            No blocks yet. A block is one coherent piece of the document —
-            <code>profile</code>, <code>assessment</code>, <code>summary</code>.
-            Add one, or load the worked example.</div>`;
+            Nothing yet. Pick from the palette above — a block is one coherent
+            piece of the document, and the palette is grouped by the only three
+            places a value can come from.</div>`;
           return;
         }
         wrap.innerHTML = cbBlocks
@@ -1902,8 +2441,44 @@
                    </div>`;
 
             const whyN = (b.why || "").trim().length;
+            const nFields =
+              b.shape === "value"
+                ? 1
+                : b.fields.filter((f) => f.name.trim()).length;
+            const isOpen = cbOpen.has(b.name) || !b.name.trim();
+
+            // Collapsed by default. The summary carries the only two things
+            // worth seeing at a glance: where the values come from, and
+            // whether the one field the compiler will not write is written.
+            if (!isOpen) {
+              return `
+              <div class="cb-block" data-status="${b.status}">
+                <div class="cb-sum" onclick="cbToggle('${esc(b.name)}')">
+                  <span class="nm">${esc(b.name)}</span>
+                  <span class="cb-pill ${b.status}">${b.status}</span>
+                  <span class="cb-hintlet">${nFields} field${nFields === 1 ? "" : "s"}</span>
+                  <span class="cb-spacer"></span>
+                  ${
+                    whyN >= 40
+                      ? '<span class="cb-ok">&#10003; why</span>'
+                      : '<span class="cb-todo">why needed</span>'
+                  }
+                </div>
+              </div>`;
+            }
+
             return `
             <div class="cb-block" data-status="${b.status}">
+              <div class="cb-sum" onclick="cbToggle('${esc(b.name)}')"
+                   style="margin-bottom:8px">
+                <span class="cb-hintlet">▾ collapse</span>
+                <span class="cb-spacer"></span>
+                ${
+                  whyN >= 40
+                    ? '<span class="cb-ok">&#10003; why</span>'
+                    : '<span class="cb-todo">why needed</span>'
+                }
+              </div>
               <div class="cb-block-head">
                 <input class="cb-name" value="${esc(b.name)}" placeholder="block_name"
                        oninput="cbSet(${i},'name',this.value)" />
@@ -1974,8 +2549,18 @@
       }
 
       function cbTouch() {
+        cbRenderDoc();
         clearTimeout(cbTimer);
         cbTimer = setTimeout(cbCompile, 400);
+      }
+
+      // Declared tools changed: re-derive the palette, since a chip is only
+      // offered for a tool the agent really has.
+      let cbToolTimer = null;
+      function cbToolsChanged() {
+        cbTouch();
+        clearTimeout(cbToolTimer);
+        cbToolTimer = setTimeout(cbLoadProposals, 350);
       }
 
       function cbSetStatusChip(text, cls) {
@@ -2134,9 +2719,12 @@
       function cbClear() {
         cbBlocks = [];
         cbCompiled = null;
+        cbProposals = [];
+        cbOpen = new Set();
         ["cb-domain", "cb-type", "cb-tools", "cb-ontology"].forEach(
           (id) => (document.getElementById(id).value = ""),
         );
+        document.getElementById("cb-output").innerHTML = "";
         cbRender();
         cbTouch();
       }
@@ -2194,6 +2782,8 @@
           ", ",
         );
         cbBlocks = cbBlocksFromSketch(ex.sketch);
+        cbOpen = new Set();
+        cbLoadProposals();
         cbRender();
         cbCompile();
       }

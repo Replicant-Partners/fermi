@@ -16,10 +16,13 @@
 //!
 //! One endpoint, no database, no side effects: `POST /api/contracts/compile`.
 
-use axum::{http::StatusCode, Json};
+use axum::{extract::State, http::StatusCode, Json};
 use fermi_auth::AuthPrincipal;
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{json, Value};
+use sqlx::Row;
+
+use crate::AppState;
 
 #[derive(Deserialize)]
 pub struct CompileRequest {
@@ -154,6 +157,109 @@ mod tests {
         }
     }
 
+    /// The invariant that keeps `suggest` a proposer rather than a generator:
+    /// it never writes `why`. Asserted over the whole catalogue, not one
+    /// example, because this is the property that would erode quietly — a
+    /// helpful default here is the fabrication the contract exists to catch,
+    /// wearing the costume of developer experience.
+    #[test]
+    fn no_proposal_ever_invents_a_why() {
+        for (name, desc) in fermi::agent_backend::tools::builtin_tool_catalogue() {
+            let p = tool_block_proposal(name, desc);
+            assert_eq!(
+                p["why"].as_str(),
+                Some(""),
+                "`{name}` came back with a why the author did not write"
+            );
+            for f in p["candidate_fields"].as_array().unwrap() {
+                assert_eq!(
+                    f["unconfirmed"],
+                    serde_json::json!(true),
+                    "`{name}`: a field lifted from prose must be marked unconfirmed"
+                );
+            }
+        }
+    }
+
+    /// A proposal is a real starting point: fill in the `why` and it compiles.
+    /// Without that, "suggest" would be a button that produces something the
+    /// next button rejects.
+    #[test]
+    fn a_proposal_plus_an_authored_why_compiles() {
+        let (name, desc) = fermi::agent_backend::tools::builtin_tool_catalogue()
+            .into_iter()
+            .find(|(n, _)| *n == "fmp_company_profile")
+            .expect("fmp_company_profile is a builtin");
+
+        let mut block = tool_block_proposal(name, desc);
+        block["why"] = serde_json::json!(
+            "FMP's profile endpoint returns these for a resolved ticker, or an \
+             empty array for a symbol it does not carry."
+        );
+
+        // Candidate fields become real fields once the author keeps them.
+        let fields: serde_json::Map<String, Value> = block["candidate_fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| {
+                (
+                    f["name"].as_str().unwrap().to_string(),
+                    f["type"].clone(),
+                )
+            })
+            .collect();
+        assert!(!fields.is_empty(), "the description yielded no candidates");
+        block
+            .as_object_mut()
+            .unwrap()
+            .insert("fields".into(), Value::Object(fields));
+
+        let input = json!({
+            "sketch": {
+                "domain": "testing",
+                "produces_schema": "demo/doc",
+                "blocks": [block],
+            },
+            "tool_names": [name],
+        });
+        let out = fermi::contract_sketch::execute_build_tool(&input).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["compiles"], json!(true), "{v:#}");
+    }
+
+    /// And the same proposal, untouched, does NOT compile \u2014 so the button
+    /// cannot be used to skip the one decision that matters.
+    #[test]
+    fn an_untouched_proposal_does_not_compile() {
+        let (name, desc) = fermi::agent_backend::tools::builtin_tool_catalogue()
+            .into_iter()
+            .find(|(n, _)| *n == "fmp_company_profile")
+            .unwrap();
+        let mut block = tool_block_proposal(name, desc);
+        block
+            .as_object_mut()
+            .unwrap()
+            .insert("fields".into(), json!({ "price": "number?" }));
+
+        let input = json!({
+            "sketch": {
+                "domain": "testing",
+                "produces_schema": "demo/doc",
+                "blocks": [block],
+            },
+            "tool_names": [name],
+        });
+        let out = fermi::contract_sketch::execute_build_tool(&input).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["compiles"], json!(false));
+        assert!(v["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["check"] == "sketch_why"));
+    }
+
     /// A `sourced` block naming a tool the agent does not declare must not
     /// come back with a contract. Checked through the HTTP request shape
     /// rather than the compiler, because this is the property the builder's
@@ -201,4 +307,238 @@ mod tests {
             "{v:#}"
         );
     }
+}
+
+// ─── Compositional clues ───────────────────────────────────────────────
+//
+// The first version of the builder was a form in a vacuum: it asked what
+// document you return without telling you what documents already exist, who
+// would consume yours, or that your own declared tools already imply most of
+// the answer. A contract is a COMPOSITION artefact — `produces_schema` exists
+// so another agent can match on identity — so authoring one with no view of
+// the ecosystem is the one context in which it makes least sense.
+//
+// Two endpoints, both answering questions the author actually has:
+//
+//   /api/contracts/types    what types exist, who produces them, who could
+//                           consume mine
+//   /api/contracts/suggest  my tools, turned into candidate blocks
+//
+// `suggest` is a PROPOSER, in the sense `scripts/port_migrate.py` uses the
+// word: it fills in what the tool declaration is evidence for and refuses to
+// fill in what it is not. Specifically it never writes `why`, so nothing it
+// returns can be compiled without the author having said something. See
+// `tool_block_proposal`.
+
+/// `GET /api/contracts/types`
+///
+/// The type registry: every `produces_schema` declared anywhere, its
+/// producers, and its block names.
+///
+/// The block names are the useful part and the reason this is not just a list
+/// of strings. "What do agents like mine actually return?" is answerable from
+/// the corpus, and answering it from the corpus is strictly better than an
+/// author guessing at structure from an empty form — which is the one thing
+/// `port_migrate.py` measured as impossible to do well.
+pub async fn types_handler(
+    State(state): State<AppState>,
+    _principal: AuthPrincipal,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let rows = sqlx::query(
+        "SELECT agent_name, agent_type, accepts, produces, output_contract \
+         FROM agents \
+         WHERE output_contract IS NOT NULL \
+           AND output_contract -> 'produces_schema' IS NOT NULL \
+         ORDER BY agent_name",
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db: {e}")))?;
+
+    // Every label any agent accepts, so "who could consume this" is answered
+    // from declarations rather than from optimism.
+    let consumer_rows =
+        sqlx::query("SELECT agent_name, accepts FROM agents WHERE accepts IS NOT NULL")
+            .fetch_all(&state.db)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db: {e}")))?;
+
+    let mut consumers_by_label: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for r in &consumer_rows {
+        let name: String = r.try_get("agent_name").unwrap_or_default();
+        let accepts: Vec<String> = r.try_get("accepts").unwrap_or_default();
+        for a in accepts {
+            consumers_by_label.entry(a).or_default().push(name.clone());
+        }
+    }
+
+    let mut types: Vec<Value> = Vec::new();
+    for r in &rows {
+        let name: String = r.try_get("agent_name").unwrap_or_default();
+        let agent_type: String = r.try_get("agent_type").unwrap_or_default();
+        let oc: Option<Value> = r.try_get("output_contract").ok();
+        let Some(oc) = oc else { continue };
+        let Some(ty) = oc.get("produces_schema").and_then(|v| v.as_str()) else {
+            continue;
+        };
+
+        let blocks: Vec<String> = oc
+            .pointer("/schema/properties")
+            .and_then(|p| p.as_object())
+            .map(|o| {
+                o.keys()
+                    // The derived stamps are noise in a "what shape is this"
+                    // answer: they are one per block and always the same idea.
+                    .filter(|k| !k.ends_with(fermi::contract_sketch::PROVENANCE_SUFFIX))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        types.push(json!({
+            "type": ty,
+            "producer": name,
+            "agent_type": agent_type,
+            "domain": oc.get("domain").and_then(|d| d.as_str()),
+            "blocks": blocks,
+            "consumers": consumers_by_label.get(ty).cloned().unwrap_or_default(),
+        }));
+    }
+
+    Ok(Json(json!({
+        "types": types,
+        // Stated so the builder can be honest about how thin this is rather
+        // than presenting three entries as an ecosystem.
+        "note": "Types declared across the corpus. `consumers` lists agents whose \
+                 `accepts` names this type exactly. Most agents still accept \
+                 free-text labels rather than types, so an empty `consumers` \
+                 usually means the consumer side has not been typed yet — not \
+                 that nothing wants this document.",
+    })))
+}
+
+#[derive(Deserialize)]
+pub struct SuggestRequest {
+    /// Tools the agent declares. Only these are proposed — a block sourced
+    /// from a tool the agent lacks is the defect the whole contract exists to
+    /// catch, so it must not be reachable even as a suggestion.
+    #[serde(default)]
+    pub tool_names: Vec<String>,
+}
+
+/// `POST /api/contracts/suggest`
+///
+/// Turn declared tools into candidate blocks.
+///
+/// This is the single biggest ease-of-use lever, and it is legitimate where a
+/// label-derived schema is not. `port_migrate.py`'s finding was that ~95% of
+/// port LABELS have no corroborating evidence in the card — a name is not
+/// evidence of anything. A declared tool is different: it has an author, a
+/// description of what it returns, and an input schema. Proposing a block for
+/// it is extraction from a real declaration.
+///
+/// Two invariants make it safe:
+///
+/// 1. **`why` is never proposed.** It is the field whose subject is the
+///    author's own reasoning, so `compile` refuses without it and this returns
+///    an empty string deliberately rather than a plausible sentence.
+/// 2. **Field names are marked unconfirmed.** They are nouns lifted from the
+///    tool's own description, which is the tool author's prose and not the
+///    response keys. Useful as a starting point, dishonest as a fact, so they
+///    come back under `candidate_fields` for the author to accept or rename.
+pub async fn suggest_handler(
+    _principal: AuthPrincipal,
+    Json(req): Json<SuggestRequest>,
+) -> Json<Value> {
+    let defs = fermi::agent_backend::tools::builtin_tool_catalogue();
+    let proposals: Vec<Value> = req
+        .tool_names
+        .iter()
+        .filter_map(|want| {
+            defs.iter()
+                .find(|(name, _)| name == want)
+                .map(|(name, desc)| tool_block_proposal(name, desc))
+        })
+        .collect();
+
+    Json(json!({
+        "blocks": proposals,
+        "note": "One candidate block per declared tool. `why` is deliberately empty: \
+                 its subject is where YOUR data comes from, and a generated \
+                 justification for that is the fabrication this contract exists to \
+                 catch. `candidate_fields` are nouns lifted from the tool's own \
+                 description — a starting point, not the response keys. Rename them.",
+    }))
+}
+
+/// A candidate block for one tool.
+fn tool_block_proposal(name: &str, description: &str) -> Value {
+    // `fmp_company_profile` -> `company_profile`. The vendor prefix is noise
+    // in a field name: the document says what it holds, the grounding entry
+    // says who supplied it.
+    let block = name
+        .split_once('_')
+        .map(|(_, rest)| rest)
+        .unwrap_or(name)
+        .to_string();
+
+    json!({
+        "name": block,
+        "source": {
+            "status": "sourced",
+            "tool": name,
+            // The tool's own sentence, for the author to cut down to the
+            // fields that matter. Better than an empty box and explicitly not
+            // a claim about response keys.
+            "response_field": description.trim(),
+            "coverage": "complete",
+        },
+        "why": "",
+        "candidate_fields": candidate_fields(description),
+    })
+}
+
+/// Nouns from a tool description, as candidate field names.
+///
+/// Crude on purpose. A cleverer extractor would produce more confident-looking
+/// output for the same evidence, which is the wrong direction: the author has
+/// to read these either way, and a list that obviously needs editing gets
+/// edited.
+fn candidate_fields(description: &str) -> Vec<Value> {
+    // Tool descriptions in this corpus follow "…including a, b, c." or
+    // "…data: a, b, c." — take the clause after the first colon or
+    // "including", then split on commas.
+    let tail = description
+        .split_once(':')
+        .map(|(_, t)| t)
+        .or_else(|| description.split_once("including").map(|(_, t)| t))
+        .unwrap_or("");
+
+    tail.split(',')
+        .map(|s| s.trim().trim_end_matches('.').trim())
+        .filter(|s| !s.is_empty() && s.len() < 40 && !s.contains(" the "))
+        .take(10)
+        .map(|s| {
+            let snake = s
+                .to_lowercase()
+                .chars()
+                .map(|c| if c.is_alphanumeric() { c } else { '_' })
+                .collect::<String>();
+            let snake = snake
+                .split('_')
+                .filter(|p| !p.is_empty())
+                .collect::<Vec<_>>()
+                .join("_");
+            json!({
+                "name": snake,
+                // Nullable by default: a retrieved field that the tool did
+                // not return must be able to say so, and the corpus
+                // convention is a type union rather than an absent key.
+                "type": "number?",
+                "unconfirmed": true,
+            })
+        })
+        .filter(|f| !f["name"].as_str().unwrap_or("").is_empty())
+        .collect()
 }

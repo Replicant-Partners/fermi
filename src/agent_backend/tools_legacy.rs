@@ -170,6 +170,19 @@ pub fn platform_tool_names() -> Vec<&'static str> {
     builtin_tools().into_iter().map(|t| t.name).collect()
 }
 
+/// Every builtin tool as `(name, description)`.
+///
+/// For the contract builder, which turns a declared tool into a candidate
+/// evidence block. The description is the load-bearing half: it is the tool
+/// author's own statement of what the tool returns, which is real evidence
+/// about document shape in a way a port label is not.
+pub fn builtin_tool_catalogue() -> Vec<(&'static str, &'static str)> {
+    builtin_tools()
+        .into_iter()
+        .map(|t| (t.name, t.description))
+        .collect()
+}
+
 /// Arms that exist in `ToolRegistry::execute` but have no `BuiltinToolDef`.
 ///
 /// Such a tool *runs* — card declarations carrying a schema are advertised to

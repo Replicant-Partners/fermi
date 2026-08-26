@@ -3349,6 +3349,18 @@ async fn main() {
             "/api/contracts/tools",
             get(handlers::contracts::tool_names_handler),
         )
+        // Compositional clues: what types exist and who consumes them, and
+        // the author's own tools turned into candidate blocks. A contract is
+        // a composition artefact, so authoring one with no view of the
+        // ecosystem is the least sensible place to be.
+        .route(
+            "/api/contracts/types",
+            get(handlers::contracts::types_handler),
+        )
+        .route(
+            "/api/contracts/suggest",
+            post(handlers::contracts::suggest_handler),
+        )
         // Agent CRUD
         .route("/api/agents", post(handlers::agents::create_agent_handler))
         .route(

@@ -74,6 +74,14 @@ mod legacy;
 
 // Re-export everything the rest of the codebase uses from the legacy module.
 pub use legacy::{
+    // Tool-declaration validation. Names in `capabilities.mcp_tools` must
+    // resolve to a dispatch arm in `ToolRegistry::execute`, or they become
+    // phantom tools: advertised to the model and over `/mcp/agents/:id`,
+    // then answered with `Unknown tool: X`.
+    // Name + description for every builtin, so the contract builder can turn
+    // a declared tool into a candidate evidence block. The description is
+    // real evidence about document shape in a way a port label is not.
+    builtin_tool_catalogue,
     dispatchable_tool_names,
     // Two keyless HTTP tools, re-exported so a handler that already holds a name
     // can ground it without standing up a full `ToolContext`. Neither takes
@@ -82,10 +90,6 @@ pub use legacy::{
     // second copy of a lookup is a second answer to the same question.
     execute_gbif_species_search,
     execute_mycobank_lookup,
-    // Tool-declaration validation. Names in `capabilities.mcp_tools` must
-    // resolve to a dispatch arm in `ToolRegistry::execute`, or they become
-    // phantom tools: advertised to the model and over `/mcp/agents/:id`,
-    // then answered with `Unknown tool: X`.
     invalid_tool_declarations,
     platform_tool_names,
     platform_tools,
