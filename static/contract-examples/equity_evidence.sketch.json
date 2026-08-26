@@ -1,0 +1,81 @@
+{
+  "_README": [
+    "The 'Load worked example' payload for the contract builder in",
+    "templates/agent_create.html. Trimmed from",
+    "agents/curated/equity_analyst/output_contract.sketch.json.",
+    "",
+    "It lives here as a real file, rather than inline in the page's",
+    "JavaScript, so that tests/contract_sketch_corpus.rs can compile it. A",
+    "demo button that ships broken is worse than no demo button: the first",
+    "thing anyone clicks would show a wall of findings about the example",
+    "rather than about anything they did.",
+    "",
+    "Four blocks, chosen so all four stamp behaviours are visible at once:",
+    "  profile        sourced, coverage complete  -> enum of 2",
+    "  fundamentals   sourced, coverage partial   -> enum of 3",
+    "  assessment     inferred                    -> const model_inference",
+    "  summary        narrative                   -> no stamp at all"
+  ],
+
+  "tool_names": ["fmp_company_profile", "fmp_ratios", "fmp_key_metrics"],
+
+  "sketch": {
+    "domain": "equity-research",
+    "produces_schema": "demo/equity_evidence",
+    "title": "Equity evidence",
+
+    "blocks": [
+      {
+        "name": "profile",
+        "source": {
+          "status": "sourced",
+          "tool": "fmp_company_profile",
+          "response_field": "symbol, companyName, sector, price, marketCap, beta",
+          "coverage": "complete"
+        },
+        "why": "FMP's /stable/profile returns every field of this block for a resolved ticker, or an empty array for a symbol it does not carry. Those are the only two outcomes, which is why the stamp admits exactly two verdicts.",
+        "fields": {
+          "symbol": "string?",
+          "sector": "string?",
+          "market_cap_usd": "number?",
+          "beta": "number?"
+        }
+      },
+      {
+        "name": "fundamentals",
+        "source": {
+          "status": "sourced",
+          "tool": "fmp_key_metrics",
+          "response_field": "returnOnEquity, freeCashFlowYield, debtToEquity",
+          "coverage": "partial"
+        },
+        "why": "Coverage is partial, and the distinction is load-bearing: individual members of this block are absent for whole classes of filer — free cash flow yield for a pre-revenue biotech. That is the tool answering and the field having no source, which is a third verdict.",
+        "fields": {
+          "return_on_equity": "number?",
+          "free_cash_flow_yield": "number?",
+          "debt_to_equity": "number?"
+        }
+      },
+      {
+        "name": "assessment",
+        "source": {
+          "status": "inferred",
+          "from": "the retrieved profile and fundamentals blocks, weighed against sector base rates"
+        },
+        "why": "The load-bearing entry. Every number here is a judgement over the blocks above and can never be tool_verified however good those inputs were — two runs over one set of responses may legitimately disagree, which is what makes it not a retrieval.",
+        "fields": {
+          "direction": "enum:undervalued|fairly_valued|overvalued|indeterminate",
+          "multiplier_p50": "number?",
+          "confidence": "number?",
+          "key_findings": "string[]"
+        }
+      },
+      {
+        "name": "summary",
+        "source": { "status": "narrative" },
+        "why": "Prose for a human, and the field with the least protection: the one place a number the sourced blocks could not supply can reappear as a sentence. It must assert nothing the blocks above cannot support.",
+        "value": "string"
+      }
+    ]
+  }
+}

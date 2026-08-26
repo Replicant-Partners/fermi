@@ -348,6 +348,16 @@ pub mod port_trust;
 // compiled const. So the map lives in the card and Rust keeps the checker.
 pub mod card_contract;
 
+// The authoring surface for the above. 98 of 101 curated cards declare no
+// typed contract, and the one card that satisfies `card_contract` in full
+// expands six authored blocks into thirty-five artefacts — eight of them
+// near-identical boilerplate. So the cost is the reason, not the rule. A
+// sketch declares the three things that need a human (blocks, fields,
+// where each value comes from and why) and this compiles the rest,
+// emitting `schema.properties` and `grounding` from one traversal so the
+// bijection between them is unrepresentable rather than merely checked.
+pub mod contract_sketch;
+
 // A minimal JSON Schema validator. Seven keywords, no new dependency, and
 // an unsupported keyword is NOT a pass — a validator that silently ignores
 // what it cannot interpret returns `valid` for a document it never checked.

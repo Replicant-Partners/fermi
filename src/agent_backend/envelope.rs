@@ -430,6 +430,88 @@ mod tests {
         );
     }
 
+    /// The first sketch-compiled contract, checked through the hop rather
+    /// than against `schema_validate` directly — so this covers the ordering
+    /// (`grounding_trust::enforce` first, then validate) as well as the
+    /// verdict.
+    #[test]
+    fn a_sketch_compiled_contract_validates_at_the_hop() {
+        let oc = contract_for("equity_analyst");
+        let raw = r#"Here is the analysis.
+```json
+{
+  "profile": {"symbol":"AAPL","company_name":"Apple Inc.","sector":"Technology",
+              "industry":"Consumer Electronics","price_usd":168.2,
+              "market_cap_usd":2610000000000,"beta":1.24},
+  "profile_provenance": "tool_verified",
+  "valuation_multiples": {"period":"annual","price_to_earnings":28.4,
+                          "price_to_book":39.1,"price_to_sales":6.8,
+                          "dividend_yield":0.0055},
+  "valuation_multiples_provenance": "tool_verified",
+  "intrinsic_value": {"dcf_per_share_usd":142.0,"price_at_dcf_date_usd":168.2},
+  "intrinsic_value_provenance": "tool_verified",
+  "fundamentals": {"enterprise_value_usd":2680000000000,"return_on_equity":1.47,
+                   "return_on_invested_capital":0.56,"free_cash_flow_yield":null,
+                   "debt_to_equity":1.79},
+  "fundamentals_provenance": "unavailable_no_tool_source",
+  "analyst_consensus": {"estimate_date":"2026-09-30","revenue_avg_usd":410000000000,
+                        "eps_avg":7.21,"eps_low":6.6,"eps_high":7.9,
+                        "analyst_count":31},
+  "analyst_consensus_provenance": "tool_verified",
+  "assessment": {"direction":"overvalued","multiplier_p50":0.75,"multiplier_p5":0.4,
+                 "multiplier_p95":1.2,"confidence":0.72,
+                 "key_findings":["[MULTIPLIER] Suggested p50: 0.75 (p5: 0.40, p95: 1.20)"]},
+  "assessment_provenance": "model_inference",
+  "summary": "Trading above FMP's DCF fair value."
+}
+```"#;
+        let env = build(
+            "equity_analyst",
+            oc.as_ref(),
+            &output_with(Some(raw)),
+            Uuid::new_v4(),
+        );
+        assert_eq!(
+            env["validation"]["status"],
+            json!("valid"),
+            "violations: {}",
+            env["validation"]["violations"]
+        );
+        assert_eq!(env["type"], json!("fermi/equity_evidence"));
+        assert_eq!(env["payload_status"], json!("document"));
+
+        // Honest about what is still missing. The card now types the
+        // document, but nobody has written a `grounding_trust` contract for
+        // this producer, so the hop checks shape and not sourcing. Asserted
+        // rather than left implicit: `grounding_enforced: false` is exactly
+        // the reading that must not be mistaken for a pass, and pinning it
+        // here means the day someone writes the contract this test tells
+        // them to update the claim.
+        assert_eq!(env["provenance"]["grounding_enforced"], json!(false));
+    }
+
+    /// A judgement stamped as a retrieval is refused at the hop. This is the
+    /// composition-path protection: the value is caught crossing the seam,
+    /// which is where a coordinator would otherwise have weighted it as
+    /// measured data.
+    #[test]
+    fn a_reasoned_block_claiming_to_be_retrieved_is_refused_at_the_hop() {
+        let oc = contract_for("equity_analyst");
+        let raw = r#"{"assessment_provenance":"tool_verified","summary":"s"}"#;
+        let env = build(
+            "equity_analyst",
+            oc.as_ref(),
+            &output_with(Some(raw)),
+            Uuid::new_v4(),
+        );
+        assert_eq!(env["validation"]["status"], json!("invalid"));
+        let v = env["validation"]["violations"].as_array().unwrap();
+        assert!(
+            v.iter().any(|x| x["path"] == "assessment_provenance"),
+            "{v:?}"
+        );
+    }
+
     #[test]
     fn an_untyped_producer_is_unverified_never_valid() {
         // The failure mode to avoid: an agent with no schema must not look

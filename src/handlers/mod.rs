@@ -43,6 +43,10 @@ pub mod collab;
 pub mod composition;
 pub mod composition_evolution;
 pub mod consolidation;
+/// Compiling an output-contract sketch for the create wizard — the same
+/// code path the publish gate uses, so the two cannot give different
+/// answers. See `src/contract_sketch.rs`.
+pub mod contracts;
 pub mod creatures;
 pub mod dashboard;
 pub mod dreaming_maturity;

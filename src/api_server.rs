@@ -3338,6 +3338,17 @@ async fn main() {
             "/api/tags/popular",
             get(handlers::wizard::popular_tags_handler),
         )
+        // Typed output contracts — compile a sketch for the create wizard.
+        // Server-side on purpose: a browser-side compiler would be a second
+        // implementation of the publish gate, and it would drift.
+        .route(
+            "/api/contracts/compile",
+            post(handlers::contracts::compile_handler),
+        )
+        .route(
+            "/api/contracts/tools",
+            get(handlers::contracts::tool_names_handler),
+        )
         // Agent CRUD
         .route("/api/agents", post(handlers::agents::create_agent_handler))
         .route(

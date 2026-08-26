@@ -214,7 +214,6 @@ pub const TYPED_TIER_EXEMPT: &[&str] = &[
     "enemy_sensor",
     "energy_advisor",
     "entity_investigator",
-    "equity_analyst",
     "eval_runner",
     "fermi",
     "fixture_context_agent",
@@ -445,7 +444,12 @@ mod tests {
     /// editing this number in the same commit, where a reviewer sees it.
     #[test]
     fn typed_tier_exemptions_only_shrink() {
-        const BASELINE: usize = 86;
+        // 86 → 85: `equity_analyst` migrated. Its contract is compiled from
+        // `agents/curated/equity_analyst/output_contract.sketch.json` by
+        // `contract_sketch`, and `tests/equity_analyst_contract.rs` holds the
+        // two together. That is the intended path for the remaining 85: the
+        // list shrinks by a sketch at a time, not by a rewrite of this file.
+        const BASELINE: usize = 85;
         assert!(
             TYPED_TIER_EXEMPT.len() <= BASELINE,
             "the typed-tier exemption list grew from {BASELINE} to {}. A new agent \

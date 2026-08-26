@@ -213,6 +213,14 @@ path = "scripts/brier_backtest_seed.rs"
 name = "initialize-workspace"
 path = "scripts/initialize_workspace.rs"
 
+[[bin]]
+# Compile an agent's `output_contract.sketch.json` into the typed output
+# contract the publish gate wants, or check the card still agrees with it.
+# Print-only by design — see the header of the file for why there is no
+# `--write`.
+name = "contract-sketch"
+path = "scripts/contract_sketch.rs"
+
 [lib]
 name = "fermi"
 path = "src/lib.rs"

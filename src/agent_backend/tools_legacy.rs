@@ -940,6 +940,53 @@ fn builtin_tools_core() -> Vec<BuiltinToolDef> {
             is_delegation: false,
         },
         BuiltinToolDef {
+            name: "build_output_contract",
+            description: "Compile a short SKETCH into a complete, publishable typed \
+                          output contract. You declare the three things that need \
+                          judgement — the evidence blocks, their fields and types, and \
+                          where each block's value comes from plus why — and this emits \
+                          the JSON Schema, the narrowed per-block `_provenance` enums, \
+                          the grounding map and the rewritten `produces`. Prefer this \
+                          over hand-writing a contract: it emits schema and grounding \
+                          from one pass, so they cannot disagree, and it refuses to \
+                          return anything the publish gate would reject. It will NOT \
+                          invent a `why`, and a block claiming to be `sourced` from a \
+                          tool absent from `tool_names` is refused.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sketch": {
+                        "type": "object",
+                        "description": "{domain, produces_schema (namespaced, e.g. \
+                                        `myapp/risk_assessment`), title?, description?, \
+                                        synthesis?, calibration?, blocks: [{name, \
+                                        source: {status: sourced|inferred|narrative|unavailable, \
+                                        tool?, response_field?, coverage?: complete|partial|deferred, \
+                                        from?, would_need?}, why (40+ chars, never generated), \
+                                        fields?: {name: type}, value?: type, required?}]}. \
+                                        Type syntax: string|integer|number|boolean|object, \
+                                        `enum:a|b|c`, `const:v`, or `@entity` to take the \
+                                        type from the ontology; suffix `[]` for array then \
+                                        `?` for nullable, in that order. `minimum`/`pattern` \
+                                        are deliberately unavailable — the platform validator \
+                                        cannot evaluate them, and a schema it cannot evaluate \
+                                        reports `unverified`, which is not a pass."
+                    },
+                    "tool_names": {
+                        "type": "array", "items": { "type": "string" },
+                        "description": "Tools the agent declares in `capabilities.mcp_tools`. Cross-checked: a `sourced` block must name one of these."
+                    },
+                    "ontology": {
+                        "type": "object",
+                        "description": "Optional agent ontology ({entities: [{id, properties: {definition, scale|categories}}]}). Resolves `@entity` field types so vocabulary is selected rather than reinvented."
+                    }
+                },
+                "required": ["sketch"]
+            }),
+            requires_workspace: false,
+            is_delegation: false,
+        },
+        BuiltinToolDef {
             name: "list_agents",
             description: "List all available agents in the registry with their names, types, and descriptions.",
             input_schema: json!({
@@ -2548,6 +2595,7 @@ impl ToolRegistry {
                 crate::agent_backend::ncbi_tools::execute_ncbi_genome_search(input).await
             }
             "validate_agent_card" => crate::card_contract::execute_validate_tool(input),
+            "build_output_contract" => crate::contract_sketch::execute_build_tool(input),
             "list_agents" => execute_list_agents(ctx).await,
             "read_workspace_file" => execute_read_workspace_file(input, ctx).await,
             "read_workspace_output" => execute_read_workspace_output(input, ctx).await,

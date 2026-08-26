@@ -5,6 +5,37 @@
 **Check your work:** `scripts/port_migrate.py --propose <agent_id>`, or ask
 `xaman_ek` to validate a draft.
 
+> ## Do not write this by hand
+>
+> Read the next two sections so you know what the parts *mean*, then write a
+> **sketch** and compile it. You declare the three things that need
+> judgement — the blocks, their fields, and where each block's value comes
+> from plus why — and `src/contract_sketch.rs` emits the JSON Schema, the
+> narrowed `<block>_provenance` enums, the grounding map and the rewritten
+> `produces`.
+>
+> ```bash
+> cargo run --bin contract-sketch -- <agent_id>     # or the build_output_contract tool
+> ```
+>
+> Two reasons this is not just convenience:
+>
+> - Schema and `grounding` are emitted from **one traversal of one block
+>   list**, so the bijection between them — the rule below that costs the most
+>   to satisfy by hand — cannot be violated. It is unrepresentable rather
+>   than merely checked.
+> - The compiler runs `card_contract::validate` over its own output and
+>   **refuses to emit anything that would not publish**. There is no state in
+>   which you are holding something that looks finished and is not.
+>
+> Worked example: `agents/curated/equity_analyst/output_contract.sketch.json`
+> — six authored blocks, thirteen emitted properties. Design notes and the
+> migration recipe: `docs/DESIGN_typed_output_contracts.md`.
+>
+> The one field the compiler will never write for you is `why`, because its
+> subject is where *your agent's* data comes from. See §"Choosing a
+> `status`".
+
 ---
 
 ## What you must declare, and why

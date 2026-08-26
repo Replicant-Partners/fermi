@@ -467,6 +467,175 @@
       }
 
       /* ─── Roadmap section ─── */
+      /* ─── Contract builder ─── */
+      .cb-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 12px;
+        flex-wrap: wrap;
+      }
+      .cb-spacer {
+        flex: 1;
+      }
+      .cb-status {
+        font-size: 0.72rem;
+        color: var(--fg3);
+        padding: 3px 8px;
+        border: 1px solid var(--bg2);
+      }
+      .cb-status.ok {
+        color: var(--green);
+        border-color: var(--green);
+      }
+      .cb-status.bad {
+        color: var(--orange);
+        border-color: var(--orange);
+      }
+      .cb-status.busy {
+        color: var(--yellow);
+        border-color: var(--yellow);
+      }
+      .cb-block {
+        border: 1px solid var(--bg2);
+        border-left: 3px solid var(--bg3);
+        padding: 12px;
+        margin-bottom: 10px;
+        background: var(--bg0);
+      }
+      .cb-block[data-status="sourced"] {
+        border-left-color: var(--green);
+      }
+      .cb-block[data-status="inferred"] {
+        border-left-color: var(--blue);
+      }
+      .cb-block[data-status="narrative"] {
+        border-left-color: var(--purple);
+      }
+      .cb-block[data-status="unavailable"] {
+        border-left-color: var(--orange);
+      }
+      .cb-block-head {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+      .cb-block-head input.cb-name {
+        flex: 1;
+        font-weight: bold;
+      }
+      .cb-del {
+        background: none;
+        border: 1px solid var(--bg2);
+        color: var(--fg3);
+        cursor: pointer;
+        padding: 4px 8px;
+        font-size: 0.72rem;
+      }
+      .cb-del:hover {
+        color: var(--red);
+        border-color: var(--red);
+      }
+      .cb-fields {
+        margin: 6px 0;
+      }
+      .cb-field-row {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 4px;
+      }
+      .cb-field-row input {
+        font-size: 0.75rem;
+        padding: 4px 6px;
+      }
+      .cb-field-row .cb-fname {
+        flex: 2;
+      }
+      .cb-field-row .cb-ftype {
+        flex: 3;
+        font-family: monospace;
+      }
+      .cb-why-count {
+        font-size: 0.68rem;
+        color: var(--fg3);
+        text-align: right;
+      }
+      .cb-why-count.short {
+        color: var(--orange);
+      }
+      .cb-derived {
+        font-size: 0.7rem;
+        color: var(--fg3);
+        border-top: 1px dashed var(--bg2);
+        margin-top: 8px;
+        padding-top: 6px;
+      }
+      .cb-derived code {
+        color: var(--aqua);
+      }
+      .cb-finding {
+        border-left: 3px solid var(--orange);
+        background: var(--bg1);
+        padding: 8px 10px;
+        margin-bottom: 6px;
+        font-size: 0.75rem;
+        line-height: 1.5;
+      }
+      .cb-finding .cb-check {
+        color: var(--orange);
+        font-family: monospace;
+        font-size: 0.7rem;
+        display: block;
+        margin-bottom: 2px;
+      }
+      .cb-result {
+        border: 1px solid var(--green);
+        padding: 10px;
+        margin-top: 12px;
+      }
+      .cb-result h4 {
+        margin: 0 0 6px;
+        font-size: 0.78rem;
+        color: var(--green);
+      }
+      .cb-pre {
+        background: var(--bg0-hard);
+        border: 1px solid var(--bg2);
+        padding: 8px;
+        font-size: 0.68rem;
+        max-height: 260px;
+        overflow: auto;
+        white-space: pre;
+        color: var(--fg2);
+      }
+      .cb-tabs {
+        display: flex;
+        gap: 0;
+        margin: 8px 0 0;
+      }
+      .cb-tabs button {
+        background: var(--bg1);
+        border: 1px solid var(--bg2);
+        border-bottom: none;
+        color: var(--fg3);
+        font-size: 0.7rem;
+        padding: 4px 10px;
+        cursor: pointer;
+      }
+      .cb-tabs button.active {
+        background: var(--bg0-hard);
+        color: var(--yellow);
+      }
+      .cb-gen {
+        font-size: 0.72rem;
+        color: var(--fg3);
+        margin-top: 6px;
+      }
+      .cb-gen code {
+        color: var(--aqua);
+      }
+
       .roadmap-section {
         opacity: 0.5;
         border: 1px dashed var(--bg3);
@@ -550,8 +719,9 @@
           <div class="step-dot active" data-step="0">1. Identity</div>
           <div class="step-dot" data-step="1">2. Ontology</div>
           <div class="step-dot" data-step="2">3. Capabilities</div>
-          <div class="step-dot" data-step="3">4. Economics</div>
-          <div class="step-dot" data-step="4">5. Review</div>
+          <div class="step-dot" data-step="3">4. Contract</div>
+          <div class="step-dot" data-step="4">5. Economics</div>
+          <div class="step-dot" data-step="5">6. Review</div>
         </div>
 
         <!-- ─── Step 1: Identity ─── -->
@@ -808,13 +978,116 @@
           <div class="step-nav">
             <button class="btn" onclick="goStep(1)">&larr; Back</button>
             <button class="btn btn-primary" onclick="goStep(3)">
+              Next: Contract &rarr;
+            </button>
+          </div>
+        </div>
+
+        <!-- ─── Step 4: Output contract ─── -->
+        <div class="step-panel" id="step-3">
+          <div class="form-section">
+            <div class="form-title">Typed Output Contract</div>
+
+            <div class="info-box">
+              Declare <strong>what document this agent returns</strong>, and
+              for each block <strong>where its value comes from</strong>. You
+              write the parts that need judgement; the compiler writes the
+              JSON Schema, the per-block <code>_provenance</code> stamps, the
+              grounding map and the <code>produces</code> port.
+              <div style="margin-top: 6px; color: var(--fg3)">
+                Optional now &mdash; required to publish. An untyped agent can
+                be created and run, but nothing downstream can compose with it
+                and its output is never validated.
+              </div>
+            </div>
+
+            <div class="cb-toolbar">
+              <button class="btn" onclick="cbLoadExample()">
+                Load worked example
+              </button>
+              <button class="btn" onclick="cbAddBlock()">+ Add block</button>
+              <button class="btn" onclick="cbClear()">Clear</button>
+              <span class="cb-spacer"></span>
+              <span class="cb-status" id="cb-status">No contract yet</span>
+            </div>
+
+            <div class="row">
+              <div class="form-group">
+                <label for="cb-domain">Domain</label>
+                <input
+                  type="text"
+                  id="cb-domain"
+                  placeholder="equity-research"
+                  oninput="cbTouch()"
+                />
+              </div>
+              <div class="form-group">
+                <label for="cb-type">Type name</label>
+                <input
+                  type="text"
+                  id="cb-type"
+                  placeholder="myapp/risk_assessment"
+                  oninput="cbTouch()"
+                />
+                <div class="hint">
+                  Namespaced <code>namespace/type</code>, so two teams can both
+                  have a <code>summary</code> without colliding.
+                </div>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="cb-tools">Declared tools</label>
+              <input
+                type="text"
+                id="cb-tools"
+                placeholder="fmp_company_profile, fmp_ratios"
+                oninput="cbTouch()"
+              />
+              <div class="hint">
+                Comma-separated, and saved onto the card. A block marked
+                <code>sourced</code> must name one of these &mdash; a field
+                sourced from a tool the agent cannot call is the exact defect
+                this contract exists to catch, so the compiler refuses it.
+              </div>
+            </div>
+
+            <datalist id="cb-tool-list"></datalist>
+            <div id="cb-blocks"></div>
+
+            <div class="collapsible-header" onclick="toggleCollapsible(this)">
+              <span class="arrow">&#9654;</span> Advanced: ontology vocabulary
+            </div>
+            <div class="collapsible-body">
+              <div class="hint" style="margin-bottom: 6px">
+                Paste an ontology (<code>{"entities": [{"id": "sentiment",
+                "properties": {"definition": "...", "scale": [...]}}]}</code>)
+                and a field type of <code>@sentiment</code> takes its type,
+                its closed value set and its definition from the entity
+                &mdash; selecting vocabulary instead of reinventing it. An
+                unknown id is an error, never a silent fallback to
+                <code>string</code>.
+              </div>
+              <textarea
+                id="cb-ontology"
+                rows="4"
+                placeholder='{"entities": []}'
+                oninput="cbTouch()"
+              ></textarea>
+            </div>
+
+            <div id="cb-output"></div>
+          </div>
+          <div class="step-nav">
+            <button class="btn" onclick="goStep(2)">&larr; Back</button>
+            <button class="btn btn-primary" onclick="goStep(4)">
               Next: Economics &rarr;
             </button>
           </div>
         </div>
 
-        <!-- ─── Step 4: Economics ─── -->
-        <div class="step-panel" id="step-3">
+        <!-- ─── Step 5: Economics ─── -->
+        <div class="step-panel" id="step-4">
           <div class="form-section">
             <div class="form-title">Economics</div>
             <div id="tips-economics"></div>
@@ -898,22 +1171,22 @@
             </div>
           </div>
           <div class="step-nav">
-            <button class="btn" onclick="goStep(2)">&larr; Back</button>
-            <button class="btn btn-primary" onclick="goStep(4)">
+            <button class="btn" onclick="goStep(3)">&larr; Back</button>
+            <button class="btn btn-primary" onclick="goStep(5)">
               Next: Review &rarr;
             </button>
           </div>
         </div>
 
-        <!-- ─── Step 5: Review & Create ─── -->
-        <div class="step-panel" id="step-4">
+        <!-- ─── Step 6: Review & Create ─── -->
+        <div class="step-panel" id="step-5">
           <div class="form-section">
             <div class="form-title">Review & Create</div>
             <div class="review-card" id="review-card"></div>
             <div class="checklist" id="checklist"></div>
           </div>
           <div class="step-nav">
-            <button class="btn" onclick="goStep(3)">&larr; Back</button>
+            <button class="btn" onclick="goStep(4)">&larr; Back</button>
             <button
               class="btn btn-create"
               id="create-btn"
@@ -950,6 +1223,8 @@
         loadGuide();
         loadPopularTags();
         loadCatalogue();
+        cbLoadToolNames();
+        cbRender();
       })();
 
       // ─── Mode toggle ───
@@ -1172,7 +1447,8 @@
           .querySelector(`.step-dot[data-step="${n}"]`)
           .classList.add("active");
         currentStep = n;
-        if (n === 4) buildReview();
+        if (n === 3) cbTouch();
+        if (n === 5) buildReview();
       }
 
       document.querySelectorAll(".step-dot").forEach((d) => {
@@ -1416,6 +1692,12 @@
         <div class="review-row"><span class="rk">Temperature</span><span class="rv">${temp}</span></div>
         <div class="review-row"><span class="rk">System Prompt</span><span class="rv">${prompt ? prompt.substring(0, 80) + "..." : "(none)"}</span></div>
         <div class="review-row"><span class="rk">Ontology</span><span class="rv">${selectedOntology ? "Seed ontology set" : "None (will learn from scratch)"}</span></div>
+        <div class="review-row"><span class="rk">Output contract</span><span class="rv">${
+          cbCompiled
+            ? `${esc(cbCompiled.output_contract.produces_schema)} — ${Object.keys(cbCompiled.output_contract.schema.properties).length} properties`
+            : "None (untyped — cannot be published, and its output is never validated)"
+        }</span></div>
+        <div class="review-row"><span class="rk">Declared tools</span><span class="rv">${esc(cbToolNames().join(", ") || "(none)")}</span></div>
         <div class="review-row"><span class="rk">Embedding</span><span class="rv">${esc(embProviderName)} (${selectedEmbeddingModel} / ${selectedEmbeddingDimension}d)</span></div>
         <div class="review-row"><span class="rk">Dream Budget</span><span class="rv">5 cycles (included)</span></div>
       `;
@@ -1425,6 +1707,12 @@
           { label: "Description provided", pass: !!desc },
           { label: "System prompt configured", pass: !!prompt },
           { label: "Valid name format", pass: /^[a-z0-9_-]+$/.test(name) },
+          {
+            label: cbCompiled
+              ? "Typed output contract compiles — would pass the publish gate"
+              : "Typed output contract (optional now, required to publish)",
+            pass: !!cbCompiled,
+          },
         ];
         const cl = document.getElementById("checklist");
         cl.innerHTML = checks
@@ -1433,6 +1721,495 @@
               `<div class="check-item ${c.pass ? "pass" : "fail"}">${c.pass ? "&#10003;" : "&#10007;"} ${c.label}</div>`,
           )
           .join("");
+      }
+
+      // ═══ Contract builder ═══════════════════════════════════════
+      //
+      // The compile is a SERVER round-trip on purpose. Doing it in the
+      // browser would be a second implementation of the publish gate, and
+      // the two would drift — at which point this shows a green tick for a
+      // contract that is refused at publish, which is worse than no builder.
+      // See src/handlers/contracts.rs.
+
+      let cbBlocks = [];
+      let cbCompiled = null;
+      let cbTimer = null;
+      let cbAvailableTools = [];
+      let cbOutTab = "schema";
+
+      const CB_STATUSES = ["sourced", "inferred", "narrative", "unavailable"];
+
+      // What each status implies for the derived `_provenance` sibling.
+      // Mirrors Source::provenance_schema in src/contract_sketch.rs; shown so
+      // the author can see the consequence of the choice while making it.
+      function cbDerivedHint(b) {
+        if (b.status === "narrative")
+          return "No provenance stamp. A retrieval verdict about a paragraph is a category error.";
+        if (b.status === "inferred")
+          return "Stamp: <code>const: \"model_inference\"</code> — can never claim to be retrieved.";
+        if (b.status === "unavailable")
+          return "Stamp: <code>const: \"unavailable_no_tool_source\"</code> — the value must be null.";
+        const base = "tool_verified, tool_no_match";
+        if (b.coverage === "partial")
+          return `Stamp: <code>enum [${base}, unavailable_no_tool_source]</code>`;
+        if (b.coverage === "deferred")
+          return `Stamp: <code>enum [${base}, pending_tool_check]</code>`;
+        return `Stamp: <code>enum [${base}]</code>`;
+      }
+
+      function cbNewBlock(name) {
+        return {
+          name: name || "",
+          status: "inferred",
+          tool: "",
+          response_field: "",
+          coverage: "complete",
+          from: "",
+          would_need: "",
+          why: "",
+          shape: "fields",
+          value: "string",
+          fields: [{ name: "", type: "string?" }],
+        };
+      }
+
+      function cbAddBlock() {
+        cbBlocks.push(cbNewBlock());
+        cbRender();
+        cbTouch();
+      }
+      function cbDelBlock(i) {
+        cbBlocks.splice(i, 1);
+        cbRender();
+        cbTouch();
+      }
+      function cbAddField(i) {
+        cbBlocks[i].fields.push({ name: "", type: "string?" });
+        cbRender();
+        cbTouch();
+      }
+      function cbDelField(i, j) {
+        cbBlocks[i].fields.splice(j, 1);
+        cbRender();
+        cbTouch();
+      }
+
+      // Value writes do NOT re-render, so typing keeps focus. Only structural
+      // changes (add/remove/status) call cbRender().
+      function cbSet(i, key, val) {
+        cbBlocks[i][key] = val;
+        if (key === "why") cbUpdateWhyCount(i);
+        cbTouch();
+      }
+      function cbSetField(i, j, key, val) {
+        cbBlocks[i].fields[j][key] = val;
+        cbTouch();
+      }
+      function cbSetStatus(i, val) {
+        cbBlocks[i].status = val;
+        cbRender();
+        cbTouch();
+      }
+      function cbSetShape(i, val) {
+        cbBlocks[i].shape = val;
+        cbRender();
+        cbTouch();
+      }
+
+      function cbUpdateWhyCount(i) {
+        const el = document.getElementById(`cb-whycount-${i}`);
+        if (!el) return;
+        const n = (cbBlocks[i].why || "").trim().length;
+        el.textContent = `${n}/40`;
+        el.classList.toggle("short", n < 40);
+      }
+
+      function cbRender() {
+        const wrap = document.getElementById("cb-blocks");
+        if (!cbBlocks.length) {
+          wrap.innerHTML = `<div class="hint" style="padding:12px 0">
+            No blocks yet. A block is one coherent piece of the document —
+            <code>profile</code>, <code>assessment</code>, <code>summary</code>.
+            Add one, or load the worked example.</div>`;
+          return;
+        }
+        wrap.innerHTML = cbBlocks
+          .map((b, i) => {
+            const src =
+              b.status === "sourced"
+                ? `<div class="row">
+                     <div class="form-group">
+                       <label>Tool</label>
+                       <input list="cb-tool-list" value="${esc(b.tool)}"
+                              oninput="cbSet(${i},'tool',this.value)"
+                              placeholder="fmp_ratios" />
+                     </div>
+                     <div class="form-group">
+                       <label>Response field</label>
+                       <input value="${esc(b.response_field)}"
+                              oninput="cbSet(${i},'response_field',this.value)"
+                              placeholder="priceToEarningsRatio, priceToBookRatio" />
+                     </div>
+                   </div>
+                   <div class="form-group">
+                     <label>Coverage</label>
+                     <select onchange="cbSet(${i},'coverage',this.value); cbRender()">
+                       <option value="complete" ${b.coverage === "complete" ? "selected" : ""}>complete — answers for every field, or honestly reports no match</option>
+                       <option value="partial" ${b.coverage === "partial" ? "selected" : ""}>partial — some fields have no source at all</option>
+                       <option value="deferred" ${b.coverage === "deferred" ? "selected" : ""}>deferred — the check may not have run yet</option>
+                     </select>
+                   </div>`
+                : b.status === "inferred"
+                  ? `<div class="form-group">
+                       <label>Reasoned from</label>
+                       <input value="${esc(b.from)}"
+                              oninput="cbSet(${i},'from',this.value)"
+                              placeholder="the retrieved profile and valuation blocks, against sector base rates" />
+                       <div class="hint">An inference over nothing is a guess; naming the basis is what separates them.</div>
+                     </div>`
+                  : b.status === "unavailable"
+                    ? `<div class="form-group">
+                         <label>Would need (optional)</label>
+                         <input value="${esc(b.would_need)}"
+                                oninput="cbSet(${i},'would_need',this.value)"
+                                placeholder="an NCBI Assembly lookup" />
+                         <div class="hint">Turns a null into a to-do.</div>
+                       </div>`
+                    : "";
+
+            const shapeUi =
+              b.shape === "value"
+                ? `<div class="form-group">
+                     <label>Type</label>
+                     <input value="${esc(b.value)}" style="font-family:monospace"
+                            oninput="cbSet(${i},'value',this.value)" />
+                   </div>`
+                : `<div class="cb-fields">
+                     ${b.fields
+                       .map(
+                         (f, j) => `
+                       <div class="cb-field-row">
+                         <input class="cb-fname" value="${esc(f.name)}" placeholder="field_name"
+                                oninput="cbSetField(${i},${j},'name',this.value)" />
+                         <input class="cb-ftype" value="${esc(f.type)}" placeholder="string?"
+                                oninput="cbSetField(${i},${j},'type',this.value)" />
+                         <button class="cb-del" onclick="cbDelField(${i},${j})" title="remove field">&times;</button>
+                       </div>`,
+                       )
+                       .join("")}
+                     <button class="btn" style="font-size:0.7rem;padding:3px 8px"
+                             onclick="cbAddField(${i})">+ field</button>
+                   </div>`;
+
+            const whyN = (b.why || "").trim().length;
+            return `
+            <div class="cb-block" data-status="${b.status}">
+              <div class="cb-block-head">
+                <input class="cb-name" value="${esc(b.name)}" placeholder="block_name"
+                       oninput="cbSet(${i},'name',this.value)" />
+                <select onchange="cbSetStatus(${i}, this.value)">
+                  ${CB_STATUSES.map((s) => `<option value="${s}" ${b.status === s ? "selected" : ""}>${s}</option>`).join("")}
+                </select>
+                <select onchange="cbSetShape(${i}, this.value)">
+                  <option value="fields" ${b.shape === "fields" ? "selected" : ""}>object</option>
+                  <option value="value" ${b.shape === "value" ? "selected" : ""}>single value</option>
+                </select>
+                <button class="cb-del" onclick="cbDelBlock(${i})">Remove</button>
+              </div>
+              ${shapeUi}
+              ${src}
+              <div class="form-group" style="margin-bottom:4px">
+                <label>Why this status</label>
+                <textarea rows="2" placeholder="Say why this field has the status it has — the next author cannot tell a considered 'unavailable' from a lazy one."
+                          oninput="cbSet(${i},'why',this.value)">${esc(b.why)}</textarea>
+                <div class="cb-why-count ${whyN < 40 ? "short" : ""}" id="cb-whycount-${i}">${whyN}/40</div>
+              </div>
+              <div class="cb-derived">${cbDerivedHint(b)}</div>
+            </div>`;
+          })
+          .join("");
+      }
+
+      // Build the sketch the server compiles. Empty optional fields are
+      // dropped rather than sent blank, so the compiler's messages are about
+      // what is missing and not about what is empty.
+      function cbSketch() {
+        const s = {
+          domain: document.getElementById("cb-domain").value.trim(),
+          produces_schema: document.getElementById("cb-type").value.trim(),
+          blocks: cbBlocks.map((b) => {
+            const source = { status: b.status };
+            if (b.status === "sourced") {
+              source.tool = b.tool.trim();
+              source.response_field = b.response_field.trim();
+              source.coverage = b.coverage;
+            } else if (b.status === "inferred") {
+              source.from = b.from.trim();
+            } else if (b.status === "unavailable" && b.would_need.trim()) {
+              source.would_need = b.would_need.trim();
+            }
+            const out = { name: b.name.trim(), source, why: b.why.trim() };
+            if (b.shape === "value") {
+              out.value = b.value.trim();
+            } else {
+              out.fields = {};
+              b.fields.forEach((f) => {
+                if (f.name.trim()) out.fields[f.name.trim()] = f.type.trim();
+              });
+            }
+            return out;
+          }),
+        };
+        const title = document.getElementById("agent-name").value.trim();
+        if (title) s.title = title.replace(/_/g, " ");
+        return s;
+      }
+
+      function cbToolNames() {
+        return document
+          .getElementById("cb-tools")
+          .value.split(",")
+          .map((t) => t.trim())
+          .filter(Boolean);
+      }
+
+      function cbTouch() {
+        clearTimeout(cbTimer);
+        cbTimer = setTimeout(cbCompile, 400);
+      }
+
+      function cbSetStatusChip(text, cls) {
+        const el = document.getElementById("cb-status");
+        el.textContent = text;
+        el.className = "cb-status" + (cls ? " " + cls : "");
+      }
+
+      async function cbCompile() {
+        const out = document.getElementById("cb-output");
+        const sketch = cbSketch();
+
+        // Nothing declared yet is not a failure — say so plainly rather than
+        // showing a wall of findings before the author has typed anything.
+        if (!cbBlocks.length && !sketch.domain && !sketch.produces_schema) {
+          cbCompiled = null;
+          out.innerHTML = "";
+          cbSetStatusChip("No contract yet", "");
+          return;
+        }
+
+        cbSetStatusChip("Compiling…", "busy");
+
+        let ontology = null;
+        const ontRaw = document.getElementById("cb-ontology").value.trim();
+        if (ontRaw) {
+          try {
+            ontology = JSON.parse(ontRaw);
+          } catch (e) {
+            cbCompiled = null;
+            cbSetStatusChip("Ontology is not valid JSON", "bad");
+            out.innerHTML = `<div class="cb-finding"><span class="cb-check">ontology</span>${esc(e.message)}</div>`;
+            return;
+          }
+        }
+
+        let data;
+        try {
+          const res = await fetch("/api/contracts/compile", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              sketch,
+              tool_names: cbToolNames(),
+              ontology,
+            }),
+          });
+          if (!res.ok) {
+            cbCompiled = null;
+            cbSetStatusChip("Compiler error", "bad");
+            out.innerHTML = `<div class="cb-finding">${esc(await res.text())}</div>`;
+            return;
+          }
+          data = await res.json();
+        } catch (e) {
+          cbCompiled = null;
+          cbSetStatusChip("Network error", "bad");
+          out.innerHTML = `<div class="cb-finding">${esc(e.message)}</div>`;
+          return;
+        }
+
+        if (!data.compiles) {
+          cbCompiled = null;
+          const n = (data.findings || []).length;
+          cbSetStatusChip(`${n} to fix`, "bad");
+          out.innerHTML =
+            `<div class="hint" style="margin:10px 0 6px">Not compiled. Nothing partial is emitted —
+             a contract that is almost complete reads exactly like one that is.</div>` +
+            (data.findings || [])
+              .map(
+                (f) =>
+                  `<div class="cb-finding"><span class="cb-check">${esc(f.check)}</span>${esc(f.fix)}</div>`,
+              )
+              .join("");
+          return;
+        }
+
+        cbCompiled = data;
+        cbSetStatusChip("Compiles — would publish", "ok");
+        cbRenderOutput();
+      }
+
+      function cbRenderOutput() {
+        if (!cbCompiled) return;
+        const oc = cbCompiled.output_contract;
+        const gen = cbCompiled.generated_properties || [];
+        const body =
+          cbOutTab === "schema"
+            ? JSON.stringify(oc.schema, null, 2)
+            : cbOutTab === "grounding"
+              ? JSON.stringify(oc.grounding, null, 2)
+              : JSON.stringify(cbSampleDoc(oc.schema), null, 2);
+
+        document.getElementById("cb-output").innerHTML = `
+          <div class="cb-result">
+            <h4>&#10003; Compiles — the publish gate accepts this</h4>
+            <div class="cb-gen">
+              Type <code>${esc(oc.produces_schema)}</code> ·
+              ${Object.keys(oc.schema.properties).length} properties ·
+              <code>produces</code> set to <code>${esc((cbCompiled.produces || []).join(", "))}</code>
+            </div>
+            ${
+              gen.length
+                ? `<div class="cb-gen">Written for you: ${gen.map((g) => `<code>${esc(g)}</code>`).join(" ")}
+                   — plus their grounding entries, the narrowed enums and the required list.</div>`
+                : ""
+            }
+            <div class="cb-tabs">
+              <button class="${cbOutTab === "schema" ? "active" : ""}" onclick="cbTab('schema')">JSON Schema</button>
+              <button class="${cbOutTab === "grounding" ? "active" : ""}" onclick="cbTab('grounding')">Grounding</button>
+              <button class="${cbOutTab === "sample" ? "active" : ""}" onclick="cbTab('sample')">Sample document</button>
+            </div>
+            <div class="cb-pre">${esc(body)}</div>
+            ${
+              cbOutTab === "sample"
+                ? `<div class="cb-gen">Paste this into your system prompt so the model knows the
+                   shape it must return. Every key is required — a value you could not fill is
+                   <code>null</code>, not absent, because "I looked and found nothing" and
+                   "I did not answer" are different facts.</div>`
+                : ""
+            }
+          </div>`;
+      }
+
+      function cbTab(t) {
+        cbOutTab = t;
+        cbRenderOutput();
+      }
+
+      // A skeleton document from the compiled schema — the json-schema-builder
+      // "sample data" idea, which here is what turns a declared contract into
+      // something an author can actually test a prompt against.
+      function cbSampleDoc(schema) {
+        function val(s) {
+          if (!s || typeof s !== "object") return null;
+          if (s.const !== undefined) return s.const;
+          if (Array.isArray(s.enum)) return s.enum[0];
+          const t = Array.isArray(s.type) ? s.type[0] : s.type;
+          const nullable = Array.isArray(s.type) && s.type.includes("null");
+          if (t === "object") {
+            const o = {};
+            Object.entries(s.properties || {}).forEach(([k, v]) => {
+              o[k] = val(v);
+            });
+            return o;
+          }
+          if (t === "array") return nullable ? null : [];
+          if (nullable) return null;
+          if (t === "integer" || t === "number") return 0;
+          if (t === "boolean") return false;
+          return "…";
+        }
+        return val(schema);
+      }
+
+      function cbClear() {
+        cbBlocks = [];
+        cbCompiled = null;
+        ["cb-domain", "cb-type", "cb-tools", "cb-ontology"].forEach(
+          (id) => (document.getElementById(id).value = ""),
+        );
+        cbRender();
+        cbTouch();
+      }
+
+      // Turn a sketch (as authored on disk) into the builder's block model.
+      // The two differ in exactly one way: a sketch's `fields` is an object
+      // because that is pleasant to write, and the editor needs an ordered
+      // array because rows have positions.
+      function cbBlocksFromSketch(sketch) {
+        return (sketch.blocks || []).map((b) => {
+          const s = b.source || {};
+          const blk = cbNewBlock(b.name);
+          blk.status = s.status || "inferred";
+          blk.tool = s.tool || "";
+          blk.response_field = s.response_field || "";
+          blk.coverage = s.coverage || "complete";
+          blk.from = s.from || "";
+          blk.would_need = s.would_need || "";
+          blk.why = b.why || "";
+          if (b.value) {
+            blk.shape = "value";
+            blk.value = b.value;
+            blk.fields = [];
+          } else {
+            blk.shape = "fields";
+            blk.fields = Object.entries(b.fields || {}).map(([name, t]) => ({
+              name,
+              type: typeof t === "string" ? t : t.type,
+            }));
+          }
+          return blk;
+        });
+      }
+
+      // The worked example is fetched, not inlined, so that
+      // tests/contract_sketch_corpus.rs compiles the same bytes this button
+      // loads. A demo that ships broken shows the newcomer a wall of
+      // findings about the example rather than about anything they did.
+      async function cbLoadExample() {
+        let ex;
+        try {
+          const res = await fetch(
+            "/static/contract-examples/equity_evidence.sketch.json",
+          );
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          ex = await res.json();
+        } catch (e) {
+          cbSetStatusChip("Could not load example", "bad");
+          return;
+        }
+        document.getElementById("cb-domain").value = ex.sketch.domain || "";
+        document.getElementById("cb-type").value =
+          ex.sketch.produces_schema || "";
+        document.getElementById("cb-tools").value = (ex.tool_names || []).join(
+          ", ",
+        );
+        cbBlocks = cbBlocksFromSketch(ex.sketch);
+        cbRender();
+        cbCompile();
+      }
+
+      async function cbLoadToolNames() {
+        try {
+          const res = await fetch("/api/contracts/tools");
+          if (!res.ok) return;
+          const data = await res.json();
+          cbAvailableTools = data.tools || [];
+          const dl = document.getElementById("cb-tool-list");
+          if (dl)
+            dl.innerHTML = cbAvailableTools
+              .map((t) => `<option value="${esc(t)}"></option>`)
+              .join("");
+        } catch {}
       }
 
       // ─── Create ───
@@ -1480,6 +2257,21 @@
           embedding_model: selectedEmbeddingModel,
           embedding_dimension: selectedEmbeddingDimension,
         };
+
+        // Tools first: the contract's `sourced` blocks were cross-checked
+        // against these names, so saving the contract without them would
+        // leave a grounding claim pointing at nothing.
+        const declaredTools = cbToolNames();
+        if (declaredTools.length) {
+          body.mcp_tools = declaredTools.map((t) => ({
+            name: t,
+            description: "",
+          }));
+        }
+        if (cbCompiled) {
+          body.output_contract = cbCompiled.output_contract;
+          body.produces = cbCompiled.produces;
+        }
 
         btn.disabled = true;
         btn.textContent = "Creating...";
@@ -1592,7 +2384,13 @@
         if (!str) return "";
         const d = document.createElement("div");
         d.textContent = str;
-        return d.innerHTML;
+        // `innerHTML` escapes & < > but leaves quotes alone, which is fine
+        // for text content and wrong for `value="..."`. The contract builder
+        // interpolates user prose into attributes, and a single `"` in a
+        // `why` would otherwise close the attribute and swallow the rest of
+        // the block. Escaped here so every call site is safe rather than
+        // every call site having to remember which context it is in.
+        return d.innerHTML.replace(/"/g, "&quot;");
       }
     </script>
     <script src="/static/js/widgets/xaman-ek.js"></script>

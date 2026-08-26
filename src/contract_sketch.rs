@@ -1,0 +1,1556 @@
+//! # Compiling a typed output contract from a sketch
+//!
+//! ## The measurement that motivates this
+//!
+//! 98 of the 101 curated cards declare no typed output contract, and
+//! `agent_contract::TYPED_TIER_EXEMPT` grandfathers 86 of them. That is not
+//! 86 authors who disagreed with the contract; it is a contract whose
+//! authoring cost nobody paid twice.
+//!
+//! Count the work on the one card that does satisfy
+//! [`crate::card_contract::validate`] end to end. `hud_field_scout` declares
+//! **six** evidence blocks. Those six expand to:
+//!
+//! ```text
+//!   14 schema properties      (6 blocks + 6 provenance siblings + summary + an audit marker)
+//!   14 grounding entries      (bijection with the above — enforced)
+//!    6 narrowed provenance enums
+//!    1 required list of 13 names
+//! ```
+//!
+//! Six decisions, thirty-five artefacts. And of the fourteen grounding
+//! entries, **eight** are platform-stamp boilerplate whose prose is
+//! near-identical block to block — each needing 40+ characters of `why`
+//! (`card_contract::MIN_WHY`) to clear the gate. An author who writes that
+//! once writes it correctly; an author who writes it six times copies the
+//! nearest neighbour, which is the failure mode
+//! `card_contract::grounding_explained` exists to catch and cannot.
+//!
+//! ## What is actually a decision, and what is derivable
+//!
+//! Three things require a human (or an agent that can be held to account):
+//!
+//! 1. What blocks does the document have?
+//! 2. What fields, of what type, does each block hold?
+//! 3. Where does each block's value come from, and **why**?
+//!
+//! Everything else follows mechanically: the `_provenance` sibling, its
+//! narrowed enum, its grounding entry, the `required` list,
+//! `additionalProperties: false`, `$id`, the nullable unions, and the
+//! rewrite of `produces` to reference the declared type. This module
+//! authors the first three and computes the rest.
+//!
+//! ## The property that makes it worth having
+//!
+//! [`Sketch::compile`] emits `schema.properties` and `grounding` **from one
+//! traversal of one block list**. The bijection between them — the
+//! `grounding_declared` check, which is the one an author fails most because
+//! it is the one that scales with the number of fields — therefore cannot be
+//! violated by construction. It is not checked and reported; it is
+//! unrepresentable, in the same way `football_analyst`'s narrowed provenance
+//! enums make a dishonest stamp unrepresentable rather than discouraged.
+//!
+//! The compiler then runs `card_contract::validate` over its own output and
+//! refuses to return anything that would not publish. So:
+//!
+//! ```text
+//!   compile() returned Ok  ⟹  the Admission gate passes
+//! ```
+//!
+//! `contract_compiles_to_something_the_gate_accepts` holds that line.
+//!
+//! ## Where this differs from `scripts/port_migrate.py`
+//!
+//! That tool is deliberately a *proposer*: it emits `NEEDS_AUTHOR`, which is
+//! not a valid `grounding.status`, precisely so a draft cannot be pasted into
+//! a card and published. Its input is a card that contains no evidence for
+//! the type it is being asked to invent, so anything it emitted confidently
+//! would be a fabrication with good manners.
+//!
+//! This module's input is different: a sketch is *authored*. The statuses,
+//! the `why`s and the tool bindings come from a person. So it is allowed to
+//! produce a publishable contract — it is expanding a declaration, not
+//! guessing one.
+//!
+//! ### The one line the compiler will not cross
+//!
+//! **A generated `why` may only describe what the platform does. It may
+//! never describe where the agent's data comes from.**
+//!
+//! The provenance-sibling entries are generated with prose, because their
+//! subject is `grounding_trust::enforce` — platform behaviour this module
+//! knows for certain. Every entry describing an agent's own value requires
+//! an authored `why`, and a missing one is an error rather than a default.
+//! Blur that and this becomes the fabrication engine `port_migrate.py`
+//! refuses to be.
+//!
+//! ## Ontology binding
+//!
+//! Field vocabulary can come from an agent's ontology rather than an
+//! author's memory: `"@sentiment"` resolves against an [`Ontology`], taking
+//! the type, the closed value set and the definition from the entity. See
+//! [`Ontology::field`] — including why it puts a numeric range in the
+//! *description* rather than emitting `minimum`/`maximum`.
+
+use crate::card_contract::{self, Finding};
+use crate::grounding_trust::{
+    PROV_INFERRED, PROV_NO_MATCH, PROV_PENDING_TOOL, PROV_TOOL, PROV_UNAVAILABLE,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Map, Value};
+use std::collections::BTreeMap;
+
+/// Suffix of the sibling stamp `grounding_trust::enforce` writes per block.
+/// An author may not use it as a block name: the compiler owns that namespace.
+pub const PROVENANCE_SUFFIX: &str = "_provenance";
+
+/// The JSON Schema dialect the corpus declares.
+const DIALECT: &str = "https://json-schema.org/draft/2020-12/schema";
+
+fn f(check: &'static str, message: impl Into<String>) -> Finding {
+    Finding {
+        check,
+        message: message.into(),
+    }
+}
+
+// ─── the type mini-language ────────────────────────────────────────────
+
+/// A leaf type, written as a short string rather than a JSON Schema object.
+///
+/// ```text
+///   string            {"type": "string"}
+///   integer?          {"type": ["integer", "null"]}
+///   string[]          {"type": "array", "items": {"type": "string"}}
+///   number[]?         {"type": ["array", "null"], "items": {"type": "number"}}
+///   enum:up|down|flat {"enum": ["up", "down", "flat"]}
+///   enum:a|b?         {"enum": ["a", "b", null]}
+///   const:platform    {"const": "platform"}
+/// ```
+///
+/// The grammar is `<base>` `[]`? `?`? — array before nullable, because
+/// "nullable array of strings" and "array of nullable strings" are different
+/// types and only one order can mean one of them.
+///
+/// **Every form emits only keywords `crate::schema_validate` implements.**
+/// That is a hard constraint, not a coincidence: a schema carrying one
+/// keyword the validator cannot evaluate makes the whole document
+/// `unverified_unsupported_schema` at the delegation hop — which is *not a
+/// pass*, and is strictly worse than having declared less. `minimum`,
+/// `pattern` and `format` are therefore unavailable here on purpose.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeExpr {
+    pub base: Base,
+    pub array: bool,
+    pub nullable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Base {
+    String,
+    Integer,
+    Number,
+    Boolean,
+    /// A nested object whose fields this sketch does not enumerate. Allowed,
+    /// but it types nothing below the top of the block — prefer `fields`.
+    Object,
+    /// A closed set of string values.
+    Enum(Vec<String>),
+    /// Exactly one value.
+    Const(String),
+}
+
+impl TypeExpr {
+    /// Parse a type expression. The error is the message an author reads.
+    pub fn parse(src: &str) -> Result<Self, String> {
+        let mut s = src.trim();
+        if s.is_empty() {
+            return Err("empty type expression".into());
+        }
+        let nullable = s.ends_with('?');
+        if nullable {
+            s = s[..s.len() - 1].trim_end();
+        }
+        let array = s.ends_with("[]");
+        if array {
+            s = s[..s.len() - 2].trim_end();
+        }
+        if s.ends_with('?') {
+            return Err(format!(
+                "`{src}`: write the nullable marker last, as `{}[]?`. `[]?` is a \
+                 nullable array; `?[]` would be an array of nullables, and letting \
+                 both orders mean the same thing would make one of the two types \
+                 unwritable.",
+                s.trim_end_matches('?')
+            ));
+        }
+
+        let base = match s {
+            "string" => Base::String,
+            "integer" => Base::Integer,
+            "number" => Base::Number,
+            "boolean" => Base::Boolean,
+            "object" => Base::Object,
+            other if other.starts_with("enum:") => {
+                let vals: Vec<String> = other[5..]
+                    .split('|')
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty())
+                    .collect();
+                if vals.len() < 2 {
+                    return Err(format!(
+                        "`{src}`: an `enum:` needs at least two values separated by \
+                         `|`. A one-value enum is a `const:`, and saying so makes the \
+                         intent legible."
+                    ));
+                }
+                Base::Enum(vals)
+            }
+            other if other.starts_with("const:") => {
+                let v = other[6..].trim();
+                if v.is_empty() {
+                    return Err(format!("`{src}`: `const:` needs a value."));
+                }
+                Base::Const(v.to_string())
+            }
+            other => {
+                return Err(format!(
+                    "`{src}`: unknown type `{other}`. Available: string, integer, \
+                     number, boolean, object, `enum:a|b|c`, `const:v`, or `@entity` \
+                     to take the type from the agent's ontology. Suffix `[]` for an \
+                     array and `?` for nullable, in that order.\n\
+                     Deliberately absent: `minimum`, `pattern`, `format`. \
+                     src/schema_validate.rs cannot evaluate them, and a schema it \
+                     cannot evaluate reports `unverified_unsupported_schema` at the \
+                     delegation hop — which is not a pass. State the constraint in a \
+                     `description` where a reader gets it and the validator is not \
+                     asked to lie about it."
+                ))
+            }
+        };
+        Ok(TypeExpr {
+            base,
+            array,
+            nullable,
+        })
+    }
+
+    /// JSON Schema for this leaf, with an optional description.
+    pub fn to_schema(&self, description: Option<&str>) -> Value {
+        let mut out = Map::new();
+
+        // The item schema, before array/nullable wrapping.
+        let scalar_type = |b: &Base| -> Option<&'static str> {
+            match b {
+                Base::String => Some("string"),
+                Base::Integer => Some("integer"),
+                Base::Number => Some("number"),
+                Base::Boolean => Some("boolean"),
+                Base::Object => Some("object"),
+                Base::Enum(_) | Base::Const(_) => None,
+            }
+        };
+
+        match (&self.base, self.array) {
+            // enum / const, not an array: the keyword carries the type.
+            (Base::Enum(vals), false) => {
+                let mut items: Vec<Value> = vals.iter().map(|v| json!(v)).collect();
+                if self.nullable {
+                    // `null` joins the enum rather than a type union: `enum`
+                    // already fully determines the admissible set, and adding
+                    // `type` alongside it would be a second, redundant
+                    // assertion that could disagree with the first.
+                    items.push(Value::Null);
+                }
+                out.insert("enum".into(), Value::Array(items));
+            }
+            (Base::Const(v), false) => {
+                out.insert("const".into(), json!(v));
+            }
+            // arrays
+            (base, true) => {
+                let ty = if self.nullable {
+                    json!(["array", "null"])
+                } else {
+                    json!("array")
+                };
+                out.insert("type".into(), ty);
+                let mut items = Map::new();
+                match base {
+                    Base::Enum(vals) => {
+                        items.insert(
+                            "enum".into(),
+                            Value::Array(vals.iter().map(|v| json!(v)).collect()),
+                        );
+                    }
+                    Base::Const(v) => {
+                        items.insert("const".into(), json!(v));
+                    }
+                    other => {
+                        items.insert("type".into(), json!(scalar_type(other).unwrap_or("string")));
+                    }
+                }
+                out.insert("items".into(), Value::Object(items));
+            }
+            // plain scalars
+            (base, false) => {
+                let name = scalar_type(base).unwrap_or("string");
+                let ty = if self.nullable {
+                    json!([name, "null"])
+                } else {
+                    json!(name)
+                };
+                out.insert("type".into(), ty);
+            }
+        }
+
+        if let Some(d) = description.filter(|d| !d.trim().is_empty()) {
+            out.insert("description".into(), json!(d));
+        }
+        Value::Object(out)
+    }
+}
+
+// ─── the sketch ────────────────────────────────────────────────────────
+
+/// A field of a block: a type expression, optionally with prose.
+///
+/// Accepts the shorthand `"number?"` and the long form
+/// `{"type": "number?", "description": "..."}`, because most fields need no
+/// prose and the ones that do need it badly.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum FieldSpec {
+    Short(String),
+    Long {
+        #[serde(rename = "type")]
+        ty: String,
+        #[serde(default)]
+        description: Option<String>,
+    },
+}
+
+impl FieldSpec {
+    fn ty(&self) -> &str {
+        match self {
+            FieldSpec::Short(s) => s,
+            FieldSpec::Long { ty, .. } => ty,
+        }
+    }
+    fn description(&self) -> Option<&str> {
+        match self {
+            FieldSpec::Short(_) => None,
+            FieldSpec::Long { description, .. } => description.as_deref(),
+        }
+    }
+}
+
+/// How completely a tool covers the block it sources.
+///
+/// This is the whole reason the provenance enums in the corpus differ from
+/// each other — `genome_profiler.taxonomy` admits two verdicts and
+/// `genome_profiler.genome` admits three. Asking the author the question
+/// once, here, is what lets the compiler narrow the enum correctly instead
+/// of emitting the widest set and calling it safe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Coverage {
+    /// The tool answers for every field, or honestly reports no match.
+    #[default]
+    Complete,
+    /// The tool covers part of the block; the rest has no source at all, so
+    /// `unavailable_no_tool_source` is a reachable verdict.
+    Partial,
+    /// The check exists but may not have run when the document was built, so
+    /// `pending_tool_check` is reachable. Distinct from `Partial`: "not yet
+    /// asked" and "asked, nothing exists" need different fixes.
+    Deferred,
+}
+
+/// Where a block's value comes from. Mirrors `card_contract::GROUNDING_STATUSES`
+/// and is the sole input to the provenance enum.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum Source {
+    /// A declared tool returns it. The tool name is cross-checked against
+    /// what the agent actually declares — the check with teeth.
+    Sourced {
+        tool: String,
+        response_field: String,
+        #[serde(default)]
+        coverage: Coverage,
+    },
+    /// The model reasons it out from something named.
+    Inferred { from: String },
+    /// Prose. Gets no provenance sibling, per `grounding_trust.rs`: a block
+    /// that is only ever a narrative must not carry a stamp, because a stamp
+    /// on prose is a retrieval claim about a sentence.
+    Narrative,
+    /// Nothing available can supply it, so it must be null.
+    Unavailable {
+        /// What would have to be wired up for this to become `sourced`.
+        /// Optional, and worth writing: it turns a null into a to-do.
+        #[serde(default)]
+        would_need: Option<String>,
+    },
+}
+
+impl Source {
+    fn status(&self) -> &'static str {
+        match self {
+            Source::Sourced { .. } => "sourced",
+            Source::Inferred { .. } => "inferred",
+            Source::Narrative => "narrative",
+            Source::Unavailable { .. } => "unavailable",
+        }
+    }
+
+    /// The narrowed schema for this block's `_provenance` sibling, or `None`
+    /// when the block gets no sibling at all.
+    fn provenance_schema(&self) -> Option<Value> {
+        let verdicts: Vec<&str> = match self {
+            Source::Sourced { coverage, .. } => match coverage {
+                Coverage::Complete => vec![PROV_TOOL, PROV_NO_MATCH],
+                Coverage::Partial => vec![PROV_TOOL, PROV_NO_MATCH, PROV_UNAVAILABLE],
+                Coverage::Deferred => vec![PROV_TOOL, PROV_NO_MATCH, PROV_PENDING_TOOL],
+            },
+            Source::Inferred { .. } => return Some(json!({ "const": PROV_INFERRED })),
+            Source::Unavailable { .. } => return Some(json!({ "const": PROV_UNAVAILABLE })),
+            Source::Narrative => return None,
+        };
+        Some(json!({ "enum": verdicts }))
+    }
+
+    /// Prose naming the verdicts, for the generated sibling's `why`.
+    fn verdict_prose(&self, block: &str) -> String {
+        match self {
+            Source::Sourced { tool, coverage, .. } => {
+                let base = format!(
+                    "`{PROV_TOOL}` when `{tool}` returned a value, `{PROV_NO_MATCH}` \
+                     when it was asked and had nothing"
+                );
+                match coverage {
+                    Coverage::Complete => base,
+                    Coverage::Partial => format!(
+                        "{base}, and `{PROV_UNAVAILABLE}` for the parts of `{block}` \
+                         that `{tool}` does not cover"
+                    ),
+                    Coverage::Deferred => {
+                        format!("{base}, and `{PROV_PENDING_TOOL}` when the check had not run yet")
+                    }
+                }
+            }
+            Source::Inferred { .. } => format!(
+                "constant `{PROV_INFERRED}`, because every field under `{block}` is a \
+                 judgement rather than a retrieval"
+            ),
+            Source::Unavailable { .. } => format!(
+                "constant `{PROV_UNAVAILABLE}`. Constant rather than variable on \
+                 purpose: if a source is wired up later this becomes an enum, and the \
+                 change shows in the schema diff rather than only in behaviour"
+            ),
+            Source::Narrative => String::new(),
+        }
+    }
+
+    /// The card grounding entry for the block itself, from the author's `why`.
+    fn grounding_entry(&self, why: &str) -> Value {
+        let mut m = Map::new();
+        m.insert("status".into(), json!(self.status()));
+        match self {
+            Source::Sourced {
+                tool,
+                response_field,
+                ..
+            } => {
+                m.insert("tool".into(), json!(tool));
+                m.insert("response_field".into(), json!(response_field));
+            }
+            Source::Inferred { from } => {
+                m.insert("from".into(), json!(from));
+            }
+            Source::Unavailable { would_need } => {
+                if let Some(w) = would_need.as_deref().filter(|w| !w.trim().is_empty()) {
+                    m.insert("would_need".into(), json!(w));
+                }
+            }
+            Source::Narrative => {}
+        }
+        m.insert("why".into(), json!(why));
+        Value::Object(m)
+    }
+}
+
+/// One evidence block: the unit an author actually thinks in.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Block {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Where the value comes from. Decides the provenance sibling.
+    pub source: Source,
+    /// Why it has that status. 40+ characters (`card_contract::MIN_WHY`), and
+    /// never generated — see the module docs.
+    pub why: String,
+    /// The block's fields, when it is an object. Mutually exclusive with
+    /// [`Block::value`].
+    #[serde(default)]
+    pub fields: BTreeMap<String, FieldSpec>,
+    /// The block's type, when it is a single value rather than an object.
+    #[serde(default)]
+    pub value: Option<String>,
+    /// Whether the document must carry it. Defaults true; set false for a
+    /// field only the platform sometimes adds, like `hud_field_scout`'s
+    /// `_hud_review`.
+    #[serde(default = "yes")]
+    pub required: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// The authored form of a typed output contract.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Sketch {
+    /// Human-readable domain, e.g. `equity-research`.
+    pub domain: String,
+    /// Namespaced type name. Becomes `$id` and the single entry in `produces`.
+    pub produces_schema: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    /// How a coordinator combines members' documents. Passed through.
+    #[serde(default)]
+    pub synthesis: Option<String>,
+    /// How correctness is measured over time. Passed through verbatim: this
+    /// module has no opinion about calibration and inventing one would be
+    /// worse than carrying the author's.
+    #[serde(default)]
+    pub calibration: Option<Value>,
+    pub blocks: Vec<Block>,
+}
+
+/// What the compiler produces: the card fragments, ready to paste.
+#[derive(Debug, Clone)]
+pub struct Compiled {
+    /// Goes at `capabilities.output_contract`.
+    pub output_contract: Value,
+    /// Replaces the card's `produces`. One entry, the declared type.
+    pub produces: Vec<String>,
+    /// Properties the compiler added that the author did not write. Returned
+    /// so the expansion is inspectable rather than magic.
+    pub generated_properties: Vec<String>,
+}
+
+impl Sketch {
+    pub fn from_json(v: &Value) -> Result<Self, Vec<Finding>> {
+        serde_json::from_value(v.clone()).map_err(|e| {
+            vec![f(
+                "sketch_shape",
+                format!(
+                    "Could not read the sketch: {e}. Expected `domain`, \
+                     `produces_schema` and `blocks`, where each block has `name`, \
+                     `source` and `why`, plus either `fields` or `value`."
+                ),
+            )]
+        })
+    }
+
+    /// Compile to a publishable `output_contract`.
+    ///
+    /// `tool_names` is the agent's declared `capabilities.mcp_tools`. It is
+    /// required rather than optional because the load-bearing check —
+    /// a `sourced` field naming a tool the agent cannot call — is a
+    /// cross-reference, and a compiler that skipped it would emit contracts
+    /// that fail at publish having looked fine at author time.
+    ///
+    /// On success the result is guaranteed to satisfy
+    /// [`card_contract::validate`]. On failure every finding is returned, so
+    /// an author fixes the sketch in one pass.
+    pub fn compile(&self, tool_names: &[String]) -> Result<Compiled, Vec<Finding>> {
+        let mut errs: Vec<Finding> = Vec::new();
+
+        if self.blocks.is_empty() {
+            errs.push(f(
+                "sketch_shape",
+                "The sketch declares no blocks, so it would compile to an empty \
+                 schema — which is what `output_contract_typed` refuses. Name at \
+                 least one block, and a `narrative` one for prose.",
+            ));
+        }
+
+        let mut properties = Map::new();
+        let mut grounding = Map::new();
+        let mut required: Vec<Value> = Vec::new();
+        let mut generated: Vec<String> = Vec::new();
+        let mut seen: BTreeMap<&str, ()> = BTreeMap::new();
+
+        for b in &self.blocks {
+            let name = b.name.trim();
+
+            // ── the block's own name ──────────────────────────────────
+            if name.is_empty() {
+                errs.push(f("sketch_block_name", "A block has an empty `name`."));
+                continue;
+            }
+            if name.ends_with(PROVENANCE_SUFFIX) {
+                errs.push(f(
+                    "sketch_block_name",
+                    format!(
+                        "Block `{name}` ends in `{PROVENANCE_SUFFIX}`, which the \
+                         compiler owns: it writes one sibling stamp per block and a \
+                         hand-written twin would either collide or contradict it. \
+                         Name the block for what it holds and let the stamp be \
+                         derived."
+                    ),
+                ));
+                continue;
+            }
+            if seen.insert(name, ()).is_some() {
+                errs.push(f(
+                    "sketch_block_name",
+                    format!("Block `{name}` is declared twice."),
+                ));
+                continue;
+            }
+
+            // ── the block's shape ─────────────────────────────────────
+            let has_fields = !b.fields.is_empty();
+            let has_value = b.value.as_deref().is_some_and(|v| !v.trim().is_empty());
+            let block_schema = match (has_fields, has_value) {
+                (true, true) => {
+                    errs.push(f(
+                        "sketch_shape",
+                        format!(
+                            "Block `{name}` declares both `fields` and `value`. A block \
+                             is either an object of fields or a single typed value; \
+                             both at once has no JSON Schema."
+                        ),
+                    ));
+                    continue;
+                }
+                (false, false) => {
+                    errs.push(f(
+                        "sketch_shape",
+                        format!(
+                            "Block `{name}` declares neither `fields` nor `value`, so \
+                             nothing below it is typed. Give it `fields: {{ ... }}`, or \
+                             `value: \"string\"` if it really is one scalar."
+                        ),
+                    ));
+                    continue;
+                }
+                (false, true) => match TypeExpr::parse(b.value.as_deref().unwrap()) {
+                    Ok(t) => t.to_schema(b.description.as_deref()),
+                    Err(e) => {
+                        errs.push(f("sketch_type_expr", format!("Block `{name}`: {e}")));
+                        continue;
+                    }
+                },
+                (true, false) => {
+                    let mut props = Map::new();
+                    let mut bad = false;
+                    for (fname, spec) in &b.fields {
+                        match TypeExpr::parse(spec.ty()) {
+                            Ok(t) => {
+                                props.insert(fname.clone(), t.to_schema(spec.description()));
+                            }
+                            Err(e) => {
+                                errs.push(f(
+                                    "sketch_type_expr",
+                                    format!("Block `{name}`, field `{fname}`: {e}"),
+                                ));
+                                bad = true;
+                            }
+                        }
+                    }
+                    if bad {
+                        continue;
+                    }
+                    let mut m = Map::new();
+                    m.insert("type".into(), json!("object"));
+                    // Closed on purpose, matching every typed card in the
+                    // corpus: an open object lets a model add a field nobody
+                    // classified, which is the shape `grounding` exists to
+                    // stop, one level down where it is invisible.
+                    m.insert("additionalProperties".into(), json!(false));
+                    m.insert("properties".into(), Value::Object(props));
+                    if let Some(d) = b.description.as_deref().filter(|d| !d.trim().is_empty()) {
+                        m.insert("description".into(), json!(d));
+                    }
+                    Value::Object(m)
+                }
+            };
+
+            // ── the author's why ─────────────────────────────────────
+            if b.why.trim().len() < card_contract::MIN_WHY {
+                errs.push(f(
+                    "sketch_why",
+                    format!(
+                        "Block `{name}` has no usable `why` ({}+ characters needed). \
+                         This is the one field the compiler will not write for you: \
+                         its subject is where *your agent's* data comes from, and a \
+                         generated justification for that is the fabrication this \
+                         whole contract exists to catch.",
+                        card_contract::MIN_WHY
+                    ),
+                ));
+            }
+
+            properties.insert(name.to_string(), block_schema);
+            grounding.insert(name.to_string(), b.source.grounding_entry(b.why.trim()));
+            if b.required {
+                required.push(json!(name));
+            }
+
+            // ── the derived sibling ──────────────────────────────────
+            if let Some(prov_schema) = b.source.provenance_schema() {
+                let sib = format!("{name}{PROVENANCE_SUFFIX}");
+                properties.insert(sib.clone(), prov_schema);
+                grounding.insert(sib.clone(), stamp_grounding_entry(name, &b.source));
+                if b.required {
+                    required.push(json!(sib.clone()));
+                }
+                generated.push(sib);
+            }
+        }
+
+        if !errs.is_empty() {
+            return Err(errs);
+        }
+
+        // ── assemble ─────────────────────────────────────────────────
+        let mut schema = Map::new();
+        schema.insert("$schema".into(), json!(DIALECT));
+        schema.insert("$id".into(), json!(self.produces_schema.trim()));
+        if let Some(t) = self.title.as_deref() {
+            schema.insert("title".into(), json!(t));
+        }
+        if let Some(d) = self.description.as_deref() {
+            schema.insert("description".into(), json!(d));
+        }
+        schema.insert("type".into(), json!("object"));
+        schema.insert("additionalProperties".into(), json!(false));
+        schema.insert("required".into(), Value::Array(required));
+        schema.insert("properties".into(), Value::Object(properties));
+
+        let mut oc = Map::new();
+        oc.insert("domain".into(), json!(self.domain.trim()));
+        oc.insert("produces_schema".into(), json!(self.produces_schema.trim()));
+        if let Some(s) = self.synthesis.as_deref() {
+            oc.insert("synthesis".into(), json!(s));
+        }
+        if let Some(c) = self.calibration.clone() {
+            oc.insert("calibration".into(), c);
+        }
+        oc.insert("schema".into(), Value::Object(schema));
+        oc.insert("grounding".into(), Value::Object(grounding));
+
+        let output_contract = Value::Object(oc);
+        let produces = vec![self.produces_schema.trim().to_string()];
+
+        // ── the guarantee ────────────────────────────────────────────
+        //
+        // Check our own output against the gate we are compiling toward. A
+        // compiler that emits an unpublishable contract has moved the
+        // authoring cost rather than removed it, and the author would find
+        // out at publish with no idea which part of the sketch to blame.
+        let findings = card_contract::validate(Some(&output_contract), &produces, tool_names);
+        if !findings.is_empty() {
+            return Err(findings);
+        }
+
+        Ok(Compiled {
+            output_contract,
+            produces,
+            generated_properties: generated,
+        })
+    }
+}
+
+/// The grounding entry for a derived `_provenance` sibling.
+///
+/// Generated, `why` included, and the module docs draw the line this sits on:
+/// the subject is `grounding_trust::enforce` — platform behaviour the
+/// compiler knows for certain — not the agent's data. Compare the eight
+/// hand-written near-duplicates in `hud_field_scout`'s card, which say the
+/// same thing eight times and are the reason this function exists.
+fn stamp_grounding_entry(block: &str, source: &Source) -> Value {
+    json!({
+        // `inferred` rather than `derived` because the authoring vocabulary
+        // has no `derived` token while the runtime's Grounding enum does; see
+        // card_contract::PLATFORM_ASSIGNED_ONLY for why the gap is deliberate.
+        // `inferred` understates a reproducible value, which is the safe
+        // direction — the unsafe one would overstate a guess.
+        "status": "inferred",
+        "from": "src/grounding_trust.rs enforcement over this response",
+        "why": format!(
+            "Platform-written provenance stamp over the `{block}` block: {}. Written \
+             by the platform, not by the model and not by a tool, so it is declared \
+             `inferred`: card_contract::GROUNDING_STATUSES has no `derived` token \
+             while the runtime's Grounding enum does, and understating a reproducible \
+             value is the safe direction. Generated by contract_sketch, whose subject \
+             here is platform behaviour rather than this agent's data.",
+            source.verdict_prose(block)
+        ),
+    })
+}
+
+// ─── ontology binding ──────────────────────────────────────────────────
+
+/// An agent's ontology, read as a field vocabulary.
+///
+/// The point is not automation, it is *selection over invention*. An author
+/// naming `@sentiment` is choosing a concept the agent already reasons in,
+/// with its closed value set and its definition attached; an author typing
+/// `"enum:positive|negative"` from memory is minting a second, slightly
+/// different vocabulary that nothing reconciles with the first.
+///
+/// Matches the shape in `ontologies/samples/*.json`: `entities[]`, each with
+/// `id`, `name`, and `properties` holding `definition`, and optionally
+/// `scale` or `categories`.
+pub struct Ontology {
+    entities: BTreeMap<String, Value>,
+}
+
+impl Ontology {
+    pub fn from_json(v: &Value) -> Result<Self, String> {
+        let arr = v
+            .get("entities")
+            .and_then(|e| e.as_array())
+            .ok_or("ontology has no `entities` array")?;
+        let mut entities = BTreeMap::new();
+        for e in arr {
+            if let Some(id) = e.get("id").and_then(|i| i.as_str()) {
+                entities.insert(id.to_string(), e.clone());
+            }
+        }
+        Ok(Ontology { entities })
+    }
+
+    /// Resolve `@id` to a type expression and a description.
+    ///
+    /// Three shapes are recognised, in order:
+    ///
+    /// - `properties.scale` of strings, or `properties.categories` → an
+    ///   `enum`. The ontology already closed the set; re-closing it by hand
+    ///   is how the two drift.
+    /// - `properties.scale` of two numbers → `number`, **with the range in
+    ///   the description**. Not `minimum`/`maximum`: `schema_validate`
+    ///   implements neither, so emitting them would flip every document at
+    ///   the delegation hop to `unverified_unsupported_schema` — declaring
+    ///   more and thereby verifying less. The bound belongs where a reader
+    ///   sees it until the validator can enforce it.
+    /// - anything else → `string`, described.
+    ///
+    /// Returns `None` for an unknown id: a silent fallback to `string` would
+    /// let a typo become a type.
+    pub fn field(&self, id: &str) -> Option<(TypeExpr, Option<String>)> {
+        let e = self.entities.get(id.trim_start_matches('@'))?;
+        let props = e.get("properties");
+        let definition = props
+            .and_then(|p| p.get("definition"))
+            .and_then(|d| d.as_str())
+            .map(str::to_string);
+
+        let as_strings = |key: &str| -> Option<Vec<String>> {
+            let a = props?.get(key)?.as_array()?;
+            let v: Vec<String> = a
+                .iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect();
+            (v.len() == a.len() && v.len() >= 2).then_some(v)
+        };
+
+        if let Some(vals) = as_strings("scale").or_else(|| as_strings("categories")) {
+            return Some((
+                TypeExpr {
+                    base: Base::Enum(vals),
+                    array: false,
+                    nullable: false,
+                },
+                definition,
+            ));
+        }
+
+        // A numeric scale, e.g. `"scale": [0.0, 1.0]`.
+        if let Some(a) = props
+            .and_then(|p| p.get("scale"))
+            .and_then(|s| s.as_array())
+        {
+            let nums: Vec<f64> = a.iter().filter_map(|x| x.as_f64()).collect();
+            if nums.len() == 2 && nums.len() == a.len() {
+                let range = format!("Ontology scale {} to {}.", nums[0], nums[1]);
+                let desc = match definition {
+                    Some(d) => format!("{d} {range}"),
+                    None => range,
+                };
+                return Some((
+                    TypeExpr {
+                        base: Base::Number,
+                        array: false,
+                        nullable: false,
+                    },
+                    Some(desc),
+                ));
+            }
+        }
+
+        Some((
+            TypeExpr {
+                base: Base::String,
+                array: false,
+                nullable: false,
+            },
+            definition,
+        ))
+    }
+
+    /// Expand every `@id` in a sketch's field types against this ontology.
+    ///
+    /// Rewrites in place so the compiled schema carries real types and the
+    /// sketch on disk stays short. Suffixes survive: `@sentiment?` resolves
+    /// the base and keeps the nullable marker.
+    pub fn expand(&self, sketch: &mut Sketch) -> Vec<Finding> {
+        let mut errs = Vec::new();
+        for b in &mut sketch.blocks {
+            for (fname, spec) in b.fields.iter_mut() {
+                let raw = spec.ty().to_string();
+                if !raw.trim_start().starts_with('@') {
+                    continue;
+                }
+                let trimmed = raw.trim();
+                let (id, suffix) = split_suffix(trimmed);
+                match self.field(id) {
+                    Some((t, desc)) => {
+                        let base_src = render_base(&t.base);
+                        let ty = format!("{base_src}{suffix}");
+                        let description = match spec.description() {
+                            Some(d) if !d.trim().is_empty() => Some(d.to_string()),
+                            _ => desc,
+                        };
+                        *spec = FieldSpec::Long { ty, description };
+                    }
+                    None => errs.push(f(
+                        "sketch_ontology_ref",
+                        format!(
+                            "Block `{}`, field `{fname}`: `{trimmed}` names no entity in \
+                             the ontology. Known ids: {}. Not defaulted to `string` on \
+                             purpose — a silent fallback would let a typo become a type.",
+                            b.name,
+                            if self.entities.is_empty() {
+                                "(none)".to_string()
+                            } else {
+                                self.entities.keys().cloned().collect::<Vec<_>>().join(", ")
+                            }
+                        ),
+                    )),
+                }
+            }
+        }
+        errs
+    }
+}
+
+/// Split `@id[]?` into (`id`, `[]?`).
+fn split_suffix(s: &str) -> (&str, &str) {
+    let cut = s.find(['[', '?']).unwrap_or(s.len());
+    (&s[..cut], &s[cut..])
+}
+
+fn render_base(b: &Base) -> String {
+    match b {
+        Base::String => "string".into(),
+        Base::Integer => "integer".into(),
+        Base::Number => "number".into(),
+        Base::Boolean => "boolean".into(),
+        Base::Object => "object".into(),
+        Base::Enum(v) => format!("enum:{}", v.join("|")),
+        Base::Const(v) => format!("const:{v}"),
+    }
+}
+
+// ─── MCP tool ──────────────────────────────────────────────────────────
+
+/// MCP tool body for `build_output_contract`.
+///
+/// Sits next to the compiler for the same reason
+/// `card_contract::execute_validate_tool` sits next to the rules: an agent
+/// working from a *description* of the expansion in its system prompt would
+/// drift from the expansion, and confidently produce contracts that do not
+/// compile. Calling [`Sketch::compile`] means the advice and the compiler are
+/// the same code.
+///
+/// This is the division of labour the ontology agent makes possible. A model
+/// is good at the part that needs judgement — which blocks, which fields,
+/// which vocabulary, and the `why` — and is exactly the wrong thing to trust
+/// with a bijection over fourteen keys. So it writes a sketch, and Rust
+/// writes the contract. Note that the model *cannot* fabricate a `sourced`
+/// claim through this path: `compile` cross-checks every tool name against
+/// `tool_names` and refuses.
+pub fn execute_build_tool(input: &Value) -> Result<String, String> {
+    let sketch_val = input
+        .get("sketch")
+        .filter(|v| v.is_object())
+        .ok_or("`sketch` is required and must be an object")?;
+
+    let tool_names: Vec<String> = input
+        .get("tool_names")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let mut sketch = match Sketch::from_json(sketch_val) {
+        Ok(s) => s,
+        Err(findings) => return Ok(render_findings(&findings)),
+    };
+
+    // Optional ontology, expanded before compilation so `@refs` become types.
+    if let Some(ont) = input.get("ontology").filter(|v| v.is_object()) {
+        match Ontology::from_json(ont) {
+            Ok(o) => {
+                let errs = o.expand(&mut sketch);
+                if !errs.is_empty() {
+                    return Ok(render_findings(&errs));
+                }
+            }
+            Err(e) => {
+                return Ok(render_findings(&[f(
+                    "sketch_ontology_ref",
+                    format!("Could not read `ontology`: {e}"),
+                )]))
+            }
+        }
+    }
+
+    match sketch.compile(&tool_names) {
+        Ok(c) => serde_json::to_string_pretty(&json!({
+            "compiles": true,
+            "would_publish": true,
+            "output_contract": c.output_contract,
+            "produces": c.produces,
+            "generated_properties": c.generated_properties,
+            "note": "Paste `output_contract` at `capabilities.output_contract` and \
+                     replace `produces` wholesale. This has been checked against \
+                     card_contract::validate — the Admission gate accepts it. Keep the \
+                     sketch beside the card and assert the two agree in a test, so the \
+                     card cannot drift away from the declaration that produced it.",
+            "guide": "docs/guides/AGENT_CONTRACT_AUTHORING.md",
+        }))
+        .map_err(|e| e.to_string()),
+        Err(findings) => Ok(render_findings(&findings)),
+    }
+}
+
+fn render_findings(findings: &[Finding]) -> String {
+    serde_json::to_string_pretty(&json!({
+        "compiles": false,
+        "would_publish": false,
+        "findings": findings
+            .iter()
+            .map(|x| json!({ "check": x.check, "fix": x.message }))
+            .collect::<Vec<_>>(),
+        "note": "Nothing was emitted. The compiler does not return a partial contract: \
+                 a contract that is almost complete reads exactly like one that is, and \
+                 the gap would be found at publish with no clue which part of the \
+                 sketch caused it.",
+        "guide": "docs/guides/AGENT_CONTRACT_AUTHORING.md",
+    }))
+    .unwrap_or_else(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tools() -> Vec<String> {
+        vec!["fmp_ratios".to_string(), "fmp_company_profile".to_string()]
+    }
+
+    fn minimal() -> Sketch {
+        Sketch {
+            domain: "testing".into(),
+            produces_schema: "test/doc".into(),
+            title: Some("Doc".into()),
+            description: None,
+            synthesis: None,
+            calibration: None,
+            blocks: vec![
+                Block {
+                    name: "ratios".into(),
+                    description: None,
+                    source: Source::Sourced {
+                        tool: "fmp_ratios".into(),
+                        response_field: "peRatio, debtEquityRatio".into(),
+                        coverage: Coverage::Complete,
+                    },
+                    why: "FMP returns these ratios pre-computed for the queried symbol, \
+                          so the block is a real retrieval."
+                        .into(),
+                    fields: [("pe".to_string(), FieldSpec::Short("number?".into()))]
+                        .into_iter()
+                        .collect(),
+                    value: None,
+                    required: true,
+                },
+                Block {
+                    name: "summary".into(),
+                    description: None,
+                    source: Source::Narrative,
+                    why: "Prose over what was retrieved; must not assert anything the \
+                          sourced blocks cannot support."
+                        .into(),
+                    fields: BTreeMap::new(),
+                    value: Some("string".into()),
+                    required: true,
+                },
+            ],
+        }
+    }
+
+    // ── the type mini-language ────────────────────────────────────────
+
+    #[test]
+    fn a_plain_scalar_is_a_plain_type() {
+        let t = TypeExpr::parse("string").unwrap();
+        assert_eq!(t.to_schema(None), json!({ "type": "string" }));
+    }
+
+    #[test]
+    fn nullable_is_a_union_not_an_omission() {
+        // The corpus convention: a field that may be absent is typed
+        // ["integer","null"] and stays REQUIRED, so the model must say
+        // "nothing" explicitly rather than quietly dropping the key.
+        let t = TypeExpr::parse("integer?").unwrap();
+        assert_eq!(t.to_schema(None), json!({ "type": ["integer", "null"] }));
+    }
+
+    #[test]
+    fn a_nullable_array_is_the_array_that_is_nullable() {
+        let t = TypeExpr::parse("string[]?").unwrap();
+        assert_eq!(
+            t.to_schema(None),
+            json!({ "type": ["array", "null"], "items": { "type": "string" } })
+        );
+    }
+
+    #[test]
+    fn the_suffix_order_is_fixed_so_both_types_stay_writable() {
+        // `?[]` is refused rather than treated as a synonym for `[]?`. If
+        // both spellings meant "nullable array", "array of nullables" would
+        // have no spelling at all.
+        let e = TypeExpr::parse("string?[]").unwrap_err();
+        assert!(e.contains("nullable marker last"), "{e}");
+    }
+
+    #[test]
+    fn a_nullable_enum_admits_null_into_the_set() {
+        let t = TypeExpr::parse("enum:up|down?").unwrap();
+        assert_eq!(t.to_schema(None), json!({ "enum": ["up", "down", null] }));
+    }
+
+    #[test]
+    fn a_one_value_enum_is_refused_in_favour_of_const() {
+        let e = TypeExpr::parse("enum:only").unwrap_err();
+        assert!(e.contains("at least two values"), "{e}");
+    }
+
+    #[test]
+    fn an_unsupported_keyword_is_not_offered_at_all() {
+        // The trap this closes: `{"minimum": 0}` looks like a tightening and
+        // is a loosening, because schema_validate cannot evaluate it and
+        // reports the whole document `unverified_unsupported_schema` — which
+        // is not a pass. So there is no way to write it.
+        let e = TypeExpr::parse("number(min=0)").unwrap_err();
+        assert!(e.contains("unverified_unsupported_schema"), "{e}");
+    }
+
+    #[test]
+    fn every_emitted_keyword_is_one_the_validator_implements() {
+        // The invariant behind the previous test, checked over the whole
+        // mini-language rather than asserted in prose.
+        const SUPPORTED: &[&str] = &[
+            "type",
+            "properties",
+            "required",
+            "additionalProperties",
+            "enum",
+            "const",
+            "items",
+            "description",
+            "$schema",
+            "$id",
+            "title",
+        ];
+        fn walk(v: &Value, path: &str) {
+            if let Value::Object(m) = v {
+                for (k, sub) in m {
+                    assert!(
+                        SUPPORTED.contains(&k.as_str()),
+                        "{path}.{k} is a keyword schema_validate does not implement, \
+                         which would make every document unverified"
+                    );
+                    if k == "properties" {
+                        if let Value::Object(props) = sub {
+                            for (name, s) in props {
+                                walk(s, &format!("{path}.{name}"));
+                            }
+                        }
+                    } else if k == "items" {
+                        walk(sub, &format!("{path}[]"));
+                    }
+                }
+            }
+        }
+        let c = minimal().compile(&tools()).unwrap();
+        walk(c.output_contract.get("schema").unwrap(), "schema");
+    }
+
+    // ── the expansion ─────────────────────────────────────────────────
+
+    #[test]
+    fn a_sourced_block_gets_a_narrowed_provenance_sibling() {
+        let c = minimal().compile(&tools()).unwrap();
+        let props = c.output_contract.pointer("/schema/properties").unwrap();
+        assert_eq!(
+            props.get("ratios_provenance").unwrap(),
+            &json!({ "enum": ["tool_verified", "tool_no_match"] }),
+            "a tool with complete coverage cannot honestly say \
+             unavailable_no_tool_source"
+        );
+    }
+
+    #[test]
+    fn partial_coverage_widens_the_enum_and_deferred_widens_it_differently() {
+        let mut s = minimal();
+        if let Source::Sourced { coverage, .. } = &mut s.blocks[0].source {
+            *coverage = Coverage::Partial;
+        }
+        let c = s.compile(&tools()).unwrap();
+        assert_eq!(
+            c.output_contract
+                .pointer("/schema/properties/ratios_provenance")
+                .unwrap(),
+            &json!({ "enum": ["tool_verified", "tool_no_match", "unavailable_no_tool_source"] })
+        );
+
+        let mut s = minimal();
+        if let Source::Sourced { coverage, .. } = &mut s.blocks[0].source {
+            *coverage = Coverage::Deferred;
+        }
+        let c = s.compile(&tools()).unwrap();
+        assert_eq!(
+            c.output_contract
+                .pointer("/schema/properties/ratios_provenance")
+                .unwrap(),
+            &json!({ "enum": ["tool_verified", "tool_no_match", "pending_tool_check"] }),
+            "`not asked yet` and `nothing exists` are different facts and must not \
+             collapse into one enum"
+        );
+    }
+
+    #[test]
+    fn a_narrative_block_gets_no_stamp() {
+        // grounding_trust is explicit: a block that is only ever prose must
+        // not carry a provenance key, because a retrieval verdict about a
+        // sentence is a category error.
+        let c = minimal().compile(&tools()).unwrap();
+        let props = c
+            .output_contract
+            .pointer("/schema/properties")
+            .unwrap()
+            .as_object()
+            .unwrap();
+        assert!(props.contains_key("summary"));
+        assert!(!props.contains_key("summary_provenance"));
+    }
+
+    #[test]
+    fn nullable_blocks_stay_required_so_absence_must_be_stated() {
+        let c = minimal().compile(&tools()).unwrap();
+        let req = c.output_contract.pointer("/schema/required").unwrap();
+        assert_eq!(
+            req,
+            &json!(["ratios", "ratios_provenance", "summary"]),
+            "required follows block order, so the diff of a schema reads in the \
+             order the author thinks in"
+        );
+    }
+
+    #[test]
+    fn the_generated_properties_are_reported_rather_than_slipped_in() {
+        let c = minimal().compile(&tools()).unwrap();
+        assert_eq!(c.generated_properties, vec!["ratios_provenance"]);
+    }
+
+    #[test]
+    fn produces_is_rewritten_to_the_declared_type() {
+        let c = minimal().compile(&tools()).unwrap();
+        assert_eq!(c.produces, vec!["test/doc"]);
+    }
+
+    // ── the guarantee ─────────────────────────────────────────────────
+
+    #[test]
+    fn contract_compiles_to_something_the_gate_accepts() {
+        // The load-bearing property. If this ever fails, the compiler has
+        // started moving the authoring cost instead of removing it.
+        let c = minimal().compile(&tools()).unwrap();
+        let findings = card_contract::validate(Some(&c.output_contract), &c.produces, &tools());
+        assert!(findings.is_empty(), "{findings:#?}");
+    }
+
+    #[test]
+    fn the_grounding_map_is_a_bijection_by_construction() {
+        let c = minimal().compile(&tools()).unwrap();
+        let mut props: Vec<&String> = c
+            .output_contract
+            .pointer("/schema/properties")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect();
+        let mut ground: Vec<&String> = c
+            .output_contract
+            .get("grounding")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect();
+        props.sort();
+        ground.sort();
+        assert_eq!(props, ground);
+    }
+
+    #[test]
+    fn a_sourced_claim_against_a_tool_the_agent_lacks_is_refused() {
+        // The check with teeth, reached through the compiler: an author
+        // cannot get a plausible-looking contract out of this by naming a
+        // tool that does not exist.
+        let mut s = minimal();
+        if let Source::Sourced { tool, .. } = &mut s.blocks[0].source {
+            *tool = "fmp_imaginary".into();
+        }
+        let errs = s.compile(&tools()).unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| e.check == "grounding_sourced_names_tool"),
+            "{errs:#?}"
+        );
+    }
+
+    #[test]
+    fn a_short_why_is_refused_and_never_filled_in() {
+        let mut s = minimal();
+        s.blocks[0].why = "because".into();
+        let errs = s.compile(&tools()).unwrap_err();
+        let e = errs.iter().find(|e| e.check == "sketch_why").unwrap();
+        assert!(
+            e.message.contains("will not write for you"),
+            "the refusal must say why it is a refusal and not a default: {}",
+            e.message
+        );
+    }
+
+    #[test]
+    fn the_provenance_namespace_belongs_to_the_compiler() {
+        let mut s = minimal();
+        s.blocks[0].name = "ratios_provenance".into();
+        let errs = s.compile(&tools()).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.check == "sketch_block_name"),
+            "{errs:#?}"
+        );
+    }
+
+    #[test]
+    fn a_block_with_no_shape_is_refused() {
+        let mut s = minimal();
+        s.blocks[0].fields.clear();
+        s.blocks[0].value = None;
+        let errs = s.compile(&tools()).unwrap_err();
+        assert!(errs.iter().any(|e| e.check == "sketch_shape"), "{errs:#?}");
+    }
+
+    #[test]
+    fn nested_objects_are_closed_too() {
+        // An open nested object is the same defect one level down, where
+        // `grounding`'s top-level bijection cannot see it.
+        let c = minimal().compile(&tools()).unwrap();
+        assert_eq!(
+            c.output_contract
+                .pointer("/schema/properties/ratios/additionalProperties")
+                .unwrap(),
+            &json!(false)
+        );
+    }
+
+    #[test]
+    fn every_finding_is_returned_not_just_the_first() {
+        let mut s = minimal();
+        s.blocks[0].why = "no".into();
+        s.blocks[1].why = "no".into();
+        let errs = s.compile(&tools()).unwrap_err();
+        assert!(errs.len() >= 2, "{errs:#?}");
+    }
+
+    #[test]
+    fn a_failed_compile_emits_no_partial_contract() {
+        let mut s = minimal();
+        s.blocks[0].why = "no".into();
+        let out = execute_build_tool(&json!({
+            "sketch": serde_json::to_value(&s).unwrap(),
+            "tool_names": tools(),
+        }))
+        .unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["compiles"], json!(false));
+        assert!(
+            v.get("output_contract").is_none(),
+            "a partial contract reads exactly like a complete one"
+        );
+    }
+
+    // ── ontology binding ──────────────────────────────────────────────
+
+    #[test]
+    fn an_ontology_entity_supplies_the_closed_set_and_the_definition() {
+        let ont = Ontology::from_json(&json!({
+            "entities": [{
+                "id": "sentiment",
+                "properties": {
+                    "definition": "Emotional tone expressed in text",
+                    "scale": ["negative", "neutral", "positive"]
+                }
+            }]
+        }))
+        .unwrap();
+        let (t, desc) = ont.field("@sentiment").unwrap();
+        assert_eq!(
+            t.base,
+            Base::Enum(vec!["negative".into(), "neutral".into(), "positive".into()])
+        );
+        assert_eq!(desc.as_deref(), Some("Emotional tone expressed in text"));
+    }
+
+    #[test]
+    fn a_numeric_scale_lands_in_the_description_not_in_minimum() {
+        // Emitting `minimum` would declare more and verify less: the whole
+        // document would go `unverified_unsupported_schema` at the hop.
+        let ont = Ontology::from_json(&json!({
+            "entities": [{
+                "id": "intensity",
+                "properties": { "definition": "Strength of sentiment.", "scale": [0.0, 1.0] }
+            }]
+        }))
+        .unwrap();
+        let (t, desc) = ont.field("@intensity").unwrap();
+        assert_eq!(t.base, Base::Number);
+        let d = desc.unwrap();
+        assert!(d.contains("0 to 1"), "{d}");
+    }
+
+    #[test]
+    fn an_unknown_entity_is_an_error_not_a_string() {
+        let ont = Ontology::from_json(&json!({
+            "entities": [{ "id": "sentiment", "properties": {} }]
+        }))
+        .unwrap();
+        let mut s = minimal();
+        s.blocks[0]
+            .fields
+            .insert("mood".into(), FieldSpec::Short("@typo".into()));
+        let errs = ont.expand(&mut s);
+        assert!(
+            errs.iter().any(|e| e.check == "sketch_ontology_ref"),
+            "{errs:#?}"
+        );
+    }
+
+    #[test]
+    fn an_ontology_ref_keeps_its_suffixes() {
+        let ont = Ontology::from_json(&json!({
+            "entities": [{
+                "id": "emotion",
+                "properties": { "categories": ["joy", "anger", "fear"] }
+            }]
+        }))
+        .unwrap();
+        let mut s = minimal();
+        s.blocks[0]
+            .fields
+            .insert("emotions".into(), FieldSpec::Short("@emotion[]?".into()));
+        assert!(ont.expand(&mut s).is_empty());
+        let c = s.compile(&tools()).unwrap();
+        assert_eq!(
+            c.output_contract
+                .pointer("/schema/properties/ratios/properties/emotions")
+                .unwrap(),
+            &json!({
+                "type": ["array", "null"],
+                "items": { "enum": ["joy", "anger", "fear"] }
+            })
+        );
+    }
+
+    /// Against a real ontology on disk, so the binding is not a story told
+    /// with a fixture. `ontologies/samples/sentiment_analyzer_ontology.json`
+    /// is one of the two ontologies the repo actually carries.
+    #[test]
+    fn the_real_sentiment_ontology_resolves_to_types() {
+        let path = "ontologies/samples/sentiment_analyzer_ontology.json";
+        let raw = match std::fs::read_to_string(path) {
+            Ok(r) => r,
+            // Cargo runs unit tests from the crate root, but do not fail a
+            // build over a sample file's location: an absent sample is not
+            // evidence about the code.
+            Err(_) => return,
+        };
+        let ont = Ontology::from_json(&serde_json::from_str(&raw).unwrap()).unwrap();
+
+        // A five-point scale becomes a closed set, taken from the ontology
+        // rather than retyped from memory into a second, subtly different one.
+        let (t, desc) = ont.field("@sentiment").expect("sentiment entity");
+        assert_eq!(
+            t.base,
+            Base::Enum(vec![
+                "very_negative".into(),
+                "negative".into(),
+                "neutral".into(),
+                "positive".into(),
+                "very_positive".into()
+            ])
+        );
+        assert!(desc.unwrap().to_lowercase().contains("tone"));
+
+        // Eight emotion categories, likewise.
+        let (t, _) = ont.field("@emotion").expect("emotion entity");
+        match t.base {
+            Base::Enum(ref v) => assert_eq!(v.len(), 8),
+            ref other => panic!("expected an enum, got {other:?}"),
+        }
+
+        // `"scale": [0.0, 1.0]` is a numeric range: a number, with the bound
+        // in the description because the validator cannot enforce `minimum`.
+        let (t, desc) = ont.field("@intensity").expect("intensity entity");
+        assert_eq!(t.base, Base::Number);
+        assert!(desc.unwrap().contains("0 to 1"));
+    }
+
+    #[test]
+    fn the_sketch_round_trips_through_json() {
+        let v = serde_json::to_value(minimal()).unwrap();
+        let back = Sketch::from_json(&v).unwrap();
+        let a = back.compile(&tools()).unwrap();
+        let b = minimal().compile(&tools()).unwrap();
+        assert_eq!(a.output_contract, b.output_contract);
+    }
+}

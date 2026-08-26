@@ -747,6 +747,18 @@ pub(crate) struct CreateAgentRequest {
     #[serde(default)]
     pub(crate) produces: Vec<String>,
     pub(crate) prompt_template: Option<String>,
+    /// Typed output contract, as compiled by `contract_sketch` and posted by
+    /// the create wizard. Optional: an agent may still be created untyped,
+    /// and `card_contract::validate` is what has an opinion about that — at
+    /// publish, which is the clock the decision belongs on.
+    #[serde(default)]
+    pub(crate) output_contract: Option<serde_json::Value>,
+    /// Tools the agent declares. Validated against the dispatch table by the
+    /// same `invalid_tool_declarations` the update path uses — a contract
+    /// whose `sourced` blocks name tools that were never wired would be the
+    /// original defect, admitted through a newer door.
+    #[serde(default)]
+    pub(crate) mcp_tools: Option<serde_json::Value>,
 }
 
 pub fn default_agent_type() -> String {
@@ -797,6 +809,42 @@ pub async fn create_agent_handler(
     // downstream.
     fermi::slug::validate_http("agent_name", &req.agent_name)?;
 
+    // Reject phantom tool declarations before they reach the DB, exactly as
+    // `update_agent_handler` does. A new agent declares no MCP servers, so
+    // every name must resolve to a builtin dispatch arm.
+    //
+    // This matters more here than it looks: the create wizard's contract
+    // builder cross-checks `sourced` blocks against these names. If an
+    // undispatchable name could be saved, the grounding check would be
+    // validating against a tool list that is itself fiction.
+    let declared_tools: Vec<String> = match req.mcp_tools.as_ref().filter(|v| !v.is_null()) {
+        Some(raw) => {
+            serde_json::from_value::<Vec<fermi::agent_backend::agent_card::McpTool>>(raw.clone())
+                .map(|v| v.into_iter().map(|t| t.name).collect())
+                .map_err(|e| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        format!("mcp_tools must be [{{name, description, input_schema}}]: {e}"),
+                    )
+                })?
+        }
+        None => Vec::new(),
+    };
+    if !declared_tools.is_empty() {
+        let invalid = fermi::agent_backend::tools::invalid_tool_declarations(&declared_tools, &[]);
+        if !invalid.is_empty() {
+            let detail = invalid
+                .iter()
+                .map(|(name, why)| format!("'{name}': {why}"))
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("cannot declare undispatchable tools — {detail}"),
+            ));
+        }
+    }
+
     // SPEC_30 — classify at birth. Before mig-186 taxonomy lived only in
     // on-disk cards, so an agent authored through this endpoint could never
     // be classified and sat under `Incertae sedis` forever. Derived ranks
@@ -819,7 +867,7 @@ pub async fn create_agent_handler(
         model: req.model,
         temperature: req.temperature,
         mcp_servers: None,
-        mcp_tools: None,
+        mcp_tools: req.mcp_tools.clone().filter(|v| !v.is_null()),
         description: req.description,
         author: user_id.clone(),
         system_prompt: req.system_prompt,
@@ -862,7 +910,7 @@ pub async fn create_agent_handler(
         fermi_contract: None,
         model_params: serde_json::Value::Object(serde_json::Map::new()),
         valence: None,
-        output_contract: None,
+        output_contract: req.output_contract.filter(|v| v.is_object()),
         taxonomy: Some(derived_taxonomy),
     };
 

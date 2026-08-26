@@ -1,0 +1,176 @@
+{
+  "_README": [
+    "The SOURCE OF TRUTH for this agent's `capabilities.output_contract`.",
+    "",
+    "Compile it with the `build_output_contract` MCP tool, or",
+    "`src/contract_sketch.rs::Sketch::compile`. The card is the compiler's",
+    "output; this file is the input. `tests/equity_analyst_contract.rs`",
+    "asserts the two agree, so the card cannot be edited away from the",
+    "declaration that produced it — which is the drift every generated",
+    "artefact in this repo has eventually suffered.",
+    "",
+    "Five sourced blocks and one judgement block expand to 12 schema",
+    "properties, 12 grounding entries and 5 narrowed provenance enums. The",
+    "expansion is in src/contract_sketch.rs and is the same for every agent,",
+    "which is the point: what is written here is only what needed deciding.",
+    "",
+    "Read docs/guides/AGENT_CONTRACT_AUTHORING.md for the statuses, and",
+    "docs/DESIGN_typed_output_contracts.md for why this file exists."
+  ],
+
+  "domain": "equity-research",
+  "produces_schema": "fermi/equity_evidence",
+  "title": "Equity evidence",
+  "description": "Evidence supporting one driver of a Fermi forecast, from a member of the research orchestra. The retrieved blocks are Financial Modeling Prep responses; `assessment` is the agent's own judgement over them and is stamped `model_inference` for exactly that reason. The split is the product: a coordinator weighting five members' multipliers can tell a retrieved multiple from a reasoned one, which is the distinction the delegation envelope existed to carry and had nothing typed to carry it over.",
+  "synthesis": "cep_weighted",
+
+  "calibration": {
+    "signal": "brier_forecast",
+    "comparison": "brier_score",
+    "resolution_delay_hours": 2160,
+    "note": "The agent's contribution resolves when the forecast it fed does. `assessment.multiplier_p50` is the scoreable quantity; the sourced blocks are inputs and are not scored, because a correctly retrieved P/E that led to a wrong multiplier is a reasoning failure and must not be charged to the retrieval."
+  },
+
+  "blocks": [
+    {
+      "name": "profile",
+      "description": "Who the issuer is and what the market currently pays for it.",
+      "source": {
+        "status": "sourced",
+        "tool": "fmp_company_profile",
+        "response_field": "symbol, companyName, sector, industry, price, marketCap, beta",
+        "coverage": "complete"
+      },
+      "why": "FMP's /stable/profile returns every field of this block for a resolved ticker, or an empty array for a symbol it does not carry. Those are the only two outcomes, which is why the stamp admits exactly two verdicts. Note what is NOT here: nothing in this block is an opinion, so a null means the lookup failed rather than that the agent declined to guess.",
+      "fields": {
+        "symbol": "string?",
+        "company_name": "string?",
+        "sector": "string?",
+        "industry": "string?",
+        "price_usd": "number?",
+        "market_cap_usd": "number?",
+        "beta": "number?"
+      }
+    },
+
+    {
+      "name": "valuation_multiples",
+      "description": "What the market pays per unit of earnings, book and sales.",
+      "source": {
+        "status": "sourced",
+        "tool": "fmp_ratios",
+        "response_field": "priceToEarningsRatio, priceToBookRatio, priceToSalesRatio, dividendYield for the requested period",
+        "coverage": "complete"
+      },
+      "why": "FMP computes these ratios server-side, so the agent is reading them rather than deriving them from statements it also fetched. That matters for this contract specifically: a multiple the model divided out itself would be a judgement wearing a retrieval's clothes, and would belong under `assessment` instead.",
+      "fields": {
+        "period": {
+          "type": "enum:annual|quarter?",
+          "description": "Which reporting period was requested. Null when no ratio row came back at all."
+        },
+        "price_to_earnings": "number?",
+        "price_to_book": "number?",
+        "price_to_sales": "number?",
+        "dividend_yield": "number?"
+      }
+    },
+
+    {
+      "name": "intrinsic_value",
+      "description": "FMP's own DCF estimate, beside the price on the same date.",
+      "source": {
+        "status": "sourced",
+        "tool": "fmp_dcf",
+        "response_field": "dcf and stockPrice, both as returned on the same date",
+        "coverage": "complete"
+      },
+      "why": "Both numbers come from the endpoint, and only those two. The implied upside is deliberately absent from this block even though it is one subtraction away: the moment the agent computes it the value stops being retrieved, and a field that is arithmetic over a vendor model is a judgement about that model. It lives under `assessment`, where the stamp says so.",
+      "fields": {
+        "dcf_per_share_usd": "number?",
+        "price_at_dcf_date_usd": "number?"
+      }
+    },
+
+    {
+      "name": "fundamentals",
+      "description": "Returns on capital, cash generation and leverage.",
+      "source": {
+        "status": "sourced",
+        "tool": "fmp_key_metrics",
+        "response_field": "enterpriseValue, returnOnEquity, returnOnInvestedCapital, freeCashFlowYield, debtToEquity",
+        "coverage": "partial"
+      },
+      "why": "Coverage is partial rather than complete, and the distinction is load-bearing. /stable/key-metrics answers for the issuer, but individual members of this block are absent for whole classes of filer — free cash flow yield for a pre-revenue biotech, return on invested capital for a financial. That is not the tool having nothing for the symbol; it is the tool answering and the field having no source, which is a third verdict and is why this stamp admits `unavailable_no_tool_source` while `profile`'s does not.",
+      "fields": {
+        "enterprise_value_usd": "number?",
+        "return_on_equity": "number?",
+        "return_on_invested_capital": "number?",
+        "free_cash_flow_yield": "number?",
+        "debt_to_equity": "number?"
+      }
+    },
+
+    {
+      "name": "analyst_consensus",
+      "description": "Forward Wall Street estimates and how many analysts stand behind them.",
+      "source": {
+        "status": "sourced",
+        "tool": "fmp_analyst_estimates",
+        "response_field": "date, revenueAvg, epsAvg, epsLow, epsHigh, numAnalystsEps",
+        "coverage": "complete"
+      },
+      "why": "Forward estimates, retrieved rather than modelled. `analyst_count` is in the block on purpose: a consensus of two is a different object from a consensus of thirty, and without the count a downstream coordinator weights them identically. Uncovered symbols come back as an empty array, which is `tool_no_match` and honestly says the street is silent rather than that the street is neutral.",
+      "fields": {
+        "estimate_date": "string?",
+        "revenue_avg_usd": "number?",
+        "eps_avg": "number?",
+        "eps_low": "number?",
+        "eps_high": "number?",
+        "analyst_count": "integer?"
+      }
+    },
+
+    {
+      "name": "assessment",
+      "description": "The agent's own judgement, and the only block a Fermi coordinator scores.",
+      "source": {
+        "status": "inferred",
+        "from": "the retrieved profile, valuation_multiples, intrinsic_value, fundamentals and analyst_consensus blocks, weighed against the sector base rates in capabilities.fermi_contract.seed_facts"
+      },
+      "why": "The load-bearing entry. Every number here is a judgement over the blocks above and can never be `tool_verified` however good those inputs were — two runs over one set of FMP responses may legitimately disagree about a multiplier, which is precisely what makes it not a retrieval. Stamped `model_inference` as a constant rather than an enum so no run can present a reasoned multiplier as a looked-up one. This is the field the Brier score in `calibration` eventually settles.",
+      "fields": {
+        "direction": {
+          "type": "enum:undervalued|fairly_valued|overvalued|indeterminate",
+          "description": "`indeterminate` is a real answer, not a failure: with no DCF and no consensus there is nothing to be directional about, and a forced call there is noise a coordinator cannot distinguish from signal."
+        },
+        "multiplier_p50": {
+          "type": "number?",
+          "description": "Multiplier on the Fermi driver base rate, NOT a probability. 1.0 means the evidence agrees with the base rate. capabilities.fermi_contract.multiplier_range bounds it to [0.1, 3.0]; the bound is stated here rather than as JSON Schema `minimum` because src/schema_validate.rs cannot evaluate `minimum`, and a schema carrying a keyword the validator skips reports the whole document `unverified_unsupported_schema` at the delegation hop — declaring more in exchange for verifying nothing."
+        },
+        "multiplier_p5": {
+          "type": "number?",
+          "description": "Low end of the multiplier interval. Same [0.1, 3.0] bound and the same reason it is prose."
+        },
+        "multiplier_p95": {
+          "type": "number?",
+          "description": "High end of the multiplier interval. Same [0.1, 3.0] bound and the same reason it is prose."
+        },
+        "confidence": {
+          "type": "number?",
+          "description": "0.0 to 1.0. Should fall when the sourced blocks came back thin — a confident multiplier over four nulls is the shape this contract exists to make visible."
+        },
+        "key_findings": {
+          "type": "string[]",
+          "description": "CEP findings, each prefixed with one of the labels in capabilities.fermi_contract.finding_labels: [BASE RATE], [VALUATION], [EARNINGS], [SECTOR], [MULTIPLIER]. The [MULTIPLIER] finding must be last and must restate p50/p5/p95, so the orchestra's existing text parser keeps working against a document that is now also typed."
+        }
+      }
+    },
+
+    {
+      "name": "summary",
+      "source": { "status": "narrative" },
+      "why": "Prose for a human reading the forecast, and the field with the least protection: it is the one place a number the sourced blocks could not supply can reappear as a sentence. It must assert nothing the blocks above cannot support, and grounding_trust scans it for exactly that. It carries no provenance stamp because a retrieval verdict about a paragraph is a category error.",
+      "value": "string"
+    }
+  ]
+}
