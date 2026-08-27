@@ -1,0 +1,154 @@
+{
+  "_README": [
+    "Stage 2 of the weather composition. Compile with",
+    "`cargo run --bin contract-sketch -- weather_calibrator`.",
+    "",
+    "COMPOSITION CONSTRAINT",
+    "",
+    "weather_oracle's `calibration_stage` block lifts three leaves out of",
+    "this document: calibrated_probability, error_bar, skill_score. They",
+    "must exist here by those names; tests/weather_composition.rs asserts",
+    "it.",
+    "",
+    "WHY MOST OF THIS IS `inferred`",
+    "",
+    "This is the one stage in the pipeline whose product is a judgement",
+    "rather than a retrieval. Its inputs are another agent's raw",
+    "distribution; its output is a corrected one. Bias correction, variance",
+    "inflation and climatology shrinkage are modelling choices, and two",
+    "runs over one raw distribution may legitimately differ. Sourcing the",
+    "corrected probability from a tool would be the most consequential",
+    "possible misattribution in this composition, because the corrected",
+    "probability is the number that gets traded."
+  ],
+
+  "domain": "weather-forecasting",
+  "produces_schema": "fermi/weather_calibrated_forecast",
+  "title": "Calibrated forecast",
+  "synthesis": "pipeline",
+  "description": "Stage 2: a raw ensemble distribution turned into a probability safe to bet on, plus the Brier Skill Score that says whether betting it beats climatology at all. The corrections are the agent's own modelling choices and are stamped as such; the reference forecast they are scored against is retrieved.",
+
+  "calibration": {
+    "signal": "brier_forecast",
+    "comparison": "brier_score",
+    "resolution_delay_hours": 48,
+    "note": "Scored on `calibration.calibrated_probability` against the realised bucket. This stage is the one whose whole claim is calibration, so it is the one for which a Brier score is a direct measurement of the claim rather than a proxy."
+  },
+
+  "blocks": [
+    {
+      "name": "reference",
+      "description": "The climatology the correction shrinks toward and is scored against.",
+      "source": {
+        "status": "sourced",
+        "tool": "weather_climatology",
+        "response_field": "ERA5 base rate for the calendar-day window, fitted warming trend, trend-adjusted base rate",
+        "coverage": "complete"
+      },
+      "why": "Retrieved independently rather than taken from Stage 1's document, and that is deliberate: this is the reference forecast the Brier Skill Score is computed against, and a skill score is only meaningful if the reference was not chosen after seeing the forecast. Fetching it here means the number cannot be quietly inherited from a stage that had an interest in the comparison.",
+      "fields": {
+        "climatology_base_rate": "number?",
+        "trend_adjusted_base_rate": "number?",
+        "years_used": "integer?"
+      }
+    },
+
+    {
+      "name": "realised",
+      "description": "Anything already observed, which bounds the answer.",
+      "source": {
+        "status": "sourced",
+        "tool": "weather_station_observation",
+        "response_field": "running realised max/min so far today, and the official CLI daily figure when published",
+        "coverage": "deferred"
+      },
+      "why": "Deferred: NWS stations only, and on a same-day question the check may not have run yet. When it is populated it is a hard constraint rather than evidence — a realised daily maximum is a floor on a daily-high question, and a calibrated distribution placing weight below it is not a poorly calibrated forecast but an impossible one. Kept in its own block so that distinction survives into the document.",
+      "fields": {
+        "running_max": "number?",
+        "running_min": "number?",
+        "official_daily": "number?"
+      }
+    },
+
+    {
+      "name": "corrections",
+      "description": "The modelling choices applied, each one named.",
+      "source": {
+        "status": "inferred",
+        "from": "Stage 1's raw distribution and uncertainty decomposition, the retrieved climatology in `reference`, and the station's own residual history"
+      },
+      "why": "Every value here is a modelling decision, not a lookup. Which SSR to inflate variance by, how hard to shrink toward climatology, what residual bias the station carries — all are choices, and two defensible runs over one raw distribution will differ. Itemised rather than reported as a single delta because the failure mode this stage is most prone to is a large total correction assembled from several small plausible ones, and only an itemised list makes that visible to Stage 4's challenge.",
+      "fields": {
+        "residual_bias_applied": "number?",
+        "variance_inflation_ssr": {
+          "type": "number?",
+          "description": "The spread-skill ratio used. Every operational and AI ensemble in the published literature is under-dispersive at 1-7 day leads, so a value of 1.0 here is a claim that this station is the exception."
+        },
+        "climatology_shrinkage_weight": {
+          "type": "number?",
+          "description": "0 = trust the ensemble entirely, 1 = fall back to climatology. Should rise with lead time and with the epistemic spread Stage 1 reported."
+        },
+        "rounding_convolution_applied": {
+          "type": "boolean?",
+          "description": "Whether the market's rounding rule was convolved into the distribution. Omitting it on a bucket ladder mis-states the probability by up to half a bucket."
+        },
+        "correction_magnitude_exceeds_uncertainty": {
+          "type": "boolean?",
+          "description": "The self-check: is the total correction larger than the uncertainty in the corrections themselves? True means the corrected probability is an artefact of the correction rather than of the forecast."
+        }
+      }
+    },
+
+    {
+      "name": "calibration",
+      "description": "The bettable probability, and whether betting it beats climatology.",
+      "source": {
+        "status": "inferred",
+        "from": "the raw distribution after the corrections in `corrections`, floored against anything in `realised`, and scored against `reference`"
+      },
+      "why": "The number that gets traded, and a judgement throughout. It can never be `tool_verified`: no tool returns a calibrated probability, because calibration is the modelling this agent exists to do. Stamped `model_inference` as a constant so no run can present it as a retrieved figure — the most consequential possible misattribution in this composition, since the next stage sizes real money against it.",
+      "fields": {
+        "calibrated_probability": {
+          "type": "number?",
+          "description": "The probability safe to bet on, after bias correction, variance inflation, climatology shrinkage and rounding convolution."
+        },
+        "error_bar": {
+          "type": "number?",
+          "description": "Uncertainty in the calibrated probability itself, propagated through the corrections. Stage 4 compares the market edge against this: an eight-point edge built on a correction with ten points of uncertainty is not an edge."
+        },
+        "skill_score": {
+          "type": "number?",
+          "description": "Brier Skill Score against `reference`. NEGATIVE MEANS WORSE THAN CLIMATOLOGY and the pipeline is required to stop rather than price it. A number in the document rather than a sentence, so a downstream agent can enforce the halt instead of trusting that this one did."
+        },
+        "forecastable_with_skill": {
+          "type": "boolean?",
+          "description": "The halt condition, stated. False is a successful outcome for this stage: declining to produce a tradeable number is the correct answer when the forecast does not beat climatology."
+        }
+      }
+    },
+
+    {
+      "name": "flags",
+      "description": "Epistemic warnings that survive into the document.",
+      "source": {
+        "status": "inferred",
+        "from": "the conditions met while calibrating: model coverage from Stage 1, lead time, whether the realised floor bound the answer, and the sensitivity decomposition over the correction drivers"
+      },
+      "why": "Recorded because a warning that exists only in prose does not survive being summarised by the next agent. The specific failure this catches is one the sensitivity analysis is run to find: the final probability being driven mostly by one correction parameter rather than by the forecast, which reads as a confident number and is a fitted artefact.",
+      "fields": {
+        "warnings": "string[]",
+        "dominant_driver": {
+          "type": "string?",
+          "description": "The correction parameter with the largest Sobol index. When this is a correction rather than the forecast itself, the probability is an artefact of the calibration."
+        }
+      }
+    },
+
+    {
+      "name": "summary",
+      "source": { "status": "narrative" },
+      "why": "Prose for whoever reads the stage alone. Must state the skill score's sign in words: a summary that reports a calibrated probability without saying it fails to beat climatology is the one artefact that could get a negative-skill forecast traded.",
+      "value": "string"
+    }
+  ]
+}

@@ -1,0 +1,156 @@
+{
+  "_README": [
+    "Stage 1 of the weather composition. Compile with",
+    "`cargo run --bin contract-sketch -- weather_ensemble_forecaster`.",
+    "",
+    "COMPOSITION CONSTRAINT",
+    "",
+    "weather_oracle's `forecast` block lifts four leaves out of this",
+    "document: raw_probability, climatology_base_rate, within_model_spread,",
+    "cross_model_spread. They must exist here by those names, and",
+    "tests/weather_composition.rs asserts it. A coordinator reading a field",
+    "its member does not declare is the composition failing silently, which",
+    "is the whole reason `produces_schema` is a type rather than a label.",
+    "",
+    "The within/cross split is the load-bearing one and it comes straight",
+    "from the tool: spread WITHIN a model is aleatoric (chaos), spread",
+    "BETWEEN model medians is epistemic (you do not know which model is",
+    "right). Collapsing them into one number is what makes a raw histogram",
+    "look tradeable when it is not."
+  ],
+
+  "domain": "weather-forecasting",
+  "produces_schema": "fermi/weather_raw_forecast",
+  "title": "Raw ensemble forecast",
+  "synthesis": "pipeline",
+  "description": "Stage 1 of the weather pipeline: a RAW multi-model ensemble distribution and an ERA5 climatological base rate, with the uncertainty split into its aleatoric and epistemic parts. Explicitly not tradeable — the tool says so in its own response and the type says so here.",
+
+  "blocks": [
+    {
+      "name": "proposition",
+      "description": "The settlement target, resolved before anything is forecast.",
+      "source": {
+        "status": "sourced",
+        "tool": "weather_settlement_spec",
+        "response_field": "station identity (ICAO), IANA timezone defining the local day, unit, bucket width and rounding convention",
+        "coverage": "complete"
+      },
+      "why": "A local registry lookup with no network: it either knows the market's station or it does not. Restated in this document even though the coordinator resolves it too, and that redundancy is the point — weather_oracle's Stage 4 checks whether the market's resolution text names the same station this stage forecast, and it cannot make that check unless both sides state it.",
+      "fields": {
+        "station_icao": "string?",
+        "timezone": "string?",
+        "local_date": "string?",
+        "variable": "string?",
+        "unit": "string?",
+        "bucket_low": {
+          "type": "number?",
+          "description": "Inclusive lower bound as a NUMBER, not a label. A bucket labelled `76-77` is the half-open interval [75.5, 77.5) and is two degrees wide."
+        },
+        "bucket_high": "number?"
+      }
+    },
+
+    {
+      "name": "distribution",
+      "description": "The raw multi-model ensemble, reduced to the target bucket.",
+      "source": {
+        "status": "sourced",
+        "tool": "weather_ensemble_forecast",
+        "response_field": "bucket_probabilities for the target bucket, ensemble.n_members, ensemble.models_returned, ensemble.mean, ensemble.median, ensemble.p10, ensemble.p90",
+        "coverage": "complete"
+      },
+      "why": "Every value is read straight off the ensemble response rather than derived. `raw_probability` is named exactly that, and not `probability`, because the tool's own response carries a `calibration_required` block saying THESE ARE RAW MODEL PROBABILITIES, DO NOT TRADE THEM DIRECTLY. A field called `probability` in a document a market agent reads would invite exactly the mistake the tool warns about, so the name carries the warning into the type.",
+      "fields": {
+        "raw_probability": {
+          "type": "number?",
+          "description": "Raw model probability for the target bucket. NOT tradeable: under-dispersion at 1-7 day leads systematically underprices the tail, which is what a threshold market pays on. weather_calibrator exists to correct this."
+        },
+        "member_count": "integer?",
+        "models_returned": "string[]?",
+        "models_missing": {
+          "type": "string[]?",
+          "description": "Named rather than counted. Fewer than three models returned means cross-model disagreement is not measurable, so the epistemic component below is invisible rather than absent — a different and worse situation than it being small."
+        },
+        "ensemble_mean": "number?",
+        "ensemble_median": "number?",
+        "p10": "number?",
+        "p90": "number?"
+      }
+    },
+
+    {
+      "name": "uncertainty",
+      "description": "The two components, kept apart.",
+      "source": {
+        "status": "sourced",
+        "tool": "weather_ensemble_forecast",
+        "response_field": "ensemble.std_dev (within-model, aleatoric) and epistemic_disagreement.cross_model_median_range (between-model, epistemic)",
+        "coverage": "complete"
+      },
+      "why": "Both numbers are returned by the tool, and the reason they are a block of their own is that they answer different questions. Spread within a model is chaos and shrinks with better initial conditions; spread between model medians is not knowing which model is right, and no single-model ensemble can see it at all. When the cross-model range is large relative to the ensemble standard deviation the raw histogram is overconfident even after calibration, and the correct response is to widen the no-trade band rather than to bet the histogram. A consumer handed one summed `uncertainty` number cannot tell which case it is in.",
+      "fields": {
+        "within_model_spread": {
+          "type": "number?",
+          "description": "Ensemble standard deviation. Aleatoric: irreducible chaos at this lead time."
+        },
+        "cross_model_spread": {
+          "type": "number?",
+          "description": "Range across per-model medians. Epistemic: model disagreement. Null when fewer than three models returned, which means UNMEASURABLE and must not be read as zero."
+        },
+        "epistemic_exceeds_aleatoric": {
+          "type": "boolean?",
+          "description": "The condition that should widen the no-trade band. In the document rather than left in prose so a downstream agent can check it instead of trusting that this one mentioned it."
+        }
+      }
+    },
+
+    {
+      "name": "climatology",
+      "description": "The ERA5 reference forecast.",
+      "source": {
+        "status": "sourced",
+        "tool": "weather_climatology",
+        "response_field": "ERA5 base rate for the same calendar-day window across N years, the fitted warming trend, and the trend-adjusted base rate",
+        "coverage": "complete"
+      },
+      "why": "The reference forecast for the Brier Skill Score downstream, so it belongs in the document rather than being recomputed by whoever needs it. Both the raw and the trend-adjusted base rate are carried: a warming trend fitted over decades moves the base rate materially for temperature thresholds, and a skill score computed against the wrong one flatters or punishes the forecast for a reason that has nothing to do with the forecast.",
+      "fields": {
+        "climatology_base_rate": {
+          "type": "number?",
+          "description": "ERA5 frequency of the target bucket over the historical calendar-day window. The reference the Brier Skill Score is computed against."
+        },
+        "years_used": "integer?",
+        "warming_trend_per_decade": "number?",
+        "trend_adjusted_base_rate": "number?"
+      }
+    },
+
+    {
+      "name": "observation",
+      "description": "What has already happened today, when the station reports it.",
+      "source": {
+        "status": "sourced",
+        "tool": "weather_station_observation",
+        "response_field": "running max/min so far today and the official CLI daily figure when published",
+        "coverage": "deferred"
+      },
+      "why": "Deferred, and the distinction matters more here than anywhere else in this document. The tool covers NWS stations, so a non-US market has no observation available; and on a same-day question asked in the morning the check has simply not run yet. Either way the block is empty because it was not asked, not because nothing exists. This is also the highest-value block when it IS populated: a running realised maximum is a HARD FLOOR on a daily-high question, and a forecast distribution placing weight below an already-observed value is wrong in a way the ensemble cannot see.",
+      "fields": {
+        "running_max": "number?",
+        "running_min": "number?",
+        "official_daily": "number?",
+        "floor_violated": {
+          "type": "boolean?",
+          "description": "True when the distribution places weight below an already-realised value. A logical impossibility rather than a poor forecast, and worth surfacing as its own boolean because it invalidates the stage."
+        }
+      }
+    },
+
+    {
+      "name": "summary",
+      "source": { "status": "narrative" },
+      "why": "Prose for whoever reads the stage on its own. Must state that these probabilities are raw and not tradeable, because the sourced blocks say so and a summary that omits it is the one artefact a hurried reader takes away.",
+      "value": "string"
+    }
+  ]
+}

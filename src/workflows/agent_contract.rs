@@ -262,9 +262,6 @@ pub const TYPED_TIER_EXEMPT: &[&str] = &[
     "valuechain_mapper",
     "vote_strategist",
     "watermark",
-    "weather_calibrator",
-    "weather_ensemble_forecaster",
-    "weather_market_analyst",
     "wild_companion",
     "wild_narrator",
     "xaman_ek",
@@ -447,11 +444,16 @@ mod tests {
         // `contract_sketch`, and `tests/equity_analyst_contract.rs` holds the
         // two together. That is the intended path for the remaining 85: the
         // list shrinks by a sketch at a time, not by a rewrite of this file.
+        // 83 → 80: the three weather members migrated, completing the
+        // first fully-typed composition — weather_oracle plus all three of
+        // its pipeline members. tests/weather_composition.rs checks the
+        // coordinator only reads fields its members declare, which is a
+        // property no single card could have.
         // 85 → 83: `species_resolver` and `weather_oracle` migrated.
         // `macro_data_agent` was never on this list and gained a contract in
         // the same commit, so it stopped failing the gate rather than
         // stopping being excused from it.
-        const BASELINE: usize = 83;
+        const BASELINE: usize = 80;
         assert!(
             TYPED_TIER_EXEMPT.len() <= BASELINE,
             "the typed-tier exemption list grew from {BASELINE} to {}. A new agent \

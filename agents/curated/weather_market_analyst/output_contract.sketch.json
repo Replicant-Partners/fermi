@@ -1,0 +1,133 @@
+{
+  "_README": [
+    "Stage 3 of the weather composition. Compile with",
+    "`cargo run --bin contract-sketch -- weather_market_analyst`.",
+    "",
+    "COMPOSITION CONSTRAINT",
+    "",
+    "weather_oracle's `pricing` block lifts four leaves out of this",
+    "document: resolution_audit_agrees, edge_after_fees, recommended_side,",
+    "recommended_size_usd. They must exist here by those names;",
+    "tests/weather_composition.rs asserts it.",
+    "",
+    "THE BLOCK THAT MATTERS MOST IS THE AUDIT",
+    "",
+    "`resolution_audit_agrees` is the field that can invalidate the entire",
+    "chain. If the market's verbatim text settles on a different station",
+    "than Stage 1 forecast, no amount of calibration quality rescues it —",
+    "the pipeline has priced the wrong question. It is a boolean in the",
+    "document rather than a caveat in prose precisely so weather_oracle's",
+    "Stage 4 can act on it mechanically."
+  ],
+
+  "domain": "weather-markets",
+  "produces_schema": "fermi/weather_market_pricing",
+  "title": "Weather market pricing",
+  "synthesis": "pipeline",
+  "description": "Stage 3: the market's own resolution text audited against the settlement target, then the calibrated probability priced against the live order book net of fees, with a sized recommendation. The audit is retrieved and the sizing is a judgement, and the split is what lets a coordinator tell a mispriced market from a misread one.",
+
+  "blocks": [
+    {
+      "name": "resolution_audit",
+      "description": "What the market's own text says it settles on, versus what was forecast.",
+      "source": {
+        "status": "sourced",
+        "tool": "polymarket_weather_markets",
+        "response_field": "the event's verbatim resolution criteria, its full outcome ladder and the CLOB token ids",
+        "coverage": "complete"
+      },
+      "why": "The verbatim text, retrieved rather than remembered, because this is the block that can invalidate everything upstream. Polymarket either returns the event or it does not. `resolution_audit_agrees` is the load-bearing field and it is a boolean rather than a caveat so the coordinator can act on it mechanically: if the market settles on a station the forecast did not use, the chain priced the wrong question and the correct output is a refusal, not a discounted recommendation.",
+      "fields": {
+        "market_slug": "string?",
+        "resolution_text": {
+          "type": "string?",
+          "description": "Verbatim, not paraphrased. A paraphrase of a settlement rule is a new settlement rule."
+        },
+        "market_station": "string?",
+        "resolution_source": "string?",
+        "resolution_audit_agrees": {
+          "type": "boolean?",
+          "description": "Whether the market's stated station, day and unit match the settlement target Stage 1 forecast. FALSE INVALIDATES THE ENTIRE CHAIN. Null means the audit could not be performed, which is not the same as agreement and must not be read as such."
+        },
+        "station_trap_flagged": {
+          "type": "boolean?",
+          "description": "Whether the registry cross-check found a known station trap — Polymarket NYC settling on KLGA rather than Central Park, Dallas on Love Field rather than DFW. These are the errors that look like nothing and cost everything."
+        }
+      }
+    },
+
+    {
+      "name": "book",
+      "description": "The live order book for the outcome token.",
+      "source": {
+        "status": "sourced",
+        "tool": "polymarket_orderbook",
+        "response_field": "normalised bids and asks, book-quality flags, fee-adjusted EV and Kelly sizing for one outcome token",
+        "coverage": "deferred"
+      },
+      "why": "Deferred rather than complete: the book is only fetched once a specific outcome token has been identified, so a question asked before the ladder is resolved has no book because the call has not been made. Book quality is carried alongside the prices because a wide or one-sided book makes a nominal edge unrealisable, and a mid-price quoted from an empty book is a number with no counterparty.",
+      "fields": {
+        "best_bid": "number?",
+        "best_ask": "number?",
+        "spread": "number?",
+        "book_quality_flags": "string[]?",
+        "implied_probability": {
+          "type": "number?",
+          "description": "The market's own probability, from the book rather than from a last-traded price. Last-traded is history; the book is what you can actually transact against."
+        }
+      }
+    },
+
+    {
+      "name": "valuation",
+      "description": "The calibrated probability priced against the book, net of fees.",
+      "source": {
+        "status": "sourced",
+        "tool": "polymarket_orderbook",
+        "response_field": "fee-adjusted EV and Kelly sizing computed by the tool for the supplied probability",
+        "coverage": "deferred"
+      },
+      "why": "Sourced rather than inferred because the tool performs this arithmetic itself given a probability: the fee adjustment and the Kelly fraction are computed, not judged. Deferred for the same reason as `book` — no token, no computation. The distinction from `recommendation` below is the point of splitting them: what the arithmetic says and what this agent advises are different claims, and a coordinator should be able to see them disagree.",
+      "fields": {
+        "edge_after_fees": {
+          "type": "number?",
+          "description": "Fee-adjusted expected edge in probability points. The number Stage 4 compares against the calibration error bar: an eight-point edge on a correction with ten points of uncertainty is not an edge."
+        },
+        "kelly_fraction": "number?",
+        "fees_bps": "integer?"
+      }
+    },
+
+    {
+      "name": "recommendation",
+      "description": "What this agent actually advises, which may be less than the arithmetic allows.",
+      "source": {
+        "status": "inferred",
+        "from": "the fee-adjusted edge in `valuation`, discounted for book quality, for the audit result in `resolution_audit`, and for the calibration error bar supplied by Stage 2"
+      },
+      "why": "A judgement, and deliberately separate from `valuation` so the two can differ visibly. Kelly says one thing; a full Kelly stake on a market whose resolution audit is null, or whose book is one-sided, is not what a careful analyst would advise. Stamped `model_inference` as a constant, because a recommendation presented as a computed figure is how a sizing judgement acquires unearned authority — and this is the block that moves real money.",
+      "fields": {
+        "recommended_side": {
+          "type": "enum:yes|no|none",
+          "description": "`none` is a first-class recommendation and the correct one whenever the audit failed, the book is unusable, or the edge does not clear the calibration uncertainty."
+        },
+        "recommended_size_usd": {
+          "type": "number?",
+          "description": "Typically below the Kelly fraction in `valuation`. A recommendation equal to full Kelly on every market is a sign nothing is being discounted."
+        },
+        "size_discount_reasons": {
+          "type": "string[]",
+          "description": "Why the recommendation sits below what the arithmetic allowed. An empty list beside a below-Kelly size means the discount was applied without a stated reason."
+        },
+        "confidence": "number?"
+      }
+    },
+
+    {
+      "name": "summary",
+      "source": { "status": "narrative" },
+      "why": "Prose for whoever reads the stage alone, and the highest-risk field in this document: a fluent paragraph about a market reads as a recommendation even when `recommended_side` is `none`. It must state the refusal when there is one, and must not quote an edge the valuation block does not carry.",
+      "value": "string"
+    }
+  ]
+}
