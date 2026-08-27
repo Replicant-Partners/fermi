@@ -496,6 +496,100 @@
         color: var(--yellow);
         border-color: var(--yellow);
       }
+      /* ─── Three views ─── */
+      .cb-viewnav {
+        display: flex;
+        gap: 0;
+        margin: 14px 0 0;
+        border-bottom: 1px solid var(--bg2);
+      }
+      .cb-viewbtn {
+        background: none;
+        border: none;
+        border-bottom: 2px solid transparent;
+        color: var(--fg3);
+        cursor: pointer;
+        font-size: 0.75rem;
+        padding: 8px 14px 7px;
+        text-align: left;
+        font-family: inherit;
+      }
+      .cb-viewbtn:hover {
+        color: var(--fg1);
+      }
+      .cb-viewbtn.active {
+        color: var(--yellow);
+        border-bottom-color: var(--yellow);
+      }
+      .cb-viewbtn .n {
+        display: block;
+        font-size: 0.62rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        opacity: 0.7;
+      }
+      .cb-viewbtn .badge {
+        font-size: 0.62rem;
+        margin-left: 4px;
+      }
+      .cb-viewbtn .badge.todo {
+        color: var(--orange);
+      }
+      .cb-viewbtn .badge.ok {
+        color: var(--green);
+      }
+      .cb-view {
+        padding-top: 14px;
+      }
+      .cb-lead {
+        font-size: 0.74rem;
+        color: var(--fg3);
+        line-height: 1.6;
+        border-left: 2px solid var(--bg3);
+        padding-left: 10px;
+        margin-bottom: 14px;
+      }
+      .cb-sticky {
+        position: sticky;
+        top: 12px;
+      }
+      .cb-shape-row {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        border: 1px solid var(--bg2);
+        border-left: 3px solid var(--bg3);
+        padding: 8px;
+        margin-bottom: 6px;
+        background: var(--bg0);
+      }
+      .cb-shape-row input.nm {
+        flex: 1;
+        font-weight: bold;
+      }
+      .cb-shape-fields {
+        margin: 6px 0 0 12px;
+      }
+      .cb-borrow {
+        margin-top: 18px;
+        border-top: 1px dashed var(--bg2);
+        padding-top: 12px;
+      }
+      .cb-consumer {
+        border: 1px solid var(--bg2);
+        padding: 8px 10px;
+        margin-bottom: 6px;
+        font-size: 0.74rem;
+      }
+      .cb-consumer .who {
+        color: var(--aqua);
+      }
+      .cb-copybtn {
+        float: right;
+        font-size: 0.65rem;
+        padding: 2px 8px;
+      }
+
       /* Compose-from palette */
       .cb-palette-wrap {
         margin: 14px 0;
@@ -1183,15 +1277,16 @@
             <div class="form-title">Typed Output Contract</div>
 
             <div class="info-box">
-              Declare <strong>what document this agent returns</strong>, and
-              for each block <strong>where its value comes from</strong>. You
-              write the parts that need judgement; the compiler writes the
-              JSON Schema, the per-block <code>_provenance</code> stamps, the
-              grounding map and the <code>produces</code> port.
+              A contract answers three questions on three different clocks:
+              <strong>what you return</strong>, <strong>where each value comes
+              from</strong>, and <strong>who uses it</strong>. They are three
+              views because stacking them makes each one read like
+              form-filling. The document on the right is the artefact; the
+              views are lenses onto it.
               <div style="margin-top: 6px; color: var(--fg3)">
-                Optional now &mdash; required to publish. An untyped agent can
-                be created and run, but nothing downstream can compose with it
-                and its output is never validated.
+                Optional now &mdash; required to publish. An untyped agent runs
+                fine, but nothing can compose with it and its output is never
+                validated.
               </div>
             </div>
 
@@ -1204,100 +1299,213 @@
               <span class="cb-status" id="cb-status">No contract yet</span>
             </div>
 
-            <div class="row">
-              <div class="form-group">
-                <label for="cb-domain">Domain</label>
-                <input
-                  type="text"
-                  id="cb-domain"
-                  placeholder="equity-research"
-                  oninput="cbTouch()"
-                />
-              </div>
-              <div class="form-group">
-                <label for="cb-type">Type name</label>
-                <input
-                  type="text"
-                  id="cb-type"
-                  placeholder="myapp/risk_assessment"
-                  oninput="cbTouch(); cbRenderCompose()"
-                />
-                <div class="hint">
-                  Namespaced <code>namespace/type</code>, so two teams can both
-                  have a <code>summary</code> without colliding.
-                </div>
-              </div>
-            </div>
-
-            <div class="form-group">
-              <label for="cb-tools">Declared tools</label>
-              <input
-                type="text"
-                id="cb-tools"
-                placeholder="fmp_company_profile, fmp_ratios"
-                oninput="cbToolsChanged()"
-              />
-              <div class="hint">
-                Comma-separated, and saved onto the card. A block marked
-                <code>sourced</code> must name one of these &mdash; a field
-                sourced from a tool the agent cannot call is the exact defect
-                this contract exists to catch, so the compiler refuses it.
-              </div>
-            </div>
-
-            <datalist id="cb-tool-list"></datalist>
-
-            <!-- Compositional clues: what already exists to compose with. -->
-            <div id="cb-compose"></div>
-
-            <!-- Compose from what you HAVE, rather than from an empty form.
-                 Every chip is either a tool you declared (so the `sourced`
-                 cross-check passes by construction) or one of the two things
-                 no tool can give you. -->
-            <div class="cb-palette-wrap">
-              <div class="cb-sub">Compose the document from</div>
-              <div class="cb-palette" id="cb-palette"></div>
-            </div>
+            <!-- Three lenses. Not wizard steps: you move between them freely,
+                 because authoring a contract is not linear — naming a consumer
+                 in view 3 routinely sends you back to rename a type in view 1. -->
+            <div class="cb-viewnav" id="cb-viewnav"></div>
 
             <div class="cb-split">
               <div class="cb-col">
-                <div class="cb-sub">
-                  Blocks
-                  <span class="cb-hintlet">click to expand</span>
+                <!-- ═══ View 1: what do you return ═══ -->
+                <div class="cb-view" id="cb-view-1">
+                  <div class="cb-lead">
+                    Name the artefact and list its parts. Nothing here says
+                    where a value comes from &mdash; that is the next view, and
+                    keeping them apart is the point.
+                  </div>
+
+                  <div class="row">
+                    <div class="form-group">
+                      <label for="cb-type">Type name</label>
+                      <input
+                        type="text"
+                        id="cb-type"
+                        placeholder="myapp/risk_assessment"
+                        oninput="cbTouch(); cbRenderNav(); cbRenderConsumers()"
+                      />
+                      <div class="hint">
+                        <code>namespace/type</code>, so two teams can both have
+                        a <code>summary</code> without colliding.
+                      </div>
+                    </div>
+                    <div class="form-group">
+                      <label for="cb-domain">Domain</label>
+                      <input
+                        type="text"
+                        id="cb-domain"
+                        placeholder="equity-research"
+                        oninput="cbTouch()"
+                      />
+                    </div>
+                  </div>
+
+                  <div class="cb-sub">
+                    Parts
+                    <span class="cb-hintlet">
+                      one coherent piece each &mdash; profile, assessment, summary
+                    </span>
+                  </div>
+                  <div id="cb-shape"></div>
+                  <button
+                    class="btn"
+                    style="margin-top: 8px"
+                    onclick="cbAddBlock()"
+                  >
+                    + Add a part
+                  </button>
+
+                  <div class="cb-borrow" id="cb-borrow"></div>
                 </div>
-                <div id="cb-blocks"></div>
+
+                <!-- ═══ View 2: where does each value come from ═══ -->
+                <div class="cb-view" id="cb-view-2" style="display: none">
+                  <div class="cb-lead">
+                    The only view with real weight: this is where the contract
+                    stops being a schema and starts being a claim. Every value
+                    comes from exactly one of four places.
+                  </div>
+
+                  <div class="form-group">
+                    <label for="cb-tools">Declared tools</label>
+                    <input
+                      type="text"
+                      id="cb-tools"
+                      placeholder="fmp_company_profile, fmp_ratios"
+                      oninput="cbToolsChanged()"
+                    />
+                    <div class="hint">
+                      Comma-separated, saved onto the card. A part marked
+                      <code>sourced</code> must name one of these &mdash; a
+                      field sourced from a tool the agent cannot call is the
+                      exact defect this contract exists to catch.
+                    </div>
+                  </div>
+                  <datalist id="cb-tool-list"></datalist>
+
+                  <div class="cb-palette-wrap">
+                    <div class="cb-sub">
+                      Add a part from
+                      <span class="cb-hintlet">
+                        starting from a tool you have is the fastest honest route
+                      </span>
+                    </div>
+                    <div class="cb-palette" id="cb-palette"></div>
+                  </div>
+
+                  <div class="cb-sub">
+                    Where each part comes from
+                    <span class="cb-hintlet">click to expand</span>
+                  </div>
+                  <div id="cb-blocks"></div>
+
+                  <div class="collapsible-header" onclick="toggleCollapsible(this)">
+                    <span class="arrow">&#9654;</span> Advanced: ontology
+                    vocabulary
+                  </div>
+                  <div class="collapsible-body">
+                    <div class="hint" style="margin-bottom: 6px">
+                      Paste an ontology and a field type of
+                      <code>@sentiment</code> takes its type, its closed value
+                      set and its definition from the entity &mdash; selecting
+                      vocabulary instead of reinventing it. An unknown id is an
+                      error, never a silent fallback to <code>string</code>.
+                    </div>
+                    <textarea
+                      id="cb-ontology"
+                      rows="4"
+                      placeholder='{"entities": []}'
+                      oninput="cbTouch()"
+                    ></textarea>
+                  </div>
+                </div>
+
+                <!-- ═══ View 3: who uses it ═══ -->
+                <div class="cb-view" id="cb-view-3" style="display: none">
+                  <div class="cb-lead">
+                    The view whose absence turns a contract into decoration.
+                    &ldquo;It compiles&rdquo; is not the finish line &mdash;
+                    something has to be able to consume it, and something has
+                    to be able to score it.
+                  </div>
+
+                  <div class="cb-sub">Who could consume this</div>
+                  <div id="cb-consumers"></div>
+
+                  <div class="row" style="margin-top: 14px">
+                    <div class="form-group">
+                      <label for="cb-synthesis">
+                        How a coordinator combines members
+                      </label>
+                      <select id="cb-synthesis" onchange="cbTouch()">
+                        <option value="">(not declared)</option>
+                        <option value="aggregation">
+                          aggregation &mdash; merge every member's document
+                        </option>
+                        <option value="pipeline">
+                          pipeline &mdash; each feeds the next
+                        </option>
+                        <option value="selection">
+                          selection &mdash; pick the best one
+                        </option>
+                        <option value="max_risk">
+                          max_risk &mdash; the worst finding wins
+                        </option>
+                        <option value="cep_weighted">
+                          cep_weighted &mdash; weight by calibration
+                        </option>
+                      </select>
+                    </div>
+                    <div class="form-group">
+                      <label for="cb-cal-signal">
+                        How correctness is eventually measured
+                      </label>
+                      <select
+                        id="cb-cal-signal"
+                        onchange="cbTouch(); cbRenderNav()"
+                      >
+                        <option value="">(not declared)</option>
+                        <option value="brier_forecast">
+                          brier_forecast &mdash; a forecast resolves
+                        </option>
+                        <option value="sosa_observation">
+                          sosa_observation &mdash; a sensor reading arrives
+                        </option>
+                        <option value="hitl_review">
+                          hitl_review &mdash; a human judges it
+                        </option>
+                        <option value="user_rating">
+                          user_rating &mdash; the caller rates it
+                        </option>
+                      </select>
+                      <div class="hint">
+                        Without this the document is composable and
+                        unfalsifiable &mdash; a strange pair to ship.
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="cb-sub" style="margin-top: 14px">
+                    Paste this into your system prompt
+                    <span class="cb-hintlet">
+                      or the schema is checked against prose for ever
+                    </span>
+                  </div>
+                  <div id="cb-promptsnippet"></div>
+                </div>
               </div>
+
+              <!-- The artefact, persistent across all three views. -->
               <div class="cb-col">
-                <div class="cb-sub">
-                  The document your agent returns
-                  <span class="cb-hintlet">live</span>
+                <div class="cb-sticky">
+                  <div class="cb-sub">
+                    The document your agent returns
+                    <span class="cb-hintlet">live</span>
+                  </div>
+                  <div id="cb-doc"></div>
+                  <div id="cb-output"></div>
                 </div>
-                <div id="cb-doc"></div>
               </div>
             </div>
-
-            <div class="collapsible-header" onclick="toggleCollapsible(this)">
-              <span class="arrow">&#9654;</span> Advanced: ontology vocabulary
-            </div>
-            <div class="collapsible-body">
-              <div class="hint" style="margin-bottom: 6px">
-                Paste an ontology (<code>{"entities": [{"id": "sentiment",
-                "properties": {"definition": "...", "scale": [...]}}]}</code>)
-                and a field type of <code>@sentiment</code> takes its type,
-                its closed value set and its definition from the entity
-                &mdash; selecting vocabulary instead of reinventing it. An
-                unknown id is an error, never a silent fallback to
-                <code>string</code>.
-              </div>
-              <textarea
-                id="cb-ontology"
-                rows="4"
-                placeholder='{"entities": []}'
-                oninput="cbTouch()"
-              ></textarea>
-            </div>
-
-            <div id="cb-output"></div>
           </div>
           <div class="step-nav">
             <button class="btn" onclick="goStep(2)">&larr; Back</button>
@@ -1947,37 +2155,109 @@
 
       // ═══ Contract builder ═══════════════════════════════════════
       //
-      // The compile is a SERVER round-trip on purpose. Doing it in the
-      // browser would be a second implementation of the publish gate, and
-      // the two would drift — at which point this shows a green tick for a
-      // contract that is refused at publish, which is worse than no builder.
+      // Three views over ONE artefact, not three forms.
+      //
+      // A contract answers three questions on three different clocks:
+      //
+      //   1. what do you return          the shape        cheap to change
+      //   2. where does each value       the claim        the real work
+      //      come from
+      //   3. who uses it                 the composition  why it exists
+      //
+      // The first cut of this step put all three on one screen, and the
+      // feedback was that it read as a form built for a DB analyst. That was
+      // right, and the reason is that the three questions have different
+      // audiences and different costs. Tangling shape with grounding is what
+      // makes people give up: you cannot decide "is this retrieved or
+      // reasoned" while still deciding whether the block exists.
+      //
+      // The views are not wizard steps. Movement between them is expected to
+      // be non-linear — naming a consumer in view 3 routinely sends you back
+      // to rename a type in view 1 so it composes with something that already
+      // exists.
+      //
+      // The compile is a SERVER round-trip. A browser-side compiler would be a
+      // second implementation of the publish gate and the two would drift, at
+      // which point this shows a green tick for a contract publish refuses.
       // See src/handlers/contracts.rs.
 
       let cbBlocks = [];
       let cbCompiled = null;
       let cbTimer = null;
       let cbAvailableTools = [];
+      let cbProposals = [];
+      let cbTypes = [];
+      let cbOpen = new Set();
+      let cbView = 1;
       let cbOutTab = "schema";
 
       const CB_STATUSES = ["sourced", "inferred", "narrative", "unavailable"];
 
-      // What each status implies for the derived `_provenance` sibling.
-      // Mirrors Source::provenance_schema in src/contract_sketch.rs; shown so
-      // the author can see the consequence of the choice while making it.
-      function cbDerivedHint(b) {
-        if (b.status === "narrative")
-          return "No provenance stamp. A retrieval verdict about a paragraph is a category error.";
-        if (b.status === "inferred")
-          return "Stamp: <code>const: \"model_inference\"</code> — can never claim to be retrieved.";
-        if (b.status === "unavailable")
-          return "Stamp: <code>const: \"unavailable_no_tool_source\"</code> — the value must be null.";
-        const base = "tool_verified, tool_no_match";
-        if (b.coverage === "partial")
-          return `Stamp: <code>enum [${base}, unavailable_no_tool_source]</code>`;
-        if (b.coverage === "deferred")
-          return `Stamp: <code>enum [${base}, pending_tool_check]</code>`;
-        return `Stamp: <code>enum [${base}]</code>`;
+      // ─── view switching ───────────────────────────────────────────
+
+      function cbSetView(n) {
+        cbView = n;
+        [1, 2, 3].forEach((i) => {
+          const el = document.getElementById("cb-view-" + i);
+          if (el) el.style.display = i === n ? "block" : "none";
+        });
+        cbRenderAll();
       }
+
+      // The nav carries per-view state, because the useful question is not
+      // "which view am I on" but "which view still owes something". A badge
+      // that says `2 without a why` is the whole to-do list.
+      function cbRenderNav() {
+        const named = cbBlocks.filter((b) => b.name.trim());
+        const noWhy = named.filter((b) => (b.why || "").trim().length < 40);
+        const typed = document.getElementById("cb-type").value.trim();
+        const signal = (document.getElementById("cb-cal-signal") || {}).value;
+
+        const views = [
+          {
+            n: 1,
+            k: "what you return",
+            t: "The artefact",
+            badge: !typed
+              ? { cls: "todo", text: "needs a type name" }
+              : named.length
+                ? { cls: "ok", text: `${named.length} part(s)` }
+                : { cls: "todo", text: "no parts yet" },
+          },
+          {
+            n: 2,
+            k: "where values come from",
+            t: "The claim",
+            badge: !named.length
+              ? { cls: "", text: "—" }
+              : noWhy.length
+                ? { cls: "todo", text: `${noWhy.length} without a why` }
+                : { cls: "ok", text: "all answered" },
+          },
+          {
+            n: 3,
+            k: "who uses it",
+            t: "The composition",
+            badge: signal
+              ? { cls: "ok", text: "scoreable" }
+              : { cls: "todo", text: "unfalsifiable" },
+          },
+        ];
+
+        document.getElementById("cb-viewnav").innerHTML = views
+          .map(
+            (v) => `
+          <button class="cb-viewbtn ${cbView === v.n ? "active" : ""}"
+                  onclick="cbSetView(${v.n})">
+            <span class="n">${v.n}. ${esc(v.k)}</span>
+            ${esc(v.t)}
+            <span class="badge ${v.badge.cls}">${esc(v.badge.text)}</span>
+          </button>`,
+          )
+          .join("");
+      }
+
+      // ─── block model ──────────────────────────────────────────────
 
       function cbNewBlock(name) {
         return {
@@ -1997,27 +2277,27 @@
 
       function cbAddBlock() {
         cbBlocks.push(cbNewBlock());
-        cbRender();
+        cbRenderAll();
         cbTouch();
       }
       function cbDelBlock(i) {
         cbBlocks.splice(i, 1);
-        cbRender();
+        cbRenderAll();
         cbTouch();
       }
       function cbAddField(i) {
         cbBlocks[i].fields.push({ name: "", type: "string?" });
-        cbRender();
+        cbRenderAll();
         cbTouch();
       }
       function cbDelField(i, j) {
         cbBlocks[i].fields.splice(j, 1);
-        cbRender();
+        cbRenderAll();
         cbTouch();
       }
 
       // Value writes do NOT re-render, so typing keeps focus. Only structural
-      // changes (add/remove/status) call cbRender().
+      // changes (add/remove/status/shape) re-render.
       function cbSet(i, key, val) {
         cbBlocks[i][key] = val;
         if (key === "why") cbUpdateWhyCount(i);
@@ -2029,37 +2309,142 @@
       }
       function cbSetStatus(i, val) {
         cbBlocks[i].status = val;
-        cbRender();
+        cbRenderAll();
         cbTouch();
       }
       function cbSetShape(i, val) {
         cbBlocks[i].shape = val;
-        cbRender();
+        cbRenderAll();
+        cbTouch();
+      }
+      function cbRenameBlock(i, val) {
+        cbBlocks[i].name = val;
         cbTouch();
       }
 
       function cbUpdateWhyCount(i) {
         const el = document.getElementById(`cb-whycount-${i}`);
-        if (!el) return;
-        const n = (cbBlocks[i].why || "").trim().length;
-        el.textContent = `${n}/40`;
-        el.classList.toggle("short", n < 40);
+        if (el) {
+          const n = (cbBlocks[i].why || "").trim().length;
+          el.textContent = `${n}/40`;
+          el.classList.toggle("short", n < 40);
+        }
+        cbRenderNav();
       }
 
-      // ─── Compose-from palette ───
+      // ─── VIEW 1: the artefact ─────────────────────────────────────
       //
-      // The first version of this step opened on an empty block form, which
-      // is the wrong question: it asks the author to invent structure before
-      // telling them what they already have. Every value an agent can put in
-      // a document comes from exactly one of three places — a tool it
-      // declared, its own reasoning, or prose — so those are the chips.
-      //
-      // A block added from a tool chip is `sourced` against a tool the agent
-      // really declares, so the check with teeth passes by construction.
+      // Shape only. A part's name, whether it holds fields or one value, and
+      // the fields themselves. Deliberately silent about grounding.
 
-      let cbProposals = [];
-      let cbTypes = [];
-      let cbOpen = new Set();
+      function cbRenderShape() {
+        const wrap = document.getElementById("cb-shape");
+        if (!wrap) return;
+        if (!cbBlocks.length) {
+          wrap.innerHTML = `<div class="hint">
+            No parts yet. A part is one coherent piece of the document. Add one
+            here, or start from a tool in view 2 &mdash; which is often faster,
+            because a tool you already have implies the part.</div>`;
+          return;
+        }
+        wrap.innerHTML = cbBlocks
+          .map(
+            (b, i) => `
+          <div class="cb-shape-row" data-status="${b.status}">
+            <div style="flex:1">
+              <div style="display:flex;gap:6px;align-items:center">
+                <input class="nm" value="${esc(b.name)}" placeholder="part_name"
+                       oninput="cbRenameBlock(${i}, this.value)" />
+                <select onchange="cbSetShape(${i}, this.value)">
+                  <option value="fields" ${b.shape === "fields" ? "selected" : ""}>fields</option>
+                  <option value="value" ${b.shape === "value" ? "selected" : ""}>one value</option>
+                </select>
+                <span class="cb-pill ${b.status}">${b.status}</span>
+                <button class="cb-del" onclick="cbDelBlock(${i})">Remove</button>
+              </div>
+              ${
+                b.shape === "value"
+                  ? `<div class="cb-shape-fields">
+                       <input value="${esc(b.value)}" style="font-family:monospace;font-size:0.75rem"
+                              oninput="cbSet(${i},'value',this.value)" />
+                     </div>`
+                  : `<div class="cb-shape-fields">
+                       ${b.fields
+                         .map(
+                           (f, j) => `
+                         <div class="cb-field-row">
+                           <input class="cb-fname" value="${esc(f.name)}" placeholder="field_name"
+                                  oninput="cbSetField(${i},${j},'name',this.value)" />
+                           <input class="cb-ftype" value="${esc(f.type)}" placeholder="string?"
+                                  oninput="cbSetField(${i},${j},'type',this.value)" />
+                           <button class="cb-del" onclick="cbDelField(${i},${j})">&times;</button>
+                         </div>`,
+                         )
+                         .join("")}
+                       <button class="btn" style="font-size:0.7rem;padding:3px 8px"
+                               onclick="cbAddField(${i})">+ field</button>
+                     </div>`
+              }
+            </div>
+          </div>`,
+          )
+          .join("");
+      }
+
+      // Borrowing a neighbour's part NAMES belongs in view 1, because "what do
+      // documents like mine look like" is a shape question. Grounding is never
+      // borrowed: where your values come from is not transferable, so borrowed
+      // parts arrive unanswered and view 2 will say so.
+      function cbRenderBorrow() {
+        const el = document.getElementById("cb-borrow");
+        if (!el) return;
+        if (!cbTypes.length) {
+          el.innerHTML = `<div class="cb-sub">Borrow a shape</div>
+            <div class="hint">No typed agents reachable yet &mdash; either none
+            are published or the server is not up. Yours would be the first,
+            which is fine; it just means nothing can match on it yet.</div>`;
+          return;
+        }
+        el.innerHTML = `
+          <div class="cb-sub">
+            Borrow a shape
+            <span class="cb-hintlet">
+              ${cbTypes.length} type(s) declared here &middot; names only, never grounding
+            </span>
+          </div>
+          ${cbTypes
+            .slice(0, 8)
+            .map(
+              (t) => `
+            <div class="cb-type-row">
+              <span class="t" onclick="cbBorrow('${esc(t.type)}')">${esc(t.type)}</span>
+              <span class="b">${esc((t.blocks || []).join(" · ")) || "—"}</span>
+              <span class="c">${esc(t.producer)}</span>
+            </div>`,
+            )
+            .join("")}`;
+      }
+
+      function cbBorrow(type) {
+        const t = cbTypes.find((x) => x.type === type);
+        if (!t) return;
+        const have = new Set(cbBlocks.map((b) => b.name));
+        (t.blocks || []).forEach((name) => {
+          if (have.has(name)) return;
+          const b = cbNewBlock(name);
+          b.status = name === "summary" ? "narrative" : "inferred";
+          if (b.status === "narrative") {
+            b.shape = "value";
+            b.value = "string";
+            b.fields = [];
+          }
+          cbBlocks.push(b);
+        });
+        cbRenderAll();
+        cbTouch();
+      }
+
+      // ─── VIEW 2: the claim ────────────────────────────────────────
 
       async function cbLoadProposals() {
         const tools = cbToolNames();
@@ -2082,6 +2467,8 @@
       }
 
       function cbRenderPalette() {
+        const wrap = document.getElementById("cb-palette");
+        if (!wrap) return;
         const used = new Set(cbBlocks.map((b) => (b.tool || "").trim()));
         const chips = [];
 
@@ -2100,7 +2487,7 @@
           chips.push(`
             <div class="hint" style="max-width:420px">
               No tools declared yet. Add some above and they appear here as
-              retrieved blocks — which is the only kind whose values a tool can
+              retrieved parts &mdash; the only kind whose values a tool can
               actually vouch for.
             </div>`);
         }
@@ -2121,7 +2508,7 @@
             declare a gap
           </button>`);
 
-        document.getElementById("cb-palette").innerHTML = chips.join("");
+        wrap.innerHTML = chips.join("");
       }
 
       function cbAddFromProposal(i) {
@@ -2129,8 +2516,6 @@
         const b = cbNewBlock(p.name);
         b.status = "sourced";
         b.tool = p.source.tool;
-        // The tool's own sentence, for the author to cut down. Left long on
-        // purpose: it is visibly a starting point rather than an answer.
         b.response_field = p.source.response_field;
         b.coverage = p.source.coverage || "complete";
         b.fields = (p.candidate_fields || []).map((f) => ({
@@ -2140,7 +2525,7 @@
         if (!b.fields.length) b.fields = [{ name: "", type: "string?" }];
         cbBlocks.push(b);
         cbOpen.add(b.name);
-        cbRender();
+        cbRenderAll();
         cbTouch();
       }
 
@@ -2157,7 +2542,7 @@
         ];
         cbBlocks.push(b);
         cbOpen.add(b.name);
-        cbRender();
+        cbRenderAll();
         cbTouch();
       }
 
@@ -2169,7 +2554,7 @@
         b.fields = [];
         cbBlocks.push(b);
         cbOpen.add(b.name);
-        cbRender();
+        cbRenderAll();
         cbTouch();
       }
 
@@ -2177,17 +2562,149 @@
         const b = cbNewBlock("");
         b.status = "unavailable";
         cbBlocks.push(b);
-        cbRender();
+        cbRenderAll();
         cbTouch();
       }
 
-      // ─── Compositional clues ───
-      //
-      // `produces_schema` exists so ANOTHER agent can match on identity. So
-      // the two questions worth answering while authoring are: what types
-      // already exist, and what shape do agents like mine actually return.
-      // Both are answerable from the corpus, and answering them from the
-      // corpus beats an author guessing from an empty form.
+      // What each status implies for the derived `_provenance` stamp. Mirrors
+      // Source::provenance_schema in src/contract_sketch.rs, shown so the
+      // author sees the consequence of the choice while making it.
+      function cbDerivedHint(b) {
+        if (b.status === "narrative")
+          return "No provenance stamp. A retrieval verdict about a paragraph is a category error.";
+        if (b.status === "inferred")
+          return 'Stamp: <code>const: "model_inference"</code> &mdash; can never claim to be retrieved.';
+        if (b.status === "unavailable")
+          return 'Stamp: <code>const: "unavailable_no_tool_source"</code> &mdash; the value must be null.';
+        const base = "tool_verified, tool_no_match";
+        if (b.coverage === "partial")
+          return `Stamp: <code>enum [${base}, unavailable_no_tool_source]</code>`;
+        if (b.coverage === "deferred")
+          return `Stamp: <code>enum [${base}, pending_tool_check]</code>`;
+        return `Stamp: <code>enum [${base}]</code>`;
+      }
+
+      function cbToggle(name) {
+        if (cbOpen.has(name)) cbOpen.delete(name);
+        else cbOpen.add(name);
+        cbRenderAll();
+      }
+
+      // View 2's cards carry grounding ONLY. Shape moved to view 1, which is
+      // what stops this card being the eight-field form it used to be.
+      function cbRenderGrounding() {
+        const wrap = document.getElementById("cb-blocks");
+        if (!wrap) return;
+        if (!cbBlocks.length) {
+          wrap.innerHTML = `<div class="hint" style="padding:12px 0">
+            Nothing to ground yet. Add a part from the palette above, or in
+            view 1.</div>`;
+          return;
+        }
+        wrap.innerHTML = cbBlocks
+          .map((b, i) => {
+            const whyN = (b.why || "").trim().length;
+            const isOpen = cbOpen.has(b.name) || !b.name.trim();
+
+            if (!isOpen) {
+              return `
+              <div class="cb-block" data-status="${b.status}">
+                <div class="cb-sum" onclick="cbToggle('${esc(b.name)}')">
+                  <span class="nm">${esc(b.name)}</span>
+                  <span class="cb-pill ${b.status}">${b.status}</span>
+                  ${
+                    b.status === "sourced"
+                      ? `<span class="cb-hintlet">${esc(b.tool || "no tool named")}</span>`
+                      : ""
+                  }
+                  <span class="cb-spacer"></span>
+                  ${
+                    whyN >= 40
+                      ? '<span class="cb-ok">&#10003; why</span>'
+                      : '<span class="cb-todo">why needed</span>'
+                  }
+                </div>
+              </div>`;
+            }
+
+            const src =
+              b.status === "sourced"
+                ? `<div class="row">
+                     <div class="form-group">
+                       <label>Tool</label>
+                       <input list="cb-tool-list" value="${esc(b.tool)}"
+                              oninput="cbSet(${i},'tool',this.value)"
+                              placeholder="fmp_ratios" />
+                     </div>
+                     <div class="form-group">
+                       <label>Response field</label>
+                       <input value="${esc(b.response_field)}"
+                              oninput="cbSet(${i},'response_field',this.value)"
+                              placeholder="priceToEarningsRatio, priceToBookRatio" />
+                     </div>
+                   </div>
+                   <div class="form-group">
+                     <label>Coverage</label>
+                     <select onchange="cbSet(${i},'coverage',this.value); cbRenderAll()">
+                       <option value="complete" ${b.coverage === "complete" ? "selected" : ""}>complete — answers for every field, or honestly reports no match</option>
+                       <option value="partial" ${b.coverage === "partial" ? "selected" : ""}>partial — some fields have no source at all</option>
+                       <option value="deferred" ${b.coverage === "deferred" ? "selected" : ""}>deferred — the check may not have run yet</option>
+                     </select>
+                   </div>`
+                : b.status === "inferred"
+                  ? `<div class="form-group">
+                       <label>Reasoned from</label>
+                       <input value="${esc(b.from)}"
+                              oninput="cbSet(${i},'from',this.value)"
+                              placeholder="the retrieved profile and valuation parts, against sector base rates" />
+                       <div class="hint">An inference over nothing is a guess; naming the basis is what separates them.</div>
+                     </div>`
+                  : b.status === "unavailable"
+                    ? `<div class="form-group">
+                         <label>Would need (optional)</label>
+                         <input value="${esc(b.would_need)}"
+                                oninput="cbSet(${i},'would_need',this.value)"
+                                placeholder="an NCBI Assembly lookup" />
+                         <div class="hint">Turns a null into a to-do.</div>
+                       </div>`
+                    : "";
+
+            return `
+            <div class="cb-block" data-status="${b.status}">
+              <div class="cb-sum" onclick="cbToggle('${esc(b.name)}')" style="margin-bottom:8px">
+                <span class="nm">${esc(b.name) || "(unnamed part)"}</span>
+                <span class="cb-hintlet">▾ collapse</span>
+                <span class="cb-spacer"></span>
+                ${
+                  whyN >= 40
+                    ? '<span class="cb-ok">&#10003; why</span>'
+                    : '<span class="cb-todo">why needed</span>'
+                }
+              </div>
+              <div class="form-group">
+                <label>Where does it come from</label>
+                <select onchange="cbSetStatus(${i}, this.value)">
+                  ${CB_STATUSES.map(
+                    (s) =>
+                      `<option value="${s}" ${b.status === s ? "selected" : ""}>${s}</option>`,
+                  ).join("")}
+                </select>
+              </div>
+              ${src}
+              <div class="form-group" style="margin-bottom:4px">
+                <label>Why this status</label>
+                <textarea rows="2" placeholder="Say why this part has the status it has — the next author cannot tell a considered 'unavailable' from a lazy one."
+                          oninput="cbSet(${i},'why',this.value)">${esc(b.why)}</textarea>
+                <div class="cb-why-count ${whyN < 40 ? "short" : ""}" id="cb-whycount-${i}">${whyN}/40</div>
+              </div>
+              <div class="cb-derived">${cbDerivedHint(b)}</div>
+            </div>`;
+          })
+          .join("");
+      }
+
+      // ─── VIEW 3: the composition ──────────────────────────────────
+
       async function cbLoadTypes() {
         try {
           const res = await fetch("/api/contracts/types");
@@ -2196,84 +2713,103 @@
         } catch {
           cbTypes = [];
         }
-        cbRenderCompose();
+        cbRenderAll();
       }
 
-      function cbRenderCompose() {
-        const el = document.getElementById("cb-compose");
+      function cbRenderConsumers() {
+        const el = document.getElementById("cb-consumers");
+        if (!el) return;
         const mine = document.getElementById("cb-type").value.trim();
-        const consumers = cbTypes
-          .filter((t) => mine && t.type === mine)
-          .flatMap((t) => t.consumers);
 
-        if (!cbTypes.length) {
-          el.innerHTML = `<div class="cb-compose"><div class="cb-sub">Compose with</div>
-            <div class="hint">No typed agents reachable yet — either none are
-            published or the server is not up. Your type will be the first,
-            which is fine; it just means nothing can match on it yet.</div></div>`;
+        if (!mine) {
+          el.innerHTML = `<div class="hint">Name a type in view 1 first.</div>`;
           return;
         }
+        const match = cbTypes.find((t) => t.type === mine);
+        const consumers = match ? match.consumers || [] : [];
+
+        let body = "";
+        if (consumers.length) {
+          body = `<div class="cb-consumer">
+            <span class="who">${esc(consumers.join(", "))}</span>
+            declare <code>${esc(mine)}</code> in <code>accepts</code>, so they
+            match on identity rather than on a string that looks familiar.
+          </div>`;
+        } else {
+          body = `<div class="cb-consumer">
+            Nothing declares <code>${esc(mine)}</code> in <code>accepts</code>
+            yet. Not a problem while you are the only producer &mdash; but it is
+            the thing that makes the type worth having, so it is worth deciding
+            now rather than discovering later.
+          </div>`;
+        }
+
+        // The near-duplicate warning. Two types differing by one field name
+        // compose with nothing, and this is the moment it is cheap to fix.
+        const near = cbTypes.filter(
+          (t) => t.type !== mine && cbSimilar(t.type, mine),
+        );
+        if (near.length) {
+          body += `<div class="cb-consumer" style="border-color:var(--orange)">
+            Close to an existing type:
+            ${near.map((t) => `<code>${esc(t.type)}</code> (${esc(t.producer)})`).join(", ")}.
+            If you mean the same document, produce THAT type instead. Two types
+            that differ by one name compose with nothing.
+          </div>`;
+        }
+        el.innerHTML = body;
+      }
+
+      // Deliberately crude: same trailing segment, different namespace, or one
+      // is a substring of the other. A cleverer matcher would be confidently
+      // wrong more often, and the author is reading these either way.
+      function cbSimilar(a, b) {
+        const seg = (s) => (s.split("/").pop() || "").replace(/[_-]/g, "");
+        const x = seg(a),
+          y = seg(b);
+        if (!x || !y) return false;
+        return x === y || x.includes(y) || y.includes(x);
+      }
+
+      function cbRenderPromptSnippet() {
+        const el = document.getElementById("cb-promptsnippet");
+        if (!el) return;
+        if (!cbCompiled) {
+          el.innerHTML = `<div class="hint">Nothing compiled yet. Once the
+            contract compiles, the exact document to paste appears here.</div>`;
+          return;
+        }
+        const doc = JSON.stringify(cbSampleDoc(cbCompiled.output_contract.schema), null, 2);
+        const rules = `End every response with one JSON document in a \`\`\`json fence, conforming exactly to type ${cbCompiled.output_contract.produces_schema}:
+
+${doc}
+
+Rules, each enforced by the platform:
+1. Every key is required, including the nulls. A field you could not fill is null, not absent — "I looked and found nothing" and "I did not answer" are different facts.
+2. No extra keys. The document is closed at every level.
+3. Never write a *_provenance value outside its declared set.
+4. Only fill a sourced block from that block's own tool. If you did not call it, the block is null and its stamp says tool_no_match.
+5. Reasoned blocks are stamped model_inference always. Do not compute derived numbers inside a retrieved block.`;
 
         el.innerHTML = `
-          <div class="cb-compose">
-            <div class="cb-sub">Compose with <span class="cb-hintlet">${cbTypes.length} type(s) declared in this ecosystem · click one to borrow its block names</span></div>
-            ${cbTypes
-              .slice(0, 8)
-              .map(
-                (t) => `
-              <div class="cb-type-row">
-                <span class="t" onclick="cbBorrow('${esc(t.type)}')">${esc(t.type)}</span>
-                <span class="b">${esc((t.blocks || []).join(" · ")) || "—"}</span>
-                <span class="c">${esc(t.producer)}</span>
-              </div>`,
-              )
-              .join("")}
-            ${
-              mine
-                ? `<div class="cb-gen" style="margin-top:8px">
-                     Your type <code>${esc(mine)}</code> — ${
-                       consumers.length
-                         ? `accepted by <strong>${esc(consumers.join(", "))}</strong>`
-                         : `nothing declares it in <code>accepts</code> yet. Not a
-                            problem while you are the only producer, but it is the
-                            thing that makes the type worth having.`
-                     }
-                   </div>`
-                : ""
-            }
-          </div>`;
+          <button class="btn cb-copybtn" onclick="cbCopySnippet()">Copy</button>
+          <div class="cb-pre" id="cb-snippet-text">${esc(rules)}</div>`;
       }
 
-      // Borrow another type's block NAMES — never its grounding or its `why`.
-      // Shape is the part an author legitimately learns from a neighbour;
-      // where your values come from is not transferable, so those blocks
-      // arrive unanswered and the compiler will say so.
-      function cbBorrow(type) {
-        const t = cbTypes.find((x) => x.type === type);
+      function cbCopySnippet() {
+        const t = document.getElementById("cb-snippet-text");
         if (!t) return;
-        const have = new Set(cbBlocks.map((b) => b.name));
-        (t.blocks || []).forEach((name) => {
-          if (have.has(name)) return;
-          const b = cbNewBlock(name);
-          b.status = name === "summary" ? "narrative" : "inferred";
-          if (b.status === "narrative") {
-            b.shape = "value";
-            b.value = "string";
-            b.fields = [];
-          }
-          cbBlocks.push(b);
-        });
-        cbRender();
-        cbTouch();
+        navigator.clipboard
+          ?.writeText(t.textContent)
+          .then(() => cbSetStatusChip("Snippet copied", "ok"))
+          .catch(() => {});
       }
 
-      // ─── The document, as the primary artefact ───
-      //
-      // A form tells you what you are filling in; this tells you what the
-      // agent will actually return, coloured by where each value came from.
-      // That is the thing being designed, so it should be the thing on screen.
+      // ─── the document, persistent across all three views ──────────
+
       function cbRenderDoc() {
         const el = document.getElementById("cb-doc");
+        if (!el) return;
         const named = cbBlocks.filter((b) => b.name.trim());
         if (!named.length) {
           el.innerHTML = `<div class="cb-doc"><span class="nul">// nothing composed yet</span></div>`;
@@ -2286,7 +2822,9 @@
           const name = esc(b.name.trim());
           if (b.shape === "value" || b.status === "narrative") {
             const cls = b.status === "narrative" ? "prose" : "k";
-            lines.push(`  <span class="k">"${name}"</span>: <span class="${cls}">"…"</span>${last ? "" : ","}`);
+            lines.push(
+              `  <span class="k">"${name}"</span>: <span class="${cls}">"…"</span>${last ? "" : ","}`,
+            );
           } else {
             const fields = b.fields.filter((f) => f.name.trim());
             const inner = fields.length
@@ -2302,9 +2840,6 @@
             lines.push("  },");
           }
 
-          // The derived stamp, shown inline because it is the half of the
-          // document the author never types and would otherwise be surprised
-          // by at runtime.
           if (b.status !== "narrative") {
             const cls =
               b.status === "sourced"
@@ -2354,160 +2889,21 @@
         return '"…"';
       }
 
-      function cbToggle(name) {
-        if (cbOpen.has(name)) cbOpen.delete(name);
-        else cbOpen.add(name);
-        cbRender();
-      }
+      // ─── orchestration ────────────────────────────────────────────
 
-      function cbRender() {
+      function cbRenderAll() {
+        cbRenderNav();
+        cbRenderShape();
+        cbRenderBorrow();
         cbRenderPalette();
-        cbRenderCompose();
+        cbRenderGrounding();
+        cbRenderConsumers();
+        cbRenderPromptSnippet();
         cbRenderDoc();
-        const wrap = document.getElementById("cb-blocks");
-        if (!cbBlocks.length) {
-          wrap.innerHTML = `<div class="hint" style="padding:12px 0">
-            Nothing yet. Pick from the palette above — a block is one coherent
-            piece of the document, and the palette is grouped by the only three
-            places a value can come from.</div>`;
-          return;
-        }
-        wrap.innerHTML = cbBlocks
-          .map((b, i) => {
-            const src =
-              b.status === "sourced"
-                ? `<div class="row">
-                     <div class="form-group">
-                       <label>Tool</label>
-                       <input list="cb-tool-list" value="${esc(b.tool)}"
-                              oninput="cbSet(${i},'tool',this.value)"
-                              placeholder="fmp_ratios" />
-                     </div>
-                     <div class="form-group">
-                       <label>Response field</label>
-                       <input value="${esc(b.response_field)}"
-                              oninput="cbSet(${i},'response_field',this.value)"
-                              placeholder="priceToEarningsRatio, priceToBookRatio" />
-                     </div>
-                   </div>
-                   <div class="form-group">
-                     <label>Coverage</label>
-                     <select onchange="cbSet(${i},'coverage',this.value); cbRender()">
-                       <option value="complete" ${b.coverage === "complete" ? "selected" : ""}>complete — answers for every field, or honestly reports no match</option>
-                       <option value="partial" ${b.coverage === "partial" ? "selected" : ""}>partial — some fields have no source at all</option>
-                       <option value="deferred" ${b.coverage === "deferred" ? "selected" : ""}>deferred — the check may not have run yet</option>
-                     </select>
-                   </div>`
-                : b.status === "inferred"
-                  ? `<div class="form-group">
-                       <label>Reasoned from</label>
-                       <input value="${esc(b.from)}"
-                              oninput="cbSet(${i},'from',this.value)"
-                              placeholder="the retrieved profile and valuation blocks, against sector base rates" />
-                       <div class="hint">An inference over nothing is a guess; naming the basis is what separates them.</div>
-                     </div>`
-                  : b.status === "unavailable"
-                    ? `<div class="form-group">
-                         <label>Would need (optional)</label>
-                         <input value="${esc(b.would_need)}"
-                                oninput="cbSet(${i},'would_need',this.value)"
-                                placeholder="an NCBI Assembly lookup" />
-                         <div class="hint">Turns a null into a to-do.</div>
-                       </div>`
-                    : "";
-
-            const shapeUi =
-              b.shape === "value"
-                ? `<div class="form-group">
-                     <label>Type</label>
-                     <input value="${esc(b.value)}" style="font-family:monospace"
-                            oninput="cbSet(${i},'value',this.value)" />
-                   </div>`
-                : `<div class="cb-fields">
-                     ${b.fields
-                       .map(
-                         (f, j) => `
-                       <div class="cb-field-row">
-                         <input class="cb-fname" value="${esc(f.name)}" placeholder="field_name"
-                                oninput="cbSetField(${i},${j},'name',this.value)" />
-                         <input class="cb-ftype" value="${esc(f.type)}" placeholder="string?"
-                                oninput="cbSetField(${i},${j},'type',this.value)" />
-                         <button class="cb-del" onclick="cbDelField(${i},${j})" title="remove field">&times;</button>
-                       </div>`,
-                       )
-                       .join("")}
-                     <button class="btn" style="font-size:0.7rem;padding:3px 8px"
-                             onclick="cbAddField(${i})">+ field</button>
-                   </div>`;
-
-            const whyN = (b.why || "").trim().length;
-            const nFields =
-              b.shape === "value"
-                ? 1
-                : b.fields.filter((f) => f.name.trim()).length;
-            const isOpen = cbOpen.has(b.name) || !b.name.trim();
-
-            // Collapsed by default. The summary carries the only two things
-            // worth seeing at a glance: where the values come from, and
-            // whether the one field the compiler will not write is written.
-            if (!isOpen) {
-              return `
-              <div class="cb-block" data-status="${b.status}">
-                <div class="cb-sum" onclick="cbToggle('${esc(b.name)}')">
-                  <span class="nm">${esc(b.name)}</span>
-                  <span class="cb-pill ${b.status}">${b.status}</span>
-                  <span class="cb-hintlet">${nFields} field${nFields === 1 ? "" : "s"}</span>
-                  <span class="cb-spacer"></span>
-                  ${
-                    whyN >= 40
-                      ? '<span class="cb-ok">&#10003; why</span>'
-                      : '<span class="cb-todo">why needed</span>'
-                  }
-                </div>
-              </div>`;
-            }
-
-            return `
-            <div class="cb-block" data-status="${b.status}">
-              <div class="cb-sum" onclick="cbToggle('${esc(b.name)}')"
-                   style="margin-bottom:8px">
-                <span class="cb-hintlet">▾ collapse</span>
-                <span class="cb-spacer"></span>
-                ${
-                  whyN >= 40
-                    ? '<span class="cb-ok">&#10003; why</span>'
-                    : '<span class="cb-todo">why needed</span>'
-                }
-              </div>
-              <div class="cb-block-head">
-                <input class="cb-name" value="${esc(b.name)}" placeholder="block_name"
-                       oninput="cbSet(${i},'name',this.value)" />
-                <select onchange="cbSetStatus(${i}, this.value)">
-                  ${CB_STATUSES.map((s) => `<option value="${s}" ${b.status === s ? "selected" : ""}>${s}</option>`).join("")}
-                </select>
-                <select onchange="cbSetShape(${i}, this.value)">
-                  <option value="fields" ${b.shape === "fields" ? "selected" : ""}>object</option>
-                  <option value="value" ${b.shape === "value" ? "selected" : ""}>single value</option>
-                </select>
-                <button class="cb-del" onclick="cbDelBlock(${i})">Remove</button>
-              </div>
-              ${shapeUi}
-              ${src}
-              <div class="form-group" style="margin-bottom:4px">
-                <label>Why this status</label>
-                <textarea rows="2" placeholder="Say why this field has the status it has — the next author cannot tell a considered 'unavailable' from a lazy one."
-                          oninput="cbSet(${i},'why',this.value)">${esc(b.why)}</textarea>
-                <div class="cb-why-count ${whyN < 40 ? "short" : ""}" id="cb-whycount-${i}">${whyN}/40</div>
-              </div>
-              <div class="cb-derived">${cbDerivedHint(b)}</div>
-            </div>`;
-          })
-          .join("");
       }
 
-      // Build the sketch the server compiles. Empty optional fields are
-      // dropped rather than sent blank, so the compiler's messages are about
-      // what is missing and not about what is empty.
+      // ─── compile ──────────────────────────────────────────────────
+
       function cbSketch() {
         const s = {
           domain: document.getElementById("cb-domain").value.trim(),
@@ -2537,25 +2933,39 @@
         };
         const title = document.getElementById("agent-name").value.trim();
         if (title) s.title = title.replace(/_/g, " ");
+
+        // View 3's answers. Passed through by the compiler, which has no
+        // opinion about calibration — inventing one would be worse than
+        // carrying the author's.
+        const syn = document.getElementById("cb-synthesis");
+        if (syn && syn.value) s.synthesis = syn.value;
+        const sig = document.getElementById("cb-cal-signal");
+        if (sig && sig.value) {
+          s.calibration = {
+            signal: sig.value,
+            comparison:
+              sig.value === "brier_forecast" ? "brier_score" : "hitl_review",
+          };
+        }
         return s;
       }
 
       function cbToolNames() {
-        return document
-          .getElementById("cb-tools")
-          .value.split(",")
+        const el = document.getElementById("cb-tools");
+        if (!el) return [];
+        return el.value
+          .split(",")
           .map((t) => t.trim())
           .filter(Boolean);
       }
 
       function cbTouch() {
         cbRenderDoc();
+        cbRenderNav();
         clearTimeout(cbTimer);
         cbTimer = setTimeout(cbCompile, 400);
       }
 
-      // Declared tools changed: re-derive the palette, since a chip is only
-      // offered for a tool the agent really has.
       let cbToolTimer = null;
       function cbToolsChanged() {
         cbTouch();
@@ -2565,16 +2975,16 @@
 
       function cbSetStatusChip(text, cls) {
         const el = document.getElementById("cb-status");
+        if (!el) return;
         el.textContent = text;
         el.className = "cb-status" + (cls ? " " + cls : "");
       }
 
       async function cbCompile() {
         const out = document.getElementById("cb-output");
+        if (!out) return;
         const sketch = cbSketch();
 
-        // Nothing declared yet is not a failure — say so plainly rather than
-        // showing a wall of findings before the author has typed anything.
         if (!cbBlocks.length && !sketch.domain && !sketch.produces_schema) {
           cbCompiled = null;
           out.innerHTML = "";
@@ -2585,7 +2995,8 @@
         cbSetStatusChip("Compiling…", "busy");
 
         let ontology = null;
-        const ontRaw = document.getElementById("cb-ontology").value.trim();
+        const ontEl = document.getElementById("cb-ontology");
+        const ontRaw = ontEl ? ontEl.value.trim() : "";
         if (ontRaw) {
           try {
             ontology = JSON.parse(ontRaw);
@@ -2627,34 +3038,37 @@
           const n = (data.findings || []).length;
           cbSetStatusChip(`${n} to fix`, "bad");
           out.innerHTML =
-            `<div class="hint" style="margin:10px 0 6px">Not compiled. Nothing partial is emitted —
-             a contract that is almost complete reads exactly like one that is.</div>` +
+            `<div class="hint" style="margin:10px 0 6px">Not compiled. Nothing
+             partial is emitted — a contract that is almost complete reads
+             exactly like one that is.</div>` +
             (data.findings || [])
               .map(
                 (f) =>
                   `<div class="cb-finding"><span class="cb-check">${esc(f.check)}</span>${esc(f.fix)}</div>`,
               )
               .join("");
+          cbRenderPromptSnippet();
           return;
         }
 
         cbCompiled = data;
         cbSetStatusChip("Compiles — would publish", "ok");
         cbRenderOutput();
+        cbRenderPromptSnippet();
       }
 
       function cbRenderOutput() {
         if (!cbCompiled) return;
+        const out = document.getElementById("cb-output");
+        if (!out) return;
         const oc = cbCompiled.output_contract;
         const gen = cbCompiled.generated_properties || [];
         const body =
           cbOutTab === "schema"
             ? JSON.stringify(oc.schema, null, 2)
-            : cbOutTab === "grounding"
-              ? JSON.stringify(oc.grounding, null, 2)
-              : JSON.stringify(cbSampleDoc(oc.schema), null, 2);
+            : JSON.stringify(oc.grounding, null, 2);
 
-        document.getElementById("cb-output").innerHTML = `
+        out.innerHTML = `
           <div class="cb-result">
             <h4>&#10003; Compiles — the publish gate accepts this</h4>
             <div class="cb-gen">
@@ -2671,17 +3085,8 @@
             <div class="cb-tabs">
               <button class="${cbOutTab === "schema" ? "active" : ""}" onclick="cbTab('schema')">JSON Schema</button>
               <button class="${cbOutTab === "grounding" ? "active" : ""}" onclick="cbTab('grounding')">Grounding</button>
-              <button class="${cbOutTab === "sample" ? "active" : ""}" onclick="cbTab('sample')">Sample document</button>
             </div>
             <div class="cb-pre">${esc(body)}</div>
-            ${
-              cbOutTab === "sample"
-                ? `<div class="cb-gen">Paste this into your system prompt so the model knows the
-                   shape it must return. Every key is required — a value you could not fill is
-                   <code>null</code>, not absent, because "I looked and found nothing" and
-                   "I did not answer" are different facts.</div>`
-                : ""
-            }
           </div>`;
       }
 
@@ -2690,9 +3095,9 @@
         cbRenderOutput();
       }
 
-      // A skeleton document from the compiled schema — the json-schema-builder
+      // A skeleton document from the compiled schema. The json-schema-builder
       // "sample data" idea, which here is what turns a declared contract into
-      // something an author can actually test a prompt against.
+      // something an author can test a prompt against.
       function cbSampleDoc(schema) {
         function val(s) {
           if (!s || typeof s !== "object") return null;
@@ -2716,23 +3121,29 @@
         return val(schema);
       }
 
+      // ─── load / clear ─────────────────────────────────────────────
+
       function cbClear() {
         cbBlocks = [];
         cbCompiled = null;
         cbProposals = [];
         cbOpen = new Set();
-        ["cb-domain", "cb-type", "cb-tools", "cb-ontology"].forEach(
-          (id) => (document.getElementById(id).value = ""),
-        );
-        document.getElementById("cb-output").innerHTML = "";
-        cbRender();
+        ["cb-domain", "cb-type", "cb-tools", "cb-ontology"].forEach((id) => {
+          const el = document.getElementById(id);
+          if (el) el.value = "";
+        });
+        ["cb-synthesis", "cb-cal-signal"].forEach((id) => {
+          const el = document.getElementById(id);
+          if (el) el.value = "";
+        });
+        const out = document.getElementById("cb-output");
+        if (out) out.innerHTML = "";
+        cbRenderAll();
         cbTouch();
       }
 
-      // Turn a sketch (as authored on disk) into the builder's block model.
-      // The two differ in exactly one way: a sketch's `fields` is an object
-      // because that is pleasant to write, and the editor needs an ordered
-      // array because rows have positions.
+      // A sketch's `fields` is an object because that is pleasant to write;
+      // the editor needs an ordered array because rows have positions.
       function cbBlocksFromSketch(sketch) {
         return (sketch.blocks || []).map((b) => {
           const s = b.source || {};
@@ -2759,10 +3170,9 @@
         });
       }
 
-      // The worked example is fetched, not inlined, so that
-      // tests/contract_sketch_corpus.rs compiles the same bytes this button
-      // loads. A demo that ships broken shows the newcomer a wall of
-      // findings about the example rather than about anything they did.
+      // Fetched, not inlined, so tests/contract_sketch_corpus.rs compiles the
+      // same bytes this button loads. A demo that ships broken shows the
+      // newcomer a wall of findings about the example.
       async function cbLoadExample() {
         let ex;
         try {
@@ -2781,10 +3191,15 @@
         document.getElementById("cb-tools").value = (ex.tool_names || []).join(
           ", ",
         );
+        const syn = document.getElementById("cb-synthesis");
+        if (syn && ex.sketch.synthesis) syn.value = ex.sketch.synthesis;
+        const sig = document.getElementById("cb-cal-signal");
+        if (sig && ex.sketch.calibration && ex.sketch.calibration.signal)
+          sig.value = ex.sketch.calibration.signal;
         cbBlocks = cbBlocksFromSketch(ex.sketch);
         cbOpen = new Set();
         cbLoadProposals();
-        cbRender();
+        cbRenderAll();
         cbCompile();
       }
 
