@@ -6465,6 +6465,41 @@ async fn execute_execute_agent(
         child_episode_id,
     );
 
+    // Third consumer of the same verdict: the trend.
+    //
+    // The coordinator reads `envelope.validation` on this hop and
+    // `gate_trust` counts it in aggregate, but neither accrues per agent —
+    // the counters are process-local and reset on deploy. Without this row,
+    // "is this member's output getting better or worse" has no answer, which
+    // is the input loop 4 needs to change a roster on measured contribution.
+    //
+    // Writes nothing when nothing was checked. See `schema_conformance`.
+    if let Some(ref db) = ctx.db {
+        if let Some(status) = envelope
+            .pointer("/validation/status")
+            .and_then(|s| s.as_str())
+        {
+            if crate::schema_conformance::score_for(status).is_some() {
+                if let Ok(Some(target_db_id)) = sqlx::query_scalar::<_, Uuid>(
+                    "SELECT agent_id FROM agents WHERE agent_name = $1 LIMIT 1",
+                )
+                .bind(agent_name)
+                .fetch_optional(db)
+                .await
+                {
+                    crate::schema_conformance::record(
+                        db,
+                        target_db_id,
+                        child_episode_id,
+                        status,
+                        envelope.get("type").and_then(|t| t.as_str()),
+                    )
+                    .await;
+                }
+            }
+        }
+    }
+
     let result = json!({
         "agent": output.agent_name,
         "confidence": output.confidence,

@@ -358,6 +358,13 @@ pub mod card_contract;
 // bijection between them is unrepresentable rather than merely checked.
 pub mod contract_sketch;
 
+// The third consumer of a schema verdict. The coordinator reads it per hop
+// and `gate_trust` counts it in aggregate; neither accrues per agent, so
+// "is this member getting better or worse" had no answer. Writes an
+// `eval_signals` row per checked delegation — and deliberately none at all
+// when nothing was checked, because there is no honest score for that.
+pub mod schema_conformance;
+
 // A minimal JSON Schema validator. Seven keywords, no new dependency, and
 // an unsupported keyword is NOT a pass — a validator that silently ignores
 // what it cannot interpret returns `valid` for a document it never checked.

@@ -254,6 +254,18 @@ pub const SUBJECT_SCOPES: &[(&str, &str, SubjectScope)] = &[
     // ── loop4 ────────────────────────────────────────────────────────────
     (
         "loop4",
+        "conformed",
+        SubjectScope::PerAgent {
+            // The whole point of putting this in `eval_signals` rather than in
+            // `gate_decisions`: it has an agent dimension, so "is THIS member
+            // getting better or worse" is answerable. A process-local counter
+            // could never have answered it.
+            sql: "SELECT count(*)::bigint FROM eval_signals \
+                  WHERE evaluator_name = 'schema_conformance' AND agent_id = $1",
+        },
+    ),
+    (
+        "loop4",
         "claims",
         SubjectScope::PerAgent {
             sql: "SELECT count(*)::bigint FROM forecast_agent_claims WHERE agent_id = $1",

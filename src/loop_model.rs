@@ -324,6 +324,24 @@ pub const LOOPS: &[FeedbackLoop] = &[
                 contribution.",
         stages: &[
             Stage {
+                id: "conformed",
+                what: "a member's document is checked against the type it declared",
+                // Counts CHECKED documents, not all of them. An unverified
+                // document writes no signal, because there is no honest score
+                // for one — see `schema_conformance`. So a zero here means
+                // "nothing declares a type", which is a real and current
+                // finding rather than a broken probe, and `gate_trust`'s
+                // `undetermined` counter is where the size of that absence is
+                // read.
+                sink_sql: "SELECT count(*)::bigint AS n FROM eval_signals \
+                            WHERE evaluator_name = 'schema_conformance'",
+                writer: "schema_conformance::record, from the delegation hop in \
+                         agent_backend::tools_legacy::execute_execute_agent",
+                trigger: Trigger::Request,
+                accounted: None,
+                gated_by: Some(Gate::OutputSchema),
+            },
+            Stage {
                 id: "claims",
                 what: "an agent's quantified judgement is retained",
                 sink_sql: "SELECT count(*)::bigint AS n FROM forecast_agent_claims",
