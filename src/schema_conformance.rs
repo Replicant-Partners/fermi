@@ -66,10 +66,19 @@ pub const EVALUATOR: &str = "schema_conformance";
 /// `eval_signals.dimension`.
 pub const DIMENSION: &str = "schema_conformance";
 
-/// Deterministic and structural, so `pre_filter` rather than `dimensional`:
-/// no model ran, nothing was judged, and the answer does not vary between two
+/// Deterministic and structural, so `PreFilter` rather than `Dimensional`: no
+/// model ran, nothing was judged, and the answer does not vary between two
 /// evaluations of the same document.
-pub const TIER: &str = "pre_filter";
+///
+/// The typed variant rather than the string. `eval_signals.evaluator_tier`
+/// carries a CHECK constraint registered in `seam_vocabulary`, and
+/// `no_declared_token_is_re_spelled_as_a_bare_literal` refuses a literal here
+/// — correctly: a literal is invisible to the seam contract, so a token the
+/// column rejects would be refused at runtime, swallowed by the write path,
+/// and surface as an empty table. This test caught exactly that in the first
+/// version of this module.
+pub const TIER: crate::seam_vocabulary::EvaluatorTier =
+    crate::seam_vocabulary::EvaluatorTier::PreFilter;
 
 /// The score for a validation status, or `None` when nothing was checked.
 ///
@@ -140,13 +149,17 @@ pub async fn record(
     .execute(db)
     .await;
 
-    if let Err(e) = res {
-        tracing::warn!(
-            error = %e,
-            "[schema_conformance] signal not written; loop4's conformance \
-             stage will under-report"
-        );
-    }
+    // Counted, not logged.
+    //
+    // The first version of this was `if let Err(e) = res { tracing::warn!() }`,
+    // and `write_accounting_coverage` refused it as an uninstrumented
+    // swallowed write. It was right, and the irony is the point: this module
+    // exists because a signal nobody counts does not exist, and it was
+    // swallowing its own write failure into a log line nobody reads. A failed
+    // insert here makes `loop4.conformed` under-report, which reads as "few
+    // documents were checked" rather than as "the writer is broken" — the
+    // same indistinguishability one layer down.
+    crate::write_accounting::observe(crate::write_accounting::Sink::EvalSignals, res);
 }
 
 #[cfg(test)]
@@ -194,7 +207,12 @@ mod tests {
     fn the_evaluator_vocabulary_is_stable() {
         assert_eq!(EVALUATOR, "schema_conformance");
         assert_eq!(DIMENSION, "schema_conformance");
-        assert_eq!(TIER, "pre_filter");
+            assert_eq!(
+            TIER,
+            crate::seam_vocabulary::EvaluatorTier::PreFilter,
+            "a schema check is deterministic and structural: nothing was \
+             judged, so it is not a `Dimensional` score"
+        );
     }
 
     /// `EVALUATOR` is written into three places: the INSERT above, the loop

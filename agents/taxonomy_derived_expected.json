@@ -262,7 +262,7 @@
   },
   "macro_data_agent": {
     "class": "Researchia",
-    "order": "Prognosticales",
+    "order": "Evidentiales",
     "phylum": "Instrumenta",
     "species": "macro_data_agent"
   },
@@ -483,7 +483,6 @@
   },
   "species_resolver": {
     "class": "Researchia",
-    "order": "Imaginales",
     "phylum": "Instrumenta",
     "species": "species_resolver"
   },
@@ -567,12 +566,10 @@
   },
   "weather_market_analyst": {
     "class": "Researchia",
-    "order": "Consiliales",
     "phylum": "Instrumenta",
     "species": "weather_market_analyst"
   },
   "weather_oracle": {
-    "order": "Prognosticales",
     "phylum": "Composita",
     "species": "weather_oracle"
   },

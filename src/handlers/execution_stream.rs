@@ -208,6 +208,11 @@ pub async fn execute_agent_stream_handler(
     // The declared input ports, captured before the spawn so the streaming
     // path can verify the interface match the same way execution.rs does.
     let declared_accepts = card.accepts.clone();
+    // The declared output type, captured for the same reason `declared_accepts`
+    // is: both execute endpoints must check, or the unchecked one becomes the
+    // one callers use. That sentence is already in this file about grounding
+    // and input binding; the schema was the third check it did not cover.
+    let declared_output_contract = card.capabilities.output_contract.clone();
     let agent_tier = db_agent.tier.clone();
     // Captured for the live observability pass, which needs the agent's
     // persona version and card snapshot after the handler frame is gone.
@@ -302,6 +307,70 @@ pub async fn execute_agent_stream_handler(
                         None,
                         report.clone(),
                     );
+                }
+                // Does the document match the type the agent declared?
+                //
+                // Enforce first, then verify what remains — the block above
+                // has already run, so the document re-extracted here is
+                // checked in the right order. Re-extracted rather than
+                // threaded out of that block because it is scoped and the
+                // grounding pass there mutates a local; the alternative is
+                // widening a scope for a second consumer, which is a larger
+                // change to a closure than this earns.
+                {
+                    let doc = output
+                        .raw_response
+                        .as_deref()
+                        .and_then(fermi::agent_backend::envelope::extract_json)
+                        .map(|mut d| {
+                            fermi::grounding_trust::enforce(&agent_id_clone, &mut d);
+                            d
+                        });
+                    let schema = declared_output_contract
+                        .as_ref()
+                        .and_then(|oc| oc.get("schema"))
+                        .filter(|v| v.is_object());
+                    let status = match (schema, doc.as_ref()) {
+                        (Some(sch), Some(d)) => {
+                            let r = fermi::schema_validate::validate(sch, d);
+                            if r.is_valid() {
+                                "valid"
+                            } else if r.is_contradiction() {
+                                "invalid"
+                            } else {
+                                "unverified_unsupported_schema"
+                            }
+                        }
+                        (None, _) => "unverified_no_schema",
+                        (Some(_), None) => "unverified_no_payload",
+                    };
+                    fermi::gate_trust::decided_about(
+                        fermi::gate_trust::Gate::OutputSchema,
+                        fermi::agent_backend::envelope::decision_for(status),
+                        Some(&format!("{agent_id_clone}: {status}")),
+                        Some(&agent_id_clone),
+                    );
+                    if status == "invalid" {
+                        tracing::warn!(
+                            agent = %agent_id_clone,
+                            episode = %minted_episode_id,
+                            "output contradicts the type the agent itself \
+                             declared, on the streaming execute path"
+                        );
+                    }
+                    if fermi::schema_conformance::score_for(status).is_some() {
+                        fermi::schema_conformance::record(
+                            &state_clone.db,
+                            agent_db_id,
+                            minted_episode_id,
+                            status,
+                            declared_output_contract
+                                .as_ref()
+                                .and_then(|oc| oc.get("produces_schema"))
+                                .and_then(|v| v.as_str()),
+                        )
+                        .await;
+                    }
                 }
                 // Verify the asking against the card — see execution.rs. Both
                 // execute endpoints must check, or the unchecked one becomes

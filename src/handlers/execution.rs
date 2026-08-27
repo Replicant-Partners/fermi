@@ -410,12 +410,22 @@ pub async fn execute_agent_handler(
     // `enforce` is a pure function over the document and returns an empty
     // report for any agent without a contract, so this is a no-op for most of
     // the catalogue and cannot fail a run.
-    let grounding_report = match output
+    // The document AFTER enforcement, kept rather than dropped.
+    //
+    // This enforced into a binding local to the match arm and threw it away,
+    // keeping only the report. That was enough while nothing downstream needed
+    // the cleaned document; schema validation does, and it has to see the
+    // cleaned one. Order is load-bearing and `envelope::build` states the
+    // rule: enforce first, then verify what remains. A schema pinning an
+    // unsourceable field to `null` would otherwise reject a document
+    // grounding was about to clean, and the agent would be blamed for
+    // something the platform then fixed.
+    let mut enforced_doc = output
         .raw_response
         .as_deref()
-        .and_then(fermi::agent_backend::envelope::extract_json)
-    {
-        Some(mut doc) => fermi::grounding_trust::enforce(&agent_id, &mut doc),
+        .and_then(fermi::agent_backend::envelope::extract_json);
+    let grounding_report = match enforced_doc.as_mut() {
+        Some(doc) => fermi::grounding_trust::enforce(&agent_id, doc),
         None => fermi::grounding_trust::Report::default(),
     };
     // The invocation gate's own verdict, counted — in three states, not two.
@@ -457,6 +467,106 @@ pub async fn execute_agent_handler(
             violations = grounding_report.violations.len(),
             "grounding contract violated on the execute path — fields with no possible source"
         );
+    }
+
+    // 3.7 Does the document match the type the agent declared?
+    //
+    // This path built no envelope and validated no schema. So a declared type
+    // was enforced on the agent→agent route — `envelope::build`, from the
+    // delegation hop — and completely unenforced when a person or a script
+    // POSTed here. That is the mirror image of the defect `envelope.rs` was
+    // written to fix: there the composition path was the unprotected one, and
+    // the asymmetry had simply flipped rather than gone away.
+    //
+    // Not `envelope::build`, deliberately. `build` re-extracts from
+    // `raw_response` and re-runs `enforce`, so calling it here would be a
+    // second pass over the same instant — two enforcement runs that could in
+    // principle describe different documents. The pieces are reused instead:
+    // the enforced document from above, the schema off the card, and
+    // `envelope::decision_for`, so the gate mapping has one definition rather
+    // than two.
+    let declared_schema = card
+        .capabilities
+        .output_contract
+        .as_ref()
+        .and_then(|oc| oc.get("schema"))
+        .filter(|s| s.is_object());
+    let declared_type = card
+        .capabilities
+        .output_contract
+        .as_ref()
+        .and_then(|oc| oc.get("produces_schema"))
+        .and_then(|v| v.as_str());
+
+    let (validation_status, schema_violations) = match (declared_schema, enforced_doc.as_ref()) {
+        (Some(schema), Some(doc)) => {
+            let r = fermi::schema_validate::validate(schema, doc);
+            let status = if r.is_valid() {
+                "valid"
+            } else if r.is_contradiction() {
+                "invalid"
+            } else {
+                // A schema keyword the validator cannot evaluate. NOT a
+                // pass: reporting it as one would mean a card could buy
+                // itself a green light by declaring something unreadable.
+                "unverified_unsupported_schema"
+            };
+            (
+                status,
+                r.violations
+                    .iter()
+                    .map(|v| json!({ "path": v.path, "message": v.message }))
+                    .collect::<Vec<_>>(),
+            )
+        }
+        (None, _) => ("unverified_no_schema", vec![]),
+        (Some(_), None) => ("unverified_no_payload", vec![]),
+    };
+
+    // The gate. `unverified_*` maps to `Undetermined`, never `Approved` —
+    // and on this path that is the overwhelming majority, because most
+    // callers reach agents that declare no type at all.
+    fermi::gate_trust::decided_about(
+        fermi::gate_trust::Gate::OutputSchema,
+        fermi::agent_backend::envelope::decision_for(validation_status),
+        Some(&match validation_status {
+            "invalid" => format!(
+                "{agent_id}: contradicts declared type {} at {}",
+                declared_type.unwrap_or("(none)"),
+                schema_violations
+                    .first()
+                    .and_then(|v| v.get("path"))
+                    .and_then(|p| p.as_str())
+                    .unwrap_or("<root>")
+            ),
+            other => format!("{agent_id}: {other}"),
+        }),
+        Some(&agent_id),
+    );
+
+    if validation_status == "invalid" {
+        tracing::warn!(
+            agent = %agent_id,
+            episode = %episode_id,
+            declared_type = declared_type.unwrap_or("(none)"),
+            violations = schema_violations.len(),
+            "output contradicts the type the agent itself declared"
+        );
+    }
+
+    // And the trend, so loop4's conformance stage counts HTTP executions and
+    // not only delegation hops. Writes nothing when nothing was checked;
+    // see `schema_conformance` for why an unverified document has no honest
+    // score.
+    if fermi::schema_conformance::score_for(validation_status).is_some() {
+        fermi::schema_conformance::record(
+            &state.db,
+            db_agent.agent_id,
+            episode_id,
+            validation_status,
+            declared_type,
+        )
+        .await;
     }
 
     // 4. Record stats in registry
@@ -748,6 +858,15 @@ pub async fn execute_agent_handler(
         // or show the person who paid for the run.
         "failure_reason": output.metadata.failure_reason,
         "stop_reason": output.metadata.stop_reason,
+        // Whether the document matched the type the agent declared. Reported
+        // rather than only counted: a caller composing this response needs
+        // the same three-way answer a delegating agent gets, and
+        // `unverified_*` is not a pass on either route.
+        "validation": {
+            "type": declared_type,
+            "status": validation_status,
+            "violations": schema_violations,
+        },
         "metadata": {
             "model_used": output.metadata.model_used,
             "provider": output.metadata.provider,

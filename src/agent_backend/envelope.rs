@@ -287,7 +287,7 @@ pub fn build(
 /// this module exists to remove, restated one layer up. And it is the COMMON
 /// case: 98 of 101 curated cards declare no schema, so getting it wrong would
 /// have the gate report near-perfect health forever.
-pub(crate) fn decision_for(validation_status: &str) -> crate::gate_trust::Decision {
+pub fn decision_for(validation_status: &str) -> crate::gate_trust::Decision {
     match validation_status {
         "valid" => crate::gate_trust::Decision::Approved,
         "invalid" => crate::gate_trust::Decision::Refused,
