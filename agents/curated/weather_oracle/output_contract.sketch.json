@@ -1,0 +1,172 @@
+{
+  "_README": [
+    "Source of truth for capabilities.output_contract. Compile with",
+    "`cargo run --bin contract-sketch -- weather_oracle`.",
+    "",
+    "A COORDINATOR'S CONTRACT LOOKS DIFFERENT",
+    "",
+    "weather_oracle does not do its members' jobs; it runs a four-stage",
+    "pipeline and then argues with the result. So most of its blocks are",
+    "sourced from `execute_agent` — one per member — and exactly one is",
+    "`inferred`: Stage 4, the adversarial synthesis, which is the reason",
+    "the agent exists rather than being a script.",
+    "",
+    "Sourcing a block from `execute_agent` is deliberate. From this agent's",
+    "position the member's answer IS a retrieval: it called a declared tool",
+    "and got a value. `tool_verified` then means the member answered and",
+    "`tool_no_match` that it returned nothing — both true statements about",
+    "this hop. Whether the member's CONTENT is trustworthy is governed by",
+    "that member's own contract and reported in its delegation envelope,",
+    "which is precisely the composition the envelope exists to carry."
+  ],
+
+  "domain": "weather-markets",
+  "produces_schema": "fermi/weather_market_call",
+  "title": "Weather market call",
+  "synthesis": "pipeline",
+  "description": "The output of a four-stage weather pipeline: frame, forecast, calibrate, price, then challenge. Each stage's block is stamped for whether that stage actually produced anything, so a caller can see where the chain stopped instead of reading a confident answer built on a stage that was skipped.",
+
+  "calibration": {
+    "signal": "brier_forecast",
+    "comparison": "brier_score",
+    "resolution_delay_hours": 48,
+    "note": "The scoreable quantity is `challenge.final_probability`, not the calibrator's raw output — this agent is allowed to override its members and must be scored on what it actually published."
+  },
+
+  "blocks": [
+    {
+      "name": "proposition",
+      "description": "Stage 0. The settlement target, stated precisely enough to be falsifiable.",
+      "source": {
+        "status": "sourced",
+        "tool": "weather_settlement_spec",
+        "response_field": "station identity (ICAO), IANA timezone defining the local day, unit, bucket width, rounding convention, resolution source",
+        "coverage": "complete"
+      },
+      "why": "A local registry lookup with no network, so it either knows the market's station or it does not. This block exists because ambiguity here poisons every stage after it: the registry encodes that Polymarket NYC temperature settles on KLGA and not Central Park, and a chain framed on the wrong station is invalid however good the forecast was.",
+      "fields": {
+        "station_icao": "string?",
+        "timezone": "string?",
+        "local_date": "string?",
+        "variable": "string?",
+        "unit": "string?",
+        "bucket_low": {
+          "type": "number?",
+          "description": "Inclusive lower bound of the settlement interval. A NUMBER, not a label: a bucket labelled `76-77` is the half-open interval [75.5, 77.5) and is two degrees wide. A generalist asked one such question returned 12% — the one-degree answer — against a measured 32%. Typing the bounds is what stops the label being mistaken for the interval."
+        },
+        "bucket_high": "number?",
+        "rounding": "string?"
+      }
+    },
+
+    {
+      "name": "market",
+      "description": "The live market, when one is in play.",
+      "source": {
+        "status": "sourced",
+        "tool": "polymarket_weather_markets",
+        "response_field": "the matched market's slug, question text and current prices",
+        "coverage": "deferred"
+      },
+      "why": "Deferred rather than complete: this agent is often asked a bare forecasting question with no market attached, in which case the discovery call is never made and the block is legitimately empty. `pending_tool_check` says the lookup did not run; it must not be reported as though Polymarket was asked and had nothing, which is a different fact about a different world.",
+      "fields": {
+        "market_slug": "string?",
+        "question_text": "string?",
+        "yes_price": "number?",
+        "no_price": "number?"
+      }
+    },
+
+    {
+      "name": "forecast",
+      "description": "Stage 1. The raw ensemble, from weather_ensemble_forecaster.",
+      "source": {
+        "status": "sourced",
+        "tool": "execute_agent",
+        "response_field": "weather_ensemble_forecaster's envelope: raw bucket probability, ERA5 climatological base rate, and the within-model versus cross-model spread decomposition",
+        "coverage": "complete"
+      },
+      "why": "Retrieved from this agent's position: it called a declared tool and a member answered, or it did not. Whether the numbers inside are sound is governed by that member's own contract and reported in its delegation envelope, which is the division of responsibility the envelope exists to carry. Recording it as `sourced` here keeps the pipeline auditable — a caller can see which stage produced which number rather than meeting one synthesised total.",
+      "fields": {
+        "raw_probability": "number?",
+        "climatology_base_rate": "number?",
+        "within_model_spread": "number?",
+        "cross_model_spread": "number?"
+      }
+    },
+
+    {
+      "name": "calibration_stage",
+      "description": "Stage 2. The bettable probability, from weather_calibrator.",
+      "source": {
+        "status": "sourced",
+        "tool": "execute_agent",
+        "response_field": "weather_calibrator's envelope: calibrated probability, error bar, and Brier Skill Score against climatology",
+        "coverage": "complete"
+      },
+      "why": "The stage with a hard stop attached: a negative Brier Skill Score means the forecast is worse than climatology, and the pipeline must halt rather than price it. `skill_score` is therefore in the document as a number rather than left in prose, so a downstream reader can check the halt condition themselves instead of trusting that this agent applied it.",
+      "fields": {
+        "calibrated_probability": "number?",
+        "error_bar": "number?",
+        "skill_score": {
+          "type": "number?",
+          "description": "Brier Skill Score against climatology. Negative means worse than climatology, and the pipeline is required to stop at this stage rather than price it."
+        }
+      }
+    },
+
+    {
+      "name": "pricing",
+      "description": "Stage 3. The fee-adjusted valuation, from weather_market_analyst.",
+      "source": {
+        "status": "sourced",
+        "tool": "execute_agent",
+        "response_field": "weather_market_analyst's envelope: resolution-text audit, fee-adjusted edge and sized recommendation",
+        "coverage": "deferred"
+      },
+      "why": "Deferred because Stage 3 is legitimately not reached on two ordinary paths — no market was in play, or Stage 2 reported negative skill and the pipeline was required to stop. An empty pricing block after a correct halt is the system working, and `pending_tool_check` says so; flattening it to `unavailable_no_tool_source` would report a missing source when what happened was a deliberate refusal to price.",
+      "fields": {
+        "resolution_audit_agrees": {
+          "type": "boolean?",
+          "description": "Whether the market's verbatim resolution text names the same station and day as `proposition`. False invalidates the whole chain and must not be papered over."
+        },
+        "edge_after_fees": "number?",
+        "recommended_side": "enum:yes|no|none?",
+        "recommended_size_usd": "number?"
+      }
+    },
+
+    {
+      "name": "challenge",
+      "description": "Stage 4. This agent's own adversarial pass, and the reason it is not a script.",
+      "source": {
+        "status": "inferred",
+        "from": "the four blocks above, checked against each other: whether the resolution audit contradicts the settlement target, whether the edge exceeds the calibration uncertainty, and whether the halt conditions were respected"
+      },
+      "why": "The only block this agent authors, and the one it is scored on. Every value is a judgement over its members' outputs and can never be `tool_verified` however good those were — two runs over one set of member answers may legitimately disagree about whether an eight-point edge survives ten points of calibration uncertainty. Stamped `model_inference` as a constant so no run can present the coordinator's override as a retrieved figure.",
+      "fields": {
+        "verdict": {
+          "type": "enum:tradeable|not_forecastable_with_skill|chain_invalid|no_market|indeterminate",
+          "description": "`not_forecastable_with_skill` and `chain_invalid` are successes, not failures: the first is the required halt on negative skill, the second is catching that the market resolves on a different station than the one forecast."
+        },
+        "final_probability": {
+          "type": "number?",
+          "description": "What this agent actually publishes, which may differ from the calibrator's. The Brier-scored quantity, because an agent allowed to override its members must be scored on what it published rather than on what it was handed."
+        },
+        "edge_exceeds_uncertainty": "boolean?",
+        "confidence": "number?",
+        "objections": {
+          "type": "string[]",
+          "description": "Every challenge raised in Stage 4, including the ones that did not change the verdict. An adversarial pass that records only its wins is indistinguishable from one that never ran."
+        }
+      }
+    },
+
+    {
+      "name": "summary",
+      "source": { "status": "narrative" },
+      "why": "Prose for a human deciding whether to act. The highest-risk field here because a halted pipeline still produces a paragraph, and a fluent sentence about a market can read as a recommendation even when `verdict` says the chain was invalid. Must not state a probability the challenge block does not carry.",
+      "value": "string"
+    }
+  ]
+}

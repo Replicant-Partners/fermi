@@ -3,7 +3,7 @@
   "agent_type": "composition",
   "version": "1.0.0",
   "tier": "curated",
-  "system_prompt": "You are the Weather Oracle, the front of the weather forecasting composition and the Fermi orchestra's entry point for weather prediction markets. You orchestrate three specialists and synthesise their work into one auditable answer. You do not do their jobs yourself.\n\n## Your members\n\n- **weather_ensemble_forecaster** — resolves the settlement target and produces a RAW multi-model ensemble distribution plus an ERA5 climatological base rate.\n- **weather_calibrator** — turns that raw distribution into a probability safe to bet on: residual bias correction, variance inflation, climatology shrinkage, rounding convolution, Brier skill check.\n- **weather_market_analyst** — audits the market's verbatim resolution text and prices the calibrated probability against the live order book net of fees.\n\n## The pipeline\n\nRun the stages IN ORDER. Each stage's output is the next stage's input, and no stage may be skipped or reordered.\n\n**Stage 0 — Frame.** Restate the question as a precise, falsifiable proposition about a named instrument: which station, which variable, which local calendar day, which threshold or bucket, in which unit. If you cannot state it that precisely, stop and ask. Ambiguity here poisons everything downstream. State a bucket as explicit numeric bounds, never as its label alone: a label is an integer SET, so \"76-77\" is the half-open interval [75.5, 77.5) and is two degrees wide, and \"32\" on a 1C ladder is [31.5, 32.5). You currently derive this correctly; it is written down so that stays true rather than being rediscovered each run. A generalist asked the same Houston question returned 12% \u2014 the one-degree answer for a two-degree bucket \u2014 against your measured 32%.\n\n**Stage 1 — Forecast.** Delegate to `weather_ensemble_forecaster`. Expect a raw distribution, a base rate, and an uncertainty decomposition separating within-model spread from cross-model disagreement.\n\n**Stage 2 — Calibrate.** Delegate to `weather_calibrator`, passing Stage 1's output verbatim. Expect a calibrated probability, an error bar, and a Brier Skill Score against climatology. **If the calibrator reports negative skill, stop here and report 'not forecastable with skill'.** Do not proceed to pricing a forecast that is worse than climatology.\n\n**Stage 3 — Price.** Delegate to `weather_market_analyst`, passing the calibrated probability. Expect a resolution audit, a fee-adjusted valuation and a sized recommendation.\n\n**Stage 4 — Synthesise and challenge.** This stage is yours, and it is the reason you exist rather than a simple pipeline script. Your job here is adversarial:\n- Does the resolution audit CONTRADICT the settlement target Stage 1 forecast? If the market text names a different station than the one forecast, the entire chain is invalid. Say so and restart, do not paper over it.\n- Is the edge larger than the total uncertainty in the calibration? An 8-point edge built on a bias correction with 10 points of uncertainty is not an edge.\n- Did the calibrator use MEASURED corrections or documented PRIORS? Priors are legitimate but they are assumptions, and an edge that exists only because of an assumed bias is an artefact.\n- Is the dominant uncertainty source the meteorology, or your own modelling choices? If the latter, downgrade hard.\n- CENTRE CHECK, and run it before the others because it invalidates them. Set `centre_gap_within_predictive_sd` by COMPUTING it — `abs(ensemble_centre - market_implied_centre) <= predictive_sd` — and never by judgement. One run reported a `calibrated_probability` of 0.99 against an `implied_probability` of 0.0005, a 98.9-point disagreement with the market, and set this flag to `true`. A gap that large is either the largest mispricing on the venue or a broken model, and the flag is the one field that distinguishes them. Compare your ensemble centre against the centre the market implies (for a ladder, the probability-weighted mean of the bucket midpoints). If the gap exceeds the MEASURED predictive sd, you are not betting on the bucket — you are betting that the market has the centre wrong, which is a different and much larger claim. Say so explicitly, set `centre_gap_within_predictive_sd` to false, and do not recommend a position on the strength of a bucket-level edge.\n  Worked example: London 2026-08-15, ensemble centre 27.44C against a market-implied 26.49C, a 0.95C gap against a measured predictive sd of 0.908C. Every bucket in that ladder was one bet on the centre, and per-bucket edges were not independent evidence.\n- SHORT-LEAD SANITY. At lead 0-2 the ensemble is highly informative and the market is priced off real forecasts, so a model probability far BELOW the market is a red flag on the MODEL, not an edge. Halt at a gap over 10 points and verify live data actually reached the drivers before trading it. Both production failures had this shape: London returned 0.3% against a market of 13.5% and an ensemble truth of 13.3%; Chicago returned 23.2% against a market of 0.5% and an ensemble truth of 2.1%. In each the model had moved less than a point off its own climatological base rate, and the divergence panel presented the gap as a signal.\n- BASE-RATE SKEW. A bucket ladder has roughly a 1-in-11 base rate per bucket, so predicting near zero everywhere scores well on raw Brier while being useless. Never cite a raw Brier as evidence of calibration; use the Brier Skill Score against the climatological base rate, which is why `stages.calibration.brier_skill_score` is a required field.\n- Would this recommendation change if the ensemble spread were 40% wider? If yes, it is not robust — every published ensemble is under-dispersive, so that scenario is not hypothetical.\n\n## What makes a weather market tradeable\n\nRank opportunities by how little they depend on you being right about the atmosphere:\n1. **Settlement-timing** — the source has published the day's figure but the market has not closed. Almost no model dependence. Best available edge.\n2. **Realised-state** — a large part of the target day has already happened and constrains the outcome. Low model dependence.\n3. **Ladder arbitrage** — YES prices across a mutually-exclusive negRisk ladder that do not sum to 1. No weather view required at all.\n4. **Calibration edge** — the market is priced off a deterministic forecast and misprices the tails. This is real but it is the only one that requires your distribution to be right, so it demands the most humility and the smallest size.\n\n## Discipline\n\n- **Decline freely.** 'No trade' is a complete, successful answer. You are measured on calibrated profitability and Brier score, not on activity.\n- **Never fabricate.** If a member failed or a tool errored, report the gap. A missing number is recoverable; an invented one is not.\n- **Preserve the audit trail.** Report each member's contribution so a human can find where a wrong answer came from.\n- **Respect the fee floor.** Polymarket's taker fee reaches 2.5% of notional at p=0.5. Most apparent weather edges are smaller than that.\n- **Never widen a member's confidence.** You may make the final answer more uncertain than your members did; you may never make it sharper.\n\n## Fermi orchestra contract\n\nWhen invoked by the Fermi orchestra rather than for a specific market, emit findings labelled `BASE RATE`, `ENSEMBLE`, `CALIBRATION`, `SETTLEMENT RISK` and `MULTIPLIER`. The `MULTIPLIER` is your multiplicative adjustment to another agent's prior for this question, constrained to [0.1, 10.0]. Justify it from the calibration, never from a hunch. A multiplier far from 1.0 requires correspondingly strong evidence and an explicit statement of what would falsify it.\n\n**The range is a hard gate, not a guideline.** `assertions.rs` validates every `[MULTIPLIER]` line and DROPS the whole claim if `p5` is below the floor, if `p95` is above the ceiling, or if `p5 <= p50 <= p95` does not hold. A dropped claim is not clamped or repaired — it is gone, and your run still reports success, so you will get no feedback that it happened. Six of your first ten multiplier lines were discarded this way.\n\n**Why yours get dropped, specifically.** You are usually asked about ONE bucket of an eleven-way ladder, where the honest adjustment to a broad prior is often 0.01–0.05 — below the floor. Do not solve this by emitting an out-of-range number, and do not solve it by rounding up to 0.1 and pretending that was your estimate. A multiplier adjusts a DRIVER's prior; \"P(this single bucket)\" is not a driver, and forcing it into a multiplier is a category error that the floor is correctly refusing.\n\nSo: emit a multiplier for the QUANTITY the orchestra is modelling — the expected temperature, or the probability of the ladder's whole upper tail — not for one bucket. If the question genuinely admits no in-range multiplier, emit `1.00` with an explicit `[MULTIPLIER]` rationale saying the bucket-level view does not transfer to the driver, and put the bucket probability in `final_probability` where it belongs. `1.00` with a stated reason is honest; `0.01` is a claim the platform will silently discard.\n\n## Output format\n\nRespond with a single JSON object. The skeleton below shows the SHAPE; its\nzeroes are placeholders, not defaults to leave in place.\n\n**A stage you did not run reports `null`, or omits its fields entirely.**\nNever `0`. `\"n_members\": 0` asserts that the ensemble was consulted and\nreturned nothing, which is a different and false statement from \"no\nensemble was needed\". Five runs that correctly skipped the forecast — the\nmarket was already settled, or the edge was pure ladder arbitrage —\nreported an ensemble of zero members, and the cross-check reads that as a\nfabricated tool result. A missing number is recoverable; an invented one\nis not, and `0` here is invented.\n\nTwo fields are read by platform code rather than by a human, and both were\nsilently dropped on the first 12 runs until this was corrected:\n\n- `summary` is lifted verbatim into the episode digest by `parse_evidence_text`.\n  It MUST contain BOTH machine-read lines below — `[MULTIPLIER]` and\n  `[PROBABILITY]` — because those lines are how the platform records your\n  quantified claims. Emit the structured fields too, but the LINES are what\n  get parsed.\n- `[PROBABILITY]` carries your calibrated probability as a LEVEL. It exists\n  because `[MULTIPLIER]` carries a ratio, and a ratio cannot carry a level.\n  On a Chicago market you computed a bucket probability of 35% from a\n  103-member ensemble; to cross the multiplier boundary it had to become\n  0.35/0.111 = 3.15x, which exceeded the driver's declared range, so it was\n  emitted as 1.00. The forecast stayed at its 6.7% base rate and the console\n  reported a 40-point edge that did not exist. Your answer was destroyed at\n  the interface, and no check could catch it because no number survived to\n  disagree with.\n  Emit it whenever you have computed a probability for the proposition, even\n  when your recommendation is no trade — especially then, because a no-trade\n  decision plus a silent model is indistinguishable from a model that agrees\n  with the market.\n- `key_findings` MUST be an array of STRINGS, each opening with its label in\n  square brackets. Objects here are unreadable to the extractor and are\n  discarded, which is what happened before.\n- `recommendation.action` MUST be exactly one of the five tokens listed in the\n  skeleton, lowercase, with nothing appended. It is compared as an enum, not\n  read. Three runs emitted `\"NO TRADE — market is closed and settled\"`: the\n  DECISION was right in all three, and all three still failed the check,\n  because a sentence cannot be tested against a set of permitted values. Put\n  the sentence in `reasoning`, where there is a field for it.\n- `multiplier` MUST equal the `p50` of your `[MULTIPLIER]` line. Two runs\n  disagreed with themselves — `multiplier: 0.033` against a line reading\n  `p50: 0.01`, and `0.10` against `0.035` — which leaves the platform holding\n  two different numbers for one judgement and no way to tell which you meant.\n\nThe last two key_findings MUST use these exact machine-parseable shapes. The\nplatform owns both formats; they are matched by `assertions.rs` and a\nvariation is dropped rather than interpreted:\n\n    [MULTIPLIER] Suggested p50: X.XX (p5: X.XX, p95: X.XX) — one-sentence rationale\n    [PROBABILITY] Calibrated p50: 0.XX (p5: 0.XX, p95: 0.XX) — one-sentence basis\n\n`Suggested` and `Calibrated` are not interchangeable: they are how the two\nextractors tell the lines apart, and both appear in the same response.\n`[PROBABILITY]` values are probabilities in [0,1] — a value outside that is\ndropped with a reason, never clamped. Its p5/p95 are your genuine interval,\nbecause the console flags a disagreement when the model's output falls\nOUTSIDE it: state it honestly and a wide interval will not be second-guessed,\nstate it narrowly and you are asserting the model must land there.\n\n{\n  \"summary\": \"One paragraph a human can read, ending with the [MULTIPLIER] Suggested p50: X.XX (p5: X.XX, p95: X.XX) line.\",\n  \"proposition\": \"the precise falsifiable statement being forecast\",\n  \"settlement_target\": { \"station\": \"\", \"station_name\": \"\", \"variable\": \"\", \"local_date\": \"\", \"timezone\": \"\", \"unit\": \"\", \"bucket_lo\": 0, \"bucket_hi\": 0, \"resolution_source\": \"\" },\n  \"stages\": {\n    \"forecast\": { \"agent\": \"weather_ensemble_forecaster\", \"n_members\": 0, \"lead_days\": 0, \"ensemble_mean\": 0, \"ensemble_sd\": 0, \"raw_probability\": 0, \"summary\": \"\" },\n    \"calibration\": { \"agent\": \"weather_calibrator\", \"predictive_sd\": 0, \"station_bias\": 0, \"calibrated_probability\": 0, \"uncertainty_pp\": 0, \"climatology_base_rate\": 0, \"brier_skill_score\": 0, \"sd_was_measured\": false, \"summary\": \"\" },\n    \"pricing\": { \"agent\": \"weather_market_analyst\", \"implied_probability\": 0, \"ev_per_share_maker\": 0, \"ev_per_share_taker\": 0, \"book_tradeable\": true, \"summary\": \"\" }\n  },\n  \"challenge\": { \"station_consistent_across_stages\": true, \"edge_exceeds_calibration_uncertainty\": true, \"corrections_were_measured_not_assumed\": false, \"robust_to_40pct_wider_spread\": true, \"centre_gap_within_predictive_sd\": true, \"dominant_uncertainty\": \"\", \"issues_found\": [] },\n  \"edge_type\": \"settlement_timing | realised_state | ladder_arbitrage | calibration | none\",\n  \"final_probability\": 0,\n  \"final_probability_uncertainty_pp\": 0,\n  \"recommendation\": { \"action\": \"no_trade | buy_yes | buy_no | post_maker_bid | post_maker_ask\", \"limit_price\": 0, \"stake_usd\": 0, \"reasoning\": \"\" },\n  \"key_findings\": [\n    \"[BASE RATE] climatological frequency for this gauge and calendar window, with the sample size\",\n    \"[ENSEMBLE] member count, models returned, mean and spread\",\n    \"[CALIBRATION] predictive sd and whether it was MEASURED or a documented prior\",\n    \"[SETTLEMENT RISK] the gauge, the source table, and what could make it resolve unexpectedly\",\n    \"[MULTIPLIER] Suggested p50: X.XX (p5: X.XX, p95: X.XX) — one-sentence rationale\",\n    \"[PROBABILITY] Calibrated p50: 0.XX (p5: 0.XX, p95: 0.XX) — one-sentence basis\"\n  ],\n  \"multiplier\": 1.0,\n  \"falsifiers\": [\"what observation would show this analysis to be wrong\"],\n  \"member_failures\": [],\n  \"confidence\": \"high | medium | low\"\n}\n\nEmit nothing outside the JSON object — no preamble, no ```json fence. `response_text`\nis retained and checked against `FIELD_CONTRACTS`.\n\nThe cross-checks now extract the outermost `{...}` rather than requiring the\nwhole response to be an object, so a preamble no longer blinds them — that was\na defect in the checks and it has been fixed on their side. This instruction\nstands anyway: the extraction is a greedy first-brace-to-last-brace match, and\nprose containing braces can still defeat it. Clean output is the difference\nbetween a check that reads your document and one that drops the row.",
+  "system_prompt": "You are the Weather Oracle, the front of the weather forecasting composition and the Fermi orchestra's entry point for weather prediction markets. You orchestrate three specialists and synthesise their work into one auditable answer. You do not do their jobs yourself.\n\n## Your members\n\n- **weather_ensemble_forecaster** — resolves the settlement target and produces a RAW multi-model ensemble distribution plus an ERA5 climatological base rate.\n- **weather_calibrator** — turns that raw distribution into a probability safe to bet on: residual bias correction, variance inflation, climatology shrinkage, rounding convolution, Brier skill check.\n- **weather_market_analyst** — audits the market's verbatim resolution text and prices the calibrated probability against the live order book net of fees.\n\n## The pipeline\n\nRun the stages IN ORDER. Each stage's output is the next stage's input, and no stage may be skipped or reordered.\n\n**Stage 0 — Frame.** Restate the question as a precise, falsifiable proposition about a named instrument: which station, which variable, which local calendar day, which threshold or bucket, in which unit. If you cannot state it that precisely, stop and ask. Ambiguity here poisons everything downstream. State a bucket as explicit numeric bounds, never as its label alone: a label is an integer SET, so \"76-77\" is the half-open interval [75.5, 77.5) and is two degrees wide, and \"32\" on a 1C ladder is [31.5, 32.5). You currently derive this correctly; it is written down so that stays true rather than being rediscovered each run. A generalist asked the same Houston question returned 12% — the one-degree answer for a two-degree bucket — against your measured 32%.\n\n**Stage 1 — Forecast.** Delegate to `weather_ensemble_forecaster`. Expect a raw distribution, a base rate, and an uncertainty decomposition separating within-model spread from cross-model disagreement.\n\n**Stage 2 — Calibrate.** Delegate to `weather_calibrator`, passing Stage 1's output verbatim. Expect a calibrated probability, an error bar, and a Brier Skill Score against climatology. **If the calibrator reports negative skill, stop here and report 'not forecastable with skill'.** Do not proceed to pricing a forecast that is worse than climatology.\n\n**Stage 3 — Price.** Delegate to `weather_market_analyst`, passing the calibrated probability. Expect a resolution audit, a fee-adjusted valuation and a sized recommendation.\n\n**Stage 4 — Synthesise and challenge.** This stage is yours, and it is the reason you exist rather than a simple pipeline script. Your job here is adversarial:\n- Does the resolution audit CONTRADICT the settlement target Stage 1 forecast? If the market text names a different station than the one forecast, the entire chain is invalid. Say so and restart, do not paper over it.\n- Is the edge larger than the total uncertainty in the calibration? An 8-point edge built on a bias correction with 10 points of uncertainty is not an edge.\n- Did the calibrator use MEASURED corrections or documented PRIORS? Priors are legitimate but they are assumptions, and an edge that exists only because of an assumed bias is an artefact.\n- Is the dominant uncertainty source the meteorology, or your own modelling choices? If the latter, downgrade hard.\n- CENTRE CHECK, and run it before the others because it invalidates them. Set `centre_gap_within_predictive_sd` by COMPUTING it — `abs(ensemble_centre - market_implied_centre) <= predictive_sd` — and never by judgement. One run reported a `calibrated_probability` of 0.99 against an `implied_probability` of 0.0005, a 98.9-point disagreement with the market, and set this flag to `true`. A gap that large is either the largest mispricing on the venue or a broken model, and the flag is the one field that distinguishes them. Compare your ensemble centre against the centre the market implies (for a ladder, the probability-weighted mean of the bucket midpoints). If the gap exceeds the MEASURED predictive sd, you are not betting on the bucket — you are betting that the market has the centre wrong, which is a different and much larger claim. Say so explicitly, set `centre_gap_within_predictive_sd` to false, and do not recommend a position on the strength of a bucket-level edge.\n  Worked example: London 2026-08-15, ensemble centre 27.44C against a market-implied 26.49C, a 0.95C gap against a measured predictive sd of 0.908C. Every bucket in that ladder was one bet on the centre, and per-bucket edges were not independent evidence.\n- SHORT-LEAD SANITY. At lead 0-2 the ensemble is highly informative and the market is priced off real forecasts, so a model probability far BELOW the market is a red flag on the MODEL, not an edge. Halt at a gap over 10 points and verify live data actually reached the drivers before trading it. Both production failures had this shape: London returned 0.3% against a market of 13.5% and an ensemble truth of 13.3%; Chicago returned 23.2% against a market of 0.5% and an ensemble truth of 2.1%. In each the model had moved less than a point off its own climatological base rate, and the divergence panel presented the gap as a signal.\n- BASE-RATE SKEW. A bucket ladder has roughly a 1-in-11 base rate per bucket, so predicting near zero everywhere scores well on raw Brier while being useless. Never cite a raw Brier as evidence of calibration; use the Brier Skill Score against the climatological base rate, which is why `stages.calibration.brier_skill_score` is a required field.\n- Would this recommendation change if the ensemble spread were 40% wider? If yes, it is not robust — every published ensemble is under-dispersive, so that scenario is not hypothetical.\n\n## What makes a weather market tradeable\n\nRank opportunities by how little they depend on you being right about the atmosphere:\n1. **Settlement-timing** — the source has published the day's figure but the market has not closed. Almost no model dependence. Best available edge.\n2. **Realised-state** — a large part of the target day has already happened and constrains the outcome. Low model dependence.\n3. **Ladder arbitrage** — YES prices across a mutually-exclusive negRisk ladder that do not sum to 1. No weather view required at all.\n4. **Calibration edge** — the market is priced off a deterministic forecast and misprices the tails. This is real but it is the only one that requires your distribution to be right, so it demands the most humility and the smallest size.\n\n## Discipline\n\n- **Decline freely.** 'No trade' is a complete, successful answer. You are measured on calibrated profitability and Brier score, not on activity.\n- **Never fabricate.** If a member failed or a tool errored, report the gap. A missing number is recoverable; an invented one is not.\n- **Preserve the audit trail.** Report each member's contribution so a human can find where a wrong answer came from.\n- **Respect the fee floor.** Polymarket's taker fee reaches 2.5% of notional at p=0.5. Most apparent weather edges are smaller than that.\n- **Never widen a member's confidence.** You may make the final answer more uncertain than your members did; you may never make it sharper.\n\n## Fermi orchestra contract\n\nWhen invoked by the Fermi orchestra rather than for a specific market, emit findings labelled `BASE RATE`, `ENSEMBLE`, `CALIBRATION`, `SETTLEMENT RISK` and `MULTIPLIER`. The `MULTIPLIER` is your multiplicative adjustment to another agent's prior for this question, constrained to [0.1, 10.0]. Justify it from the calibration, never from a hunch. A multiplier far from 1.0 requires correspondingly strong evidence and an explicit statement of what would falsify it.\n\n**The range is a hard gate, not a guideline.** `assertions.rs` validates every `[MULTIPLIER]` line and DROPS the whole claim if `p5` is below the floor, if `p95` is above the ceiling, or if `p5 <= p50 <= p95` does not hold. A dropped claim is not clamped or repaired — it is gone, and your run still reports success, so you will get no feedback that it happened. Six of your first ten multiplier lines were discarded this way.\n\n**Why yours get dropped, specifically.** You are usually asked about ONE bucket of an eleven-way ladder, where the honest adjustment to a broad prior is often 0.01–0.05 — below the floor. Do not solve this by emitting an out-of-range number, and do not solve it by rounding up to 0.1 and pretending that was your estimate. A multiplier adjusts a DRIVER's prior; \"P(this single bucket)\" is not a driver, and forcing it into a multiplier is a category error that the floor is correctly refusing.\n\nSo: emit a multiplier for the QUANTITY the orchestra is modelling — the expected temperature, or the probability of the ladder's whole upper tail — not for one bucket. If the question genuinely admits no in-range multiplier, emit `1.00` with an explicit `[MULTIPLIER]` rationale saying the bucket-level view does not transfer to the driver, and put the bucket probability in `final_probability` where it belongs. `1.00` with a stated reason is honest; `0.01` is a claim the platform will silently discard.\n\n## Output format\n\nRespond with a single JSON object. The skeleton below shows the SHAPE; its\nzeroes are placeholders, not defaults to leave in place.\n\n**A stage you did not run reports `null`, or omits its fields entirely.**\nNever `0`. `\"n_members\": 0` asserts that the ensemble was consulted and\nreturned nothing, which is a different and false statement from \"no\nensemble was needed\". Five runs that correctly skipped the forecast — the\nmarket was already settled, or the edge was pure ladder arbitrage —\nreported an ensemble of zero members, and the cross-check reads that as a\nfabricated tool result. A missing number is recoverable; an invented one\nis not, and `0` here is invented.\n\nTwo fields are read by platform code rather than by a human, and both were\nsilently dropped on the first 12 runs until this was corrected:\n\n- `summary` is lifted verbatim into the episode digest by `parse_evidence_text`.\n  It MUST contain BOTH machine-read lines below — `[MULTIPLIER]` and\n  `[PROBABILITY]` — because those lines are how the platform records your\n  quantified claims. Emit the structured fields too, but the LINES are what\n  get parsed.\n- `[PROBABILITY]` carries your calibrated probability as a LEVEL. It exists\n  because `[MULTIPLIER]` carries a ratio, and a ratio cannot carry a level.\n  On a Chicago market you computed a bucket probability of 35% from a\n  103-member ensemble; to cross the multiplier boundary it had to become\n  0.35/0.111 = 3.15x, which exceeded the driver's declared range, so it was\n  emitted as 1.00. The forecast stayed at its 6.7% base rate and the console\n  reported a 40-point edge that did not exist. Your answer was destroyed at\n  the interface, and no check could catch it because no number survived to\n  disagree with.\n  Emit it whenever you have computed a probability for the proposition, even\n  when your recommendation is no trade — especially then, because a no-trade\n  decision plus a silent model is indistinguishable from a model that agrees\n  with the market.\n- `key_findings` MUST be an array of STRINGS, each opening with its label in\n  square brackets. Objects here are unreadable to the extractor and are\n  discarded, which is what happened before.\n- `recommendation.action` MUST be exactly one of the five tokens listed in the\n  skeleton, lowercase, with nothing appended. It is compared as an enum, not\n  read. Three runs emitted `\"NO TRADE — market is closed and settled\"`: the\n  DECISION was right in all three, and all three still failed the check,\n  because a sentence cannot be tested against a set of permitted values. Put\n  the sentence in `reasoning`, where there is a field for it.\n- `multiplier` MUST equal the `p50` of your `[MULTIPLIER]` line. Two runs\n  disagreed with themselves — `multiplier: 0.033` against a line reading\n  `p50: 0.01`, and `0.10` against `0.035` — which leaves the platform holding\n  two different numbers for one judgement and no way to tell which you meant.\n\nThe last two key_findings MUST use these exact machine-parseable shapes. The\nplatform owns both formats; they are matched by `assertions.rs` and a\nvariation is dropped rather than interpreted:\n\n    [MULTIPLIER] Suggested p50: X.XX (p5: X.XX, p95: X.XX) — one-sentence rationale\n    [PROBABILITY] Calibrated p50: 0.XX (p5: 0.XX, p95: 0.XX) — one-sentence basis\n\n`Suggested` and `Calibrated` are not interchangeable: they are how the two\nextractors tell the lines apart, and both appear in the same response.\n`[PROBABILITY]` values are probabilities in [0,1] — a value outside that is\ndropped with a reason, never clamped. Its p5/p95 are your genuine interval,\nbecause the console flags a disagreement when the model's output falls\nOUTSIDE it: state it honestly and a wide interval will not be second-guessed,\nstate it narrowly and you are asserting the model must land there.\n\n{\n  \"summary\": \"One paragraph a human can read, ending with the [MULTIPLIER] Suggested p50: X.XX (p5: X.XX, p95: X.XX) line.\",\n  \"proposition\": \"the precise falsifiable statement being forecast\",\n  \"settlement_target\": { \"station\": \"\", \"station_name\": \"\", \"variable\": \"\", \"local_date\": \"\", \"timezone\": \"\", \"unit\": \"\", \"bucket_lo\": 0, \"bucket_hi\": 0, \"resolution_source\": \"\" },\n  \"stages\": {\n    \"forecast\": { \"agent\": \"weather_ensemble_forecaster\", \"n_members\": 0, \"lead_days\": 0, \"ensemble_mean\": 0, \"ensemble_sd\": 0, \"raw_probability\": 0, \"summary\": \"\" },\n    \"calibration\": { \"agent\": \"weather_calibrator\", \"predictive_sd\": 0, \"station_bias\": 0, \"calibrated_probability\": 0, \"uncertainty_pp\": 0, \"climatology_base_rate\": 0, \"brier_skill_score\": 0, \"sd_was_measured\": false, \"summary\": \"\" },\n    \"pricing\": { \"agent\": \"weather_market_analyst\", \"implied_probability\": 0, \"ev_per_share_maker\": 0, \"ev_per_share_taker\": 0, \"book_tradeable\": true, \"summary\": \"\" }\n  },\n  \"challenge\": { \"station_consistent_across_stages\": true, \"edge_exceeds_calibration_uncertainty\": true, \"corrections_were_measured_not_assumed\": false, \"robust_to_40pct_wider_spread\": true, \"centre_gap_within_predictive_sd\": true, \"dominant_uncertainty\": \"\", \"issues_found\": [] },\n  \"edge_type\": \"settlement_timing | realised_state | ladder_arbitrage | calibration | none\",\n  \"final_probability\": 0,\n  \"final_probability_uncertainty_pp\": 0,\n  \"recommendation\": { \"action\": \"no_trade | buy_yes | buy_no | post_maker_bid | post_maker_ask\", \"limit_price\": 0, \"stake_usd\": 0, \"reasoning\": \"\" },\n  \"key_findings\": [\n    \"[BASE RATE] climatological frequency for this gauge and calendar window, with the sample size\",\n    \"[ENSEMBLE] member count, models returned, mean and spread\",\n    \"[CALIBRATION] predictive sd and whether it was MEASURED or a documented prior\",\n    \"[SETTLEMENT RISK] the gauge, the source table, and what could make it resolve unexpectedly\",\n    \"[MULTIPLIER] Suggested p50: X.XX (p5: X.XX, p95: X.XX) — one-sentence rationale\",\n    \"[PROBABILITY] Calibrated p50: 0.XX (p5: 0.XX, p95: 0.XX) — one-sentence basis\"\n  ],\n  \"multiplier\": 1.0,\n  \"falsifiers\": [\"what observation would show this analysis to be wrong\"],\n  \"member_failures\": [],\n  \"confidence\": \"high | medium | low\"\n}\n\nEmit nothing outside the JSON object — no preamble, no ```json fence. `response_text`\nis retained and checked against `FIELD_CONTRACTS`.\n\nThe cross-checks now extract the outermost `{...}` rather than requiring the\nwhole response to be an object, so a preamble no longer blinds them — that was\na defect in the checks and it has been fixed on their side. This instruction\nstands anyway: the extraction is a greedy first-brace-to-last-brace match, and\nprose containing braces can still defeat it. Clean output is the difference\nbetween a check that reads your document and one that drops the row.\n\n## TYPED OUTPUT DOCUMENT — the part that is checked\n\nStages 0–4 above describe the pipeline. This describes what you hand back. End\nevery response with one JSON document in a ```json fence, conforming exactly to\n`capabilities.output_contract.schema` (type `fermi/weather_market_call`).\n\nOne block per stage, so a caller can see **where the chain stopped** instead of\nreading a confident answer built on a stage that never ran. A halted pipeline is\na valid document: set `challenge.verdict` to `not_forecastable_with_skill` or\n`chain_invalid`, null the stages that did not run, and let their stamps say\n`pending_tool_check`. Halting correctly is the system working, and the document\nhas to be able to say so.\n\n```json\n{\n  \"calibration_stage\": {\n    \"calibrated_probability\": null,\n    \"error_bar\": null,\n    \"skill_score\": null\n  },\n  \"calibration_stage_provenance\": \"tool_verified\",\n  \"challenge\": {\n    \"confidence\": null,\n    \"edge_exceeds_uncertainty\": null,\n    \"final_probability\": null,\n    \"objections\": [],\n    \"verdict\": \"tradeable\"\n  },\n  \"challenge_provenance\": \"model_inference\",\n  \"forecast\": {\n    \"climatology_base_rate\": null,\n    \"cross_model_spread\": null,\n    \"raw_probability\": null,\n    \"within_model_spread\": null\n  },\n  \"forecast_provenance\": \"tool_verified\",\n  \"market\": {\n    \"market_slug\": null,\n    \"no_price\": null,\n    \"question_text\": null,\n    \"yes_price\": null\n  },\n  \"market_provenance\": \"tool_verified\",\n  \"pricing\": {\n    \"edge_after_fees\": null,\n    \"recommended_side\": \"yes\",\n    \"recommended_size_usd\": null,\n    \"resolution_audit_agrees\": null\n  },\n  \"pricing_provenance\": \"tool_verified\",\n  \"proposition\": {\n    \"bucket_high\": null,\n    \"bucket_low\": null,\n    \"local_date\": null,\n    \"rounding\": null,\n    \"station_icao\": null,\n    \"timezone\": null,\n    \"unit\": null,\n    \"variable\": null\n  },\n  \"proposition_provenance\": \"tool_verified\",\n  \"summary\": \"…\"\n}\n```\n\nSix rules, each enforced by the platform rather than by convention:\n\n1. **Every key is required, including the nulls.** A value you could not fill\n   is `null`, not absent. \"I looked and there was nothing\" and \"I did not\n   answer\" are different facts and only the first is a measurement.\n2. **No extra keys.** The document is closed at every level. A key you invent\n   is a rejection, not an extension.\n3. **Never write a `*_provenance` value outside its declared set.** Each stamp\n   admits only the verdicts its block could honestly hold.\n4. **Only fill a sourced block from that block's own tool.** If you did not\n   call it, the block is null and its stamp says `tool_no_match`. A remembered\n   value in a retrieved field is the exact failure this contract exists to stop.\n5. **Reasoned blocks are stamped `model_inference` always.** Do not compute a\n   derived number inside a retrieved block; it belongs in the reasoned one.\n6. **The prose block must assert nothing the retrieved blocks cannot support.**\n   It is scanned for exactly that.\n",
   "capabilities": {
     "executor": "llm",
     "provider": "anthropic",
@@ -239,13 +239,370 @@
       ]
     },
     "output_contract": {
-      "domain": "prediction_market",
-      "produces_schema": "weather_oracle/weather_market_forecast",
       "calibration": {
-        "signal": "market_resolution",
-        "comparison": "final_probability_vs_realised_outcome",
-        "resolution_delay": "0-30 days"
-      }
+        "comparison": "brier_score",
+        "note": "The scoreable quantity is `challenge.final_probability`, not the calibrator's raw output — this agent is allowed to override its members and must be scored on what it actually published.",
+        "resolution_delay_hours": 48,
+        "signal": "brier_forecast"
+      },
+      "domain": "weather-markets",
+      "grounding": {
+        "calibration_stage": {
+          "response_field": "weather_calibrator's envelope: calibrated probability, error bar, and Brier Skill Score against climatology",
+          "status": "sourced",
+          "tool": "execute_agent",
+          "why": "The stage with a hard stop attached: a negative Brier Skill Score means the forecast is worse than climatology, and the pipeline must halt rather than price it. `skill_score` is therefore in the document as a number rather than left in prose, so a downstream reader can check the halt condition themselves instead of trusting that this agent applied it."
+        },
+        "calibration_stage_provenance": {
+          "from": "src/grounding_trust.rs enforcement over this response",
+          "status": "inferred",
+          "why": "Platform-written provenance stamp over the `calibration_stage` block: `tool_verified` when `execute_agent` returned a value, `tool_no_match` when it was asked and had nothing. Written by the platform, not by the model and not by a tool, so it is declared `inferred`: card_contract::GROUNDING_STATUSES has no `derived` token while the runtime's Grounding enum does, and understating a reproducible value is the safe direction. Generated by contract_sketch, whose subject here is platform behaviour rather than this agent's data."
+        },
+        "challenge": {
+          "from": "the four blocks above, checked against each other: whether the resolution audit contradicts the settlement target, whether the edge exceeds the calibration uncertainty, and whether the halt conditions were respected",
+          "status": "inferred",
+          "why": "The only block this agent authors, and the one it is scored on. Every value is a judgement over its members' outputs and can never be `tool_verified` however good those were — two runs over one set of member answers may legitimately disagree about whether an eight-point edge survives ten points of calibration uncertainty. Stamped `model_inference` as a constant so no run can present the coordinator's override as a retrieved figure."
+        },
+        "challenge_provenance": {
+          "from": "src/grounding_trust.rs enforcement over this response",
+          "status": "inferred",
+          "why": "Platform-written provenance stamp over the `challenge` block: constant `model_inference`, because every field under `challenge` is a judgement rather than a retrieval. Written by the platform, not by the model and not by a tool, so it is declared `inferred`: card_contract::GROUNDING_STATUSES has no `derived` token while the runtime's Grounding enum does, and understating a reproducible value is the safe direction. Generated by contract_sketch, whose subject here is platform behaviour rather than this agent's data."
+        },
+        "forecast": {
+          "response_field": "weather_ensemble_forecaster's envelope: raw bucket probability, ERA5 climatological base rate, and the within-model versus cross-model spread decomposition",
+          "status": "sourced",
+          "tool": "execute_agent",
+          "why": "Retrieved from this agent's position: it called a declared tool and a member answered, or it did not. Whether the numbers inside are sound is governed by that member's own contract and reported in its delegation envelope, which is the division of responsibility the envelope exists to carry. Recording it as `sourced` here keeps the pipeline auditable — a caller can see which stage produced which number rather than meeting one synthesised total."
+        },
+        "forecast_provenance": {
+          "from": "src/grounding_trust.rs enforcement over this response",
+          "status": "inferred",
+          "why": "Platform-written provenance stamp over the `forecast` block: `tool_verified` when `execute_agent` returned a value, `tool_no_match` when it was asked and had nothing. Written by the platform, not by the model and not by a tool, so it is declared `inferred`: card_contract::GROUNDING_STATUSES has no `derived` token while the runtime's Grounding enum does, and understating a reproducible value is the safe direction. Generated by contract_sketch, whose subject here is platform behaviour rather than this agent's data."
+        },
+        "market": {
+          "response_field": "the matched market's slug, question text and current prices",
+          "status": "sourced",
+          "tool": "polymarket_weather_markets",
+          "why": "Deferred rather than complete: this agent is often asked a bare forecasting question with no market attached, in which case the discovery call is never made and the block is legitimately empty. `pending_tool_check` says the lookup did not run; it must not be reported as though Polymarket was asked and had nothing, which is a different fact about a different world."
+        },
+        "market_provenance": {
+          "from": "src/grounding_trust.rs enforcement over this response",
+          "status": "inferred",
+          "why": "Platform-written provenance stamp over the `market` block: `tool_verified` when `polymarket_weather_markets` returned a value, `tool_no_match` when it was asked and had nothing, and `pending_tool_check` when the check had not run yet. Written by the platform, not by the model and not by a tool, so it is declared `inferred`: card_contract::GROUNDING_STATUSES has no `derived` token while the runtime's Grounding enum does, and understating a reproducible value is the safe direction. Generated by contract_sketch, whose subject here is platform behaviour rather than this agent's data."
+        },
+        "pricing": {
+          "response_field": "weather_market_analyst's envelope: resolution-text audit, fee-adjusted edge and sized recommendation",
+          "status": "sourced",
+          "tool": "execute_agent",
+          "why": "Deferred because Stage 3 is legitimately not reached on two ordinary paths — no market was in play, or Stage 2 reported negative skill and the pipeline was required to stop. An empty pricing block after a correct halt is the system working, and `pending_tool_check` says so; flattening it to `unavailable_no_tool_source` would report a missing source when what happened was a deliberate refusal to price."
+        },
+        "pricing_provenance": {
+          "from": "src/grounding_trust.rs enforcement over this response",
+          "status": "inferred",
+          "why": "Platform-written provenance stamp over the `pricing` block: `tool_verified` when `execute_agent` returned a value, `tool_no_match` when it was asked and had nothing, and `pending_tool_check` when the check had not run yet. Written by the platform, not by the model and not by a tool, so it is declared `inferred`: card_contract::GROUNDING_STATUSES has no `derived` token while the runtime's Grounding enum does, and understating a reproducible value is the safe direction. Generated by contract_sketch, whose subject here is platform behaviour rather than this agent's data."
+        },
+        "proposition": {
+          "response_field": "station identity (ICAO), IANA timezone defining the local day, unit, bucket width, rounding convention, resolution source",
+          "status": "sourced",
+          "tool": "weather_settlement_spec",
+          "why": "A local registry lookup with no network, so it either knows the market's station or it does not. This block exists because ambiguity here poisons every stage after it: the registry encodes that Polymarket NYC temperature settles on KLGA and not Central Park, and a chain framed on the wrong station is invalid however good the forecast was."
+        },
+        "proposition_provenance": {
+          "from": "src/grounding_trust.rs enforcement over this response",
+          "status": "inferred",
+          "why": "Platform-written provenance stamp over the `proposition` block: `tool_verified` when `weather_settlement_spec` returned a value, `tool_no_match` when it was asked and had nothing. Written by the platform, not by the model and not by a tool, so it is declared `inferred`: card_contract::GROUNDING_STATUSES has no `derived` token while the runtime's Grounding enum does, and understating a reproducible value is the safe direction. Generated by contract_sketch, whose subject here is platform behaviour rather than this agent's data."
+        },
+        "summary": {
+          "status": "narrative",
+          "why": "Prose for a human deciding whether to act. The highest-risk field here because a halted pipeline still produces a paragraph, and a fluent sentence about a market can read as a recommendation even when `verdict` says the chain was invalid. Must not state a probability the challenge block does not carry."
+        }
+      },
+      "produces_schema": "fermi/weather_market_call",
+      "schema": {
+        "$id": "fermi/weather_market_call",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "The output of a four-stage weather pipeline: frame, forecast, calibrate, price, then challenge. Each stage's block is stamped for whether that stage actually produced anything, so a caller can see where the chain stopped instead of reading a confident answer built on a stage that was skipped.",
+        "properties": {
+          "calibration_stage": {
+            "additionalProperties": false,
+            "description": "Stage 2. The bettable probability, from weather_calibrator.",
+            "properties": {
+              "calibrated_probability": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "error_bar": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "skill_score": {
+                "description": "Brier Skill Score against climatology. Negative means worse than climatology, and the pipeline is required to stop at this stage rather than price it.",
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "calibration_stage_provenance": {
+            "enum": [
+              "tool_verified",
+              "tool_no_match"
+            ]
+          },
+          "challenge": {
+            "additionalProperties": false,
+            "description": "Stage 4. This agent's own adversarial pass, and the reason it is not a script.",
+            "properties": {
+              "confidence": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "edge_exceeds_uncertainty": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "final_probability": {
+                "description": "What this agent actually publishes, which may differ from the calibrator's. The Brier-scored quantity, because an agent allowed to override its members must be scored on what it published rather than on what it was handed.",
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "objections": {
+                "description": "Every challenge raised in Stage 4, including the ones that did not change the verdict. An adversarial pass that records only its wins is indistinguishable from one that never ran.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "verdict": {
+                "description": "`not_forecastable_with_skill` and `chain_invalid` are successes, not failures: the first is the required halt on negative skill, the second is catching that the market resolves on a different station than the one forecast.",
+                "enum": [
+                  "tradeable",
+                  "not_forecastable_with_skill",
+                  "chain_invalid",
+                  "no_market",
+                  "indeterminate"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "challenge_provenance": {
+            "const": "model_inference"
+          },
+          "forecast": {
+            "additionalProperties": false,
+            "description": "Stage 1. The raw ensemble, from weather_ensemble_forecaster.",
+            "properties": {
+              "climatology_base_rate": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "cross_model_spread": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "raw_probability": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "within_model_spread": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "forecast_provenance": {
+            "enum": [
+              "tool_verified",
+              "tool_no_match"
+            ]
+          },
+          "market": {
+            "additionalProperties": false,
+            "description": "The live market, when one is in play.",
+            "properties": {
+              "market_slug": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "no_price": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "question_text": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "yes_price": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "market_provenance": {
+            "enum": [
+              "tool_verified",
+              "tool_no_match",
+              "pending_tool_check"
+            ]
+          },
+          "pricing": {
+            "additionalProperties": false,
+            "description": "Stage 3. The fee-adjusted valuation, from weather_market_analyst.",
+            "properties": {
+              "edge_after_fees": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "recommended_side": {
+                "enum": [
+                  "yes",
+                  "no",
+                  "none",
+                  null
+                ]
+              },
+              "recommended_size_usd": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "resolution_audit_agrees": {
+                "description": "Whether the market's verbatim resolution text names the same station and day as `proposition`. False invalidates the whole chain and must not be papered over.",
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "pricing_provenance": {
+            "enum": [
+              "tool_verified",
+              "tool_no_match",
+              "pending_tool_check"
+            ]
+          },
+          "proposition": {
+            "additionalProperties": false,
+            "description": "Stage 0. The settlement target, stated precisely enough to be falsifiable.",
+            "properties": {
+              "bucket_high": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "bucket_low": {
+                "description": "Inclusive lower bound of the settlement interval. A NUMBER, not a label: a bucket labelled `76-77` is the half-open interval [75.5, 77.5) and is two degrees wide. A generalist asked one such question returned 12% — the one-degree answer — against a measured 32%. Typing the bounds is what stops the label being mistaken for the interval.",
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "local_date": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "rounding": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "station_icao": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "timezone": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "unit": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "variable": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "proposition_provenance": {
+            "enum": [
+              "tool_verified",
+              "tool_no_match"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposition",
+          "proposition_provenance",
+          "market",
+          "market_provenance",
+          "forecast",
+          "forecast_provenance",
+          "calibration_stage",
+          "calibration_stage_provenance",
+          "pricing",
+          "pricing_provenance",
+          "challenge",
+          "challenge_provenance",
+          "summary"
+        ],
+        "title": "Weather market call",
+        "type": "object"
+      },
+      "synthesis": "pipeline"
     }
   },
   "accepts": [
@@ -254,10 +611,7 @@
     "evidence-set"
   ],
   "produces": [
-    "weather_market_forecast",
-    "calibrated_probability",
-    "trade_recommendation",
-    "multiplier-suggestion"
+    "fermi/weather_market_call"
   ],
   "dependencies": {
     "required": [

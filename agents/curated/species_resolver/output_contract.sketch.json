@@ -1,0 +1,130 @@
+{
+  "_README": [
+    "Source of truth for capabilities.output_contract. Compile with",
+    "`cargo run --bin contract-sketch -- species_resolver`.",
+    "tests/contract_sketch_corpus.rs asserts the card still matches.",
+    "",
+    "WHAT TYPING THIS AGENT CAUGHT",
+    "",
+    "The species-card example in the system prompt carried `wingspan_mm:",
+    "\"45-50\"` — a range string, with no source, presented beside real GBIF",
+    "taxonomy. That is the genome_profiler failure exactly: a plausible",
+    "number in a data field, indistinguishable from a measured one.",
+    "",
+    "`gbif_species_search` returns key, scientificName, canonicalName,",
+    "vernacular names, the rank ladder, rank and taxonomicStatus — and",
+    "nothing else. It returns no description, no habitat, no wingspan, no",
+    "flight style and no threat status. So this contract puts every one of",
+    "those in `appearance` (inferred) or `conservation` (unavailable), and",
+    "the wingspan becomes two typed integers instead of a range string."
+  ],
+
+  "domain": "entomology",
+  "produces_schema": "rabble/species_card",
+  "title": "Species card",
+  "description": "A GBIF-resolved insect, split by where each part came from. The taxonomy is retrieved and the appearance is recalled, and before this contract both arrived in one flat object where nothing distinguished them. A consumer minting a creature from this card can now tell which half it may rely on.",
+
+  "blocks": [
+    {
+      "name": "subject",
+      "description": "Which taxon GBIF matched, and how it names it.",
+      "source": {
+        "status": "sourced",
+        "tool": "gbif_species_search",
+        "response_field": "species[0].key, scientificName, canonicalName, vernacularName (eng), taxonomicStatus",
+        "coverage": "complete"
+      },
+      "why": "GBIF either matches the queried name and returns these, or returns an empty result set. Those are the only two outcomes, which is why the stamp admits exactly two verdicts. `gbif_key` is the load-bearing field: it is the identity every downstream consumer should key on, rather than on a name string that two sources may spell differently.",
+      "fields": {
+        "gbif_key": "integer?",
+        "scientific_name": "string?",
+        "canonical_name": "string?",
+        "common_name": "string?",
+        "taxonomic_status": {
+          "type": "string?",
+          "description": "GBIF's own verdict on the name — ACCEPTED, SYNONYM, DOUBTFUL. Carried because a synonym resolving to a different accepted taxon is a real and silent way for a card to be about the wrong animal."
+        }
+      }
+    },
+
+    {
+      "name": "taxonomy",
+      "description": "The rank ladder, as GBIF holds it.",
+      "source": {
+        "status": "sourced",
+        "tool": "gbif_species_search",
+        "response_field": "species[0] kingdom, phylum, class, order, family, genus, species, rank",
+        "coverage": "partial"
+      },
+      "why": "Coverage is partial rather than complete, and the distinction is real: GBIF answers for the taxon but individual ranks are genuinely absent for many insect records — an unplaced family, a genus with no accepted species epithet. That is the tool answering and the field having no source, which is a third verdict and is why this stamp admits `unavailable_no_tool_source` while `subject`'s does not.",
+      "fields": {
+        "kingdom": "string?",
+        "phylum": "string?",
+        "class": "string?",
+        "order": "string?",
+        "family": "string?",
+        "genus": "string?",
+        "species": "string?",
+        "rank": "string?"
+      }
+    },
+
+    {
+      "name": "media",
+      "description": "Reference imagery, when the taxon was looked up by key.",
+      "source": {
+        "status": "sourced",
+        "tool": "gbif_species_search",
+        "response_field": "media.results[] — identifier, license, rightsHolder",
+        "coverage": "deferred"
+      },
+      "why": "Deferred rather than partial, and the two are not interchangeable. The tool only calls GBIF's media endpoint on a lookup by `gbif_key`; a search by name returns no media at all because the check has not run yet, not because none exists. `pending_tool_check` says the first and `unavailable_no_tool_source` would say the second, and they need different fixes — one is another call, the other is a missing source.",
+      "fields": {
+        "image_urls": "string[]?",
+        "license": {
+          "type": "string?",
+          "description": "GBIF media carry per-item licences. Null is not permission: a consumer rendering an image without one is republishing under unknown terms."
+        }
+      }
+    },
+
+    {
+      "name": "appearance",
+      "description": "What the creature looks like and how it flies. Recalled, not retrieved.",
+      "source": {
+        "status": "inferred",
+        "from": "the resolved taxon in `subject` and `taxonomy`, plus the model's own knowledge of the family's morphology and flight behaviour"
+      },
+      "why": "The most important entry in this contract. GBIF returns none of this — not description, not habitat, not wingspan, not flight style — so every value here is the model writing from memory about a taxon it just looked up. The old prompt example made that invisible by placing `wingspan_mm: \"45-50\"` beside a real `gbif_key` in one flat object, which is the genome_profiler shape: a plausible number in a data field with no possible source. Declared `inferred` so a consumer can weigh it accordingly, and the wingspan split into two typed integers so a range string can no longer stand in for a measurement.",
+      "fields": {
+        "description": "string?",
+        "habitat": "string?",
+        "wingspan_min_mm": {
+          "type": "integer?",
+          "description": "Typical minimum for the taxon. Two integers rather than a `\"45-50\"` string on purpose: a range in a string is unusable arithmetic and hides that nobody measured this specimen."
+        },
+        "wingspan_max_mm": "integer?",
+        "flight_style": "string?",
+        "visual_description": "string?"
+      }
+    },
+
+    {
+      "name": "conservation",
+      "description": "Threat status.",
+      "source": {
+        "status": "unavailable",
+        "would_need": "the IUCN Red List API, or GBIF's species/{key} record whose threatStatus this tool's projection does not surface"
+      },
+      "why": "The honest null. `gbif_species_search` projects a fixed set of fields and threat status is not among them, so nothing this agent can call returns it. A model asked for a conservation status will answer `Least Concern` fluently for almost any insect, because that is the modal answer — which is exactly why the refusal has to be structural rather than left to the model's discretion.",
+      "value": "const:unavailable"
+    },
+
+    {
+      "name": "summary",
+      "source": { "status": "narrative" },
+      "why": "Prose for whoever is choosing a species to mint. Must not restate an appearance value as though the taxonomy block supported it: this is the one field where a recalled wingspan can reappear as a confident sentence after the structured field has been correctly labelled.",
+      "value": "string"
+    }
+  ]
+}
