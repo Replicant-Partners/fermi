@@ -1,7 +1,28 @@
 # UX handoff — the trust surfaces
 
 **For:** the team reworking the front end.
-**Status:** complete enough to build against. Eleven endpoints, one vocabulary.
+**Status:** complete enough to build against. Thirteen endpoints, one vocabulary.
+**Last change:** `UX_CONTRACT_belt_outcomes.md` is **implemented** — see
+`UX_RESPONSE_belt_outcomes.md` for the reply, which contains two corrections to
+that contract and one disclosure you should read before drawing the belt.
+
+> ### Read this first if you read nothing else
+>
+> **Two axes, and they must not be mixed.**
+>
+> * **`substrate`** is about the **agent** — is it declared onto the platform at
+>   all? Its `disposition` is `prune` (a fixture awaiting deletion — 110 of 206
+>   producing agents), `retrofit` (a real agent not yet declared — **this is the
+>   legacy state**), or `legible`.
+> * **`belt`** is about **this artifact** — what did each gate decide?
+>
+> A legacy agent is **not a degraded belt.** It is an agent that is not on the
+> substrate yet, with a named owner and a worklist. Branch on
+> `substrate.disposition` before you draw anything.
+>
+> Most of the fleet predates the contracts and will be **rewritten or deleted**.
+> That is a known, scheduled, separate effort. It is not a platform fault, it is
+> not a pass, and it should not read as either.
 
 ## Two directions, one structure
 
@@ -412,16 +433,26 @@ primary object is the episode, and the loops are the routes it can take.
               "output_grounded": "sha256:…",
               "enforcement_changed_the_bytes": true },
 
+  "substrate": { "disposition": "retrofit",
+                 "legibility": { "legibility": "partial", … },
+                 "declared": ["ports"],
+                 "because": "`prey_locator` is a real agent that has not been…" },
+
+  "belt_route": { "assumed": "agent.execute", "recoverable": false,
+                  "because": "`episodes` records no route discriminator…" },
+
   "belt": [ { "rung": "credit", "clock": "invocation",
               "enforcement": "control", "why_not_control": null,
               "refuses": "an action whose principal cannot pay for it",
               "site": "handlers::execution, gas::charge_gas",
-              "outcome": { "outcome": "not_recorded", "because": "…" } },
+              "decided_absent": { "token": "fires_before_artifact",
+                                  "because": "…" } },
             { "rung": "grounding", "clock": "invocation",
               "enforcement": "metric",
               "why_not_control": "`enforce` mutates a local doc that is dropped…",
-              "outcome": { "outcome": "graded",
-                           "fields": 12, "violations": 2 } } ],
+              "decided": { "decision": "approved", "reason": null,
+                           "at": "2026-08-28T10:07:51Z", "decision_id": 4412 },
+              "recomputed": { "fields": 12, "violations": 2 } } ],
 
   "fields": [ { "name": "intercept.bearing_deg", "value": 137,
                 "grade": "unavailable_no_tool_source", "strength": 0,
@@ -435,7 +466,6 @@ primary object is the episode, and the loops are the routes it can take.
 
   "reading": "fault", "token": "violations",
   "silence": { "silence": "unresolved" }, "owner": "platform",
-  "declared": ["ports"], "legibility": { "legibility": "partial", … },
   "caveats": [ … ] }
 ```
 
@@ -449,14 +479,98 @@ renders and neither is optional:
   whether or not it can stop anything is a diagram that lies about the platform's
   safety properties — and grounding on `/execute` is currently a `metric`, with
   `why_not_control` carrying our own words about why.
-* **`outcome`** — `graded` (we know what it decided here), `not_recorded` (the
-  rung ran and its decision for *this* artifact was not stored), or
-  `not_applicable` with a reason.
+* **`decided` or `decided_absent`** — **exactly one is present, never both,
+  never neither.** Both are omitted rather than `null` when absent, so a key
+  check is a safe branch.
 
-**`not_recorded` is most of the belt today**, and it is not a bug in the trace:
-`gate_decisions` has no `episode_id`, so no stored decision can be joined to an
-artifact. One column would change it. We list the rung anyway — a belt that drops
-the checkpoints it cannot report on looks shorter and safer than it is.
+`decided` is what the **ledger** recorded for this artifact:
+
+| field | |
+|---|---|
+| `decision` | `approved` \| `refused` \| `undetermined` — exactly three |
+| `reason` | verbatim; `null` on approvals by design |
+| `at` | when the gate decided, not when the row landed |
+| `decision_id` | `gate_decisions.id`, so the review POST is reachable from here |
+
+**`undetermined` is not an edge case.** It means the gate ran and *could not
+decide*, and on today's corpus it is the **majority reading** of the grounding
+rung — an agent with no field contract has nothing to grade. Please give it a
+real third visual. Folding it into either neighbour is how an absent check
+becomes indistinguishable from a passing one.
+
+`decided_absent` is why there is no row, as a closed set of four:
+
+| token | permanent? | a finding? |
+|---|---|---|
+| `fires_before_artifact` | **yes, by design** — `credit`, `rate_limit` | **no.** Not a gap; not a debt |
+| `retention_counted` | no — a decision could change it | no. A declared design choice |
+| `predates_retention` | for this artifact, yes | no. Nothing is backfilled |
+| `retained_but_absent` | no | **yes — the only one of the four** |
+
+`because` is always present and is the sentence a person reads. An unrecognised
+token should render as `unknown`, never healthy.
+
+* **`recomputed`** — an **independent axis**, non-null only where the contract can
+  be re-run (`grounding` today). **Do not reconcile it with `decided`.** A
+  recorded `approved` beside a recomputed `2 violations` means the contract was
+  tightened after the episode ran, and it is the only finding the platform can
+  produce about its own drift. It survives only unreconciled — which is why there
+  is deliberately no `agrees` boolean.
+
+We list every declared rung even when we can say nothing about it — a belt that
+drops the checkpoints it cannot report on looks shorter and safer than it is.
+
+### `substrate` — the agent, not the artifact. Branch on this first.
+
+**This is the field that tells you whether the belt is worth drawing at all**, and
+it is a different question from anything on the belt.
+
+Until now a belt rung could say *"this agent declares no field contract, so this
+rung had nothing to grade"* — which is an **agent-level backlog rendered inside a
+per-artifact diagram**, and it forced a reader to understand field contracts
+before they could read a checkpoint. That is gone. The question moved here.
+
+`disposition` has three values and they want different treatment:
+
+| | what it is | what to do |
+|---|---|---|
+| `prune` | Test cruft. **110 of 206 producing agents** are `test_agent_*` fixtures awaiting deletion | Arguably do not show these to a user at all. They are not a retrofit target and counting them makes the real backlog look twice its size |
+| `retrofit` | A real agent not yet declared onto the substrate. **This is the legacy state.** Its grounding rung reads `undetermined` | Show it as *not yet on the substrate* — authoring work owned by the agent's author. **Not a platform fault, and not a pass** |
+| `legible` | Every rung on the declaration ladder present | The belt can say something specific about every checkpoint |
+
+The platform's position, which you are welcome to quote: **legacy agents are not
+a degraded belt. They are outside the substrate**, with a named owner and a
+worklist. Not green, not red — not yet in the system.
+
+`legibility` and `declared` now live inside this object. They used to be loose
+keys beside the belt, which invited reading `legibility` without `disposition`
+and putting a fixture on somebody's worklist.
+
+### `belt_route` — the belt may show rungs this artifact never passed
+
+An honest disclosure rather than a feature, and we would rather you knew.
+
+The two routes that persist an episode **do not declare the same belt**:
+
+| command | rungs |
+|---|---|
+| `agent.execute` | `credit`, `attachment`, `grounding`, `input_binding` — **4** |
+| `agent.execute_stream` | `credit`, `grounding` — **2** |
+
+The trace builds `agent.execute`'s belt for every artifact. A comment in the
+handler claimed the two declared the same rungs and that either was therefore
+correct; it was false, and asserting your invariant 1 is what measured it.
+
+It is **not fixable in the handler** — `episodes` carries no route discriminator,
+so which route an artifact travelled is not recoverable. We serve the wider belt
+deliberately: the opposite error drops two real checkpoints for the majority of
+artifacts. Both directions are wrong; this one is wrong in the direction that
+shows more.
+
+**What we would like:** if `recoverable` is `false`, mark the belt as unverified
+in some low-key way. It is an unverified safety claim and your screen is the only
+place a person will ever see it. Tell us if a route column on `episodes` is worth
+prioritising — it is the real fix and it is small.
 
 ### `fields[]` — read `strength`, not `grade`
 
@@ -613,9 +727,12 @@ reason is worth having:
 So `episode_id` would have been NULL on every row that would ever exist, while
 making `not_recorded` **look** solved. The blocker was retention, not the key.
 
-Both landed. `gate_decisions.episode_id` exists, and **`grounding` is now
-`Recorded`** — so from the next deploy, the grounding rung on the belt carries a
-decision the gate actually made, not just a recomputation.
+Both landed, **and the trace now reads them.** For a while it did not: the
+column and the promotion shipped while `artifact_trace::belt()` still hardcoded
+an absence on every rung, so 220 and 221 had no observable effect. You caught
+that. It is fixed — the handler queries `gate_decisions WHERE episode_id = $1`,
+folds the result over the belt, and carries `decision_id` so you can review from
+the artifact.
 
 That distinction is the interesting part for a screen. The trace already re-runs
 the contract over the retained response, so it can show per-field grades without
@@ -644,10 +761,74 @@ Two things not to be surprised by:
 ### What it still does not have
 
 * **`input_binding`, `attachment` and `output_schema` are still `Counted`**, so
-  their rungs stay `not_recorded`. Each is now a one-line change plus a door,
-  and the pattern is established — but each is also a decision about durable
-  write volume, and we would rather make them one at a time with a reason than
-  promote the set.
+  their rungs read `decided_absent.token: "retention_counted"`. Each is now a
+  one-line change plus a door, and the pattern is established — but each is also
+  a decision about durable write volume, and we would rather make them one at a
+  time with a reason than promote the set. The token renders that honestly and
+  updates itself the day we promote one.
+* **A route discriminator on `episodes`** — see `belt_route` above.
+
+---
+
+## `GET /api/verification-queue`
+
+Claims awaiting a verdict, and the last dependency of the rejection rate. Until
+something could write a verdict, **"nobody checked" and "checked and fine"
+rendered identically.**
+
+```
+{ "items": [ { "assertion_id": "…", "episode_id": "…",
+               "verdict": "pending_human_check", "state": "pending",
+               "citation": null, "actor": "grounding_contract",
+               "actor_kind": "platform", "evidence": { … }, "at": "…" } ],
+  "tally": { "pending": 12, "settled": 3, "refuted": 1 },
+  "settleable_verdicts": ["human_sourced", "human_endorsed", "rejected"],
+  "reading": "idle", "detail": "…", "contract": "…" }
+```
+
+`state` is **derived** from the verdict, not stored: anything `pending_*` is
+awaiting a verdict, everything else is settled. The log is append-only, so this
+is the *latest* row per assertion and the earlier ones remain — two reviewers
+disagreeing about one claim is a disagreement, not a correction.
+
+`refuted` is the **numerator** of the rejection rate; the denominator is
+`settled`. A rate without it is a lie at low volume, so please show both.
+
+`settleable_verdicts` is served rather than hardcoded on your side. Copying it is
+copying a declaration; inventing a parallel list is how the two drift.
+
+## `POST /api/verification-queue/:assertion_id/settle`
+
+```
+{ "verdict": "human_sourced", "source_citation": "…", "evidence": { … } }
+```
+
+**Appends; never updates.** The earlier pending row remains, so the claim reads
+as queued *and then* settled — and a second reviewer disagreeing appends again
+rather than overwriting the first.
+
+**A reviewer may write exactly three verdicts**, and the refusals are worth
+surfacing in your copy rather than as a generic error:
+
+* `human_sourced` — requires a `source_citation`, enforced by Postgres. It scores
+  as high as `tool_verified` in the provenance ladder **because** someone else can
+  follow the citation to the same source. The citation is what earns the score.
+* `human_endorsed` — the honest uncited alternative, at the strength of a model
+  inference.
+* `rejected` — the claim is wrong.
+
+Not `tool_verified` or `derived`: those mean a tool call or a transform
+*reproduces* the value, which a person cannot bring about by saying so. Not
+`pending_*`: that is what a claim is queued **as**, so accepting it would let an
+item be cleared from the queue by re-queueing it.
+
+Status codes are meaningful and were separated on purpose:
+
+| | |
+|---|---|
+| **400** | Your fault and fixable — a missing citation, or a verdict a reviewer may not write. The body is a specific sentence, safe to show verbatim |
+| **404** | No queued claim for that assertion. A verdict can only settle something that was asked |
+| **500** | **Ours.** Notably a verdict the ladder declares and the database refuses, which means a platform seam has drifted. We deliberately do *not* return 400 for that — a 4xx is not paged on, and a human would be blamed once per attempt for a defect they cannot fix |
 
 ---
 
@@ -658,9 +839,10 @@ Two things not to be surprised by:
 | loop overview | live, all six | 2 turning, 4 stopped with no reading |
 | loop detail + stage chain | live | doors on loop2/3/4 |
 | gate board | live | counters are since-boot for 3 of 5 |
-| gate refusal ledger | live | **empty** — 0 rows in `gate_decisions` |
+| gate refusal ledger | live | **empty until the deploy lands**, then fills on first traffic. The recorder flushes every 15s |
 | **gate decision review** | live, after the next deploy | **empty**, and every gate reads `unreviewed`. The write path is verified against a real Postgres — constraint names, the rationale rule, whitespace — so the emptiness is a queue nobody has worked, not a rejected write |
-| **artifact trace** | live | **has content.** 75% `nothing_checked`, 21% `checked_clean`, **10 real violations** with named agent, field and claimed value |
+| **artifact trace** | live | **has content.** 75% `nothing_checked`, 21% `checked_clean`, **10 real violations** with named agent, field and claimed value. Belt rungs read `decided_absent` until the deploy, then `decided` fills from the ledger |
+| **verification queue + settle** | live, after the deploy | **empty.** The writer is wired on both execute paths; it fills as contracted agents run |
 | **declaration census / retrofit worklist** | live | 96 real agents, 110 fixtures. Ports 93/96, field contracts 7/96 |
 | **anomaly review queue** | `GET /api/observatory/hitl` — **already exists** | **empty.** No anomaly has ever been raised through the exception channel — but see the trace, which finds 10 the channel never saw |
 | coordination notes per agent | live | **empty today, and the platform now delivers a floor** — see below |
