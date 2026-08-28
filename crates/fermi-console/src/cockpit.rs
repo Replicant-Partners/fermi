@@ -59,9 +59,11 @@ use fermi_console::agent_naming::{
 use fermi_console::calibration::{critique_base_rate, Severity as CalibrationSeverity};
 use fermi_console::coverage;
 use fermi_console::negotiate;
-use fermi_console::routing::{
-    self, detect_domain, domain_specialist, select_agent_for_driver, FERMI_ORCHESTRA,
-};
+// `select_agent_for_driver` is deliberately NOT imported. It is the arity
+// that hardcodes `declared: None`, and every selection site in this file
+// needs the declared rung — see `declared_specialist_for`. Not importing it
+// makes reaching for it a visible edit rather than an easy default.
+use fermi_console::routing::{self, detect_domain, domain_specialist, FERMI_ORCHESTRA};
 use fermi_console::trajectory_narrative as narrative;
 use fermi_console::wire::{clamp_wire_interval_bound, clamp_wire_probability};
 
@@ -1019,6 +1021,15 @@ pub struct CockpitState {
     ///   * nothing else could tell after the fact which agent had answered.
     ///
     /// One field rather than a bool beside a name, so the two cannot disagree.
+    ///
+    /// # It is a latch, so it has to be released on every exit
+    ///
+    /// `Some` diverts a completion into [`Self::apply_base_rate_only`]. Only
+    /// that function used to clear it, so a base-rate run that FAILED left the
+    /// latch set and the next agent to complete — any agent, on any driver —
+    /// was diverted into the base-rate extractor. See
+    /// [`Self::base_rate_tracking_id`] for the identity check and
+    /// [`Self::mark_agent_failed`] for the release.
     pub base_rate_producer: Option<String>,
     /// Polling interval for PM price updates. None = no polling.
     pub pm_poll_interval: Option<std::time::Duration>,
@@ -3236,42 +3247,13 @@ impl CockpitState {
             .unwrap_or_default();
         let domain = detect_domain(&question_text);
 
-        // Which agent DECLARES this domain on its own card. Resolved once per
-        // decomposition, ahead of the compile-time `domain_specialist` table,
-        // so a domain the console has never heard of is still served by an
-        // agent that says it can serve it. `domain_specialist` covers four
-        // domains; everything else fell to the generalist, which is how two
-        // weather forecasts came back as their own climatological base rate.
-        let declared_for_domain = {
-            let roster = self.domain_roster();
-            let record = self.agent_record();
-            // The full ranked list, not just the head: the runner-up is what
-            // makes "one agent is carrying this whole forecast" actionable
-            // rather than merely true.
-            let ranked = fermi_console::routing::declared_specialists_ranked(
-                &domain,
-                &roster,
-                &record,
-                &|a| self.agent_is_assignable(a),
-            );
-            if let Some(a) = ranked.first() {
-                log::info!(
-                    "[routing] domain '{}' declared by {} ({} claimant(s) in a roster of {})",
-                    domain,
-                    a,
-                    ranked.len(),
-                    roster.len()
-                );
-            } else {
-                log::info!(
-                    "[routing] domain '{}' claimed by no agent in a roster of {}; \
-                     falling back to the compile-time table",
-                    domain,
-                    roster.len()
-                );
-            }
-            ranked.into_iter().next()
-        };
+        // Which agent DECLARES this domain on its own card. Resolved ahead of
+        // the compile-time `domain_specialist` table, so a domain the console
+        // has never heard of is still served by an agent that says it can serve
+        // it. `domain_specialist` covers four domains; everything else fell to
+        // the generalist, which is how two weather forecasts came back as their
+        // own climatological base rate.
+        let declared_for_domain = self.declared_specialist_for(&domain);
 
         let driver_names: Vec<String> = self
             .program
@@ -3340,15 +3322,14 @@ impl CockpitState {
                 // resolved against the server roster, not the local card
                 // directory. See `select_agent_for_driver`.
                 let suggestion = fermi_suggestions.get(driver_name);
-                let (agent_to_use, reason) =
-                    fermi_console::routing::select_agent_for_driver_declared(
-                        driver_name,
-                        &rationale,
-                        &domain,
-                        suggestion.map(|(a, _)| a.as_str()),
-                        declared_for_domain.as_deref(),
-                        &|a| self.agent_is_assignable(a),
-                    );
+                let (agent_to_use, reason) = routing::select_agent_for_driver_declared(
+                    driver_name,
+                    &rationale,
+                    &domain,
+                    suggestion.map(|(a, _)| a.as_str()),
+                    declared_for_domain.as_deref(),
+                    &|a| self.agent_is_assignable(a),
+                );
 
                 log::info!(
                     "[composer] {} → {} ({}; fermi suggested {:?}, domain {})",
@@ -3797,6 +3778,55 @@ impl CockpitState {
     /// other member, at any sample size. See [`routing::Proven`].
     fn agent_record(&self) -> Vec<routing::Proven> {
         self.agent_contributions.clone()
+    }
+
+    /// The best routable agent that DECLARES `domain` on its own card.
+    ///
+    /// The top rung of the routing ladder, and the one that lets a domain be
+    /// served by editing a card rather than shipping a console release.
+    ///
+    /// # Why this is a method and not an inline block
+    ///
+    /// Decomposition resolved this and passed it to
+    /// [`routing::select_agent_for_driver_declared`]. The three other selection
+    /// sites — the research panel, the picker's "Recommended" card, and the
+    /// URL-ingest analyst fallback — called `select_agent_for_driver`, which
+    /// hardcodes `declared: None`. So the ladder was shared but its top rung
+    /// was not, and the two routers disagreed in exactly the case the rung
+    /// exists for: when a declared specialist is available.
+    ///
+    /// Observed in production. `weather_oracle` declares `climate`, and
+    /// decomposition staged it on `synoptic_pattern_aug29`. Opening the
+    /// research panel on that same driver recommended `entity_investigator`,
+    /// which was accepted, ran, billed 73 credits, and replied that its
+    /// expertise is corporate ownership chains and this was not an entity
+    /// investigation. The console already knew better — it had warned, one
+    /// message earlier, that `weather_oracle` declares the `climate` domain.
+    fn declared_specialist_for(&self, domain: &str) -> Option<String> {
+        let roster = self.domain_roster();
+        let record = self.agent_record();
+        // The full ranked list, not just the head: the runner-up is what makes
+        // "one agent is carrying this whole forecast" actionable rather than
+        // merely true.
+        let ranked = routing::declared_specialists_ranked(domain, &roster, &record, &|a| {
+            self.agent_is_assignable(a)
+        });
+        match ranked.first() {
+            Some(a) => log::info!(
+                "[routing] domain '{}' declared by {} ({} claimant(s) in a roster of {})",
+                domain,
+                a,
+                ranked.len(),
+                roster.len()
+            ),
+            None => log::info!(
+                "[routing] domain '{}' claimed by no agent in a roster of {}; \
+                 falling back to the compile-time table",
+                domain,
+                roster.len()
+            ),
+        }
+        ranked.into_iter().next()
     }
 
     /// Fetch the per-agent contribution table.
@@ -4508,7 +4538,18 @@ impl CockpitState {
                         // Checked FIRST for the same reason: an agent that happens to
                         // be `macro_forecaster` should still take the scoped path when
                         // the flag is set.
-                        if state.base_rate_producer.is_some() {
+                        //
+                        // Against the RUN, not merely against the flag. `is_some()`
+                        // asks whether a base-rate refresh is outstanding somewhere;
+                        // the question here is whether THIS completion is that
+                        // refresh. The two differ whenever the base-rate run does not
+                        // complete — it is rate-limited, it drops, the user closes
+                        // the panel — and the difference is a driver run being fed to
+                        // the base-rate extractor. Comparing tracking ids makes the
+                        // guard total: exactly one run can ever satisfy it, and a
+                        // leaked latch degrades to "the base rate was not updated"
+                        // rather than to "some other agent updated it".
+                        if state.base_rate_tracking_id().as_deref() == Some(tracking_id.as_str()) {
                             // Scoped call: 'Update base rate' pressed. Do NOT
                             // rebuild the driver set — that's the destructive
                             // behavior we're guarding against. Only refresh the
@@ -5249,6 +5290,38 @@ impl CockpitState {
     }
 
     fn mark_agent_failed(&mut self, agent_name: &str, error: &str) {
+        // A base-rate refresh that failed is a base-rate refresh that is over.
+        //
+        // `base_rate_producer` latches on before the run and was released only
+        // by `apply_base_rate_only`, i.e. only on success. A 429 therefore left
+        // it set, and the next agent to complete was diverted into the
+        // base-rate extractor — observed on a San Francisco temperature
+        // forecast, where `weather_oracle_base_rate` was rate-limited at
+        // 12:05:15 and `entity_investigator_synoptic_pattern_aug29`, three
+        // seconds later, reported "no parseable base rate in response" about a
+        // question nobody had asked it.
+        //
+        // The visible symptom was a confusing message. The unbounded one is
+        // that `apply_base_rate_only` WRITES when it can parse: a driver run
+        // whose response happens to carry `historical_frequency` would have
+        // overwritten the forecast's outside view — the term every driver
+        // multiplies — with a number measured for one driver.
+        if self.base_rate_tracking_id().as_deref() == Some(agent_name) {
+            let producer = self.base_rate_producer.take().unwrap_or_default();
+            // Say what is now true of the forecast, not just of the run. The
+            // failure line below names the agent and the 429; it does not say
+            // that the anchor the whole model scales is still the old one.
+            self.messages.push(AssistantMessage {
+                node: "question".into(),
+                kind: MessageKind::Warning,
+                text: format!(
+                    "Base rate NOT updated — {} never ran. The outside view is \
+                     unchanged, and every driver is a multiplier on it. Press \
+                     ⟳ Update base rate to try again.",
+                    producer
+                ),
+            });
+        }
         if let Some(run) = self
             .agent_runs
             .iter_mut()
@@ -5452,10 +5525,20 @@ impl CockpitState {
         // the auto-assign path uses, so the picker's "Recommended" card
         // agrees with what Fermi actually spawned — they used to be two
         // independent keyword ladders that disagreed.
-        let (recommended, reason) =
-            select_agent_for_driver(driver_name, &task.rationale, &domain, None, &|a| {
-                self.agent_is_assignable(a)
-            });
+        //
+        // "Same routing" has to include the DECLARED rung, not just the same
+        // function: calling `select_agent_for_driver` here passed `None` for
+        // the declared specialist, which is the one input decomposition does
+        // resolve. The ladder matched and the answers still diverged.
+        let declared = self.declared_specialist_for(&domain);
+        let (recommended, reason) = routing::select_agent_for_driver_declared(
+            driver_name,
+            &task.rationale,
+            &domain,
+            None,
+            declared.as_deref(),
+            &|a| self.agent_is_assignable(a),
+        );
 
         // Compose from what the recommended agent declares. Remember which
         // agent it was composed for: if the user picks a different one, the
@@ -7397,11 +7480,14 @@ impl CockpitState {
                     .driver(driver_name)
                     .and_then(|d| d.rationale.clone())
                     .unwrap_or_default();
-                select_agent_for_driver(
+                let domain = detect_domain(&question);
+                let declared = self.declared_specialist_for(&domain);
+                routing::select_agent_for_driver_declared(
                     driver_name,
                     &rationale,
-                    &detect_domain(&question),
+                    &domain,
                     None,
+                    declared.as_deref(),
                     &|a| self.agent_is_assignable(a),
                 )
                 .0
@@ -8214,6 +8300,19 @@ impl CockpitState {
         self.fire_agent(&producer, &tracking, &query, cx);
     }
 
+    /// The tracking id of the base-rate run currently in flight, if any.
+    ///
+    /// One definition of `"{producer}_base_rate"`, so the three sites that
+    /// need it — the launch, the completion guard and the failure release —
+    /// cannot disagree about which run the latch refers to. They did: the
+    /// completion guard asked only whether the latch was SET, which is a
+    /// question about the console's state rather than about the run in hand.
+    fn base_rate_tracking_id(&self) -> Option<String> {
+        self.base_rate_producer
+            .as_deref()
+            .map(|p| format!("{p}_base_rate"))
+    }
+
     /// Extract ONLY the base rate from a fermi agent response and update
     /// the program's outside view. Never touches drivers, model, or any
     /// other FPL structure. Called from fire_agent's completion handler
@@ -8228,11 +8327,15 @@ impl CockpitState {
         // Who actually ran. `update_outside_rate` routes to whichever agent
         // declares the question's domain, so this is `weather_oracle` for a
         // temperature question and `fermi` only when nothing claimed it.
+        // Read the id before releasing the latch — they are the same fact, and
+        // `base_rate_tracking_id` is the one place that spells it.
+        let tracking = self
+            .base_rate_tracking_id()
+            .unwrap_or_else(|| "fermi_base_rate".to_string());
         let producer = self
             .base_rate_producer
             .take()
             .unwrap_or_else(|| "fermi".to_string());
-        let tracking = format!("{producer}_base_rate");
 
         // Mark the agent-run row completed.
         //
@@ -8240,10 +8343,19 @@ impl CockpitState {
         // the row as `"{producer}_base_rate"`. For any specialist the lookup
         // missed and no other site covers a base-rate run, so the row spun
         // forever — a completed run displayed as still working.
+        //
+        // The repair kept a `|| r.base_agent_id == producer` fallback, which
+        // over-corrected: `find` takes the FIRST match, and a specialist is
+        // routinely on drivers as well as on the base rate. `weather_oracle`
+        // held three rows on one forecast — two drivers and the base rate — so
+        // the fallback marked a driver run completed and left the base-rate row
+        // spinning, which is the bug it was written to fix, one row over.
+        // `update_outside_rate` is the only site that sets the latch and it
+        // always pushes exactly this name, so the exact match is total.
         if let Some(run) = self
             .agent_runs
             .iter_mut()
-            .find(|r| r.agent_name == tracking || r.base_agent_id == producer)
+            .find(|r| r.agent_name == tracking)
         {
             run.status = AgentRunStatus::Completed;
             run.completed_at = Some(
@@ -9273,8 +9385,22 @@ impl CockpitState {
                         let (stated, _) =
                             ::fermi::assertions::extract_probabilities_from_prose(summary);
                         for a in stated {
-                            let (lo, hi) = (a.value.p5, a.value.p95);
-                            if !a.value.contains(model_p) {
+                            // A claim has to be numeric to be compared with a
+                            // model probability. A `Fact` — a non-numeric claim
+                            // — is a real assertion and stays on the episode,
+                            // but there is no interval to test `model_p`
+                            // against, so it is skipped rather than unwrapped.
+                            //
+                            // Unreachable today: `extract_probabilities_from_prose`
+                            // only yields numeric kinds. Written out because a
+                            // panic here would take down a simulation the
+                            // operator has already paid for, to report a
+                            // diagnostic about it.
+                            let Some(spread) = a.value.as_spread() else {
+                                continue;
+                            };
+                            let (lo, hi) = (spread.p5, spread.p95);
+                            if !spread.contains(model_p) {
                                 disagreements.push((
                                     true,
                                     format!(
@@ -9285,7 +9411,7 @@ impl CockpitState {
                                         ev.source,
                                         lo * 100.0,
                                         hi * 100.0,
-                                        a.value.p50 * 100.0,
+                                        spread.p50 * 100.0,
                                     ),
                                 ));
                             }
@@ -16412,10 +16538,21 @@ fn render_agent_picker(
     // a market analyst for football drivers while auto-assign was
     // recommending something else entirely. One routing function now
     // serves auto-assign, `open_agent_picker`, and this card.
-    let (recommended_agent, _reason) =
-        select_agent_for_driver(driver_name, &rationale, &domain, None, &|a| {
-            state.agent_is_routable(a)
-        });
+    //
+    // Two things this card got wrong that the other two sites did not:
+    // it dropped the declared rung (see `declared_specialist_for`), and
+    // it gated on `agent_is_routable` — "can anything execute this id" —
+    // rather than on admission, so it could name a recommendation that
+    // clicking it would refuse.
+    let declared = state.declared_specialist_for(&domain);
+    let (recommended_agent, _reason) = routing::select_agent_for_driver_declared(
+        driver_name,
+        &rationale,
+        &domain,
+        None,
+        declared.as_deref(),
+        &|a| state.agent_is_assignable(a),
+    );
     let recommended: &str = &recommended_agent;
 
     // Pre-fill the query with the recommended agent's own declared shape.
