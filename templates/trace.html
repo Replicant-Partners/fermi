@@ -606,10 +606,7 @@ something specific about each checkpoint.")}</div></div>`;
          of what this agent said — a hard-verified signal, which needs no coherence gate.`, "ok"]);
     }
 
-    return `<div class="block"><h2>What this artifact fed</h2>
-      <div class="note">A gate decides whether an artifact is fit to enter a loop. This is
-        where this one went.</div>
-      ${items.map(([name, ts, body, tone]) => `<div class="rung">
+    const loops = `${items.map(([name, ts, body, tone]) => `<div class="rung">
         <div class="rung-b">
           <div class="rung-q">${esc(name)}</div>
           <div class="rung-pw">${body}</div>
@@ -618,7 +615,43 @@ something specific about each checkpoint.")}</div></div>`;
           tone === "bad" ? "v-silent" : tone === "warm" ? "v-inert" : "v-elsewhere"}">${esc(ts)}</span></div>
       </div>`).join("")}
       <div class="rung-pw" style="margin-top:8px">Loops not listed do not apply to this
-        artifact. <a href="/loops">All loops, by timescale →</a></div>
+        artifact. <a href="/loops">All loops, by timescale →</a></div>`;
+
+    // The other downstream, and the one the platform cannot currently answer:
+    // which agent picked this up. An artifact that no one consumes fed nothing,
+    // and an artifact consumed by a teammate is the whole point of a
+    // composition - so silence here is the most expensive silence on the page.
+    const up = d.parent_episode_id
+      ? `<div class="rung"><div class="rung-b">
+           <div class="rung-q">Delegated by another agent</div>
+           <div class="rung-pw">This run was called as a sub-task.
+             <a href="/trace/${esc(d.parent_episode_id)}">Trace the caller →</a></div>
+         </div><div class="rung-v"><span class="v-ok">upstream</span></div></div>`
+      : `<div class="rung"><div class="rung-b">
+           <div class="rung-q">Delegated by another agent</div>
+           <div class="rung-pw">No. This run was called directly, not as a sub-task of
+             another agent.</div>
+         </div><div class="rung-v"><span class="v-elsewhere">not delegated</span></div></div>`;
+
+    const down = `<div class="rung"><div class="rung-b">
+        <div class="rung-q">Picked up by another agent</div>
+        <div class="rung-pw"><b>Not recorded — and this is a gap, not a no.</b>
+          Agents collaborate through workspace messages and workspace outputs, and
+          <b>neither carries an <code>episode_id</code></b>. So when this artifact was posted
+          into a workspace and a teammate read it, nothing linked the read back to this run.
+          The only traceable agent-to-agent edge is delegation, which covers
+          <b>12 of 3,581</b> episodes.</div>
+      </div><div class="rung-v"><span class="v-silent">unrecorded</span></div></div>`;
+
+    return `<div class="block"><h2>What this artifact fed — the loops</h2>
+      <div class="note">A gate decides whether an artifact is fit to enter a loop. This is
+        where this one went.</div>
+      ${loops}
+      <h2 style="margin-top:20px">What this artifact fed — the collaboration</h2>
+      <div class="note">The other half of the question: an artifact is a packet, and a packet
+        has a next hop. This is the axis the platform cannot yet answer.</div>
+      ${up}
+      ${down}
     </div>`;
   }
 
@@ -650,11 +683,10 @@ something specific about each checkpoint.")}</div></div>`;
         “${esc(String(d.input.query).slice(0,150))}”</span></div>` : ""}
     </div>`;
 
-    const chain = d.parent_episode_id
-      ? `<div class="block"><h2>Correction chain</h2>
-         <div class="owner-body">Corrects
-         <a href="/trace/${esc(d.parent_episode_id)}">the previous attempt →</a></div></div>`
-      : "";
+    // Deliberately not a "correction chain": `parent_episode_id` is stamped by
+    // the delegation tools onto a child, so it names the agent that CALLED this
+    // one. Labelling it as a correction was wrong and is now handled in feeds().
+    const chain = "";
 
     // Answer, then reasoning, then work. The epistemics used to come first and
     // that is why the page could not be read.
