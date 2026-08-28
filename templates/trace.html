@@ -23,6 +23,62 @@
   .r-fault{color:var(--red,#fb4934);border-color:var(--red,#fb4934);}
   .r-unknown{color:var(--purple,#d3869b);border-color:var(--purple,#d3869b);border-style:dashed;}
 
+  /* ── The payload is the protagonist, not italic prose ───────────────────
+     It is a typed token — it may be a document, an image, a video — and the
+     question the whole screen answers is how deep anything looked into it. */
+  .payload{border:1px solid var(--bg3);background:var(--bg1);padding:11px 13px;margin-bottom:14px;}
+  .payload-t{font-size:0.6rem;text-transform:uppercase;letter-spacing:0.07em;color:var(--fg4);}
+  .payload-ty{font-size:0.72rem;color:var(--aqua);margin-top:2px;}
+  .payload-q{font-size:0.78rem;color:var(--fg2);margin-top:6px;line-height:1.5;}
+
+  /* ── The verdict. Answer first: passed, held, refused — then the reasoning.
+     A gate is what stops a bad artifact from becoming training data, so the
+     last line of the verdict is always whether this one was fit to learn from. */
+  .verdict{border-left:3px solid var(--fg3);background:var(--bg1);padding:12px 14px;margin-bottom:20px;}
+  .verdict.clean{border-left-color:var(--green);}
+  .verdict.dirty{border-left-color:var(--red,#fb4934);}
+  .verdict.unknown{border-left-color:var(--purple,#d3869b);}
+  .vline{font-size:0.92rem;color:var(--fg2);line-height:1.45;}
+  .vnums{display:flex;gap:18px;flex-wrap:wrap;margin-top:9px;}
+  .vnum b{font-size:0.98rem;color:var(--fg2);font-weight:normal;}
+  .vnum span{font-size:0.62rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--fg4);
+             display:block;margin-top:1px;}
+  .vnum.hot b{color:var(--red,#fb4934);}
+  .vnum.warm b{color:var(--yellow);}
+  .vceil{font-size:0.74rem;color:var(--fg3);margin-top:10px;padding-top:9px;
+         border-top:1px solid var(--bg2);line-height:1.5;}
+  .vceil b{color:var(--yellow);}
+  .vfeed{font-size:0.76rem;margin-top:8px;line-height:1.5;}
+  .vfeed.bad{color:var(--red,#fb4934);}
+  .vfeed.ok{color:var(--fg3);}
+
+  /* ── The verification ladder ────────────────────────────────────
+     Five rungs, ordered by difficulty, always all five. "Each rung is
+     invisible to the one below it", so a row of equal checkpoints would imply
+     thoroughness by count — which is the defect the ladder exists to name. */
+  .rung{display:flex;gap:11px;align-items:flex-start;padding:8px 0;border-top:1px solid var(--bg2);}
+  .rung-n{width:16px;flex-shrink:0;font-size:0.7rem;color:var(--fg4);text-align:right;}
+  .rung-b{flex:1;min-width:0;}
+  .rung-q{font-size:0.78rem;color:var(--fg2);}
+  .rung-pw{font-size:0.68rem;color:var(--fg4);margin-top:2px;line-height:1.45;}
+  .rung-pw b{color:var(--fg3);}
+  .rung-v{width:126px;flex-shrink:0;text-align:right;font-size:0.66rem;
+          text-transform:uppercase;letter-spacing:0.05em;}
+  .v-ok{color:var(--green);}
+  .v-silent{color:var(--red,#fb4934);}
+  .v-inert{color:var(--purple,#d3869b);}
+  .v-elsewhere{color:var(--fg4);}
+  .rung.is-ceiling{background:rgba(250,189,47,0.07);margin:0 -12px;padding:9px 12px;}
+  .ceilmark{font-size:0.62rem;color:var(--yellow);text-transform:uppercase;
+            letter-spacing:0.06em;margin-top:3px;}
+
+  /* Preconditions are not verification. They check the sender and the
+     envelope, never the contents, so they get a quiet strip of their own
+     rather than a place on the ladder. */
+  .pre{display:flex;gap:14px;flex-wrap:wrap;font-size:0.68rem;color:var(--fg4);
+       border:1px dashed var(--bg3);padding:8px 11px;}
+  .pre b{color:var(--fg3);font-weight:normal;}
+
   .block{margin-bottom:24px;}
   .block h2{font-size:0.72rem;color:var(--fg2);margin:0 0 8px;text-transform:uppercase;
             letter-spacing:0.07em;padding-bottom:4px;border-bottom:1px solid var(--bg2);}
@@ -182,102 +238,208 @@
   // edge case: the gate ran and could not decide. It gets its own visual.
   const decidedOf = v => DECIDED[v] || { cls: "d-unknown", glyph: "?" };
 
-  function belt(d) {
-    const cps = (d.belt || []).map(b => {
-      // `decided` and `decided_absent` are omitted rather than nulled, so a
-      // key check is the safe branch the contract promises.
-      const dec = b.decided, abs = b.decided_absent;
-      const s = dec ? decidedOf(dec.decision) : absentOf((abs || {}).token);
-      const cls = [b.enforcement === "control" ? "control" : "metric", s.cls].join(" ");
-      const glyph = dec ? s.glyph : s.cls === "a-finding" ? "?" : "·";
-      const out = dec ? esc(dec.decision) : esc(s.out);
+  // Which belt rungs are ladder rungs, and which are preconditions.
+  //
+  // `gate_trust::GATES` is a runtime inventory, not the model. It mixes two
+  // ladder rungs with billing, flow control and envelope checks, and drawing
+  // all of them as peers is what made this screen unreadable: `credit` answers
+  // no verification question at all.
+  const LADDER_GATE = { grounding: 4, input_binding: 5 };
+  const PRECONDITION = {
+    credit:        "can the caller pay",
+    rate_limit:    "is the caller inside the window",
+    attachment:    "is a payload attached, and of the right kind",
+    output_schema: "does the output match its declared shape",
+  };
 
-      // An independent axis, printed on its own line and never folded into the
-      // decision above it. There is deliberately no `agrees` boolean.
-      const rc = b.recomputed;
-      const recomp = rc
-        ? `<div class="cp-recomp">${rc.violations > 0
-            ? `${rc.violations}/${rc.fields} violations` : `${rc.fields} clean`} now</div>`
-        : "";
+  // The five rungs, from the verification ladder. `passes_while` is the failure
+  // this rung cannot see - the same idea as `does_not_show`, but attached to the
+  // rung where it was defined rather than reinvented per screen.
+  const LADDER = [
+    { n: 1, q: "Does the declared object exist?",
+      pw: "it exists and is permanently empty", scope: "platform" },
+    { n: 2, q: "Does the writer ever run?",
+      pw: "rows accumulate and disagree with their source", scope: "platform" },
+    { n: 3, q: "Does the stored value equal its source of truth?",
+      pw: "the field is well-typed and invented", scope: "platform" },
+    { n: 4, q: "Could this value have come from any tool the agent has?",
+      pw: "the request never matched the interface", scope: "artifact" },
+    { n: 5, q: "Does the invocation match the declared interface?",
+      pw: null, scope: "artifact" },
+  ];
+  const RUNG_NAME = { 1: "Presence", 2: "Liveness", 3: "Truth",
+                      4: "Grounding", 5: "Binding" };
 
-      return `<div class="cp ${cls}">
-        <div class="cp-ring">${glyph}</div>
-        <div class="cp-name">${esc(b.rung)}</div>
-        <div class="cp-enf">${esc(b.enforcement)}</div>
-        <div class="cp-out">${out}</div>
-        ${recomp}
+  // What the screen is actually for: a gate is what stops a bad artifact from
+  // becoming training data. Loop 1 is episodes -> consolidated -> rules, and
+  // `response_text` is persisted un-stripped, so a rung that inspects the
+  // contents but cannot refuse does not protect the loop from anything.
+  function readArtifact(d) {
+    const belt = d.belt || [];
+    const by = {};
+    belt.forEach(b => { by[b.rung] = b; });
+
+    const refused = belt.filter(b => b.decided && b.decided.decision === "refused");
+    const approved = belt.filter(b => b.decided && b.decided.decision === "approved");
+    const held = (d.routed || []).filter(r =>
+      String(r.verdict || "").startsWith("pending_"));
+
+    const g = by.grounding;
+    const rc = g && g.recomputed;
+    const graded = rc ? (rc.fields || 0) : 0;
+    const violations = rc ? (rc.violations || 0) : 0;
+
+    // The ceiling: the deepest rung that both looked at the contents AND could
+    // have acted on what it found. `enforcement === "control"` is the only
+    // thing that can refuse; a metric records and the artifact travels on.
+    const couldRefuse = belt.filter(b => b.enforcement === "control");
+    const inspectedContents = g ? !!rc : false;
+    const contentsGuarded = !!(g && g.enforcement === "control");
+
+    return { by, refused, approved, held, graded, violations,
+             couldRefuse, inspectedContents, contentsGuarded, grounding: g };
+  }
+
+  function verdict(d) {
+    const a = readArtifact(d);
+
+    // Answer the question first, in one sentence.
+    let line, tone;
+    if (a.refused.length) {
+      line = "This artifact was refused."; tone = "dirty";
+    } else if (a.violations > 0 && !a.contentsGuarded) {
+      line = "Nothing stopped this artifact, and it carries unsourced claims.";
+      tone = "dirty";
+    } else if (a.graded > 0 && a.violations === 0) {
+      line = "Nothing stopped this artifact, and every claim under contract was sourced.";
+      tone = "clean";
+    } else {
+      line = "Nothing stopped this artifact, and nothing examined what it says.";
+      tone = "unknown";
+    }
+
+    const nums = [
+      ["", a.approved.length, "passed"],
+      [a.held.length ? "warm" : "", a.held.length, "held for review"],
+      [a.refused.length ? "hot" : "", a.refused.length, "refused"],
+      [a.violations ? "hot" : "", a.violations, "unsourced claims"],
+      ["", a.graded, "claims graded"],
+    ].map(([cls, v, label]) =>
+      `<div class="vnum ${cls}"><b>${v}</b><span>${label}</span></div>`).join("");
+
+    // The ceiling is the honest limit on any claim about this artifact.
+    const ceiling = a.contentsGuarded
+      ? `<b>Contents were inspected by a checkpoint that could refuse.</b>`
+      : a.inspectedContents
+        ? `Deepest checkpoint that could have refused: <b>the envelope only</b>.
+           <code>grounding</code> read the contents and graded ${a.graded} claim(s), but on this
+           route it only records — so nothing it found could have stopped the response.`
+        : `Deepest checkpoint that could have refused: <b>the envelope only</b>.
+           Nothing opened the payload, so no verdict here concerns what it says.`;
+
+    // The point of the gate, stated: was this fit to learn from?
+    const feed = a.violations > 0 && !a.contentsGuarded
+      ? `<div class="vfeed bad">⚠ This artifact entered <b>Loop 1</b> as training data with
+         ${a.violations} unsourced claim(s) still in it. The platform computed a cleaned
+         copy and discarded it; <code>response_text</code> is persisted un-stripped, and
+         consolidation reads it. <b>This is how a loop gets corrupted.</b></div>`
+      : a.graded > 0
+        ? `<div class="vfeed ok">Fit to learn from, for the ${a.graded} field(s) under
+           contract. Everything else in the document is unexamined.</div>`
+        : `<div class="vfeed ok">It entered <b>Loop 1</b> unexamined — not refused, and not
+           checked. Whether that is safe is not something this platform currently knows.</div>`;
+
+    return `<div class="verdict ${tone}">
+      <div class="vline">${line}</div>
+      <div class="vnums">${nums}</div>
+      <div class="vceil">${ceiling}</div>
+      ${feed}
+    </div>`;
+  }
+
+  function payload(d) {
+    const m = d.model || {};
+    const ty = (d.output_contract_type || d.payload_type
+                || (d.hashes && d.hashes.output_grounded ? "structured document (JSON)" : null));
+    return `<div class="payload">
+      <div class="payload-t">The payload</div>
+      <div class="payload-ty">${esc(ty || "type not declared — treated as opaque text")}</div>
+      ${d.input && d.input.query
+        ? `<div class="payload-q">${esc(String(d.input.query).slice(0, 300))}</div>` : ""}
+    </div>`;
+  }
+
+  function ladder(d) {
+    const a = readArtifact(d);
+    const typed = (d.substrate || {}).disposition === "legible";
+
+    let ceilingShown = false;
+    const rows = LADDER.map(r => {
+      let verdictCell, note = "", isCeiling = false;
+
+      if (r.scope === "platform") {
+        // Standing clock: presence, liveness and truth are not artifact-scoped.
+        // Shown rather than hidden - a ladder missing its cheap rungs looks
+        // shorter and safer than it is - and pointed at where they are answered.
+        verdictCell = `<span class="v-elsewhere">standing clock</span>`;
+        note = `Answered platform-wide, not for this artifact. <a href="/loops">See Ok / Silent / Inert →</a>`;
+      } else {
+        const gateId = Object.keys(LADDER_GATE).find(k => LADDER_GATE[k] === r.n);
+        const b = a.by[gateId];
+        if (!b) {
+          verdictCell = `<span class="v-inert">not on this route</span>`;
+          note = `<code>${esc(gateId)}</code> is not declared on the route this artifact travelled.`;
+        } else if (b.enforcement !== "control") {
+          verdictCell = `<span class="v-silent">records only</span>`;
+          isCeiling = !ceilingShown;
+          note = `<b>Cannot refuse on this route.</b> ${esc(b.why_not_control || "")}`;
+        } else if (b.decided) {
+          verdictCell = `<span class="v-ok">${esc(b.decided.decision)}</span>`;
+        } else {
+          verdictCell = `<span class="v-inert">no verdict</span>`;
+          note = esc((b.decided_absent || {}).because || "");
+        }
+        if (r.n === 4 && b && b.recomputed) {
+          note += ` <br/>Graded <b>${b.recomputed.fields}</b> claim(s), <b>${b.recomputed.violations}</b> unsourced.`;
+        }
+      }
+      if (isCeiling) ceilingShown = true;
+
+      return `<div class="rung ${isCeiling ? "is-ceiling" : ""}">
+        <div class="rung-n">${r.n}</div>
+        <div class="rung-b">
+          <div class="rung-q"><b style="color:var(--fg3);font-weight:normal">${RUNG_NAME[r.n]}</b>
+            — ${esc(r.q)}</div>
+          ${note ? `<div class="rung-pw">${note}</div>` : ""}
+          ${r.pw ? `<div class="rung-pw">Passes while: <b>${esc(r.pw)}</b></div>` : ""}
+          ${isCeiling ? `<div class="ceilmark">← ceiling · nothing above this was enforced on this artifact</div>` : ""}
+        </div>
+        <div class="rung-v">${verdictCell}</div>
       </div>`;
     }).join("");
 
-    // Why each checkpoint reads as it does. `not_recorded` is most of the belt
-    // today and the reason is one missing column, not a silent gate.
-    const whys = (d.belt || []).map(b => {
-      const bits = [];
-      if (b.decided) {
-        // `reason` is null on approvals by design, so say what happened either way.
-        bits.push(`<b>${esc(b.rung)}</b> — ${esc(b.decided.decision)}`
-          + (b.decided.reason ? `: ${esc(b.decided.reason)}` : "")
-          + (b.decided.at ? ` <span class="absent">(${esc(b.decided.at.slice(0,19).replace("T"," "))})</span>` : "")
-          // The whole point of `decision_id`: judge it from the artifact.
-          + (b.decided.decision_id != null
-              ? ` <a href="/gate/${encodeURIComponent(b.rung)}#d${encodeURIComponent(b.decided.decision_id)}">Was this right? →</a>`
-              : ""));
-      }
-      if (b.decided_absent) {
-        bits.push(`<b>${esc(b.rung)}</b> — ${esc(b.decided_absent.because)}`);
-      }
-      if (b.why_not_control) bits.push(
-        `<b>${esc(b.rung)} records but cannot refuse</b> — ${esc(b.why_not_control)}`);
-      return bits.map(t =>
-        `<div class="why ${b.enforcement === "metric" ? "metric" : ""}">${t}</div>`).join("");
-    }).join("");
+    const pre = (d.belt || []).filter(b => PRECONDITION[b.rung]).map(b =>
+      `<span><b>${esc(b.rung)}</b> — ${esc(PRECONDITION[b.rung])}</span>`).join("");
 
-    // The image that matters: a checkpoint that found a violation and could not
-    // stop it, because on this route it only records.
-    const leaked = (d.belt || []).find(b =>
-      b.enforcement === "metric" && (b.recomputed || {}).violations > 0);
-    const leak = leaked ? `<div class="passed-through">
-      <b>The artifact passed through.</b> The <b>${esc(leaked.rung)}</b> checkpoint
-      found ${leaked.recomputed.violations} field(s) it could not source and recorded them —
-      it does not refuse on this route, so nothing was stopped and the response was
-      returned and persisted as it stands. That is the difference between a control
-      and a metric, and it is the reason this belt draws them differently.</div>` : "";
-
-    // The platform's only finding about its own drift. It exists only because
-    // `decided` and `recomputed` are never reconciled server-side.
-    const drifted = (d.belt || []).find(b => b.decided && b.recomputed
-      && b.decided.decision === "approved" && b.recomputed.violations > 0);
-    const drift = drifted ? `<div class="passed-through" style="border-left-color:var(--yellow)">
-      <b style="color:var(--yellow)">The standard moved.</b> <b>${esc(drifted.rung)}</b>
-      recorded <b>approved</b> when this ran, and the contract as it stands today finds
-      ${drifted.recomputed.violations} violation(s) in the same bytes. That is not a
-      contradiction and neither number is wrong — the contract was tightened afterwards.
-      This is a finding about the platform, not about the agent.</div>` : "";
-
-    // An unverified safety claim, and this screen is the only place anyone sees it.
     const route = d.belt_route && d.belt_route.recoverable === false
-      ? `<div class="why" style="border-left-color:var(--yellow)">
-           <b>Belt unverified.</b> ${esc(d.belt_route.because || "")}
-           Shown as <b>${esc(d.belt_route.assumed || "")}</b>, which is the wider of the
-           two routes — so this may list checkpoints the artifact never passed.</div>`
+      ? `<div class="rung-pw" style="margin-top:8px;color:var(--yellow)">
+           Route unverified: <code>episodes</code> records no route discriminator, so the wider
+           of the two declared belts is shown. This may list checkpoints the artifact never passed.</div>`
       : "";
 
     return `<div class="block">
-      <h2>The belt</h2>
-      <div class="note">
-        Every checkpoint the artifact was declared to pass, in order. A solid ring can
-        refuse; a dashed ring only records. <b>✓</b> approved · <b>✕</b> refused ·
-        <b>?</b> the gate ran and could not decide · faint <b>·</b> no ledger row, with
-        the reason below — only <i>no row</i> is a finding, the others are design.
-      </div>
-      <div class="belt">
-        <div class="belt-line"></div>
-        <div class="belt-token" style="left:calc(100% - 20px)"></div>
-        <div class="cps">${cps}</div>
-      </div>
-      ${drift}
-      ${leak}
-      <div class="belt-why">${route}${whys}</div>
+      <h2>The verification ladder</h2>
+      <div class="note">Five questions, ordered by difficulty. A check answering an easier
+        one will pass while a harder one fails, and each rung is invisible to the one below —
+        so the ceiling, not the count, is what the platform actually knows.</div>
+      ${rows}
+      ${route}
+      ${typed ? "" : `<div class="rung-pw" style="margin-top:8px">This agent is not fully
+        typed, so rungs 4 and 5 have less to check against than they would otherwise.</div>`}
+      <h2 style="margin-top:20px">Preconditions — not verification</h2>
+      <div class="note">These check the caller and the envelope. None of them ever opens the
+        payload, so none can say anything about what it claims.</div>
+      <div class="pre">${pre || "<span>None declared on this route.</span>"}</div>
     </div>`;
   }
 
@@ -415,6 +577,51 @@ something specific about each checkpoint.")}</div></div>`;
       </div>`).join("")}</div>`;
   }
 
+  // The join between the two axes. An artifact is a packet (it crosses gates)
+  // and a data point (it feeds loops) - the same object in two roles - and
+  // neither screen used to say so.
+  //
+  // Only Loop 1 is asserted, because every persisted episode is Loop 1's first
+  // stage. The others are claimed only when this artifact actually produced the
+  // thing they consume: not every agent is ever calibrated against an external
+  // outcome, and saying a loop does not apply is different from saying it is
+  // broken.
+  function feeds(d) {
+    const a = readArtifact(d);
+    const items = [];
+
+    items.push(["Loop 1 · Individual learning", "hours",
+      `This episode is Loop 1's first stage. Consolidation reads it and may turn it into a
+       semantic rule the agent retrieves later.`,
+      a.violations > 0 && !a.contentsGuarded ? "bad" : "ok"]);
+
+    if (a.held.length) {
+      items.push(["Verification queue", "days",
+        `${a.held.length} claim(s) from this artifact are awaiting a verdict. Until one is
+         recorded, “nobody checked” and “checked and fine” are the same state.`, "warm"]);
+    }
+    if ((d.fields || []).some(f => (f.strength ?? 0) === 2)) {
+      items.push(["Loop 5 · Calibration", "months+",
+        `Reproducible values here can be scored against an outcome that resolves independently
+         of what this agent said — a hard-verified signal, which needs no coherence gate.`, "ok"]);
+    }
+
+    return `<div class="block"><h2>What this artifact fed</h2>
+      <div class="note">A gate decides whether an artifact is fit to enter a loop. This is
+        where this one went.</div>
+      ${items.map(([name, ts, body, tone]) => `<div class="rung">
+        <div class="rung-b">
+          <div class="rung-q">${esc(name)}</div>
+          <div class="rung-pw">${body}</div>
+        </div>
+        <div class="rung-v"><span class="${
+          tone === "bad" ? "v-silent" : tone === "warm" ? "v-inert" : "v-elsewhere"}">${esc(ts)}</span></div>
+      </div>`).join("")}
+      <div class="rung-pw" style="margin-top:8px">Loops not listed do not apply to this
+        artifact. <a href="/loops">All loops, by timescale →</a></div>
+    </div>`;
+  }
+
   function caveats(d) {
     const c = d.caveats || [];
     if (!c.length) return "";
@@ -449,9 +656,11 @@ something specific about each checkpoint.")}</div></div>`;
          <a href="/trace/${esc(d.parent_episode_id)}">the previous attempt →</a></div></div>`
       : "";
 
+    // Answer, then reasoning, then work. The epistemics used to come first and
+    // that is why the page could not be read.
     document.getElementById("content").innerHTML =
-      head + substrateBlock(d) + belt(d) + fields(d) + routed(d)
-      + ownerBlock(d) + chain + caveats(d);
+      head + payload(d) + verdict(d) + ladder(d) + fields(d) + routed(d)
+      + feeds(d) + ownerBlock(d) + substrateBlock(d) + chain + caveats(d);
   }
 
   async function boot() {
