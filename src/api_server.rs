@@ -3233,6 +3233,8 @@ async fn main() {
         .route("/gates", get(handlers::pages::loops_view))
         .route("/specimen/:agent_name", get(handlers::pages::specimen_view))
         .route("/trace/:episode_id", get(handlers::pages::trace_view))
+        .route("/declarations", get(handlers::pages::declarations_view))
+        .route("/gate/:gate_id", get(handlers::pages::gate_view))
         .route(
             "/api/ecology/overview",
             get(handlers::ecology::ecology_overview_handler),

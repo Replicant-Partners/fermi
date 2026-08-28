@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en" class="theme-hasui">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Gate — Agent Bestiary</title>
+  <link rel="stylesheet" href="/static/css/variables.css"/>
+  <link rel="stylesheet" href="/static/css/common.css"/>
+  <link rel="stylesheet" href="/static/css/components.css"/>
+  <style>
+  body{font-family:"Berkeley Mono","JetBrains Mono",monospace;line-height:1.5;background:var(--bg0-hard);font-size:13px;margin:0;}
+  a{color:var(--fg3);text-decoration:none;} a:hover{color:var(--yellow);}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 20px 60px;}
+
+  .head{padding:18px 0 12px;border-bottom:1px solid var(--bg2);margin-bottom:16px;}
+  .head h1{font-size:1.02rem;color:var(--yellow);margin:0 0 3px;}
+  .head .sub{font-size:0.73rem;color:var(--fg4);}
+
+  .badge{display:inline-block;font-size:0.62rem;text-transform:uppercase;letter-spacing:0.06em;
+         padding:1px 6px;border:1px solid;}
+  .r-idle{color:var(--fg3);border-color:var(--bg3);}
+  .r-fault{color:var(--red,#fb4934);border-color:var(--red,#fb4934);}
+  .r-unknown{color:var(--purple,#d3869b);border-color:var(--purple,#d3869b);border-style:dashed;}
+
+  .block{margin-bottom:24px;}
+  .block h2{font-size:0.72rem;color:var(--fg2);margin:0 0 8px;text-transform:uppercase;
+            letter-spacing:0.07em;padding-bottom:4px;border-bottom:1px solid var(--bg2);}
+  .note{font-size:0.71rem;color:var(--fg4);font-style:italic;line-height:1.5;margin:-2px 0 12px;max-width:88ch;}
+
+  /* ── Three readings, three readouts. Never one dot. ── */
+  .three{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:1px;background:var(--bg2);}
+  .rd{background:var(--bg0);padding:11px 13px;}
+  .rd-q{font-size:0.7rem;color:var(--fg4);line-height:1.4;min-height:2.5em;}
+  .rd-v{margin-top:7px;}
+  .rd-d{font-size:0.7rem;color:var(--fg4);margin-top:6px;line-height:1.5;}
+
+  .decision{border:1px solid var(--bg2);background:var(--bg0);margin-bottom:8px;}
+  .d-h{display:flex;align-items:baseline;gap:9px;padding:8px 11px 4px;}
+  .d-verdict{font-size:0.62rem;text-transform:uppercase;letter-spacing:0.06em;padding:1px 6px;border:1px solid;}
+  .v-refused{color:var(--red,#fb4934);border-color:var(--red,#fb4934);}
+  .v-approved{color:var(--green);border-color:var(--green);}
+  .v-undetermined{color:var(--purple,#d3869b);border-color:var(--purple,#d3869b);}
+  .d-sub{font-size:0.72rem;color:var(--fg2);}
+  .d-when{margin-left:auto;font-size:0.66rem;color:var(--fg4);}
+  .d-reason{padding:0 11px 8px;font-size:0.74rem;color:var(--fg3);line-height:1.5;}
+  .d-review{margin:0 11px 10px;padding:8px 10px;background:var(--bg1);border-left:2px solid var(--bg3);}
+  .d-review.judged{border-left-color:var(--aqua);}
+  .d-review .rv{font-size:0.72rem;color:var(--fg2);}
+  .d-review .rt{font-size:0.71rem;color:var(--fg3);margin-top:3px;line-height:1.5;}
+  .d-review .ra{font-size:0.65rem;color:var(--fg4);margin-top:3px;}
+  .unreviewed{font-size:0.72rem;color:var(--purple,#d3869b);}
+
+  .form{margin:0 11px 11px;padding:9px 11px;border:1px solid var(--bg2);background:var(--bg1);}
+  .form-q{font-size:0.76rem;color:var(--fg2);margin-bottom:7px;}
+  .btns{display:flex;gap:6px;flex-wrap:wrap;}
+  .vb{background:transparent;border:1px solid var(--bg3);padding:4px 12px;font-size:0.72rem;
+      color:var(--fg3);cursor:pointer;font-family:inherit;}
+  .vb:hover{border-color:var(--yellow);color:var(--yellow);}
+  .vb.sel{border-color:var(--aqua);color:var(--aqua);}
+  .vb.up:hover{border-color:var(--green);color:var(--green);}
+  .vb.ov:hover{border-color:var(--red,#fb4934);color:var(--red,#fb4934);}
+  .form textarea{width:100%;margin-top:7px;background:var(--bg0);color:var(--fg2);
+    border:1px solid var(--bg3);padding:6px 8px;font-family:inherit;font-size:0.73rem;min-height:52px;}
+  .form .hint{font-size:0.67rem;color:var(--fg4);margin-top:5px;line-height:1.45;}
+  .form .err{font-size:0.72rem;color:var(--red,#fb4934);margin-top:6px;line-height:1.5;}
+  .form .submit{margin-top:7px;}
+
+  .door{border-left:2px solid var(--aqua);background:var(--bg1);padding:9px 12px;margin-bottom:8px;}
+  .door-does{font-size:0.74rem;color:var(--fg3);line-height:1.5;}
+  .door-why{font-size:0.7rem;color:var(--fg4);margin-top:5px;line-height:1.5;
+            padding-left:8px;border-left:1px solid var(--bg3);}
+  .nodoors{border:1px dashed var(--bg3);padding:10px 12px;font-size:0.73rem;color:var(--fg4);line-height:1.5;}
+  .caveat{border:1px solid var(--bg2);background:var(--bg1);padding:8px 11px;margin-bottom:7px;
+          font-size:0.72rem;color:var(--fg3);line-height:1.5;}
+  .caveat .ck{color:var(--green);}
+  .caveat .dns b{color:var(--yellow);}
+  .empty{padding:16px 8px;font-size:0.76rem;color:var(--fg4);}
+  .attrib{font-size:0.68rem;color:var(--fg4);font-style:italic;margin-top:8px;}
+  </style>
+</head>
+<body>
+  <div id="nav-root"></div>
+  <div class="wrap"><div id="content"><div class="empty">Loading…</div></div></div>
+
+  <script src="/static/js/widgets/nav.js"></script>
+  <script src="/static/js/theme.js"></script>
+  <script>
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
+    ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const GATE = decodeURIComponent(location.pathname.split("/").filter(Boolean).pop() || "");
+  const READINGS = ["idle","fault","unknown"];
+  const reading = r => READINGS.includes(r) ? r : "unknown";
+  let D = null, BOARD = null, PICK = {};
+
+  function badge(r, label) {
+    const rd = reading(r);
+    return `<span class="badge r-${rd}">${esc((label || rd).replace(/_/g," "))}</span>`;
+  }
+
+  // Three different `reading` fields answering three different questions. A gate
+  // can be discriminating, idle on the ledger, and unreviewed all at once, and
+  // all three are true.
+  function threeReadings(d, boardGate) {
+    const rv = d.review || {};
+    return `<div class="block">
+      <h2>Three readings</h2>
+      <div class="note">
+        These answer different questions and are not reducible to one dot.
+      </div>
+      <div class="three">
+        <div class="rd">
+          <div class="rd-q">Does this gate discriminate? <br/>(from approve/refuse counts)</div>
+          <div class="rd-v">${boardGate
+            ? badge(boardGate.reading, boardGate.token)
+            : `<span class="badge r-unknown">not on the board</span>`}</div>
+          <div class="rd-d">${boardGate ? `${boardGate.approved} approved · ${boardGate.refused} refused ·
+            ${boardGate.since === "boot"
+              ? `<span style="color:var(--yellow)">since boot only — resets on deploy</span>`
+              : "durable ledger"}` : ""}</div>
+        </div>
+        <div class="rd">
+          <div class="rd-q">Does the durability claim hold? <br/>(are there rows on file?)</div>
+          <div class="rd-v">${badge(d.reading)}</div>
+          <div class="rd-d">${esc(d.detail || "")}</div>
+        </div>
+        <div class="rd">
+          <div class="rd-q">Has anybody said the decisions were right?</div>
+          <div class="rd-v">${badge(rv.reading, rv.token)}</div>
+          <div class="rd-d">${rv.token === "unreviewed"
+            ? "Decisions on file, none judged. Not a pass — this is where every gate starts."
+            : rv.token === "nothing_to_review"
+              ? "The ledger is empty, so nothing could have been reviewed. Says nothing about the gate."
+              : rv.token === "inconclusive"
+                ? "Reviewed, and not one review could reach a verdict. That is a finding about the ledger: `reason` is not recording enough to judge from."
+                : ""}</div>
+        </div>
+      </div>
+      ${d.review_error ? `<div class="caveat" style="border-color:var(--red,#fb4934)">
+        <b>Review vocabulary drift:</b> ${esc(d.review_error)} — a platform defect,
+        reported rather than folded into a bucket.</div>` : ""}
+    </div>`;
+  }
+
+  function reviewForm(dec, canReview) {
+    if (!canReview) return "";
+    const p = PICK[dec.id] || {};
+    const sel = v => p.verdict === v ? "sel" : "";
+    return `<div class="form" data-form="${dec.id}">
+      <div class="form-q">Was this decision right?</div>
+      <div class="btns">
+        <button class="vb up ${sel("upheld")}" data-v="upheld" data-id="${dec.id}">Upheld</button>
+        <button class="vb ov ${sel("overturned")}" data-v="overturned" data-id="${dec.id}">Overturned</button>
+        <button class="vb ${sel("unclear")}" data-v="unclear" data-id="${dec.id}">Unclear</button>
+      </div>
+      ${p.verdict === "overturned" || p.verdict === "unclear" ? `
+        <textarea id="rt-${dec.id}" placeholder="${p.verdict === "overturned"
+          ? "Why was it wrong? Required."
+          : "What is missing from the record that would let someone judge this?"}"
+          >${esc(p.rationale || "")}</textarea>` : ""}
+      ${p.verdict === "unclear" ? `<div class="hint">
+        <b>Unclear is a real answer.</b> It means the record does not say enough to
+        judge this. Every review coming back unclear is how we learn that the
+        decision reason needs to carry more.</div>` : ""}
+      ${p.verdict === "upheld" ? `<div class="hint">
+        One click, no reason needed — on purpose. Making the routine confirmation
+        as expensive as the finding is how the denominator disappears, and
+        "3 overturned" and "3 overturned of 400 reviewed" are different findings.</div>` : ""}
+      ${p.error ? `<div class="err">${esc(p.error)}</div>` : ""}
+      ${p.verdict ? `<div class="submit"><button class="vb" data-submit="${dec.id}">
+        Record this judgement</button></div>` : ""}
+    </div>`;
+  }
+
+  function decisions(d, canReview) {
+    const rows = d.decisions || [];
+    if (!rows.length) {
+      return `<div class="block"><h2>Decisions</h2>
+        <div class="empty">${esc(d.detail || "Nothing on file.")}
+        ${d.ledger_total === 0 ? `<br/><br/>Migration 214 created this table. Until it
+        ran, the platform had a record of every request it served and none of any it
+        refused — so an empty ledger here is the check that would have caught that,
+        pointed at the table built to fix it.` : ""}</div></div>`;
+    }
+    return `<div class="block"><h2>Decisions</h2>
+      <div class="note">Refusals first — what was stopped is what a reader came for.</div>
+      ${rows.map(x => {
+        const rv = x.review;
+        return `<div class="decision">
+          <div class="d-h">
+            <span class="d-verdict v-${esc(x.decision)}">${esc(x.decision)}</span>
+            <span class="d-sub">${esc(x.subject || "—")}</span>
+            <span class="d-when">${esc((x.decided_at || "").slice(0,19).replace("T"," "))}</span>
+          </div>
+          ${x.reason ? `<div class="d-reason">${esc(x.reason)}</div>` : ""}
+          ${rv ? `<div class="d-review judged">
+              <div class="rv">Judged <b>${esc(rv.verdict)}</b></div>
+              ${rv.rationale ? `<div class="rt">${esc(rv.rationale)}</div>` : ""}
+              <div class="ra">${esc(rv.actor || "")} · ${esc(rv.actor_kind || "")} ·
+                ${esc((rv.reviewed_at || "").slice(0,10))}</div>
+            </div>`
+            : `<div class="d-review"><span class="unreviewed">Not reviewed</span>
+               <div class="ra">Which is not the same as nobody having found anything
+               wrong with it.</div></div>`}
+          ${reviewForm(x, canReview)}
+        </div>`;
+      }).join("")}</div>`;
+  }
+
+  function doors(d) {
+    const dr = d.doors || [];
+    if (!dr.length) {
+      return `<div class="block"><h2>What you can do here</h2>
+        <div class="nodoors"><b style="color:var(--fg3)">Nothing, and that is correct.</b>
+        This gate is counted in memory only and never claimed durability — its
+        individual decisions do not survive the process, so there is no recorded
+        decision a review could point at. That is not the same as it never having
+        refused anything.</div></div>`;
+    }
+    return `<div class="block"><h2>What you can do here</h2>
+      <div class="note">
+        This is not an override. Nothing re-runs a gate, reverses a decision, or
+        admits what one refused — it records an opinion about something that already
+        happened. Correctness is not a property of a count, and a reviewer is the
+        only instrument that can see a gate refusing the right proportion of the
+        wrong things.
+      </div>
+      ${dr.map(x => `<div class="door">
+        <div class="door-does">${esc(x.does)}</div>
+        <div class="door-why">Why a person: ${esc(x.why_manual)}</div>
+      </div>`).join("")}
+      <div class="attrib">Reviews are append-only: judging a decision twice keeps both,
+        and two reviewers disagreeing about one refusal is the most informative thing
+        this record can hold. Under admin “view as”, a review is attributed to the
+        admin, not the user being viewed — impersonation must not launder a judgement.</div>
+    </div>`;
+  }
+
+  async function submit(id) {
+    const p = PICK[id] || {};
+    const ta = document.getElementById("rt-" + id);
+    const rationale = ta ? ta.value : "";
+    if (p.verdict === "overturned" && !rationale.trim()) {
+      p.error = "Overturned needs a rationale — whitespace does not count.";
+      PICK[id] = p; return render();
+    }
+    p.error = null; PICK[id] = p;
+    try {
+      const res = await fetch(
+        `/api/gates/${encodeURIComponent(GATE)}/decisions/${encodeURIComponent(id)}/review`,
+        { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ verdict: p.verdict, rationale, actor_kind: "human" }) });
+      if (!res.ok) {
+        // The 400 text is written to be displayed verbatim.
+        p.error = (await res.text()) || `HTTP ${res.status}`;
+        PICK[id] = p; return render();
+      }
+      delete PICK[id];
+      await load(); render();
+    } catch (e) {
+      p.error = String(e.message); PICK[id] = p; render();
+    }
+  }
+
+  function wire() {
+    document.querySelectorAll("[data-v]").forEach(b => b.onclick = () => {
+      const id = b.dataset.id;
+      PICK[id] = { ...(PICK[id] || {}), verdict: b.dataset.v };
+      render();
+    });
+    document.querySelectorAll("[data-submit]").forEach(b =>
+      b.onclick = () => submit(b.dataset.submit));
+  }
+
+  function render() {
+    const boardGate = (BOARD?.gates || []).find(g => g.id === GATE);
+    const canReview = (D.doors || []).length > 0;
+    document.getElementById("content").innerHTML = `
+      <div class="head">
+        <h1>${esc(GATE)}</h1>
+        <div class="sub">${esc(boardGate?.refuses || "a control that refuses things")}</div>
+        <div class="sub" style="margin-top:6px"><a href="/loops">← all gates</a></div>
+      </div>`
+      + threeReadings(D, boardGate)
+      + decisions(D, canReview)
+      + doors(D)
+      + ((D.caveats || []).length ? `<div class="block">
+          <h2>What this does and does not establish</h2>
+          ${D.caveats.map(c => `<div class="caveat">
+            <div class="ck">✓ ${esc(c.checked)}</div>
+            <div class="dns"><b>Does not show:</b> ${esc(c.does_not_show)}</div>
+          </div>`).join("")}</div>` : "");
+    wire();
+  }
+
+  async function load() {
+    const [a, b] = await Promise.all([
+      fetch(`/api/gates/${encodeURIComponent(GATE)}/decisions`),
+      fetch("/api/gates").catch(() => null),
+    ]);
+    if (a.status === 401) throw new Error("401");
+    if (!a.ok) throw new Error("HTTP " + a.status);
+    D = await a.json();
+    if (b && b.ok) BOARD = await b.json();
+  }
+
+  (async () => {
+    if (window.Nav) Nav.init({ current: "loops" });
+    try { await load(); } catch (e) {
+      document.getElementById("content").innerHTML = e.message === "401"
+        ? `<div class="empty">Sign in to review gate decisions.
+           <a href="/auth/google">Google</a> · <a href="/auth/github">GitHub</a></div>`
+        : `<div class="empty">Could not load this gate: ${esc(e.message)}.</div>`;
+      return;
+    }
+    render();
+  })();
+  </script>
+</body>
+</html>

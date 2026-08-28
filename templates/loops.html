@@ -280,7 +280,8 @@
         ? `<span class="since-boot">since boot only — resets on deploy</span>`
         : `<span class="dim">durable ledger</span>`;
       return `<tr>
-        <td><span style="color:var(--fg2)">${esc(g.id)}</span>
+        <td><a href="/gate/${encodeURIComponent(g.id)}"
+               style="color:var(--fg2)">${esc(g.id)}</a>
             <div class="dim" style="font-size:0.66rem">${esc(g.refuses || "")}</div></td>
         <td class="num">${g.approved}</td>
         <td class="num">${g.refused}</td>
@@ -289,6 +290,7 @@
           ${c ? `<div class="caveat"><b>Checked:</b> ${esc(c.checked)}<br/>
                  <b>Does not show:</b> ${esc(c.does_not_show)}</div>` : ""}
           ${g.if_never_refuses ? `<div class="caveat">${esc(g.if_never_refuses)}</div>` : ""}
+          <div class="caveat"><a href="/gate/${encodeURIComponent(g.id)}">What it refused, and what anybody said about it →</a></div>
         </td></tr>`;
     }).join("");
 

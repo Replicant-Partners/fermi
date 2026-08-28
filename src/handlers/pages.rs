@@ -637,6 +637,26 @@ pub async fn trace_view() -> Response {
     app_shell("templates/trace.html")
 }
 
+/// Why the belts are quiet, and whose job each one is.
+///
+/// The destination of the artifact trace's default state. `unknown` on every
+/// trust surface is overwhelmingly the *agent* declaring no structure to check
+/// against — 89 of 96 real producing agents have no field contract — which is
+/// authoring work, not a platform contract we owe.
+pub async fn declarations_view() -> Response {
+    app_shell("templates/declarations.html")
+}
+
+/// One gate: what it refused, and what anybody has said about it.
+///
+/// Three independent readings live here and must not collapse into one — does the
+/// gate discriminate (from counts), does the durability claim hold (are there
+/// rows), and has anybody judged the decisions right. A gate can be
+/// `discriminating`, `idle` and `unreviewed` at once, and all three are true.
+pub async fn gate_view() -> Response {
+    app_shell("templates/gate.html")
+}
+
 pub async fn observatory_hitl_view() -> Response {
     app_shell("templates/observatory_hitl.html")
 }

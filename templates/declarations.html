@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en" class="theme-hasui">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Declarations — Agent Bestiary</title>
+  <link rel="stylesheet" href="/static/css/variables.css"/>
+  <link rel="stylesheet" href="/static/css/common.css"/>
+  <link rel="stylesheet" href="/static/css/components.css"/>
+  <style>
+  body{font-family:"Berkeley Mono","JetBrains Mono",monospace;line-height:1.5;background:var(--bg0-hard);font-size:13px;margin:0;}
+  a{color:var(--fg3);text-decoration:none;} a:hover{color:var(--yellow);}
+  .wrap{max-width:1020px;margin:0 auto;padding:0 20px 60px;}
+
+  .head{padding:18px 0 12px;border-bottom:1px solid var(--bg2);margin-bottom:16px;}
+  .head h1{font-size:1.02rem;color:var(--yellow);margin:0 0 3px;}
+  .head .sub{font-size:0.73rem;color:var(--fg4);}
+  .contract{font-size:0.73rem;color:var(--fg3);line-height:1.55;margin:12px 0 0;
+            padding-left:10px;border-left:2px solid var(--bg3);max-width:88ch;}
+
+  .block{margin-bottom:26px;}
+  .block h2{font-size:0.72rem;color:var(--fg2);margin:0 0 8px;text-transform:uppercase;
+            letter-spacing:0.07em;padding-bottom:4px;border-bottom:1px solid var(--bg2);}
+  .note{font-size:0.71rem;color:var(--fg4);font-style:italic;line-height:1.5;margin:-2px 0 12px;max-width:88ch;}
+
+  /* ── Two jobs, never one total ── */
+  .jobs{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  @media (max-width:760px){ .jobs{grid-template-columns:1fr;} }
+  .job{border:1px solid var(--bg2);padding:12px 14px;background:var(--bg0);}
+  .job .n{font-size:1.5rem;color:var(--aqua);}
+  .job.prune .n{color:var(--fg4);}
+  .job .verb{font-size:0.78rem;color:var(--fg2);margin-top:1px;}
+  .job .what{font-size:0.71rem;color:var(--fg4);margin-top:5px;line-height:1.5;}
+  .nosum{font-size:0.69rem;color:var(--fg4);font-style:italic;margin-top:9px;}
+
+  /* ── Coverage as counts, never a bar ── */
+  .rungs{display:flex;flex-wrap:wrap;gap:1px;background:var(--bg2);}
+  .rung{background:var(--bg0);padding:9px 13px;min-width:132px;}
+  .rung .rn{font-size:1.05rem;color:var(--fg2);}
+  .rung .rl{font-size:0.63rem;color:var(--fg4);text-transform:uppercase;letter-spacing:0.06em;margin-top:1px;}
+
+  /* ── The ladder ── */
+  .lr{border:1px solid var(--bg2);margin-bottom:8px;background:var(--bg0);}
+  .lr-h{display:flex;align-items:baseline;gap:9px;padding:9px 12px 5px;}
+  .lr-n{font-size:0.62rem;color:var(--fg4);border:1px solid var(--bg3);padding:1px 6px;}
+  .lr-name{font-size:0.84rem;color:var(--fg2);}
+  .lr-count{margin-left:auto;font-size:0.7rem;color:var(--fg4);}
+  .lr-body{padding:0 12px 10px;}
+  .lr-line{font-size:0.73rem;color:var(--fg3);line-height:1.5;margin-bottom:4px;}
+  .lr-line .k{color:var(--fg4);}
+  .lr-without{font-size:0.75rem;color:var(--yellow);line-height:1.55;margin-top:7px;
+              padding-left:9px;border-left:2px solid var(--yellow);}
+  .lr-owner{font-size:0.66rem;color:var(--fg4);margin-top:6px;}
+
+  /* ── Worklist ── */
+  .grp{margin-bottom:16px;}
+  .grp-h{display:flex;align-items:baseline;gap:8px;padding:6px 0 4px;border-bottom:1px solid var(--bg2);}
+  .grp-t{font-size:0.79rem;color:var(--aqua);}
+  .grp-n{font-size:0.7rem;color:var(--fg4);}
+  .grp-why{font-size:0.71rem;color:var(--fg4);line-height:1.5;margin:5px 0 8px;max-width:88ch;}
+  .agents{display:grid;grid-template-columns:repeat(auto-fill,minmax(216px,1fr));gap:6px;}
+  .ag{border:1px solid var(--bg2);padding:7px 10px;background:var(--bg0);}
+  .ag:hover{border-color:var(--bg3);background:var(--bg1);}
+  .ag-n{font-size:0.76rem;color:var(--fg2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .chips{display:flex;flex-wrap:wrap;gap:3px;margin-top:4px;}
+  .chip{font-size:0.6rem;padding:0 5px;border:1px solid var(--bg3);color:var(--fg4);}
+  .chip.have{border-color:var(--green);color:var(--green);}
+  .chip.miss{border-style:dashed;}
+  .opaque{border-left:2px solid var(--purple,#d3869b);}
+
+  .empty{padding:16px 8px;font-size:0.76rem;color:var(--fg4);}
+  </style>
+</head>
+<body>
+  <div id="nav-root"></div>
+  <div class="wrap"><div id="content"><div class="empty">Loading…</div></div></div>
+
+  <script src="/static/js/widgets/nav.js"></script>
+  <script src="/static/js/theme.js"></script>
+  <script>
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
+    ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+  // The ladder is ordered by what it costs an author, so `next` is always the
+  // least expensive useful step. Telling someone to write a field contract for
+  // an agent that has not declared its ports is the most expensive step first.
+  const RUNG_ORDER = ["ports", "output_type", "output_schema", "field_contract"];
+
+  function jobs(d) {
+    const c = d.census || {};
+    return `<div class="block">
+      <h2>Two jobs</h2>
+      <div class="note">
+        Different work, different people, and deliberately not added together.
+      </div>
+      <div class="jobs">
+        <div class="job">
+          <div class="n">${(d.retrofit || []).length}</div>
+          <div class="verb">agents to retrofit</div>
+          <div class="what">Authoring, with someone who knows the domain. Each one
+            declares what its output should look like so a rung has something to
+            check against.</div>
+        </div>
+        <div class="job prune">
+          <div class="n">${d.prune_count ?? 0}</div>
+          <div class="verb">fixtures to prune</div>
+          <div class="what">A delete behind an existing safety gate.
+            <code>test_agent_*</code> rows that declare nothing and never will.</div>
+        </div>
+      </div>
+      <div class="nosum">
+        Summed, the retrofit looks twice its real size — and its real size is what
+        decides whether it gets done. ${c.producing ?? 0} agents have produced an
+        episode; ${c.real ?? 0} are real.
+      </div>
+    </div>`;
+  }
+
+  function coverage(d) {
+    const by = (d.census || {}).by_rung || [];
+    const c = d.census || {};
+    // Counts, never a ratio and never a bar. New agents arrive undeclared by
+    // definition, so any target would fire on entirely correct behaviour.
+    return `<div class="block">
+      <h2>What is declared today</h2>
+      <div class="note">
+        Reported as counts on purpose. There is no target here: a new agent is
+        undeclared by definition, so a progress bar toward 100% would show a
+        healthy platform falling behind every time someone adds an agent.
+      </div>
+      <div class="rungs">
+        ${by.map(([rung, n]) => `<div class="rung">
+          <div class="rn">${n}</div><div class="rl">${esc(rung.replace(/_/g," "))}</div>
+        </div>`).join("")}
+        <div class="rung"><div class="rn">${c.declared ?? 0}</div>
+          <div class="rl">fully declared</div></div>
+        <div class="rung"><div class="rn">${c.opaque ?? 0}</div>
+          <div class="rl">declare nothing</div></div>
+      </div>
+    </div>`;
+  }
+
+  function ladder(d) {
+    const counts = Object.fromEntries((d.census || {}).by_rung || []);
+    return `<div class="block">
+      <h2>The ladder</h2>
+      <div class="note">
+        Ordered by what it costs an author. Each rung unlocks the one above it,
+        and <b>without it</b> is the sentence to read — it says what stops being
+        knowable, not which field is missing.
+      </div>
+      ${(d.ladder || []).map((r, i) => `<div class="lr">
+        <div class="lr-h">
+          <span class="lr-n">${i + 1}</span>
+          <span class="lr-name">${esc(r.rung.replace(/_/g," "))}</span>
+          <span class="lr-count">${counts[r.rung] ?? 0} of ${(d.census||{}).real ?? 0} declare it</span>
+        </div>
+        <div class="lr-body">
+          <div class="lr-line"><span class="k">Declares:</span> ${esc(r.declares)}</div>
+          <div class="lr-line"><span class="k">Unlocks:</span> ${esc(r.unlocks)}</div>
+          <div class="lr-without">Without it: ${esc(r.without_it)}</div>
+          <div class="lr-owner">Lives in: ${esc(r.owner)}</div>
+        </div>
+      </div>`).join("")}
+    </div>`;
+  }
+
+  function worklist(d) {
+    const rows = d.retrofit || [];
+    // Grouped by cheapest next step. A flat list of 92 is a list; grouped by the
+    // one move each needs, it is four decisions.
+    const groups = {};
+    rows.forEach(r => {
+      const k = (r.next || {}).rung || "unknown";
+      (groups[k] ||= []).push(r);
+    });
+    const byRung = Object.fromEntries((d.ladder || []).map(r => [r.rung, r]));
+
+    const order = RUNG_ORDER.filter(k => groups[k]).concat(
+      Object.keys(groups).filter(k => !RUNG_ORDER.includes(k)));
+
+    return `<div class="block">
+      <h2>Worklist</h2>
+      <div class="note">
+        Every agent here is the author's to declare, not the platform's to fix.
+        Grouped by the single cheapest move each one needs.
+      </div>
+      ${order.map(k => {
+        const g = groups[k], meta = byRung[k];
+        return `<div class="grp">
+          <div class="grp-h">
+            <span class="grp-t">Declare ${esc(k.replace(/_/g," "))}</span>
+            <span class="grp-n">${g.length} agent${g.length === 1 ? "" : "s"}</span>
+          </div>
+          ${meta ? `<div class="grp-why">${esc(meta.without_it)}</div>` : ""}
+          <div class="agents">
+            ${g.map(r => {
+              const lg = r.legibility || {};
+              const chips = (arr, cls) => (arr || []).map(x =>
+                `<span class="chip ${cls}">${esc(x.replace(/_/g," "))}</span>`).join("");
+              return `<a class="ag ${lg.legibility === "opaque" ? "opaque" : ""}"
+                         href="/specimen/${encodeURIComponent(r.agent)}">
+                <div class="ag-n">${esc(r.agent)}</div>
+                <div class="chips">${chips(lg.present,"have")}${chips(lg.missing,"miss")}</div>
+              </a>`;
+            }).join("")}
+          </div>
+        </div>`;
+      }).join("")}
+    </div>`;
+  }
+
+  async function boot() {
+    if (window.Nav) Nav.init({ current: "declarations" });
+    const el = document.getElementById("content");
+    let d;
+    try {
+      const res = await fetch("/api/declarations");
+      if (res.status === 401) {
+        el.innerHTML = `<div class="empty">Sign in to see the worklist.
+          <a href="/auth/google">Google</a> · <a href="/auth/github">GitHub</a></div>`;
+        return;
+      }
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      d = await res.json();
+    } catch (e) {
+      el.innerHTML = `<div class="empty">Could not load declarations: ${esc(e.message)}.
+        No worklist is shown rather than an empty one — nothing to declare and
+        nothing we could read are different claims.</div>`;
+      return;
+    }
+
+    el.innerHTML = `<div class="head">
+        <h1>Declarations</h1>
+        <div class="sub">Why the belts are quiet, and whose job each one is</div>
+        <div class="contract">${esc(d.contract || "")}</div>
+      </div>`
+      + jobs(d) + coverage(d) + ladder(d) + worklist(d);
+  }
+  boot();
+  </script>
+</body>
+</html>
