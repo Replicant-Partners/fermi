@@ -2,10 +2,12 @@
 
 **Between:** the trust surfaces UI and the team that owns `artifact_trace` and
 `episode_trace_handler`.
-**Status:** **closed contract, ready to implement.** No open questions. Every
-field below is required by a screen that is already built; nothing is
-speculative and nothing is negotiable-by-omission.
-**Blocks:** v1. The belt is in the release.
+**Status:** ✅ **FULFILLED.** Implemented as specified — `decided` /
+`decided_absent` / `recomputed` as siblings, both omitted rather than nulled, the
+four tokens, the three decisions, `decision_id`, and no `agrees` boolean. The
+client landed against it in the same window. Kept as the record of what was
+agreed; see the two follow-ups at the end.
+**Blocks:** nothing. The belt is in v1.
 **Supersedes:** `UX_REQUEST_the_object_model.md` §③a, §③b, §③c — those three
 asks are folded into the single shape below so they land in one pass rather than
 three.
@@ -176,3 +178,49 @@ Already built, currently rendering the degraded version:
 
 **Client-side estimate once the payload changes: under a day.** The renderer is
 already split along these lines.
+
+---
+
+## Closed — and two things that came back with it
+
+Both were raised by the backend in the handoff, and both deserve an answer rather
+than silence.
+
+### 1. The route discriminator — **yes, prioritise it.** Small, and it is the last unverified claim on the surface
+
+You asked. The answer is yes, and here is the reasoning so it can be weighed
+rather than taken on trust.
+
+`agent.execute` declares four rungs, `agent.execute_stream` declares two, and
+`episodes` carries no discriminator — so the trace serves the wider belt for
+every artifact. **Serving the wider belt was the right call** and we would have
+chosen it too: dropping two real checkpoints for the majority is the worse error.
+
+But it leaves the belt as *an unverified safety claim*, and this screen is the
+only place a person will ever encounter it. We now render `belt_route.recoverable
+: false` as a low-key **"belt unverified"** note, as asked — and that note is
+currently on **every trace in the product**, which is precisely the condition
+under which a warning stops being read. A warning that is always on is
+indistinguishable from a decoration.
+
+It is also the only remaining place where the surface shows something it cannot
+substantiate. Everything else now resolves to a served declaration. One column
+retires the last one.
+
+**Not urgent for v1** — the note is honest and ships as is. Worth doing before
+the belt is used to make any claim about coverage.
+
+### 2. `undetermined` as the majority reading — handled, and worth naming
+
+You flagged that `undetermined` is the majority reading of the grounding rung and
+asked for a real third visual. It has one: its own hue, distinct from both
+approved and refused, and distinct again from the four absence states.
+
+The reason it works is the `substrate` split. Previously a rung had to say *"this
+agent declares no field contract"*, which put an agent-level backlog inside a
+per-artifact diagram — so the reader met field contracts before they met a
+checkpoint. Moving that question to `substrate.disposition` means the rung can
+now say the small true thing (*the gate ran and could not decide*) while the
+agent-level fact is stated once, at the top, in its own register. **That was the
+single most useful change in this handoff** and it is worth saying so: it removed
+a category error we had been rendering faithfully for weeks.

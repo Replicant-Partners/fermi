@@ -39,7 +39,41 @@
   .tb.good .tb-v{color:var(--green);}
   .tb.bad .tb-v{color:var(--red,#fb4934);}
   .tb.indet .tb-v{color:var(--purple,#d3869b);}
+  /* Demoted, not deleted. The five buckets still must never collapse into
+     one number — they just are not what the page is about. */
+  .census .tb{min-width:100px;padding:7px 11px;}
+  .census .tb-v{font-size:0.88rem;}
   .contract{font-size:0.71rem;color:var(--fg4);font-style:italic;line-height:1.5;margin:6px 0 16px;}
+
+  /* ── Section headers, so the page has an argument and not just blocks ── */
+  .sec{margin:26px 0 10px;padding-bottom:4px;border-bottom:1px solid var(--bg2);}
+  .sec h2{font-size:0.72rem;color:var(--fg2);margin:0;text-transform:uppercase;letter-spacing:0.07em;}
+  .sec .why{font-size:0.71rem;color:var(--fg4);margin-top:3px;line-height:1.5;}
+
+  /* ── The lead: an artifact you can open, not a count of them ──────────
+     A loop is a path an artifact takes, so the page opens with artifacts.
+     Until there is a thing to point at, the path is a diagram. ── */
+  .lead{border-left:3px solid var(--yellow);background:var(--bg1);padding:11px 14px;margin-bottom:6px;}
+  .lead .said{font-size:0.84rem;color:var(--fg2);line-height:1.5;}
+  .lead .said b{color:var(--yellow);font-weight:normal;}
+  .lead .gloss{font-size:0.71rem;color:var(--fg4);margin-top:5px;line-height:1.5;max-width:82ch;}
+
+  .arts{display:grid;grid-template-columns:repeat(auto-fill,minmax(238px,1fr));gap:1px;
+        background:var(--bg2);border:1px solid var(--bg2);}
+  .art{background:var(--bg0);padding:8px 10px;display:block;}
+  .art:hover{background:var(--bg1);}
+  .art-h{display:flex;align-items:baseline;gap:7px;}
+  .art-a{font-size:0.75rem;color:var(--fg2);}
+  .art:hover .art-a{color:var(--yellow);}
+  .art-t{font-size:0.62rem;color:var(--fg4);margin-left:auto;}
+  .art-q{font-size:0.68rem;color:var(--fg4);margin-top:3px;line-height:1.4;
+         max-height:2.8em;overflow:hidden;}
+  /* Contracted = the belt has graded checkpoints. Uncontracted is the
+     default and is not an error, so it is dim rather than red. */
+  .art-mark{font-size:0.57rem;text-transform:uppercase;letter-spacing:0.05em;padding:0 4px;
+            border:1px solid var(--bg3);color:var(--fg4);}
+  .art.contracted{border-left:2px solid var(--green);}
+  .art.contracted .art-mark{border-color:var(--green);color:var(--green);}
 
   /* ── Loop card ── */
   .loop{border:1px solid var(--bg2);margin-bottom:12px;background:var(--bg0);}
@@ -51,17 +85,30 @@
   .claim{padding:0 12px 8px;font-size:0.74rem;color:var(--fg4);font-style:italic;line-height:1.5;max-width:80ch;}
   .detail{padding:0 12px 10px;font-size:0.77rem;color:var(--fg3);line-height:1.5;max-width:85ch;}
 
-  /* ── Stage chain ── */
+  /* ── The chain, drawn as the path it is ─────────────────────────────────
+     Same drawing as the belt on /trace: a rail, and a node per step. What
+     the step IS reads first; how many rows it has read is secondary text.
+     The count was the primary object here and that was the census. ── */
   .chain{padding:2px 12px 10px;}
-  .stage{display:flex;align-items:flex-start;gap:9px;padding:5px 0;border-top:1px solid var(--bg2);}
+  .stage{position:relative;display:flex;align-items:flex-start;gap:11px;padding:7px 0;}
   .stage.consequence{opacity:0.45;}
-  .stage.first-empty{background:rgba(251,73,52,0.06);margin:0 -12px;padding:6px 12px;}
-  .st-rows{width:66px;text-align:right;font-variant-numeric:tabular-nums;font-size:0.76rem;
-           color:var(--fg2);flex-shrink:0;}
-  .st-rows.none{color:var(--fg4);font-style:italic;font-size:0.68rem;}
+  .stage.first-empty{background:rgba(251,73,52,0.06);margin:0 -12px;padding:8px 12px;}
+  .st-node{width:11px;flex-shrink:0;position:relative;padding-top:4px;}
+  .st-dot{width:9px;height:9px;border-radius:50%;background:var(--bg0);
+          border:2px solid var(--bg3);position:relative;z-index:2;}
+  /* The rail is drawn on every step, including the ones nothing reached —
+     a path that omits the steps it cannot report on looks shorter and
+     safer than it is. */
+  .st-rail{position:absolute;left:4px;top:13px;bottom:-14px;width:1px;background:var(--bg2);}
+  .stage:last-child .st-rail{display:none;}
+  .stage.flowed .st-dot{border-color:var(--green);background:var(--green);}
+  .stage.stops  .st-dot{border-color:var(--red,#fb4934);}
+  .stage.unread .st-dot{border-style:dashed;}
   .st-body{flex:1;min-width:0;}
-  .st-what{font-size:0.76rem;color:var(--fg3);}
-  .st-meta{font-size:0.66rem;color:var(--fg4);margin-top:1px;}
+  .st-what{font-size:0.78rem;color:var(--fg3);}
+  .st-meta{font-size:0.66rem;color:var(--fg4);margin-top:2px;}
+  .st-rows{font-variant-numeric:tabular-nums;color:var(--fg4);}
+  .st-rows.none{font-style:italic;}
   .st-writer{font-size:0.64rem;color:var(--fg4);}
   .trig{font-size:0.6rem;text-transform:uppercase;letter-spacing:0.05em;padding:0 4px;border:1px solid var(--bg3);color:var(--fg4);}
   .trig.dead{border-color:var(--red,#fb4934);color:var(--red,#fb4934);}
@@ -114,7 +161,7 @@
   <div class="wrap">
     <div class="head">
       <h1>Loops &amp; Gates</h1>
-      <div class="sub">A loop is a control cycle. A gate is where it is allowed or refused.</div>
+      <div class="sub">A loop is a path an artifact takes. A gate is a checkpoint on that path.</div>
     </div>
     <div class="tabs">
       <button class="tab active" data-tab="loops">Loops</button>
@@ -135,7 +182,7 @@
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
     ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
-  let LOOPS = null, GATES = null, ACTIONS = null, ENF = null, TAB = "loops";
+  let LOOPS = null, GATES = null, ACTIONS = null, ENF = null, ARTS = null, TAB = "loops";
 
   // An unrecognised reading must render as `unknown`, never as healthy — a new
   // token falling through to a benign default is how "nothing has been watched"
@@ -163,10 +210,15 @@
   // ── Loops ──────────────────────────────────────────────────────────────
   function stageRow(s, isConsequence) {
     // `measured: false` means show nothing, not zero. `rows: -1` is a sentinel
-    // and never a value.
-    const rows = s.measured === false
+    // and never a value. The count is secondary text now: what the step IS is
+    // the thing an artifact passes through, and the count is only how many did.
+    const unread = s.measured === false;
+    const rows = unread
       ? `<span class="st-rows none">not read</span>`
-      : `<span class="st-rows">${s.rows}</span>`;
+      : `<span class="st-rows">${Number(s.rows).toLocaleString()} through</span>`;
+
+    const flowed = !unread && Number(s.rows) > 0;
+    const node = `<div class="st-node"><div class="st-dot"></div><div class="st-rail"></div></div>`;
 
     // `nothing_calls_it` is a finding in its own right, whatever the loop's
     // own reading says: no code path invokes that writer at all.
@@ -183,12 +235,13 @@
         <div class="door-path">${esc(s.action.method)} ${esc(s.action.path)}</div>
       </div>` : "";
 
-    return `<div class="stage ${s.is_first_empty ? "first-empty" : ""} ${isConsequence ? "consequence" : ""}">
-      ${rows}
+    return `<div class="stage ${s.is_first_empty ? "first-empty stops" : ""} ${
+        isConsequence ? "consequence" : ""} ${unread ? "unread" : flowed ? "flowed" : ""}">
+      ${node}
       <div class="st-body">
         <div class="st-what">${esc(s.what)}</div>
-        <div class="st-meta">${trig}
-          ${s.is_first_empty ? `<span class="marker">← stops here</span>` : ""}
+        <div class="st-meta">${rows} · ${trig}
+          ${s.is_first_empty ? `<span class="marker">← the path stops here</span>` : ""}
           ${dead ? `<span class="marker">nothing calls this writer</span>` : ""}</div>
         <div class="st-writer">${esc(s.writer || "")}</div>
         ${door}
@@ -236,25 +289,105 @@
     </div>`;
   }
 
+  const shortTime = t => {
+    if (!t) return "";
+    const d = new Date(t);
+    return isNaN(d) ? "" : d.toISOString().slice(5, 16).replace("T", " ");
+  };
+
+  // The lead. A loop is a path an artifact takes, so the surface opens with
+  // artifacts you can actually open, and the population is demoted to the
+  // bottom of the page. Leading with the census made this screen legible only
+  // to someone already holding the machine in their head.
+  function paneArtifacts() {
+    if (!ARTS) {
+      // "Nothing ran" and "I could not ask" are different sentences and must
+      // never share one rendering.
+      return `<div class="nodoors">Could not read recent artifacts
+        (<code>/api/episodes/recent</code> did not answer). This is not the same as
+        nothing having run — the page cannot tell you which.</div>`;
+    }
+    const eps = ARTS.episodes || [], graded = ARTS.graded || [];
+    if (!eps.length) {
+      return `<div class="nodoors">No episode has been recorded with a response.
+        The paths below are declared and nothing has travelled them yet.</div>`;
+    }
+
+    const strip = list => `<div class="arts">${list.map(e => `
+      <a class="art ${e.contracted ? "contracted" : ""}"
+         href="/trace/${encodeURIComponent(e.episode_id)}">
+        <div class="art-h">
+          <span class="art-a">${esc(e.agent)}</span>
+          <span class="art-mark">${e.contracted ? "graded" : "ungraded"}</span>
+          <span class="art-t">${esc(shortTime(e.at))}</span>
+        </div>
+        <div class="art-q">${esc(e.query || "—")}</div>
+      </a>`).join("")}</div>`;
+
+    // The proportion is the finding, so it is stated rather than left to be
+    // counted off the tiles. Most artifacts cross a belt with nothing on it.
+    const n = ARTS.graded_in_recent ?? 0;
+    const mix = `<div class="contract"><b style="color:var(--fg3)">${n} of the last
+      ${eps.length}</b> were produced by an agent that declares a field contract.
+      The rest crossed a belt with nothing to grade — that is the default, and it
+      is not an error.</div>`;
+
+    const gradedBlock = graded.length ? `<div class="sec" style="margin-top:18px">
+        <h2>… and the most recent with a populated belt</h2>
+        <div class="why">Listed separately so there is always one to open. Ten of 761
+          agents declare a contract, so these are rarely the recent ones.</div></div>`
+        + strip(graded) : "";
+
+    return strip(eps) + mix + gradedBlock
+      + `<div class="contract">${esc(ARTS.note || "")}</div>`;
+  }
+
   function paneLoops() {
     const d = LOOPS;
     const orphanDoors = (ACTIONS?.actions || []).filter(a =>
       !(d.loops || []).some(l => (l.stages || []).some(s => s.action &&
         s.action.subject === a.subject)));
 
-    return tally(d.tally, BUCKETS)
-      + `<div class="contract">${esc(d.contract || "")}</div>`
-      + (d.loops || []).map(loopCard).join("")
-      + (orphanDoors.length ? `<div class="loop"><div class="loop-h">
+    const lead = `<div class="lead">
+      <div class="said">A loop is <b>a path an artifact takes</b>.
+        A gate is <b>a checkpoint on that path</b>.</div>
+      <div class="gloss">Open one and you get its belt: every checkpoint it crossed,
+        which of them could have refused it, and which only watched.</div>
+    </div>`;
+
+    const doors = orphanDoors.length ? `<div class="loop"><div class="loop-h">
           <span class="loop-n">Other doors</span></div>
           <div class="detail">Declared actions not attached to a stage above.</div>
           <div class="chain">${orphanDoors.map(a => `
-            <div class="stage"><span class="st-rows none">—</span><div class="st-body">
-              <div class="st-what">${esc(a.subject)}</div>
-              <div class="door"><div class="door-does">${esc(a.does)}</div>
-              <div class="door-why">Why a person: ${esc(a.why_manual)}</div>
-              <div class="door-path">${esc(a.method)} ${esc(a.path)}</div></div>
-            </div></div>`).join("")}</div></div>` : "");
+            <div class="stage">
+              <div class="st-node"><div class="st-dot"></div><div class="st-rail"></div></div>
+              <div class="st-body">
+                <div class="st-what">${esc(a.subject)}</div>
+                <div class="door"><div class="door-does">${esc(a.does)}</div>
+                <div class="door-why">Why a person: ${esc(a.why_manual)}</div>
+                <div class="door-path">${esc(a.method)} ${esc(a.path)}</div></div>
+              </div>
+            </div>`).join("")}</div></div>` : "";
+
+    return lead
+      + `<div class="sec"><h2>Artifacts to open</h2>
+         <div class="why">Most recent runs, contracted agents first. <b>Graded</b> means the
+           agent declares a field contract, so its belt has checkpoints that actually fired;
+           the rest have a belt with nothing to grade, which is the default and not an
+           error.</div></div>`
+      + paneArtifacts()
+      + `<div class="sec"><h2>The declared paths</h2>
+         <div class="why">Each loop asserts something. The chain is the route, and the
+           marked step is where it currently stops — everything below it is empty
+           <i>because of</i> it.</div></div>`
+      + (d.loops || []).map(loopCard).join("")
+      + doors
+      + `<div class="sec"><h2>The population view</h2>
+         <div class="why">How many paths are in each state. Five buckets, never one
+           number: “2 of 6 turning” invites the reader to conclude four are broken, and
+           “0 stalled” invites the opposite. Both are wrong.</div></div>`
+      + `<div class="census">${tally(d.tally, BUCKETS)}</div>`
+      + `<div class="contract">${esc(d.contract || "")}</div>`;
   }
 
   // ── Gates ──────────────────────────────────────────────────────────────
@@ -369,9 +502,10 @@
       // whether or not a loop is turning, and a surface that only showed a door
       // when the queue was non-empty would hide it precisely when someone
       // wanted to ask why the queue was empty.
-      [LOOPS, GATES, ACTIONS, ENF] = await Promise.all([
+      [LOOPS, GATES, ACTIONS, ENF, ARTS] = await Promise.all([
         get("/api/loops"), get("/api/gates"),
         get("/api/loops/actions"), get("/api/gates/enforcement"),
+        get("/api/episodes/recent"),
       ]);
     } catch (e) { /* handled below */ }
 

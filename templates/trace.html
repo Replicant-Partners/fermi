@@ -46,6 +46,35 @@
   .cp.fired-clean .cp-ring{border-color:var(--green);color:var(--green);}
   .cp.fired-bad   .cp-ring{border-color:var(--red,#fb4934);color:var(--red,#fb4934);}
   .cp.unreported  .cp-ring{opacity:0.4;}
+  /* What the ledger recorded for THIS artifact. `undetermined` is the majority
+     reading of the grounding rung and gets a real third visual — folding it
+     into either neighbour is how an absent check becomes a passing one. */
+  .cp.d-approved .cp-ring{border-color:var(--green);color:var(--green);}
+  .cp.d-refused  .cp-ring{border-color:var(--red,#fb4934);color:var(--red,#fb4934);}
+  .cp.d-undetermined .cp-ring{border-color:var(--purple,#d3869b);
+                              color:var(--purple,#d3869b);}
+  .cp.d-unknown  .cp-ring{border-color:var(--purple,#d3869b);border-style:dashed;
+                          color:var(--purple,#d3869b);}
+  /* No ledger row. Three of the four reasons are design and read as calm; only
+     `retained_but_absent` is a finding. */
+  .cp.a-design  .cp-ring{opacity:0.32;}
+  .cp.a-design  .cp-out {opacity:0.6;}
+  .cp.a-finding .cp-ring{border-color:var(--purple,#d3869b);color:var(--purple,#d3869b);
+                         border-style:dashed;}
+  .cp.a-unknown .cp-ring{border-color:var(--purple,#d3869b);border-style:dashed;}
+  /* The independent axis, on its own line so it cannot read as the decision. */
+  .cp-recomp{font-size:0.56rem;color:var(--yellow);margin-top:1px;}
+
+  /* Substrate — an agent-level state, deliberately not styled like a belt
+     outcome. `retrofit` is not a fault and not a pass: it is outside. */
+  .sub{border:1px dashed var(--bg3);padding:10px 13px;margin-bottom:18px;}
+  .sub h3{font-size:0.78rem;margin:0 0 4px;}
+  .sub.retrofit{border-color:var(--purple,#d3869b);}
+  .sub.retrofit h3{color:var(--purple,#d3869b);}
+  .sub.prune{opacity:0.6;}
+  .sub.prune h3{color:var(--fg4);}
+  .sub.legible{border-style:solid;border-color:var(--green);}
+  .sub.legible h3{color:var(--green);}
   .cp-name{font-size:0.66rem;color:var(--fg3);margin-top:5px;}
   .cp.unreported .cp-name{color:var(--fg4);}
   .cp-enf{font-size:0.57rem;text-transform:uppercase;letter-spacing:0.05em;margin-top:1px;}
@@ -129,33 +158,74 @@
     0: "nothing to rely on yet",
   };
 
+  // The four reasons a rung has no ledger row. Exactly one is a finding; the
+  // other three are design, and rendering them alike is what made `credit`
+  // look like a permanent unpaid debt on every belt.
+  //
+  // An unrecognised token renders as `unknown`, never as healthy. A new token
+  // falling through to a benign default is the specific way this surface has
+  // lied before.
+  const ABSENT = {
+    fires_before_artifact: { cls: "a-design",  out: "before the artifact" },
+    retention_counted:     { cls: "a-design",  out: "not retained" },
+    predates_retention:    { cls: "a-design",  out: "predates the ledger" },
+    retained_but_absent:   { cls: "a-finding", out: "no row" },
+  };
+  const absentOf = t => ABSENT[t] || { cls: "a-unknown", out: "unrecognised" };
+
+  const DECIDED = {
+    approved:     { cls: "d-approved",     glyph: "✓" },
+    refused:      { cls: "d-refused",      glyph: "✕" },
+    undetermined: { cls: "d-undetermined", glyph: "?" },
+  };
+  // `undetermined` is the majority reading of the grounding rung and is not an
+  // edge case: the gate ran and could not decide. It gets its own visual.
+  const decidedOf = v => DECIDED[v] || { cls: "d-unknown", glyph: "?" };
+
   function belt(d) {
     const cps = (d.belt || []).map(b => {
-      const o = b.outcome || {};
-      const graded = o.outcome === "graded";
-      const viol = graded && (o.violations || 0) > 0;
-      const cls = [
-        b.enforcement === "control" ? "control" : "metric",
-        graded ? (viol ? "fired-bad" : "fired-clean") : "unreported",
-      ].join(" ");
-      const glyph = graded ? (viol ? "✕" : "✓") : "·";
-      const out = graded
-        ? (viol ? `${o.violations} of ${o.fields}` : `${o.fields || 0} graded`)
-        : (o.outcome || "").replace(/_/g, " ");
+      // `decided` and `decided_absent` are omitted rather than nulled, so a
+      // key check is the safe branch the contract promises.
+      const dec = b.decided, abs = b.decided_absent;
+      const s = dec ? decidedOf(dec.decision) : absentOf((abs || {}).token);
+      const cls = [b.enforcement === "control" ? "control" : "metric", s.cls].join(" ");
+      const glyph = dec ? s.glyph : s.cls === "a-finding" ? "?" : "·";
+      const out = dec ? esc(dec.decision) : esc(s.out);
+
+      // An independent axis, printed on its own line and never folded into the
+      // decision above it. There is deliberately no `agrees` boolean.
+      const rc = b.recomputed;
+      const recomp = rc
+        ? `<div class="cp-recomp">${rc.violations > 0
+            ? `${rc.violations}/${rc.fields} violations` : `${rc.fields} clean`} now</div>`
+        : "";
+
       return `<div class="cp ${cls}">
         <div class="cp-ring">${glyph}</div>
         <div class="cp-name">${esc(b.rung)}</div>
         <div class="cp-enf">${esc(b.enforcement)}</div>
-        <div class="cp-out">${esc(out)}</div>
+        <div class="cp-out">${out}</div>
+        ${recomp}
       </div>`;
     }).join("");
 
     // Why each checkpoint reads as it does. `not_recorded` is most of the belt
     // today and the reason is one missing column, not a silent gate.
     const whys = (d.belt || []).map(b => {
-      const o = b.outcome || {};
       const bits = [];
-      if (o.because) bits.push(`<b>${esc(b.rung)}</b> — ${esc(o.because)}`);
+      if (b.decided) {
+        // `reason` is null on approvals by design, so say what happened either way.
+        bits.push(`<b>${esc(b.rung)}</b> — ${esc(b.decided.decision)}`
+          + (b.decided.reason ? `: ${esc(b.decided.reason)}` : "")
+          + (b.decided.at ? ` <span class="absent">(${esc(b.decided.at.slice(0,19).replace("T"," "))})</span>` : "")
+          // The whole point of `decision_id`: judge it from the artifact.
+          + (b.decided.decision_id != null
+              ? ` <a href="/gate/${encodeURIComponent(b.rung)}#d${encodeURIComponent(b.decided.decision_id)}">Was this right? →</a>`
+              : ""));
+      }
+      if (b.decided_absent) {
+        bits.push(`<b>${esc(b.rung)}</b> — ${esc(b.decided_absent.because)}`);
+      }
       if (b.why_not_control) bits.push(
         `<b>${esc(b.rung)} records but cannot refuse</b> — ${esc(b.why_not_control)}`);
       return bits.map(t =>
@@ -165,28 +235,49 @@
     // The image that matters: a checkpoint that found a violation and could not
     // stop it, because on this route it only records.
     const leaked = (d.belt || []).find(b =>
-      b.enforcement === "metric" && (b.outcome || {}).violations > 0);
+      b.enforcement === "metric" && (b.recomputed || {}).violations > 0);
     const leak = leaked ? `<div class="passed-through">
       <b>The artifact passed through.</b> The <b>${esc(leaked.rung)}</b> checkpoint
-      found ${leaked.outcome.violations} field(s) it could not source and recorded them —
+      found ${leaked.recomputed.violations} field(s) it could not source and recorded them —
       it does not refuse on this route, so nothing was stopped and the response was
       returned and persisted as it stands. That is the difference between a control
       and a metric, and it is the reason this belt draws them differently.</div>` : "";
 
+    // The platform's only finding about its own drift. It exists only because
+    // `decided` and `recomputed` are never reconciled server-side.
+    const drifted = (d.belt || []).find(b => b.decided && b.recomputed
+      && b.decided.decision === "approved" && b.recomputed.violations > 0);
+    const drift = drifted ? `<div class="passed-through" style="border-left-color:var(--yellow)">
+      <b style="color:var(--yellow)">The standard moved.</b> <b>${esc(drifted.rung)}</b>
+      recorded <b>approved</b> when this ran, and the contract as it stands today finds
+      ${drifted.recomputed.violations} violation(s) in the same bytes. That is not a
+      contradiction and neither number is wrong — the contract was tightened afterwards.
+      This is a finding about the platform, not about the agent.</div>` : "";
+
+    // An unverified safety claim, and this screen is the only place anyone sees it.
+    const route = d.belt_route && d.belt_route.recoverable === false
+      ? `<div class="why" style="border-left-color:var(--yellow)">
+           <b>Belt unverified.</b> ${esc(d.belt_route.because || "")}
+           Shown as <b>${esc(d.belt_route.assumed || "")}</b>, which is the wider of the
+           two routes — so this may list checkpoints the artifact never passed.</div>`
+      : "";
+
     return `<div class="block">
       <h2>The belt</h2>
       <div class="note">
-        Every checkpoint the artifact was declared to pass, in order, whether or not
-        its decision about <i>this</i> artifact was recorded. A solid ring can refuse;
-        a dashed ring only records.
+        Every checkpoint the artifact was declared to pass, in order. A solid ring can
+        refuse; a dashed ring only records. <b>✓</b> approved · <b>✕</b> refused ·
+        <b>?</b> the gate ran and could not decide · faint <b>·</b> no ledger row, with
+        the reason below — only <i>no row</i> is a finding, the others are design.
       </div>
       <div class="belt">
         <div class="belt-line"></div>
         <div class="belt-token" style="left:calc(100% - 20px)"></div>
         <div class="cps">${cps}</div>
       </div>
+      ${drift}
       ${leak}
-      <div class="belt-why">${whys}</div>
+      <div class="belt-why">${route}${whys}</div>
     </div>`;
   }
 
@@ -236,10 +327,50 @@
     </div>`;
   }
 
+  // Branch on this before drawing anything. `substrate` is about the AGENT —
+  // is it declared onto the platform at all — and the belt is about this
+  // artifact. Mixing them put an agent-level backlog inside a per-artifact
+  // diagram and made a legacy agent look like a degraded belt. It is not one:
+  // it is outside the substrate, with a named owner and a worklist.
+  function substrateBlock(d) {
+    const s = d.substrate;
+    if (!s) return "";
+    const disp = s.disposition;
+    if (disp === "prune") {
+      return `<div class="sub prune"><h3>Test fixture — scheduled for deletion</h3>
+        <div class="owner-body">${esc(s.because || "")}
+        Nothing below is a finding about the platform and this agent is not a
+        retrofit target. It is counted here only because you opened it directly.</div>
+      </div>`;
+    }
+    if (disp === "retrofit") {
+      return `<div class="sub retrofit"><h3>Not yet on the substrate</h3>
+        <div class="owner-body">${esc(s.because || "")}
+        This is a real agent that predates the contracts. Its grounding rung reads
+        <b>undetermined</b> for that reason and no other. <b>Not a platform fault, and
+        not a pass</b> — authoring work, owned by the agent's author.
+        <a href="/declarations">The worklist →</a></div>
+      </div>`;
+    }
+    if (disp === "legible") {
+      return `<div class="sub legible"><h3>On the substrate</h3>
+        <div class="owner-body">${esc(s.because
+          || "Every rung on the declaration ladder is present, so the belt can say \
+something specific about each checkpoint.")}</div></div>`;
+    }
+    // Unrecognised disposition is indeterminate, never healthy.
+    return `<div class="sub"><h3 style="color:var(--purple,#d3869b)">Substrate state unrecognised</h3>
+      <div class="owner-body">The trace reports <b>${esc(String(disp))}</b>, which this
+      screen does not know how to read. Treated as indeterminate rather than assumed
+      healthy.</div></div>`;
+  }
+
   // Three values, three registers. Getting this wrong does not produce a wrong
   // number — it produces a wrong backlog.
   function ownerBlock(d) {
-    const lg = d.legibility || {}, si = d.silence || {};
+    // `legibility` and `declared` moved inside `substrate`; reading them loose
+    // is what let a fixture land on somebody's worklist.
+    const lg = (d.substrate || {}).legibility || {}, si = d.silence || {};
     const chips = (arr, cls) => (arr || []).map(x =>
       `<span class="chip ${cls}">${esc(x)}</span>`).join("");
 
@@ -319,12 +450,16 @@
       : "";
 
     document.getElementById("content").innerHTML =
-      head + belt(d) + fields(d) + routed(d) + ownerBlock(d) + chain + caveats(d);
+      head + substrateBlock(d) + belt(d) + fields(d) + routed(d)
+      + ownerBlock(d) + chain + caveats(d);
   }
 
   async function boot() {
     if (window.Nav) Nav.init({ current: "bestiary" });
     try {
+      // The `/api/gates` retention heuristic that used to live here is gone:
+      // the trace now serves `decided_absent.token` and there is no reason to
+      // derive on the client what the platform declares.
       const res = await fetch(`/api/episodes/${encodeURIComponent(EID)}/trace`);
       if (res.status === 401) {
         document.getElementById("content").innerHTML =
