@@ -272,33 +272,40 @@ The two unreleased fixes (§1, §2) need nothing but the tag — they have been 
 
 ```
 fermi-console lib             385
-fermi lib (assertions)         37
 agent_selection_parity          3  (new)
 base_rate_latch_contract        4  (new)
+cargo build --release -p fermi-console   green, in a clean worktree
 ```
 
-`cargo build -p fermi-console` is green.
+The release profile is verified in a detached `git worktree` at the tagged
+commit rather than in a working tree, for the reason in the next section.
 
-## One adaptation to concurrent work
+## A false start, recorded
 
-`cockpit.rs` did not compile against the working tree when this release was
-prepared — four errors at the model/agent agreement check, `no field p5 on type
-Claim`. A concurrent refactor of `src/assertions.rs` replaces the bare
-`(p5, p50, p95)` assertion value with a `Claim` enum (`Numeric(Spread)` |
-`Literal(Value)`), so that a non-numeric assertion is retained verbatim instead
-of being coerced. The console was the one call site not yet migrated.
+The first attempt at this tag failed all three build jobs, and the cause is
+worth writing down because the reasoning was right and the action was not.
 
-Adapted rather than worked around, to that author's own stated rule:
+A concurrent, uncommitted refactor of `src/assertions.rs` replaces the bare
+`(p5, p50, p95)` assertion value with a `Claim` enum. `cockpit.rs` was the one
+call site not migrated, so the working tree did not compile — and the console
+call site was "fixed" to `Claim::as_spread()`.
 
-> *Returns `Option` rather than panicking, and callers must handle the `None`.
-> … the arm becomes reachable the moment a `Fact` reaches a binder, and a panic
-> in a request handler is a worse answer than a skip.*
+But `Claim` is not in the repository. The change was green in the one working
+tree that has the refactor and broken on every clean checkout, which is what CI
+builds:
 
-So the console skips a non-numeric claim rather than unwrapping it, matching the
-`let ... else` idiom the same refactor used in
-`handlers/workspace/agent_params_hook.rs`. Unreachable today —
-`extract_probabilities_from_prose` only yields numeric kinds — but a panic there
-would take down a simulation the operator has already paid for, in order to
-report a diagnostic about it.
+```
+error[E0599]: no method named `as_spread` found for struct
+              `fermi::assertions::Spread`
+```
 
-`src/assertions.rs` itself is untouched.
+The diagnosis had already been correct — *"`HEAD` compiles; the working tree
+does not"* — and the right conclusion was to leave a call site alone that was
+not broken. Reverted; `cockpit.rs:9385` is again a call site the `Claim`
+refactor will migrate when it lands, which is its author's to do.
+
+The general hazard: with an uncommitted change to a dependency present, no local
+`cargo` invocation answers *"does the commit build"*. A detached worktree does,
+and is now how this release is checked.
+
+`src/assertions.rs` is untouched.

@@ -9385,22 +9385,8 @@ impl CockpitState {
                         let (stated, _) =
                             ::fermi::assertions::extract_probabilities_from_prose(summary);
                         for a in stated {
-                            // A claim has to be numeric to be compared with a
-                            // model probability. A `Fact` — a non-numeric claim
-                            // — is a real assertion and stays on the episode,
-                            // but there is no interval to test `model_p`
-                            // against, so it is skipped rather than unwrapped.
-                            //
-                            // Unreachable today: `extract_probabilities_from_prose`
-                            // only yields numeric kinds. Written out because a
-                            // panic here would take down a simulation the
-                            // operator has already paid for, to report a
-                            // diagnostic about it.
-                            let Some(spread) = a.value.as_spread() else {
-                                continue;
-                            };
-                            let (lo, hi) = (spread.p5, spread.p95);
-                            if !spread.contains(model_p) {
+                            let (lo, hi) = (a.value.p5, a.value.p95);
+                            if !a.value.contains(model_p) {
                                 disagreements.push((
                                     true,
                                     format!(
@@ -9411,7 +9397,7 @@ impl CockpitState {
                                         ev.source,
                                         lo * 100.0,
                                         hi * 100.0,
-                                        spread.p50 * 100.0,
+                                        a.value.p50 * 100.0,
                                     ),
                                 ));
                             }
