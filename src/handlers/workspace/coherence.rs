@@ -35,7 +35,155 @@ use super::messages::{broadcast_message, message_to_json};
 use crate::handlers::agents::CreateAgentRequest;
 use crate::{agent_output_to_episode, resolve_agent, resolve_agent_card, AppState};
 
-// ─── Coherence Evaluation ────────────────────────────────────────────
+// ─── Coherence Evaluation ─────────────────────────────────────
+
+/// Ask every member with no current plan, concurrently, before the strategist
+/// runs.
+///
+/// # Why concurrently
+///
+/// Sequentially this is N language-model round trips added to the front of a
+/// request that already makes one. At eight members and five seconds each that
+/// is forty seconds of added latency, which is not a slow endpoint but a broken
+/// one. Concurrently the wall clock is one round trip, and the cap bounds the
+/// burst rather than the duration.
+///
+/// # Why it cannot fail the evaluation
+///
+/// A coherence measurement must not fail because a member could not be asked
+/// what it plans to do. Every outcome is folded into [`Floor`] and reported to
+/// the strategist as prose — a member the platform could not reach is one the
+/// strategist must go back to inferring, and it has to know that in order to
+/// say so in the brief.
+async fn run_plan_floor(
+    state: &AppState,
+    ws_uuid: uuid::Uuid,
+    strategist_name: &str,
+) -> fermi::plan_solicitation::Floor {
+    use fermi::plan_solicitation::{self as ps, Solicited};
+
+    let mut floor = ps::Floor::default();
+
+    // The strategist funds the asking, as it does its own run: this is work
+    // done on its behalf during its stage, and billing a member's own owner for
+    // a question the coordinator asked would be the wrong ledger.
+    let strategist = match crate::resolve_agent(state, strategist_name).await {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::warn!(
+                workspace = %ws_uuid, agent = %strategist_name, error = ?e,
+                "no strategist row; Stage 0's floor cannot run and the map stays \
+                 whatever the model makes of it"
+            );
+            return floor;
+        }
+    };
+    let card = crate::resolve_agent_card(state, &strategist);
+    let credentials = crate::build_execution_credentials(state, &strategist, &card).await;
+
+    let mut needing = match ps::members_needing_a_plan(
+        &state.db,
+        ws_uuid,
+        Some(strategist.agent_id),
+        ps::FRESHNESS_SECS,
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(workspace = %ws_uuid, error = %e, "plan floor: member query failed");
+            return floor;
+        }
+    };
+
+    // Truncate rather than sample. `members_needing_a_plan` orders
+    // oldest-plan-first, so the members kept are the ones the map knows least
+    // about, and the same press twice running leaves the same members out
+    // instead of rotating which one is missing.
+    if needing.len() > ps::MAX_PER_RUN {
+        floor.capped = needing.len() - ps::MAX_PER_RUN;
+        needing.truncate(ps::MAX_PER_RUN);
+    }
+    if needing.is_empty() {
+        return floor;
+    }
+
+    let asker = Arc::new(ps::Asker {
+        db: state.db.clone(),
+        memory_store: state.memory_store.clone(),
+        embedder: state.embedder.clone(),
+        registry: state.registry.clone(),
+        credentials,
+    });
+    let context = format!(
+        "A coherence evaluation of this workspace is about to run. State what you \
+         intend to do next so overlaps can be caught before anyone spends a turn \
+         on them. Coordinated by {strategist_name}."
+    );
+
+    let mut set = tokio::task::JoinSet::new();
+    for member in needing {
+        let asker = asker.clone();
+        let context = context.clone();
+        let by = strategist.agent_id;
+        set.spawn(async move {
+            let outcome = ps::solicit(
+                &asker,
+                ws_uuid,
+                Some(by),
+                member,
+                Some(&context),
+                Some(ps::FRESHNESS_SECS),
+                // The strategist's episode does not exist yet — the floor runs
+                // before its run. These are the member's own episodes and are
+                // roots, which is honest: nobody delegated the plan, the
+                // platform asked for it.
+                None,
+            )
+            .await;
+            (member, outcome)
+        });
+    }
+
+    while let Some(joined) = set.join_next().await {
+        let (member, outcome) = match joined {
+            Ok(v) => v,
+            Err(e) => {
+                floor
+                    .problems
+                    .push(format!("a solicitation task panicked: {e}"));
+                continue;
+            }
+        };
+        match &outcome {
+            // `AlreadyFresh` is not counted as asked, because nothing was: the
+            // member had a current plan and the floor spent no call on it. The
+            // outcome to hope for.
+            Solicited::AlreadyFresh { .. } => floor.already_fresh += 1,
+            Solicited::Recorded { .. } => {
+                floor.asked += 1;
+                floor.recorded += 1;
+            }
+            _ => {
+                floor.asked += 1;
+                floor.problems.push(format!("{member}: {}", outcome.tag()));
+            }
+        }
+    }
+
+    tracing::info!(
+        workspace = %ws_uuid,
+        asked = floor.asked,
+        recorded = floor.recorded,
+        already_fresh = floor.already_fresh,
+        capped = floor.capped,
+        problems = floor.problems.len(),
+        "stage 0 plan floor"
+    );
+    floor
+}
+
+// ─── Coherence Evaluation ────────────────────────────────────
 
 /// Run TEC coherence evaluation on recent workspace messages.
 /// Supports tiered depth: "index" (free), "recommendations" (2cr), "dream_notes" (5cr).
@@ -238,6 +386,32 @@ pub async fn evaluate_coherence_handler(
         }
     };
 
+    // ── Loop 3 Stage 0's floor: the platform asks, before the strategist runs ─
+    //
+    // `solicit_agent_plan` shipped as a tool named in the card's Stage 0 and in
+    // the prompt below, which made the stage's grounding contingent on a model
+    // electing to make N tool calls. That is the identical contingency that
+    // left `coordinator_observation` at 0 of 3,576 episodes one stage later,
+    // and the remedy is the same one: the judgement stays the model's, the
+    // round trip becomes the platform's.
+    //
+    // **Before, not after.** `coordination_note`'s floor runs after the
+    // strategist because a brief is retrospective. A plan is not — Stage 0 is
+    // pre-flight, and a plan solicited after the diagnosis is a plan the
+    // diagnosis could not use. Running it first is what lets the strategist
+    // open Stage 2 against a map the team filled in.
+    //
+    // Only at `recommendations`: `dream_notes` is retrospective narrative and
+    // the card says to skip Stage 0 on analytical invocations. Bounded by a
+    // freshness window and a per-run cap, both in `plan_solicitation`, because
+    // each ask is an LLM call on an endpoint the user pressed expecting to pay
+    // for one strategist run.
+    let plan_floor = if depth == "recommendations" {
+        run_plan_floor(&state, ws_uuid, &strategist_name).await
+    } else {
+        fermi::plan_solicitation::Floor::default()
+    };
+
     // For premium tiers, invoke the workspace's strategist directly.
     // This replaces the former coherence_consultant sub-call per
     // docs/architecture/LEARNING_MECHANICS_SIMPLIFICATION.md.
@@ -263,19 +437,21 @@ pub async fn evaluate_coherence_handler(
                         "Coherence score: {:.0}% ({}). Principle scores: {:?}. Health indicators: {:?}.\n\n\
                          Recent conversation:\n{}\n\n\
                          Run Stage 0 (Pre-flight), Stage 2 (Diagnose) and Stage 3 (Coordinate).\n\n\
-                         Stage 0 first, and with the platform tools rather than a file. Call \
-                         `get_intention_map` to see what the members have already declared, and \
-                         read its `grounding_reading` before you trust anything in it.\n\n\
-                         Then ASK. Call `solicit_agent_plan` for each member whose next action \
-                         matters to this diagnosis, passing `context` describing what the \
-                         workspace is trying to do. That agent answers with its own plan and the \
-                         platform records it as the agent's. This is the step that makes Stage 0 \
-                         coordination rather than narration: an intention you write on a member's \
-                         behalf from the transcript is your BELIEF about that agent, it is \
-                         recorded as `inferred`, and two inferred rows cannot be checked against \
-                         each other — their similarity measures your paraphrasing, not the team's \
-                         overlap. Use `declare_intention` only for a member `solicit_agent_plan` \
-                         could not reach, and say in the brief that you inferred it.\n\n\
+                         Stage 0 first. The platform has already run its floor: {}\n\n\
+                         Call `get_intention_map` and read its `grounding_reading` before you \
+                         trust anything in it. Rows marked `solicited` or `self` are what those \
+                         agents actually said; rows marked `inferred` are somebody's reading of \
+                         them.\n\n\
+                         Call `solicit_agent_plan` yourself for any member the floor could not \
+                         reach, and for any member whose recorded plan does not answer the \
+                         question your diagnosis actually turns on — pass `context` saying what \
+                         you need it to plan against. A second ask supersedes the first, so \
+                         re-asking is cheap and never duplicates a row.\n\n\
+                         Use `declare_intention` only as a last resort. It records as `inferred`, \
+                         because an intention you write on a member's behalf is your BELIEF about \
+                         that agent; two inferred rows cannot be checked against each other, since \
+                         their similarity measures your paraphrasing rather than the team's \
+                         overlap. If you infer one, say so in the brief.\n\n\
                          Each write returns a signal; on OVERLAP_WARNING call \
                          `suggest_differentiation` for the two agents, check its \
                          `grounding_caveat`, and fold the answer into Stage 3. A solicited plan \
@@ -295,6 +471,7 @@ pub async fn evaluate_coherence_handler(
                          score itself as the problem to report.",
                         eval.global_score * 100.0, eval.quality_label,
                         principle_scores, health_indicators, msg_summary,
+                        plan_floor.reading(),
                     )
                 } else {
                     format!(

@@ -1323,11 +1323,57 @@ because nothing had tried to falsify it.
   'solicited'`, and `loop3.plans` reports it. Until it is non-zero, Stage 0's
   closure is a code claim, not a measurement — which is the distinction §16
   exists to keep.
-* `Trigger::Prompted` still applies to both `plans` and `intentions`. Asking a
-  model to make a tool call is not the same as the platform making it, and the
-  coordination-note cascade needed a platform-side floor for exactly this
-  reason. `solicit_agent_plan` has no such floor: if the strategist declines to
-  call it, Stage 0 degrades to inference — now correctly *labelled* as
-  inference, which is the improvement, but degraded all the same.
+* ~~`Trigger::Prompted` still applies to both `plans` and `intentions`.~~
+  **Closed the same day — see §22.3.**
 * Contradiction detection remains honestly absent. §4's table is unchanged on
   that row.
+
+### 22.3 The fix was itself contingent on a model, and that was caught here
+
+The bullet above is the one worth dwelling on, because it was written by the
+same pass that had just finished documenting why the shape is fatal.
+
+`solicit_agent_plan` shipped as a tool. The card's Stage 0 named it, the shelf's
+prompt named it, and whether any member was ever asked came down to whether a
+language model felt like making N tool calls. That is defect 0 of Loop 3
+reproduced exactly: `record_coordination_observation` existed, was dispatched,
+was asked for by name in two places, and produced **0 of 3,576 episodes**.
+
+Writing the honest caveat and shipping anyway would have been placing the same
+bet twice, with the losing ticket still on the desk. So:
+
+| Piece | Effect |
+|---|---|
+| `src/plan_solicitation.rs` | One implementation, two callers — the tool (targeted, model's judgement) and the shelf (the floor). The same division `coordination_note` established |
+| The floor runs **before** the strategist | The one deliberate difference. A brief is retrospective; a plan is not. A post-hoc plan floor produces identical counts, climbs `loop3.plans` identically, and grounds nothing in the run that paid for it |
+| `FRESHNESS_SECS` = 600, `MAX_PER_RUN` = 8 | Each ask is an LLM call the user did not press a button for. Bounded, and the cap is *reported* when it bites rather than truncating silently |
+| Concurrent | Eight sequential model calls in front of an HTTP handler is not a slow endpoint, it is a broken one |
+| `loop3.plans`: `Prompted` → `Request` | The reading changes, which is the point. A zero under `Prompted` could be an untried feature or an ignored instruction, indistinguishable; under `Request` it can only be traffic or failure |
+| `Sink::WorkspaceIntentions` | The stage was `accounted: None`. A floor whose write failures nobody counts cannot be told apart from a floor nobody triggered — §5's whole subject |
+
+### The stale-excuse check, and what it found immediately
+
+`loop3.plans` moving off `Prompted` made its `NO_DOOR` entry dead: the door
+check skips stages that are not person-driven *before* it consults the list, so
+a stale excuse is never read and never fails. It just sits there being a
+documented reason that has stopped being true — §7's defect class, applied to a
+guard rather than to a mechanism.
+
+The list had no staleness check, so one was added. **It found `loop2.corrected`
+on its first run** — an entry whose reason is accurate prose about a
+`Trigger::Upstream` stage, unreachable since whenever the trigger changed, read
+by nothing. Removed; `Upstream`'s own declaration already says it, in the one
+place that cannot drift from the trigger.
+
+This is the second time in two passes that a guard was found asserting nothing,
+and both were found by trying to break them rather than by reading them. The
+mutation script is now 12 breaks. Break 10 — delete the line that records the
+cap biting — came back **green** on the first attempt, because the test scanned
+for `floor.capped` and the logging line still contained it. Exactly the
+`agent_output_to_episode`-in-an-import trap from §5.1, in the same suite,
+against a test written by someone who had just fixed that one. The guard now
+asserts the assignment.
+
+> Three for three: every source scan in this work was vacuous on first writing,
+> and none of the three was noticed by reading it. A source scan should be
+> assumed non-functional until a break has been seen to turn it red.

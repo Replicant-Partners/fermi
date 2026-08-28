@@ -270,12 +270,27 @@ pub const LOOPS: &[FeedbackLoop] = &[
                 // member had ever been asked anything (mig-218).
                 sink_sql: "SELECT count(*)::bigint AS n FROM workspace_intentions \
                             WHERE source = 'solicited'",
-                writer: "agent_backend::tools_legacy::execute_solicit_agent_plan",
-                trigger: Trigger::Prompted {
-                    asked_by: "handlers::workspace::coherence, depth=recommendations, \
-                               Stage 0",
-                },
-                accounted: None,
+                writer: "plan_solicitation::solicit, from handlers::workspace::coherence \
+                         (floor) and execute_solicit_agent_plan (targeted)",
+                // `Request`, not `Prompted`, and the change is the whole of the
+                // floor.
+                //
+                // It was `Prompted`: one prompt asked a model to call
+                // `solicit_agent_plan` N times, and whether Stage 0 had any
+                // first-hand rows in it came down to whether the model felt
+                // like it. That is the contingency that left
+                // `coordinator_observation` at 0 of 3,576 episodes one stage
+                // later — same shape, same silence, and a row count could not
+                // distinguish "nobody pressed the button" from "the strategist
+                // ignored the instruction".
+                //
+                // The platform now asks before the strategist runs, so pressing
+                // the button IS the trigger and a zero here is a fact about
+                // traffic or about failure, never about a model's disposition.
+                // The tool remains and is better when used; it is no longer
+                // what the stage depends on.
+                trigger: Trigger::Request,
+                accounted: Some(Sink::WorkspaceIntentions),
                 gated_by: None,
             },
             Stage {

@@ -328,6 +328,171 @@ fn soliciting_is_marked_as_delegation() {
     );
 }
 
+// ─── the floor: the platform asks, not just the model ──────────────
+
+/// The shelf asks members for their plans itself.
+///
+/// Shipping `solicit_agent_plan` as a tool made Stage 0's grounding contingent
+/// on a model electing to make N tool calls — the identical contingency that
+/// left `coordinator_observation` at 0 of 3,576 episodes one stage later. The
+/// tool existed, was dispatched, was named in the prompt, and was never called.
+#[test]
+fn the_platform_solicits_plans_rather_than_only_asking_a_model_to() {
+    let src = code_of("src/handlers/workspace/coherence.rs");
+    assert!(
+        src.contains("plan_solicitation::solicit") || src.contains("ps::solicit"),
+        "the coherence shelf never calls `solicit` itself. Stage 0's grounding \
+         is then contingent on the strategist choosing to make the tool call, \
+         which is the mechanism that produced zero rows for the life of the \
+         coordination cascade."
+    );
+    assert!(
+        src.contains("members_needing_a_plan"),
+        "the floor must work from the members who actually lack a current plan, \
+         not from whoever the strategist happened to mention"
+    );
+}
+
+/// The floor runs BEFORE the strategist, not after.
+///
+/// This is the one place the plan floor must differ from
+/// `coordination_note`'s. A brief is retrospective and delivering it after the
+/// run is right. A plan is not: Stage 0 is pre-flight, and a plan solicited
+/// after the diagnosis is a plan the diagnosis could not use. Getting this
+/// backwards would produce a floor that looks identical in every count and
+/// grounds nothing in the run that paid for it.
+#[test]
+fn the_plan_floor_runs_before_the_strategist() {
+    let src = code_of("src/handlers/workspace/coherence.rs");
+    let floor = src
+        .find("run_plan_floor(&state")
+        .expect("the floor must be invoked from the handler");
+    let strategist = src
+        .find("let consultant_output =")
+        .expect("the strategist invocation must still be here");
+    assert!(
+        floor < strategist,
+        "the plan floor runs after the strategist. Stage 0 is pre-flight; plans \
+         solicited after the diagnosis ground the NEXT run and leave this one \
+         exactly as unfounded as it was."
+    );
+}
+
+/// The strategist is told what its map is worth.
+///
+/// A floor that silently half-succeeded produces a partially grounded map that
+/// reads exactly like a fully grounded one, and the strategist would treat the
+/// members it could not reach as though they had nothing to say.
+#[test]
+fn the_floors_outcome_reaches_the_strategists_prompt() {
+    let src = code_of("src/handlers/workspace/coherence.rs");
+    assert!(
+        src.contains("plan_floor.reading()"),
+        "the floor's outcome never reaches the prompt, so the strategist cannot \
+         tell a map the team filled in from one the platform failed to collect"
+    );
+}
+
+/// The cost of asking is bounded, and the bound is visible.
+///
+/// Each solicitation is an LLM call on an endpoint a user pressed expecting to
+/// pay for one strategist run. Unbounded, a twenty-member workspace silently
+/// becomes a twenty-one-call request.
+#[test]
+fn the_floor_is_bounded_by_a_cap_and_a_freshness_window() {
+    assert!(
+        fermi::plan_solicitation::MAX_PER_RUN > 0,
+        "a cap of zero disables the floor"
+    );
+    assert!(
+        fermi::plan_solicitation::MAX_PER_RUN <= 16,
+        "the per-run cap has grown past the point where the latency and spend \
+         arguments in `plan_solicitation` still hold"
+    );
+    assert!(
+        fermi::plan_solicitation::FRESHNESS_SECS > 0,
+        "without a freshness window every shelf press re-interrogates a team \
+         that has not moved"
+    );
+
+    let src = code_of("src/handlers/workspace/coherence.rs");
+    assert!(
+        src.contains("truncate(ps::MAX_PER_RUN)"),
+        "the handler never applies the cap, so the bound is documentation"
+    );
+    // The ASSIGNMENT, not the mention.
+    //
+    // The first draft of this asserted `src.contains("floor.capped")`, and the
+    // mutation script caught it staying green: deleting the assignment leaves
+    // `capped = floor.capped` in the log line, so the substring is still there
+    // and the scan still passes. Same trap as the `agent_output_to_episode`
+    // import — twice now, in one suite, which is the argument for the script.
+    assert!(
+        src.contains("floor.capped ="),
+        "the handler applies the cap and never records that it bit. A silently \
+         truncated floor produces a partially grounded map that reads exactly \
+         like a fully grounded one, and the strategist treats the members \
+         nobody asked as members with nothing to say."
+    );
+}
+
+/// One implementation of the intention write, per §3.4.
+///
+/// The floor and the tool both record a plan. If each had its own INSERT they
+/// would agree today and drift on `source` the first time either changed —
+/// on the one field whose entire purpose is that it cannot be forged.
+#[test]
+fn both_solicitation_paths_share_one_intention_writer() {
+    let tool = code_of("src/agent_backend/tools_legacy.rs");
+    let module = code_of("src/plan_solicitation.rs");
+
+    assert!(
+        module.contains("write_intention("),
+        "`plan_solicitation` must write through the shared writer"
+    );
+    assert_eq!(
+        module.matches("INSERT INTO workspace_intentions").count(),
+        0,
+        "`plan_solicitation` has its own INSERT; that is a second answer to \
+         'what is an intention row', on the field that must not be forgeable"
+    );
+    assert_eq!(
+        tool.matches("INSERT INTO workspace_intentions").count(),
+        1,
+        "there must be exactly one INSERT into `workspace_intentions` in the \
+         tool layer, and it is `write_intention`'s"
+    );
+}
+
+/// A member that already stated a plan is not a failure, and must not be logged
+/// as one.
+///
+/// The floor exists to be unnecessary. On a workspace where members keep their
+/// own plans current, every call returns `AlreadyFresh` and the platform spent
+/// nothing — success. A caller that warned on it would make the log useless on
+/// exactly the runs that went best.
+#[test]
+fn the_outcome_to_hope_for_is_not_counted_as_a_problem() {
+    use fermi::intentions::IntentionSource;
+    use fermi::plan_solicitation::Solicited;
+
+    assert!(!Solicited::AlreadyFresh {
+        source: IntentionSource::SelfDeclared
+    }
+    .is_problem());
+    assert!(Solicited::Unparseable {
+        reply_excerpt: String::new()
+    }
+    .is_problem());
+
+    let src = code_of("src/handlers/workspace/coherence.rs");
+    assert!(
+        src.contains("floor.already_fresh += 1"),
+        "the handler must count `AlreadyFresh` separately from asked-and-answered, \
+         or a workspace that needed nothing reads as a workspace the floor served"
+    );
+}
+
 // ─── the loop model must not overstate either fix ──────────────────────
 
 /// Loop 3 counts asked-for plans separately from the whole map.
@@ -355,6 +520,24 @@ fn the_loop_model_distinguishes_asked_for_plans_from_inferred_ones() {
          count only `solicited` rows, or it measures the defect as though it \
          were the fix. Got: {}",
         plans.sink_sql
+    );
+
+    // The floor's whole point, stated where the platform declares its own
+    // honesty. `Prompted` means "a prompt asks and a model decides", and a zero
+    // under it cannot distinguish an untried feature from an ignored
+    // instruction. Once the platform does the asking, pressing the button IS
+    // the trigger and a zero means something.
+    assert!(
+        matches!(plans.trigger, fermi::loop_model::Trigger::Request),
+        "`loop3.plans` is not `Request`. If the platform no longer asks and the \
+         stage is back to hoping a model calls the tool, say so here — but that \
+         is the defect the floor was built to end. Got: {:?}",
+        plans.trigger
+    );
+    assert!(
+        plans.accounted.is_some(),
+        "a floor whose write failures nobody counts cannot be told apart from a \
+         floor nobody triggered"
     );
 
     let intentions = loop3

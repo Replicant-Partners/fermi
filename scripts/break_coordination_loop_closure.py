@@ -33,6 +33,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 COHERENCE = REPO / "src" / "handlers" / "workspace" / "coherence.rs"
+FLOOR = REPO / "src" / "plan_solicitation.rs"
 INTENTIONS = REPO / "src" / "intentions.rs"
 TOOLS = REPO / "src" / "agent_backend" / "tools_legacy.rs"
 LOOP_MODEL = REPO / "src" / "loop_model.rs"
@@ -251,6 +252,126 @@ def main():
                 "Stage 0 asks before it assumes",
                 SUITE,
                 "stage_0_leads_with_soliciting_rather_than_inferring",
+            )
+        )
+
+    # ── 8. the floor stops asking ──────────────────────────────────
+    #
+    # The exact state Stage 0 shipped in: `solicit_agent_plan` exists, is
+    # dispatchable, is named in the card and in the prompt — and whether any
+    # member is ever asked comes down to whether a model feels like calling it.
+    # Build clean, endpoint returns 200, `source='solicited'` stays at zero.
+    print("break 8: the platform stops soliciting and only asks a model to")
+    src = COHERENCE.read_text()
+    start = src.index("    let plan_floor = if depth == \"recommendations\" {")
+    end = src.index("    // For premium tiers, invoke the workspace's strategist directly.")
+    with Break(
+        COHERENCE,
+        src[start:end],
+        "    let plan_floor = fermi::plan_solicitation::Floor::default();\n\n",
+        "let plan_floor = fermi::plan_solicitation::Floor::default();",
+        expect_absent="run_plan_floor(&state",
+    ):
+        results.append(
+            expect_red(
+                "the platform asks, not just the model",
+                SUITE,
+                "the_platform_solicits_plans_rather_than_only_asking_a_model_to",
+            )
+        )
+
+    # ── 9. the floor runs after the strategist ─────────────────────────
+    #
+    # The subtle one, and the reason it gets its own break: every count is
+    # identical either way. Plans are solicited, rows land, `loop3.plans`
+    # climbs — and the run that paid for it diagnosed against a map the floor
+    # had not filled yet. A retrospective floor for a prospective stage.
+    print("break 9: the floor runs after the strategist instead of before")
+    src = COHERENCE.read_text()
+    start = src.index("    let plan_floor = if depth == \"recommendations\" {")
+    end = src.index("    // For premium tiers, invoke the workspace's strategist directly.")
+    block = src[start:end]
+    # Move it below the strategist by parking a default before and the real
+    # call after. Compiles, runs, grounds nothing this cycle.
+    moved = (
+        "    let plan_floor = fermi::plan_solicitation::Floor::default();\n\n"
+        + "    // For premium tiers, invoke the workspace's strategist directly."
+    )
+    with Break(
+        COHERENCE,
+        block + "    // For premium tiers, invoke the workspace's strategist directly.",
+        moved,
+        "let plan_floor = fermi::plan_solicitation::Floor::default();",
+        expect_absent="run_plan_floor(&state",
+    ):
+        results.append(
+            expect_red(
+                "the floor precedes the strategist",
+                SUITE,
+                "the_plan_floor_runs_before_the_strategist",
+            )
+        )
+
+    # ── 10. the cap stops being reported ─────────────────────────────
+    #
+    # Truncate silently and the strategist reads a partially grounded map as a
+    # fully grounded one — treating the members nobody asked as members with
+    # nothing to say.
+    print("break 10: the per-run cap truncates silently")
+    with Break(
+        COHERENCE,
+        "        floor.capped = needing.len() - ps::MAX_PER_RUN;\n",
+        "",
+        "needing.truncate(ps::MAX_PER_RUN);",
+        expect_absent="floor.capped = needing.len()",
+    ):
+        results.append(
+            expect_red(
+                "a truncated floor says so",
+                SUITE,
+                "the_floor_is_bounded_by_a_cap_and_a_freshness_window",
+            )
+        )
+
+    # ── 11. the floor grows its own INSERT ───────────────────────────
+    #
+    # Two writers agree today and drift on `source` the first time either
+    # changes — on the one field whose entire purpose is that a caller cannot
+    # forge it. §3.4, on the value that carries the most weight.
+    print("break 11: the floor writes its own intention row")
+    with Break(
+        FLOOR,
+        "    let written = crate::agent_backend::tools::write_intention(",
+        '    let _second_answer = "INSERT INTO workspace_intentions (source) VALUES (\'self\')";\n'
+        "    let written = crate::agent_backend::tools::write_intention(",
+        "INSERT INTO workspace_intentions",
+    ):
+        results.append(
+            expect_red(
+                "one intention writer, not two",
+                SUITE,
+                "both_solicitation_paths_share_one_intention_writer",
+            )
+        )
+
+    # ── 12. the loop model claims a prompt still drives the stage ──────────
+    #
+    # `Prompted` licenses reading a zero as "the model declined". Once the
+    # platform does the asking that reading is false, and leaving it would let
+    # a genuinely broken floor hide behind a disposition it no longer has.
+    print("break 12: `plans` is declared Prompted again")
+    with Break(
+        LOOP_MODEL,
+        "                trigger: Trigger::Request,\n                accounted: Some(Sink::WorkspaceIntentions),",
+        '                trigger: Trigger::Prompted { asked_by: "a prompt, maybe" },\n'
+        "                accounted: Some(Sink::WorkspaceIntentions),",
+        'asked_by: "a prompt, maybe"',
+    ):
+        results.append(
+            expect_red(
+                "the stage is Request-driven",
+                SUITE,
+                "the_loop_model_distinguishes_asked_for_plans_from_inferred_ones",
             )
         )
 

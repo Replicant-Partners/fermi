@@ -1004,13 +1004,12 @@ mod tests {
         // Stages a person drives that deliberately have no direct endpoint,
         // with the reason. May only shrink.
         const NO_DOOR: &[(&str, &str, &str)] = &[
-            (
-                "loop2",
-                "corrected",
-                "Written by the platform as a consequence of `reviewed`, not by \
-                 a separate action. A reviewer who has recorded a correction \
-                 has already done the only thing a person does here.",
-            ),
+            // `loop2.corrected` was here, and the stale check below found it on
+            // its first run. The excuse was true — the platform writes it as a
+            // consequence of `reviewed` — but the stage is `Trigger::Upstream`,
+            // so the loop never reached the entry and the excuse was never
+            // read. `Upstream`'s own declaration already says it, in the one
+            // place that cannot drift from the trigger.
             (
                 "loop3",
                 "brief",
@@ -1028,15 +1027,10 @@ mod tests {
                  against would let the map be filled by something with no view \
                  of the workspace.",
             ),
-            (
-                "loop3",
-                "plans",
-                "`solicit_agent_plan`, called by the strategist during the same \
-                 Stage 0, so its door is `settled`'s too. A direct endpoint \
-                 would let a member be asked for a plan with nothing to \
-                 coordinate it against, which is the interrogation half of \
-                 Stage 0 without the half that makes it worth answering.",
-            ),
+            // `loop3.plans` was here while it was `Trigger::Prompted`. The
+            // platform now asks during the `settled` request itself, so the
+            // stage is `Request`-driven and needs no excuse — removed rather
+            // than left, per the stale check below.
         ];
 
         let mut missing = Vec::new();
@@ -1063,6 +1057,40 @@ mod tests {
         for (l, s, why) in NO_DOOR {
             assert!(why.len() > 60, "{l}.{s}: say where the door actually is");
         }
+
+        // **The list may only shrink.** An excuse for a stage that is no longer
+        // person-driven is not harmless: the loop above skips undriven stages
+        // before it ever consults `NO_DOOR`, so a stale entry is never read and
+        // never fails, and the next person to look sees a documented reason
+        // that has quietly stopped being true.
+        //
+        // `loop3.plans` is the case that prompted this. It earned an entry as
+        // `Trigger::Prompted` — the strategist may or may not call
+        // `solicit_agent_plan` — and when the platform took the asking over,
+        // the trigger became `Request` and the excuse became fiction. Nothing
+        // would have said so.
+        let stale: Vec<String> = NO_DOOR
+            .iter()
+            .filter(|(li, si, _)| {
+                !loop_model::LOOPS.iter().any(|l| {
+                    l.id == *li
+                        && l.stages.iter().any(|s| {
+                            s.id == *si
+                                && matches!(s.trigger, Trigger::Manual | Trigger::Prompted { .. })
+                        })
+                })
+            })
+            .map(|(l, s, _)| format!("{l}.{s}"))
+            .collect();
+        assert!(
+            stale.is_empty(),
+            "{} NO_DOOR entr(ies) excuse a stage that is no longer driven by a \
+             person (or no longer exists): {:?}. Delete them — an excuse nothing \
+             reads is a documented reason that has stopped being true, and this \
+             list only earns its keep by shrinking.",
+            stale.len(),
+            stale
+        );
     }
 
     /// Every stage declares whether it can be asked about one agent.

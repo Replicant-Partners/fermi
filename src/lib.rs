@@ -479,6 +479,7 @@ pub mod pipeline;
 pub mod calibration;
 pub mod episodes;
 pub mod intentions;
+pub mod plan_solicitation;
 
 // Where BayesOps observations come from. The `Feed` trait and its contract
 // types live in `crates/posterior`; the implementations live here because they

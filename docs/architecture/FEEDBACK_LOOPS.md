@@ -605,22 +605,46 @@ Workspace messages accumulate
 
 **Correction path (prospective — Stage 0), rewritten 2026-08-28:**
 ```
-Strategist runs Stage 0
-    → get_intention_map → reads `grounding_reading` before trusting the map
-    → solicit_agent_plan(member, context)      ← the round trip
-      → the member is invoked and answers with ITS OWN plan:
-        action_type, description, targets, depends_on, teammate_assignment
-      → recorded as source='solicited', declared_by=strategist
-      → conflict-checked on write against the rest of the map
-    → declare_intention only for a member that could not be reached
-      → recorded as source='inferred' — a belief, not an intention
+Shelf pressed at depth=recommendations
+    → THE PLATFORM'S FLOOR runs first, before the strategist
+      (plan_solicitation::solicit, from workspace/coherence.rs)
+      → members_needing_a_plan: members with no first-hand intention
+        younger than FRESHNESS_SECS (600), strategist excluded,
+        oldest-first, capped at MAX_PER_RUN (8)
+      → each is invoked CONCURRENTLY with its peers' intentions attached
+        and answers with ITS OWN plan: action_type, description,
+        targets, depends_on, teammate_assignment
+      → recorded source='solicited', declared_by=strategist
+      → the Floor's reading goes into the strategist's prompt
+
+    → Strategist runs Stage 0 against a map the team filled in
+      → get_intention_map → reads `grounding_reading`
+      → solicit_agent_plan(member, context)   ← targeted, supersedes
+        for anyone the floor could not reach, or whose recorded plan
+        does not answer what the diagnosis turns on
+      → declare_intention only as a last resort
+        → recorded source='inferred' — a belief, not an intention
 ```
 
-This stage previously ran the second half only. The strategist read twenty
+This stage previously ran the last line only. The strategist read twenty
 messages of transcript and called `declare_intention` once per member,
 describing what it *supposed* each was about to do. **No member was ever
 asked.** Every intention on the platform was one agent's guesswork about
 several others — see defect 6 below.
+
+**Why the floor runs before and the coordination-brief floor runs after.** A
+brief is retrospective: it summarises a session that has happened, so delivering
+it afterwards is correct. A plan is not. Stage 0 is pre-flight — *"before any
+significant agent action"* — and a plan solicited after the diagnosis is a plan
+the diagnosis could not use. A post-hoc plan floor would produce identical row
+counts, climb `loop3.plans` exactly the same, and ground nothing in the run that
+paid for it.
+
+The cost is latency and spend on a paid endpoint, bounded three ways: only at
+`depth=recommendations` (the card says skip Stage 0 on analytical invocations),
+only for members whose plan is stale, and never more than eight of them.
+Concurrent, so the wall clock is one round trip rather than N — sequentially,
+eight members at five seconds each is not a slow endpoint but a broken one.
 
 **Correction path (outer — across sessions):**
 ```
@@ -758,6 +782,25 @@ delegates hangs off its run instead of being recorded as orphan roots.
 separately from the fifth because it is a different failure — not a missing
 call, but a mechanism doing something other than what its name says. See
 "Intention coordination" in §7 for the full account and the fix.
+
+**A seventh, fixed in the same pass: the fix for the sixth was itself
+contingent on a model.** `solicit_agent_plan` shipped as a tool, named in the
+card's Stage 0 and in the shelf's prompt — which made the stage's grounding
+depend on a language model electing to make N tool calls.
+
+That is precisely the shape of defect 0 one stage later, where the same
+contingency produced **0 of 3,576 episodes** for the life of the feature: the
+tool existed, was dispatched, was asked for by name, and was never once called.
+Shipping the tool alone would have been the same bet, placed again, by someone
+who had just finished reading why it lost.
+
+So `plan_solicitation` follows `coordination_note`'s division exactly — the
+judgement is the model's, the round trip is the platform's — with the one
+difference that its floor runs *before* the strategist rather than after,
+because a plan is prospective and a brief is not. `loop3.plans` moves from
+`Trigger::Prompted` to `Trigger::Request`: pressing the button is now the
+trigger, so a zero there is a fact about traffic or failure and never about a
+model's disposition.
 
 Also verified working throughout: Γ(C) measurement, per-principle scoring, the
 auto-eval cadence, the `coherence_update` message, and the coordination-note
@@ -1613,6 +1656,7 @@ is not an instrument.
 | 18 | ~~The coherence shelf hardcoded `cohere_and_coordinate` and never read `teams.coordination_strategist_id`, making three shipped strategists unreachable and any non-default assignment fail as a permission denial~~ | 3.A | **Fixed 2026-08-21** — resolves the registered strategist; locked by a source check, since the failure was a literal where a lookup belonged |
 | 19 | ~~The coherence shelf ran the strategist with no KG retrieval and dropped the run, so the one agent told to notice recurring patterns had no record that any earlier session existed~~ | 3.A / 1 | **Fixed 2026-08-28** — both halves wired; its run is now a parent episode for the work it delegates. Guarded by a scan that ignores imports, because this file already *imported* `agent_output_to_episode` without calling it |
 | 20 | ~~Stage 0 declared every member's intention on the member's behalf, so the conflict checker compared one agent's guesses to each other~~ | 3.A | **Fixed 2026-08-28** — mig-218 records `declared_by`/`source`; `solicit_agent_plan` asks; inferred-vs-inferred duplication suppressed. See §7 |
+| 21 | ~~`solicit_agent_plan` shipped as a tool only, so Stage 0's grounding depended on a model electing to make N tool calls — the contingency that produced 0 of 3,576 episodes one stage later~~ | 3.A | **Fixed 2026-08-28** — `plan_solicitation::solicit` with a platform floor that runs *before* the strategist, concurrent, capped at 8, 10-minute freshness window. `loop3.plans` is now `Trigger::Request` |
 | 14 | 127 workspaces have no composition identity, so Loop 4.A has nothing to version | 4.A | **Open.** Onboarding gap rather than loop defect |
 | 15 | 73 curated tool declarations remain undispatchable, quarantined in `known_debt` | all | Ratcheting down: 92 → 79 → 73. Breakdown below |
 | 10 | Valence-homophily threshold (spread < 0.25) exists only as prompt text | 3.B | Compute it, or stop documenting it as a mechanism |
@@ -1851,7 +1895,11 @@ about the others is running, producing rows, and not doing the thing.
 `solicit_agent_plan` is new and has not yet been observed turning on real
 traffic; the query that will confirm it is
 `SELECT count(*) FROM workspace_intentions WHERE source = 'solicited'`, and
-`loop3.plans` reports it. Ontology development, however, has not yet been observed to work
+`loop3.plans` reports it. What changed with the floor is what a zero there would
+*mean*: under `Trigger::Prompted` it could have been an untried feature or an
+ignored instruction and nothing could tell them apart, and under
+`Trigger::Request` it can only be traffic or failure. That is the difference
+between a loop waiting to be used and a loop waiting to be believed. Ontology development, however, has not yet been observed to work
 even once — the defect is understood and fixed, and §5 states the query that
 will confirm or refute it after the next deploy.
 

@@ -101,6 +101,7 @@ pub enum Sink {
     SchemaMigrations = 14,
     GateDecisions = 15,
     AssertionVerifications = 16,
+    WorkspaceIntentions = 17,
 }
 
 /// What a sink is, who writes it non-fatally, and why that is allowed.
@@ -286,6 +287,22 @@ pub const SINKS: &[SinkSpec] = &[
                        `severity = 'L1'` shape — so the attempts are counted \
                        here and `Enqueued` carries the three reasons a queue \
                        stays empty apart.",
+    },
+    SinkSpec {
+        sink: Sink::WorkspaceIntentions,
+        table: "workspace_intentions",
+        writer: "plan_solicitation::solicit, from the coherence shelf's Stage 0 floor",
+        why_nonfatal: "A coherence evaluation must not fail because one member \
+                       could not be asked what it plans to do. The floor exists \
+                       to raise the average, and a floor that can take the whole \
+                       endpoint down with it is worse than no floor. The cost is \
+                       specific and was invisible until mig-218: a lost \
+                       solicitation leaves that member's row absent, the \
+                       strategist falls back to inferring it, and the resulting \
+                       `inferred` row looks exactly like one from a workspace \
+                       where nobody was ever asked. Counted here so the gap \
+                       between `loop3.plans` and `loop3.intentions` can be read \
+                       as a coordination finding rather than a write failure.",
     },
 ];
 

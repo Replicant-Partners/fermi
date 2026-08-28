@@ -100,6 +100,18 @@ pub use legacy::{
     ToolRegistry,
 };
 
+// The one place a `workspace_intentions` row is written, re-exported for
+// `crate::plan_solicitation`.
+//
+// Crate-visible rather than `pub`: an intention row carries a `source` the
+// platform vouches for, and a writer reachable from outside the crate is a
+// writer whose provenance argument nobody checked. The floor needs it because
+// it runs from an HTTP handler that builds no `ToolContext`, and giving that
+// path its own INSERT would be a second answer to "what is an intention row" —
+// the duplication §3.4 exists to forbid, on the field whose whole purpose is
+// that it cannot be forged.
+pub(crate) use legacy::write_intention;
+
 use crate::agent_backend::agent_card::AgentCard;
 use ::dynamics;
 use async_trait::async_trait;
