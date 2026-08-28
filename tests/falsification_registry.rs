@@ -1041,6 +1041,160 @@ const FALSIFICATIONS: &[Falsification] = &[
     },
     // -- artifact_trace ----------------------------------------------
     Falsification {
+        check: "artifact_trace::narrow_by_age",
+        owner: "src/artifact_trace.rs",
+        // Permissive reading: "this absence is permanent and not a finding."
+        passes: || {
+            let t0 = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc);
+            let t1 = chrono::DateTime::parse_from_rfc3339("2026-06-01T00:00:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc);
+            // Artifact older than the gate's first recorded decision.
+            fermi::artifact_trace::narrow_by_age(
+                fermi::artifact_trace::Absent {
+                    token: fermi::artifact_trace::NotRecordedReason::RetainedButAbsent,
+                    because: "seed".to_string(),
+                },
+                Some(t0),
+                Some(t1),
+            )
+            .token
+                == fermi::artifact_trace::NotRecordedReason::PredatesRetention
+        },
+        fires: || {
+            // No timestamp on the artifact at all. Nothing has been shown.
+            let t0 = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc);
+            fermi::artifact_trace::narrow_by_age(
+                fermi::artifact_trace::Absent {
+                    token: fermi::artifact_trace::NotRecordedReason::RetainedButAbsent,
+                    because: "seed".to_string(),
+                },
+                None,
+                Some(t0),
+            )
+            .token
+                == fermi::artifact_trace::NotRecordedReason::PredatesRetention
+        },
+        models: "The audit's recurring defect in its newest costume: a true fact \
+                 about an artifact reported as a fact about the system. Of the \
+                 four reasons a rung has no ledger row, three are permanent or \
+                 by design and exactly one -- `retained_but_absent` -- is a \
+                 finding. The promotion date is written down nowhere, so the \
+                 gate's earliest recorded decision is the ONLY evidence that an \
+                 artifact predates retention. Claiming it without that evidence \
+                 relabels a dropped recorder row as `this is old, nothing to \
+                 see`, and the calm version is the one that ships, because a \
+                 belt of grey rings that all explain themselves looks finished.",
+    },
+    Falsification {
+        check: "artifact_trace::reports_exactly_one_way",
+        owner: "src/artifact_trace.rs",
+        // Permissive reading: "this rung is well-formed."
+        passes: || {
+            fermi::artifact_trace::belt("agent.execute")
+                .iter()
+                .all(|r| r.reports_exactly_one_way())
+        },
+        fires: || {
+            // A verdict written beside the absence it supersedes.
+            let mut r = fermi::artifact_trace::belt("agent.execute")
+                .into_iter()
+                .next()
+                .expect("`agent.execute` declares gates");
+            r.decided = Some(fermi::artifact_trace::Decided {
+                decision: "approved".to_string(),
+                reason: None,
+                at: None,
+                decision_id: None,
+            });
+            r.reports_exactly_one_way()
+        },
+        models: "The belt's two absence-or-verdict fields are filled in two \
+                 different places -- `belt()` fills the absence from the gate \
+                 registry, and `episode_trace_handler` overwrites it from \
+                 `gate_decisions` -- which is the same split that produced the \
+                 defect migration 220 was written for. A handler that sets the \
+                 verdict without clearing the absence emits a rung claiming both \
+                 an `approved` and a reason there is no row, and every client \
+                 branching on `decided` first would silently render the verdict \
+                 and drop the contradiction. The UX team asked for this as an \
+                 invariant by name, because their renderer is a two-way branch \
+                 and a rung with both is a state it cannot draw.",
+    },
+    Falsification {
+        check: "verification_queue::reviewer_may_write",
+        owner: "src/verification_queue.rs",
+        // Permissive reading: "a person may assert this verdict."
+        passes: || fermi::verification_queue::reviewer_may_write("human_sourced"),
+        fires: || fermi::verification_queue::reviewer_may_write("tool_verified"),
+        models: "`grounding_trust::strength` scores `human_sourced` as high as \
+                 `tool_verified`, and the reason it is allowed to is the \
+                 citation: someone else can follow it to the same source. \
+                 `tool_verified` and `derived` mean a tool call or a transform \
+                 REPRODUCES the value, which a person cannot bring about by \
+                 saying so -- accepting one from a reviewer launders an opinion \
+                 into the strength of a tool call, on the exact surface built to \
+                 raise trust. The `pending_*` tier is the mirror defect: it is \
+                 what a claim is queued AS, so accepting it would let an item be \
+                 cleared from the queue by re-queueing it. The column's CHECK \
+                 cannot express this, because the same column is written by the \
+                 platform's own enqueue with `pending_*`.",
+    },
+    Falsification {
+        check: "verification_queue::classify_settle_error",
+        owner: "src/verification_queue.rs",
+        // Permissive reading: "the reviewer forgot the citation."
+        passes: || {
+            fermi::verification_queue::classify_settle_error(
+                Some("assertion_verifications_citation_check"),
+                "new row violates check constraint",
+            ) == fermi::verification_queue::SettleRefusal::CitationRequired
+        },
+        fires: || {
+            fermi::verification_queue::classify_settle_error(None, "deadlock detected")
+                == fermi::verification_queue::SettleRefusal::CitationRequired
+        },
+        models: "Two of this session's own probes blamed the thing they were \
+                 written to check, and both did it by matching on error TEXT \
+                 rather than on a pinned constraint name -- one of them matched \
+                 `LIKE '%verdict%'` and got the citation check back. Here the \
+                 same shortcut tells a reviewer to add a citation when the \
+                 database deadlocked, so they add one, resubmit, and get the \
+                 same message. The settle endpoint deliberately does NOT \
+                 re-implement migration 205's CHECK in Rust -- that is two \
+                 implementations of one trust rule -- so this translation is the \
+                 only thing standing between a Postgres error and the reviewer.",
+    },
+    Falsification {
+        check: "verification_queue::settle_is_client_error",
+        owner: "src/verification_queue.rs",
+        // Permissive reading: "this refusal is the caller's to fix."
+        passes: || {
+            fermi::verification_queue::settle_is_client_error(
+                &fermi::verification_queue::SettleRefusal::CitationRequired,
+            )
+        },
+        fires: || {
+            fermi::verification_queue::settle_is_client_error(
+                &fermi::verification_queue::SettleRefusal::UnknownVerdict,
+            )
+        },
+        models: "`UnknownVerdict` means the database refused a verdict the \
+                 provenance ladder declares -- so `PROVENANCE_VALUES` and \
+                 migration 205's CHECK have drifted, which is migration 219's \
+                 incident exactly: `GATE_IDS` gained `output_schema`, 214's \
+                 CHECK was widened to match and 216's was not. Returning 400 for \
+                 it hands a platform seam defect to the reviewer as though they \
+                 had typed something wrong, and a 4xx is not paged on, so the \
+                 drift persists with a human being blamed for it once per \
+                 attempt. The two halves of the same error deserve opposite \
+                 status codes and that judgement lives here.",
+    },
+    Falsification {
         check: "artifact_trace::reading",
         owner: "src/artifact_trace.rs",
         // Permissive reading: "this artifact's journey is a pass."
@@ -1744,6 +1898,15 @@ const EXEMPT: &[(&str, &str)] = &[
     ("gate_trust::asked", ACCESSOR),
     ("gate_trust::decided", IMPURE),
     ("gate_trust::decided_about", IMPURE),
+    (
+        "gate_trust::decided_for_episode",
+        "The same counter-and-enqueue as `decided`, plus the artifact the \
+         decision was about. Its one judgement -- that a reference the batched \
+         recorder writes must resolve, since migration 220 declines a foreign \
+         key so one bad row cannot reject a whole flush -- can only be settled \
+         against a live database, and is, by \
+         `gate_decision_lineage::no_gate_decision_points_at_an_episode_that_is_not_there`.",
+    ),
     ("gate_trust::decided_ok", IMPURE),
     ("gate_trust::drain", IMPURE),
     ("gate_trust::requeue", IMPURE),

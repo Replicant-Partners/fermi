@@ -190,6 +190,97 @@ pub async fn enqueue(
     out
 }
 
+// ── settling one ─────────────────────────────────────────────────────────
+
+/// Record a verdict on a queued claim. `$1..$6` in declaration order.
+///
+/// **Appends; never updates.** Current state is the latest row per
+/// `assertion_id`, derived rather than stored, so a claim queued and then settled
+/// reads as both events and two reviewers who disagree read as a disagreement.
+/// Migration 205's reasoning, and the reason a mutable `verdict` column would be
+/// worse than useless: it would erase the earlier reviewer's name along with the
+/// verdict.
+///
+/// `episode_id` is carried from the pending row rather than supplied by the
+/// caller — a settle that could name a different episode would attribute the
+/// verdict to the wrong artifact, and nothing downstream would notice.
+pub const SETTLE_SQL: &str = "INSERT INTO assertion_verifications                                 (assertion_id, episode_id, verdict, source_citation,                                  actor, actor_kind, evidence)                               SELECT $1, v.episode_id, $2, $3, $4, $5, $6                                 FROM assertion_verifications v                                WHERE v.assertion_id = $1                                ORDER BY v.created_at DESC LIMIT 1                               RETURNING verification_id, episode_id";
+
+/// Why a settle was refused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SettleRefusal {
+    /// No pending row for that assertion, so there is nothing to settle.
+    ///
+    /// A 404 rather than an insert: settling a claim nobody queued would put a
+    /// verdict in the ledger with no record of what was asked.
+    NotQueued,
+    /// `human_sourced` with no citation. Postgres's judgement, translated.
+    CitationRequired,
+    /// A verdict the column refuses.
+    UnknownVerdict,
+    /// Anything else the database said.
+    Rejected { error: String },
+}
+
+/// Is this refusal the caller's fault?
+pub fn settle_is_client_error(r: &SettleRefusal) -> bool {
+    match r {
+        SettleRefusal::NotQueued | SettleRefusal::CitationRequired => true,
+        // A verdict the typed path cannot produce means the ladder and the CHECK
+        // have drifted, which is ours.
+        SettleRefusal::UnknownVerdict | SettleRefusal::Rejected { .. } => false,
+    }
+}
+
+/// Translate a Postgres error on the settle insert.
+///
+/// Pure, and on the constraint **name** rather than the message: message text is
+/// a locale-and-version artifact, a constraint name is something migration 205
+/// chose. Same reasoning as `gate_review::classify_write_error`, and the same
+/// reason it is a translation rather than a Rust pre-check — the citation rule
+/// has exactly one implementation and it is the CHECK.
+pub fn classify_settle_error(constraint: Option<&str>, message: &str) -> SettleRefusal {
+    match constraint {
+        Some("assertion_verifications_citation_check") => SettleRefusal::CitationRequired,
+        Some("assertion_verifications_verdict_check") => SettleRefusal::UnknownVerdict,
+        _ => SettleRefusal::Rejected {
+            error: message.to_string(),
+        },
+    }
+}
+
+/// Which verdicts may settle a queued claim.
+///
+/// A subset of `grounding_trust::PROVENANCE_VALUES`, and the exclusions are the
+/// point. `pending_tool_check` and `pending_human_check` are what a claim is
+/// queued *as*, so offering them as a settlement would let a reviewer "resolve"
+/// an item by re-queueing it and the queue would never drain. The retrieval
+/// verdicts (`tool_verified`, `derived`) are the platform's to write from an
+/// actual tool call, not a person's to assert.
+///
+/// What is left is what a reviewer can honestly conclude: they followed a source
+/// (`human_sourced`, which the CHECK requires a citation for), they formed a
+/// judgement without one (`human_endorsed`, deliberately available at the
+/// strength of a model inference — requiring a citation for every judgement
+/// pushes reviewers to paste a plausible URL, which is worse than an admitted
+/// opinion), or the claim is wrong (`rejected`).
+pub const SETTLEABLE_BY_A_REVIEWER: &[&str] = &[
+    crate::grounding_trust::PROV_HUMAN_SOURCED,
+    crate::grounding_trust::PROV_HUMAN_ENDORSED,
+    crate::grounding_trust::PROV_REJECTED,
+];
+
+/// May a reviewer write this verdict?
+///
+/// Checked before the insert, and this is **not** a second implementation of the
+/// CHECK: the column accepts every ladder value including `pending_*` and
+/// `tool_verified`, and this narrows that to what a *person* may assert. Two
+/// different rules, and the narrower one has no home in the database because the
+/// same column is written by the platform's own enqueue.
+pub fn reviewer_may_write(verdict: &str) -> bool {
+    SETTLEABLE_BY_A_REVIEWER.contains(&verdict)
+}
+
 /// The contracted path an assertion was minted from, if it was minted from one.
 ///
 /// `ExtractionPath::TypedField` records it; `Prose` does not, and a prose
@@ -269,15 +360,15 @@ mod tests {
     /// multiplier to a tool that cannot verify one.
     #[test]
     fn a_prose_assertion_names_no_contracted_field() {
-        use crate::assertions::{AssertionKind, ExtractionPath, Spread};
+        use crate::assertions::{AssertionKind, Claim, ExtractionPath, Spread};
         let prose = Assertion {
             assertion_id: Uuid::new_v4(),
             kind: AssertionKind::Multiplier,
-            value: Spread {
+            value: Claim::Numeric(Spread {
                 p5: 1.0,
                 p50: 1.1,
                 p95: 1.2,
-            },
+            }),
             basis: vec![],
             extraction: ExtractionPath::Prose {
                 pattern: "multiplier_v2".into(),
@@ -316,6 +407,101 @@ mod tests {
             "a pending row has nothing to cite, and writing an empty string to \
              satisfy a constraint that does not apply is how migration 205's \
              citation requirement becomes decorative"
+        );
+    }
+
+    /// A reviewer cannot settle a claim by re-queueing it.
+    ///
+    /// `pending_tool_check` and `pending_human_check` are what a claim is queued
+    /// AS. Offering them as settlements would let an item be "resolved" into the
+    /// state it is already in, and the queue would never drain while every item
+    /// showed recent activity.
+    #[test]
+    fn the_pending_tier_is_not_a_settlement() {
+        for v in [
+            crate::grounding_trust::PROV_PENDING_TOOL,
+            crate::grounding_trust::PROV_PENDING_HUMAN,
+        ] {
+            assert!(
+                !reviewer_may_write(v),
+                "`{v}` is what a claim is queued as; accepting it as a verdict \
+                 lets a reviewer resolve an item by re-queueing it"
+            );
+        }
+    }
+
+    /// A person cannot assert a retrieval.
+    ///
+    /// `tool_verified` and `derived` mean *run the tool, or apply the transform,
+    /// and you land on the same value*. They are the platform's to write from an
+    /// actual call. A reviewer asserting one by hand puts strength 2 on the
+    /// ladder with nothing reproducible behind it, which is exactly the laundering
+    /// migration 205's citation CHECK exists to stop, one rung higher.
+    #[test]
+    fn a_reviewer_cannot_assert_a_retrieval() {
+        for v in [
+            crate::grounding_trust::PROV_TOOL,
+            crate::grounding_trust::PROV_DERIVED,
+        ] {
+            assert!(
+                !reviewer_may_write(v),
+                "`{v}` is a reproducible claim and a person cannot make one by \
+                 saying so"
+            );
+        }
+        // And what a reviewer CAN honestly conclude is available.
+        for v in SETTLEABLE_BY_A_REVIEWER {
+            assert!(reviewer_may_write(v));
+        }
+        assert_eq!(SETTLEABLE_BY_A_REVIEWER.len(), 3);
+    }
+
+    /// The citation rule stays Postgres's, and this only names it.
+    #[test]
+    fn a_missing_citation_is_translated_and_not_reinvented() {
+        assert_eq!(
+            classify_settle_error(Some("assertion_verifications_citation_check"), "..."),
+            SettleRefusal::CitationRequired
+        );
+        assert!(settle_is_client_error(&SettleRefusal::CitationRequired));
+
+        let other = classify_settle_error(None, "deadlock detected");
+        assert_eq!(
+            other,
+            SettleRefusal::Rejected {
+                error: "deadlock detected".into()
+            }
+        );
+        assert!(
+            !settle_is_client_error(&other),
+            "an unrecognised database error is ours, not the reviewer's"
+        );
+    }
+
+    /// The settle carries the episode from the pending row, not from the caller.
+    ///
+    /// A caller-supplied episode could attribute a verdict to a different
+    /// artifact, and nothing downstream would notice: the rejection rate would
+    /// move on an agent that never made the claim.
+    #[test]
+    fn the_settle_takes_its_episode_from_the_row_it_settles() {
+        assert!(
+            SETTLE_SQL.contains("v.episode_id"),
+            "the settle must read the episode from the pending row"
+        );
+        assert!(
+            SETTLE_SQL.contains("ORDER BY v.created_at DESC"),
+            "it must settle against the LATEST row for the assertion, or a \
+             re-queued claim would be settled against a stale one"
+        );
+        assert!(
+            SETTLE_SQL.trim_start().starts_with("INSERT"),
+            "append-only: an UPDATE would erase the earlier verdict and the \
+             earlier reviewer's name with it"
+        );
+        assert!(
+            !SETTLE_SQL.contains("UPDATE"),
+            "append-only, see migration 205"
         );
     }
 }

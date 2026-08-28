@@ -508,6 +508,189 @@ often someone opens a screen. `NO_RAISE` carries that reason. Whether a
 *historical* violation should be backfilled into `anomaly_events` once is a real
 and separate question; it needs a de-duplication key the table does not have.
 
+## The hashes, and the `parent_episode_id` non-gap
+
+**Built:** `src/artifact_hash.rs`, wired into the trace;
+`tests/episode_lineage_coverage.rs`.
+
+### Hashes are computed on read, not stored — deliberately
+
+The obvious implementation was three columns plus a migration. `episodes.query`
+and `response_text` are both retained, so a digest of them is a **pure function of
+data the platform already holds** — and a computed digest cannot drift from its
+subject, which a stored one can (`agents.total_executions` is why `rollup_trust`
+exists). A migration would be storage in advance of a use, and the use is further
+away than it looks: **the seam check does not work**, because a delegated child
+receives a prompt built around its task rather than its parent's output verbatim.
+The place equality would hold is the envelope payload, and nothing hashes that.
+
+When a cross-episode hash *query* is genuinely wanted, columns are the right
+answer and this module is what fills them.
+
+### The field I named wrong, caught by a live cross-check
+
+I shipped `grounding_changed_the_document`, then wrote a live assertion comparing
+it against the contract's own violation count. It disagreed on **21 episodes** —
+`weather_oracle` and `enemy_sensor` responses where the bytes changed and the
+violation count was **zero**.
+
+`enforce` does two things: it nulls a refused field (a finding) **and it stamps
+`<block>_provenance` siblings onto the document** (bookkeeping, on every contracted
+response). `Report.provenance` says so in its own doc — *"pairs written onto the
+document"* — and a digest comparison cannot tell them apart.
+
+So the field is now `enforcement_changed_the_bytes`, with the incident in its doc
+comment, and the live suite asserts only the direction that is true (violations ⇒
+bytes changed). **Asserting the reverse would fire on entirely correct behaviour.**
+The fix was to the field, not the test.
+
+### `parent_episode_id`: there was no missing writer
+
+The roadmap said *"the column exists and every call site passes `None`"*. That was
+wrong. `tools_legacy.rs:6188` writes it, both execute paths populate the context,
+and the chain is thin (4 of 3,576) because **delegation is rare** and because four
+of the ten `ToolContext` sites legitimately have no episode to point at.
+
+What *was* missing is enforcement of a discipline the code already followed by
+hand: of those four, **three carried a reason and one did not**
+(`workspace::coherence`). `tests/episode_lineage_coverage.rs` now requires one, and
+the break confirms it names the exact pre-fix state.
+
+**Its own first run made it better.** Matching the field anywhere caught five
+`Episode { parent_episode_id: None }` sites — which mean *this row has no parent*,
+true of 3,572 of 3,576 rows and the ordinary case. Demanding a paragraph for those
+would be a check that fires on correct code. So the scan is narrowed to
+`ToolContext`, and it **fails closed**: an unrecognisable enclosure is skipped
+rather than demanded of. *A scan must be no broader than the property it asserts —
+the exemption rule, pointed the other way.*
+
+### One test that is weaker than it looks, and says so
+
+`the_document_hash_ignores_key_order` **cannot fail because of a mistake in this
+code.** Order-independence is owned by `serde_json::Map` being a `BTreeMap`: both
+fixtures parse to the same map before `of_document` sees them, so no edit here can
+make the digest order-sensitive — an attempted sabotage came back green proving
+exactly that. It is a **dependency guard** against someone enabling
+`preserve_order`, and the doc comment now says so rather than implying the logic is
+verified. The falsifiable half is `a_changed_value_changes_the_digest`.
+
+## `Claim` — the Antaxius gap, closed without a migration
+
+**Built:** `assertions::Claim`, `AssertionKind::Fact`,
+`Assertion::shape_is_consistent`.
+
+`Assertion::value` was a `Spread`, so a non-numeric claim could not be recorded at
+all — which excluded `taxonomy.order = "Coleoptera"`, the `Antaxius beieri` case,
+the claim most worth verifying and the one the queue existed for.
+`grounding_trust` even has a `ViolationKind::ContradictsCanonical` for it and the
+queue had nowhere to put the result.
+
+### `untagged`, and the cost that had to be paid explicitly
+
+`episodes.assertions` holds 94 rows written as bare `{"p5":…,"p50":…,"p95":…}`
+objects. An externally tagged enum changes those bytes and every stored assertion
+stops deserialising, so `Claim` is `#[serde(untagged)]` and **the stored
+representation is unchanged — no migration**.
+
+`untagged` **falls through silently**: `{"p5":1,"p50":2}` with no `p95` does not
+fail to parse, it becomes a `Claim::Literal` carrying an object, and serde says
+nothing. That is the same defect class as everything else here — a true fact about
+a parse becoming a false fact about the world. `AssertionKind` is the independent
+witness (set by which pattern matched, not by the value), so
+`shape_is_consistent` compares the two and names *which way* they disagree,
+because a numeric kind holding a literal is a broken spread while a `Fact` holding
+a spread is a mislabelled extraction. Different remedies.
+
+Two tests carry the guarantee: `a_malformed_spread_is_caught_rather_than_becoming
+_a_literal` and `the_shape_already_in_the_database_still_reads`, the latter
+asserting the serialised bytes are byte-identical to what is stored so no row is
+rewritten into a shape the previous release cannot read.
+
+### One test correctly died
+
+`a_non_numeric_claim_is_refused_with_its_reason_rather_than_dropped` pinned the
+gap. Closing the gap made it fail, which is the right failure. Replaced with
+`a_claim_the_queue_still_cannot_carry_is_refused_with_its_reason`, covering what
+`NotEnqueued` still holds — and noting that a non-finite float arrives as `null`
+because `serde_json` cannot represent one, so the two refusal reasons collapse
+into one there.
+
+Five breaks, all land, including the one that matters: disable
+`shape_is_consistent`'s literal arm and the malformed-spread test goes red.
+
+## ⚠ A migration is unregistered, and it is not mine
+
+`migrations/218_intention_provenance.sql` (Loop 3 Stage 0 — provenance on
+`workspace_intentions`) appeared untracked and is **not in `run_migrations`**, so
+`test_all_migrations_registered` is red. That test exists for exactly this: it is
+what caught migration 212, which was written, committed, and never registered,
+while `composition_evolution.rs` bound to a column production did not have.
+
+Left for its author. It is the only failing test in the tree.
+
+## `gate_decisions.episode_id`, and why the column alone was useless
+
+**Built:** migrations 219/220/221, `gate_trust::decided_for_episode`,
+`grounding` promoted to `Retention::Recorded`, a grounding review door,
+`tests/gate_decision_lineage.rs`.
+
+### The measurement that changed the work
+
+The ask was "one column". Measured first: **every per-episode gate was `Counted`,
+and both `Recorded` gates are not per-episode.** `coherence` fires on an AgentWide
+correction, `admission` at publish. So the column would have been NULL on every
+row that would ever exist — while making the trace's `not_recorded` look solved.
+The blocker was retention.
+
+That is the fourth time this session that grouping the population first stopped
+the wrong thing being built.
+
+### Migration 221 contains no DDL
+
+It is the argument. Promoting `grounding` needed no schema change — 214 already
+registered the whole of `GATE_IDS` — so the change is one line in a Rust const,
+and *a decision made in a constant is one nobody can find*. The file records: why
+the answer was no before (the per-field detail had no home; it now lives in
+`assertion_verifications`), what a ledger row adds over re-running the contract
+(what the gate decided **at the time** — and 10 violations exist that were never
+recorded), the measured volume (**~30 episodes/day**; 214's rate-limit argument
+does not transfer, because a tick fires per *request* including the floods it
+rejects while this fires per completed *execute*), and how to reverse it.
+
+### No foreign key, and the reason is the batch
+
+`assertion_verifications.episode_id` **is** a real FK; this deliberately is not.
+`spawn_gate_recorder` drains its queue with a single
+`INSERT ... SELECT FROM UNNEST(...)`, so **one bad reference rejects the whole
+batch** — an unrelated failed episode write would take every gate decision in the
+flush with it. Decisions are also enqueued before their episode row exists.
+`tests/gate_decision_lineage.rs` checks the reference instead, which is
+`assertion_verifications.assertion_id`'s precedent for a different reason.
+
+Verified against a real Postgres with the exact batched-UNNEST statement the
+recorder issues.
+
+### The seam drift my own comment predicted
+
+`seam_vocabulary_contract` went red: `GATE_IDS` gained `output_schema`, migration
+214's CHECK was widened, **216's was not**. My registry entry for that column had
+already written down what it would cost — *"widening `GATES` and 214's constraint
+while leaving 216's alone makes the new gate's decisions recordable and its
+reviews unwritable"* — and that is exactly what happened. Migration 219 fixes it.
+Worth noting the contract found it **with no traffic, no promotion and no
+reviewer**, by comparing two declarations nothing else compares.
+
+### A scan that drifted for the second time, now derived
+
+`gate_trust_coverage` listed the reporting entry points — `decided(`,
+`decided_ok(`, `decided_about(` — and its comment recorded that `decided_about`
+had been omitted until its first caller appeared. Adding `decided_for_episode`
+did it again, and reported `grounding` as *recording nothing* on the very change
+that promoted it. **A list of entry points fails in the most misleading direction:
+a gate that reports more looks like a gate that reports nothing.** Now derived
+from the shape `decided*(`, with a falsifier covering an entry point that does not
+exist yet.
+
 ## ⚠ Cargo's fingerprint cache is unreliable in this tree
 
 **Read this before believing any test result.** The parallel session writes files

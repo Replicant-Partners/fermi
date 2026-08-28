@@ -64,6 +64,29 @@ pub enum AssertionKind {
     /// `model_inference`: no tool returns a multiplier, because the agent is
     /// asked to produce one. Verification routes to `basis`.
     Multiplier,
+    /// A non-numeric claim that purports to come from somewhere —
+    /// `taxonomy.order = "Coleoptera"`, a station code, a species name.
+    ///
+    /// # Why this kind had to exist
+    ///
+    /// The other three all carry a number, so [`Assertion::value`] was a
+    /// [`Spread`] and a claim that was not a number could not be recorded at
+    /// all. That excluded the single most important case this platform has:
+    /// **`Antaxius beieri`**, a bush-cricket (Orthoptera / Tettigoniidae) whose
+    /// profile confidently reported Coleoptera / Cerambycidae and called it a
+    /// longhorn beetle. Every check passed — the field was present, non-null,
+    /// correctly typed, and declared sourced — and the GBIF-verified answer sat
+    /// one table over.
+    ///
+    /// So the claim most worth verifying was the one the verification queue
+    /// could not carry. `grounding_trust` has a whole [`ViolationKind`] for it
+    /// (`ContradictsCanonical`) and the queue had nowhere to put the result.
+    ///
+    /// Checkable, like [`AssertionKind::Quantity`] and for the same reason: it
+    /// purports to be a retrieval, so there is a fact of the matter.
+    ///
+    /// [`ViolationKind`]: crate::grounding_trust::ViolationKind
+    Fact,
     /// An absolute measurement that purports to come from somewhere —
     /// `elo_current = 1834`, a market value, a chromosome count.
     ///
@@ -86,12 +109,15 @@ impl AssertionKind {
     /// fact about the inputs as a fact about the conclusion, which is the same
     /// error `EXTRACTION_CEILING` prevents for semantic rules.
     ///
-    /// `Quantity` has no ceiling here: a real tool call can make it
-    /// `tool_verified`, and a cited human check can make it `human_sourced`.
+    /// `Quantity` and `Fact` have no ceiling here: a real tool call can make
+    /// either `tool_verified`, and a cited human check can make it
+    /// `human_sourced`. Both purport to be retrievals, which is precisely what
+    /// makes them capable of reaching the top of the ladder — and what makes a
+    /// multiplier permanently incapable of it.
     pub fn ceiling(self) -> Option<&'static str> {
         match self {
             AssertionKind::Multiplier | AssertionKind::Probability => Some(PROV_INFERRED),
-            AssertionKind::Quantity => None,
+            AssertionKind::Quantity | AssertionKind::Fact => None,
         }
     }
 
@@ -102,7 +128,7 @@ impl AssertionKind {
     /// would either rubber-stamp it or reject it on taste, and both outcomes
     /// pollute the rejection rate that makes the queue worth having.
     pub fn is_verifiable(self) -> bool {
-        matches!(self, AssertionKind::Quantity)
+        matches!(self, AssertionKind::Quantity | AssertionKind::Fact)
     }
 }
 
@@ -139,6 +165,58 @@ impl ExtractionPath {
         match self {
             ExtractionPath::TypedField { .. } => None,
             ExtractionPath::Prose { .. } => Some(PROV_INFERRED),
+        }
+    }
+}
+
+/// What an assertion asserts.
+///
+/// # Why `untagged`, and what that costs
+///
+/// `episodes.assertions` holds 94 live rows written as bare `{"p5":…,"p50":…,
+/// "p95":…}` objects, plus 124 empty arrays. An externally tagged enum would
+/// change that shape and every stored assertion would stop deserialising, so the
+/// representation has to stay compatible — `untagged` keeps the existing bytes
+/// meaning exactly what they meant.
+///
+/// The cost is real and is why [`Assertion::shape_is_consistent`] exists:
+/// `untagged` **falls through silently**. A malformed spread — `{"p5":1,"p50":2}`
+/// with no `p95` — does not fail to parse, it becomes a [`Claim::Literal`]
+/// carrying an object. Nothing in serde will tell you. So the kind and the claim
+/// are checked against each other, and a `Quantity` whose value arrived as a
+/// literal is reported rather than quietly accepted.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Claim {
+    /// A `(p5, p50, p95)` triple. The shape every stored assertion has today.
+    Numeric(Spread),
+    /// Anything else the agent asserted, verbatim.
+    ///
+    /// Retained rather than stringified: `"2.4"` and `2.4` are different claims
+    /// and a reviewer needs to see which was made.
+    Literal(serde_json::Value),
+}
+
+impl Claim {
+    /// The spread, when this is a numeric claim.
+    ///
+    /// Returns `Option` rather than panicking, and callers must handle the
+    /// `None`. Every prose-extracted assertion is numeric so the `None` arm looks
+    /// unreachable at those two call sites — which is exactly why it must not be
+    /// an `unwrap`: the arm becomes reachable the moment a `Fact` reaches a
+    /// binder, and a panic in a request handler is a worse answer than a skip.
+    pub fn as_spread(&self) -> Option<Spread> {
+        match self {
+            Claim::Numeric(s) => Some(*s),
+            Claim::Literal(_) => None,
+        }
+    }
+
+    /// The claim as JSON, whichever shape it is.
+    pub fn as_json(&self) -> serde_json::Value {
+        match self {
+            Claim::Numeric(s) => serde_json::json!({"p5": s.p5, "p50": s.p50, "p95": s.p95}),
+            Claim::Literal(v) => v.clone(),
         }
     }
 }
@@ -209,6 +287,12 @@ impl Spread {
                 }
             }
             AssertionKind::Quantity => {}
+            // A `Fact` never reaches here: its claim is a `Claim::Literal` and
+            // this validates a `Spread`. Matched explicitly rather than with a
+            // catch-all so that a fifth kind cannot acquire "no range check"
+            // by default — which is how `Quantity` would have got one if the
+            // arm above had been `_ => {}`.
+            AssertionKind::Fact => {}
         }
         Ok(())
     }
@@ -230,7 +314,7 @@ pub struct Assertion {
     /// checks it instead — an unresolvable verification is a finding.
     pub assertion_id: Uuid,
     pub kind: AssertionKind,
-    pub value: Spread,
+    pub value: Claim,
     /// What the agent reasoned from, as provenance verdicts.
     ///
     /// For a `Multiplier` this is the whole verification story: the multiplier
@@ -273,7 +357,7 @@ impl Assertion {
                 // A measurement with no stated source is work to be done, not
                 // an absence. This is the whole point of the pending tier: the
                 // research is real and must not be discarded.
-                AssertionKind::Quantity => PROV_PENDING_HUMAN,
+                AssertionKind::Quantity | AssertionKind::Fact => PROV_PENDING_HUMAN,
             }
         } else {
             floor(self.basis.iter().map(|s| s.as_str()))
@@ -287,6 +371,47 @@ impl Assertion {
             }
         }
         best
+    }
+
+    /// Do the kind and the claim agree about what shape this is?
+    ///
+    /// # Why this is needed at all
+    ///
+    /// [`Claim`] is `#[serde(untagged)]`, because 94 stored assertions are bare
+    /// `{"p5":…,"p50":…,"p95":…}` objects and an externally tagged enum would stop
+    /// deserialising every one of them. The cost of `untagged` is that it **falls
+    /// through silently**: a malformed spread — `{"p5":1,"p50":2}` with no `p95` —
+    /// does not fail to parse, it quietly becomes a [`Claim::Literal`] carrying an
+    /// object, and serde says nothing.
+    ///
+    /// That is the same defect class as everything else here: a true fact about a
+    /// parse (`this did not match Spread`) becoming a false fact about the world
+    /// (`the agent asserted an object`). The kind is the independent witness —
+    /// `extract_from_prose` sets it from which pattern matched, not from the
+    /// value — so comparing the two catches the fallthrough.
+    ///
+    /// Returns the problem rather than a bool, because *which* way they disagree
+    /// decides the remedy: a numeric kind holding a literal is a broken spread, a
+    /// `Fact` holding a spread is a mislabelled extraction.
+    pub fn shape_is_consistent(&self) -> Result<(), String> {
+        match (self.kind, &self.value) {
+            (AssertionKind::Fact, Claim::Numeric(_)) => Err(format!(
+                "kind is `Fact` and the claim is a spread. A `Fact` is the \
+                 non-numeric kind, so either the extraction mislabelled it or a \
+                 numeric claim was recorded under the wrong kind. \
+                 assertion_id={}",
+                self.assertion_id
+            )),
+            (kind, Claim::Literal(v)) if kind != AssertionKind::Fact => Err(format!(
+                "kind is `{kind:?}` and the claim is not a spread: {v}. Because \
+                 `Claim` is untagged this is what a MALFORMED SPREAD looks like \
+                 after deserialisation — serde fell through rather than failing — \
+                 so the likely cause is a missing or non-finite percentile rather \
+                 than a deliberately non-numeric claim. assertion_id={}",
+                self.assertion_id
+            )),
+            _ => Ok(()),
+        }
     }
 
     /// Where an unverified assertion should be routed.
@@ -406,13 +531,22 @@ pub fn from_graded_field(
                   verify. Absence is the contract's business, not the queue's.",
         });
     }
+    // Non-numeric claims are `Fact`, and they are the reason `Claim` exists.
+    // `taxonomy.order = "Coleoptera"` is checkable, was wrong in the
+    // `Antaxius beieri` case, and used to be refused here because
+    // `Assertion::value` could only hold a `Spread`.
     let Some(n) = f.value.as_f64() else {
-        return Err(NotEnqueued {
-            path: f.path,
-            why: "the claim is not numeric and `Assertion::value` is a `Spread`. \
-                  A real gap: `taxonomy.order = \"Coleoptera\"` is checkable and \
-                  was wrong in the `Antaxius beieri` case. Widening `value` \
-                  changes a stored JSONB shape and is a declared follow-up.",
+        return Ok(Assertion {
+            assertion_id: Uuid::new_v4(),
+            kind: AssertionKind::Fact,
+            value: Claim::Literal(f.value.clone()),
+            basis: vec![f.provenance.to_string()],
+            extraction: ExtractionPath::TypedField {
+                schema: format!("contract:{agent_id}"),
+                field_path: f.path.to_string(),
+            },
+            target_hint: None,
+            raw: Some(f.value.to_string()),
         });
     };
     if !n.is_finite() {
@@ -431,11 +565,11 @@ pub fn from_graded_field(
         // item. `Grounding::Inferred` fields are also `Quantity` here and are
         // filtered by `route`, not by mislabelling their kind.
         kind: AssertionKind::Quantity,
-        value: Spread {
+        value: Claim::Numeric(Spread {
             p5: n,
             p50: n,
             p95: n,
-        },
+        }),
         // The block's grade, and the whole reason this is worth writing: a
         // `Quantity` with an EMPTY basis floors at `pending_human_check`
         // regardless of how well sourced its block was, so the basis is what
@@ -542,8 +676,11 @@ fn is_restatement(
     value: &Spread,
     target_hint: Option<&str>,
 ) -> bool {
-    seen.iter()
-        .any(|a| a.kind == kind && a.value == *value && a.target_hint.as_deref() == target_hint)
+    seen.iter().any(|a| {
+        a.kind == kind
+            && a.value.as_spread().as_ref() == Some(value)
+            && a.target_hint.as_deref() == target_hint
+    })
 }
 
 /// Every multiplier an agent stated in prose.
@@ -582,7 +719,7 @@ pub fn extract_from_prose(text: &str) -> (Vec<Assertion>, Vec<String>) {
         out.push(Assertion {
             assertion_id: Uuid::new_v4(),
             kind: AssertionKind::Multiplier,
-            value,
+            value: Claim::Numeric(value),
             // Prose names no typed source, so there is nothing to inherit. An
             // uncited judgement is worth less than one reasoned from verified
             // inputs, and that gap is the gradient: cite structurally, or score
@@ -687,7 +824,7 @@ pub fn extract_probabilities_from_prose(text: &str) -> (Vec<Assertion>, Vec<Stri
         out.push(Assertion {
             assertion_id: Uuid::new_v4(),
             kind: AssertionKind::Probability,
-            value,
+            value: Claim::Numeric(value),
             basis: Vec::new(),
             extraction: ExtractionPath::Prose {
                 pattern: PROBABILITY_PATTERN.to_string(),
@@ -716,7 +853,7 @@ mod tests {
         Assertion {
             assertion_id: Uuid::new_v4(),
             kind,
-            value: spread(0.6, 0.85, 1.15),
+            value: Claim::Numeric(spread(0.6, 0.85, 1.15)),
             basis: basis.iter().map(|s| s.to_string()).collect(),
             extraction: path,
             target_hint: None,
@@ -863,12 +1000,12 @@ mod tests {
         let (mults, _) = extract_from_prose(both);
         assert_eq!(mults.len(), 1, "got {mults:?}");
         assert_eq!(mults[0].kind, AssertionKind::Multiplier);
-        assert_eq!(mults[0].value.p50, 1.00);
+        assert_eq!(mults[0].value.as_spread().unwrap().p50, 1.00);
 
         let (probs, _) = extract_probabilities_from_prose(both);
         assert_eq!(probs.len(), 1, "got {probs:?}");
         assert_eq!(probs[0].kind, AssertionKind::Probability);
-        assert_eq!(probs[0].value.p50, 0.35);
+        assert_eq!(probs[0].value.as_spread().unwrap().p50, 0.35);
     }
 
     /// The Chicago numbers, which is why this channel exists.
@@ -885,7 +1022,7 @@ mod tests {
         let (probs, rejected) = extract_probabilities_from_prose(line);
         assert!(rejected.is_empty(), "{rejected:?}");
         assert_eq!(probs.len(), 1);
-        assert_eq!(probs[0].value.p50, 0.35);
+        assert_eq!(probs[0].value.as_spread().unwrap().p50, 0.35);
         // Floors at `unavailable_no_tool_source`, NOT at `model_inference`.
         //
         // `PROV_INFERRED` is the CEILING this kind can reach; the floor is set by
@@ -937,7 +1074,7 @@ mod tests {
             "[PROBABILITY] Calibrated p50: **0.35** (p5: **0.25**, p95: 0.45)",
         );
         assert_eq!(probs.len(), 1, "got {probs:?}");
-        assert_eq!(probs[0].value.p50, 0.35);
+        assert_eq!(probs[0].value.as_spread().unwrap().p50, 0.35);
     }
 
     /// The format the CARD declares is the format the EXTRACTOR reads.
@@ -989,9 +1126,9 @@ mod tests {
             1,
             "the card declares a line this module cannot read: {filled}"
         );
-        assert_eq!(probs[0].value.p50, 0.35);
-        assert_eq!(probs[0].value.p5, 0.25);
-        assert_eq!(probs[0].value.p95, 0.45);
+        assert_eq!(probs[0].value.as_spread().unwrap().p50, 0.35);
+        assert_eq!(probs[0].value.as_spread().unwrap().p5, 0.25);
+        assert_eq!(probs[0].value.as_spread().unwrap().p95, 0.45);
 
         // ...and the multiplier extractor must not claim it, which is the property
         // that lets both lines live in one response.
@@ -1076,9 +1213,9 @@ mod tests {
         // Tolerating markdown must not mean absorbing a digit from it. `**1.15`
         // has to read as 1.15, never as 115 or 1.
         let (a, _) = extract_from_prose(OBSERVED[0]);
-        assert_eq!(a[0].value.p50, 1.40);
-        assert_eq!(a[0].value.p5, 1.20);
-        assert_eq!(a[0].value.p95, 1.65);
+        assert_eq!(a[0].value.as_spread().unwrap().p50, 1.40);
+        assert_eq!(a[0].value.as_spread().unwrap().p5, 1.20);
+        assert_eq!(a[0].value.as_spread().unwrap().p95, 1.65);
     }
 
     #[test]
@@ -1124,7 +1261,7 @@ mod tests {
             rejected.is_empty(),
             "a restatement is not a malformed claim"
         );
-        assert_eq!(found[0].value.p50, 0.99);
+        assert_eq!(found[0].value.as_spread().unwrap().p50, 0.99);
     }
 
     /// Deduplication must not swallow a genuinely different second judgement.
@@ -1333,34 +1470,44 @@ mod tests {
         assert!(e.why.contains("did not carry"), "{}", e.why);
     }
 
-    /// A non-numeric claim is refused **and counted**, never silently dropped.
+    /// What the queue still cannot carry is refused **and counted**.
     ///
-    /// `taxonomy.order = "Coleoptera"` is the canonical case: the bush-cricket
-    /// `Antaxius beieri` reported as a longhorn beetle, every check passing
-    /// because the field was present, non-null and correctly typed. It is
-    /// exactly the claim most worth verifying and the queue cannot currently
-    /// carry it, because `Assertion::value` is a `Spread`.
+    /// This test used to assert that a non-numeric claim was refused, and that
+    /// was the coverage gap: `taxonomy.order = "Coleoptera"` — the bush-cricket
+    /// `Antaxius beieri` reported as a longhorn beetle — was the claim most worth
+    /// verifying and the one shape the queue could not hold. `Claim::Literal`
+    /// closed it, and `a_non_numeric_claim_becomes_a_verifiable_fact` now asserts
+    /// the opposite.
     ///
-    /// That gap is returned as a value so the caller can report it. An empty
-    /// queue that is empty because nothing could be enqueued reads identically to
-    /// one that is empty because nothing is wrong, and those must never look the
-    /// same on this surface.
+    /// [`NotEnqueued`] is still live, and this pins what remains: a **non-finite**
+    /// number. `Spread::validate` refuses those, and a claim that cannot survive
+    /// its own validator must not be written — dropped rather than repaired, the
+    /// same rule a malformed spread from prose gets, because there is no honest
+    /// reading of `NaN` to preserve.
+    ///
+    /// It stays a returned value rather than a log line for the original reason:
+    /// an empty queue that is empty because nothing could be enqueued reads
+    /// identically to one that is empty because nothing is wrong.
     #[test]
-    fn a_non_numeric_claim_is_refused_with_its_reason_rather_than_dropped() {
+    fn a_claim_the_queue_still_cannot_carry_is_refused_with_its_reason() {
         let f = graded(
-            "taxonomy.order",
-            json!("Coleoptera"),
+            "genome.estimated_size_mb",
+            json!(f64::INFINITY),
             PROV_TOOL,
             Some("gbif_lookup"),
         );
-        let e = from_graded_field("genome_profiler", &f).expect_err("a string cannot be a Spread");
+        // `serde_json` cannot even represent a non-finite float, so it arrives as
+        // `null` — which is the absent case, and is refused for that reason.
+        // Stated because it is worth knowing the two collapse into one here.
+        let e = from_graded_field("genome_profiler", &f)
+            .expect_err("a non-finite claim must not enqueue");
         assert!(
-            e.why.contains("not numeric"),
-            "the refusal must say why, so the coverage gap is visible: {}",
+            e.why.contains("did not carry") || e.why.contains("non-finite"),
+            "the refusal must say why, so the coverage gap stays visible: {}",
             e.why
         );
 
-        // And the pair form keeps both halves.
+        // And the pair form keeps both halves: one enqueued, one refused.
         let (enqueued, skipped) = from_graded_fields(
             "genome_profiler",
             &[
@@ -1370,6 +1517,19 @@ mod tests {
         );
         assert_eq!(enqueued.len(), 1);
         assert_eq!(skipped.len(), 1);
+
+        // The claim that used to be here is now carried, not skipped.
+        let (enqueued, skipped) = from_graded_fields(
+            "genome_profiler",
+            &[graded(
+                "taxonomy.order",
+                json!("Coleoptera"),
+                PROV_NO_MATCH,
+                Some("gbif_lookup"),
+            )],
+        );
+        assert_eq!(enqueued.len(), 1, "the Antaxius case must now enqueue");
+        assert!(skipped.is_empty());
     }
 
     /// A contracted field is read as a `TypedField`, and that is load-bearing.
@@ -1404,6 +1564,118 @@ mod tests {
             "the claimed value must be retained verbatim: it is the only evidence \
              that could answer which model fabricates what, and a null cannot be \
              labelled"
+        );
+    }
+
+    /// A malformed spread must not pass as a literal claim.
+    ///
+    /// The cost of `#[serde(untagged)]`, made visible. `{"p5":1,"p50":2}` has no
+    /// `p95`, so it does not match `Spread` — and untagged serde does not fail,
+    /// it falls through to `Claim::Literal` carrying the object. Nothing in serde
+    /// reports it. Without `shape_is_consistent` a broken spread would be stored,
+    /// read back, and rendered as though the agent had asserted a JSON object.
+    #[test]
+    fn a_malformed_spread_is_caught_rather_than_becoming_a_literal() {
+        let json = r#"{
+            "assertion_id": "00000000-0000-0000-0000-000000000001",
+            "kind": "quantity",
+            "value": {"p5": 1.0, "p50": 2.0},
+            "basis": [],
+            "extraction": {"path": "prose", "pattern": "multiplier_v2"},
+            "target_hint": null,
+            "raw": null
+        }"#;
+        let a: Assertion = serde_json::from_str(json).expect("untagged serde accepts this");
+        assert!(
+            matches!(a.value, Claim::Literal(_)),
+            "serde did not fall through, so this test is no longer about the \
+             hazard it was written for"
+        );
+        let problem = a
+            .shape_is_consistent()
+            .expect_err("a quantity holding a literal was accepted");
+        assert!(
+            problem.contains("MALFORMED SPREAD"),
+            "the message must name the likely cause, or a reader chases the \
+             wrong thing: {problem}"
+        );
+    }
+
+    /// Every stored assertion shape still deserialises.
+    ///
+    /// The compatibility guarantee. 94 live rows and 124 empty arrays were written
+    /// before `Claim` existed, as bare percentile objects, and an enum
+    /// representation that changed those bytes would silently orphan all of them —
+    /// `episodes.assertions` would read as an array of things that no longer parse.
+    #[test]
+    fn the_shape_already_in_the_database_still_reads() {
+        let stored = r#"{
+            "assertion_id": "00000000-0000-0000-0000-000000000002",
+            "kind": "multiplier",
+            "value": {"p5": 1.05, "p50": 1.15, "p95": 1.28},
+            "basis": [],
+            "extraction": {"path": "prose", "pattern": "multiplier_v2"},
+            "target_hint": "home_advantage",
+            "raw": "[MULTIPLIER] Suggested p50: 1.15"
+        }"#;
+        let a: Assertion = serde_json::from_str(stored).expect("a stored row must still parse");
+        assert_eq!(a.kind, AssertionKind::Multiplier);
+        assert_eq!(a.value.as_spread().map(|s| s.p50), Some(1.15));
+        assert!(a.shape_is_consistent().is_ok());
+
+        // And it round-trips to the same bytes, so nothing rewrites the column
+        // into a shape an older reader would refuse.
+        let back = serde_json::to_value(&a).unwrap();
+        assert_eq!(
+            back["value"],
+            serde_json::json!({"p5": 1.05, "p50": 1.15, "p95": 1.28}),
+            "the stored representation changed, so every row written from now on \
+             is in a shape the previous release cannot read"
+        );
+    }
+
+    /// The claim most worth verifying can now be recorded, and it routes.
+    ///
+    /// `Antaxius beieri`: a bush-cricket whose profile reported Coleoptera and
+    /// called it a longhorn beetle. Present, non-null, correctly typed, declared
+    /// sourced — every check passed. It could not previously become an assertion
+    /// at all, so the verification queue's coverage gap was exactly the case the
+    /// queue existed for.
+    #[test]
+    fn a_non_numeric_claim_becomes_a_verifiable_fact() {
+        let f = graded(
+            "taxonomy.order",
+            json!("Coleoptera"),
+            PROV_NO_MATCH,
+            Some("gbif_lookup"),
+        );
+        let a =
+            from_graded_field("genome_profiler", &f).expect("a non-numeric claim must now enqueue");
+
+        assert_eq!(a.kind, AssertionKind::Fact);
+        assert_eq!(a.value, Claim::Literal(json!("Coleoptera")));
+        assert!(a.shape_is_consistent().is_ok());
+        assert!(
+            a.kind.is_verifiable(),
+            "a Fact purports to be a retrieval, so there is a fact of the matter"
+        );
+        assert_eq!(
+            a.kind.ceiling(),
+            None,
+            "a tool call can settle it, so it must be able to reach the top of \
+             the ladder"
+        );
+        assert_eq!(
+            a.route(true),
+            Route::Automated,
+            "`gbif_lookup` is named by the contract, so a person must not be asked"
+        );
+        assert_eq!(a.route(true).pending_verdict(), Some(PROV_PENDING_TOOL));
+        assert_eq!(
+            a.raw.as_deref(),
+            Some("\"Coleoptera\""),
+            "the claim is retained verbatim, quotes and all: `\"2.4\"` and `2.4` \
+             are different claims and a reviewer must see which was made"
         );
     }
 }

@@ -406,7 +406,11 @@ primary object is the episode, and the loops are the routes it can take.
   "at": "2026-08-…",
 
   "input":  { "query": "…" },
-  "hashes": null,
+  "hashes": { "algorithm": "sha256",
+              "input":  "sha256:…",
+              "output": "sha256:…",
+              "output_grounded": "sha256:…",
+              "enforcement_changed_the_bytes": true },
 
   "belt": [ { "rung": "credit", "clock": "invocation",
               "enforcement": "control", "why_not_control": null,
@@ -515,22 +519,135 @@ they are recoverable at all.
 
 So the trace has content on arrival. Not much, and it is honest about that.
 
-### What it does not have
+### `hashes` — there, and honest about what they are not
 
-* **`hashes: null`.** Declared absent rather than served as null-shaped, so nobody
-  builds against it. Nothing in the platform hashes an episode's input or output,
-  so the seam check you wanted — this input's hash against the previous output's —
-  is not yet possible. When it lands it will hash **both** the raw and the
-  post-grounding document, because the difference between them *is* what grounding
-  did.
-* **`parent_episode_id` is almost always null** (4 of 3,576). The column exists and
-  nothing writes it. The correction chain is a real screen and it has no data yet.
-* **Non-numeric claims are not in `routed[]`.** `taxonomy.order = "Coleoptera"` is
-  the case most worth verifying — the `Antaxius beieri` bush-cricket reported as a
-  longhorn beetle, every check passing because the field was present, non-null and
-  correctly typed — and our assertion type currently carries a numeric spread. It
-  appears in `fields[]` with its grade; it does not yet produce a queue item. This
-  is on us and it is a schema change.
+Four digests, **computed from retained text on every read rather than stored.**
+`query` and `response_text` are both kept (the latter since migration 199,
+deliberately), so a digest of them is a pure function of what we already hold —
+and a computed digest **cannot drift from the text it claims to describe**, which a
+stored one can.
+
+| field | over |
+|---|---|
+| `input` | the query as given to the agent |
+| `output` | the response **verbatim**, before grounding touched it |
+| `output_grounded` | the document **after** enforcement. `null` when there was no document, or no contract |
+| `enforcement_changed_the_bytes` | did enforcement alter the document at all |
+
+**What they can do:** tell you two episodes got the identical input, or produced
+the identical output — that is the drift and determinism question. Give a reviewer a
+stable handle for *this exact text*, so a verdict recorded against it can be
+re-checked rather than trusted.
+
+**What they cannot do, and this corrects the request:** verify a seam by equality
+with a parent's output. A delegated child does not receive its parent's output
+verbatim — it receives a **prompt built around** the task, so the hashes will
+differ for entirely correct runs. The place equality *would* hold is the envelope
+payload in the delegation hop, which is passed through unchanged and which nothing
+hashes yet. That is the honest next step for a seam check and it is separate work.
+
+⚠️ **`enforcement_changed_the_bytes` is not "fabrication was stripped."** We named
+it that way first and a live cross-check against the contract's own violation count
+disagreed on **21 episodes** — `weather_oracle` and `enemy_sensor` responses where
+the bytes changed and the violation count was **zero**. `enforce` does two things:
+it nulls a refused field (a finding) *and* it stamps `<block>_provenance` siblings
+onto the document (bookkeeping, on every contracted response). A digest cannot tell
+those apart. **For "was a claim removed", read the violation count on the grounding
+rung** — the contract knows, and that is the one implementation of the question.
+
+### `parent_episode_id` — the writer was never missing
+
+We told you the column existed and nothing wrote it. That was wrong, and the real
+answer matters for what you build: `tools_legacy` **does** write it, both execute
+paths populate the context that feeds it, and the chain is thin (4 of 3,576)
+because **delegation is rare** — not because the plumbing is absent.
+
+Four of the ten places that could name a parent pass `None`, and all four are
+correct: they persist no episode of their own, so there is nothing for a child to
+point at. Three said so; one did not, and that silence was indistinguishable from
+an oversight. It says so now, and a scan
+(`tests/episode_lineage_coverage.rs`) requires every future one to.
+
+**So the correction-chain screen is buildable and will be nearly empty**, and the
+reason is a product fact rather than a missing field. If you want it populated, the
+lever is delegation volume.
+
+### Non-numeric claims now queue — the Antaxius case is covered
+
+We said this was the remaining gap and that it needed a schema change. It is done.
+
+`taxonomy.order = "Coleoptera"` — the bush-cricket `Antaxius beieri` reported as a
+longhorn beetle, every check passing because the field was present, non-null,
+correctly typed and declared sourced — was the claim **most** worth verifying and
+the one shape the queue could not hold, because an assertion's value was a
+numeric spread. There is now a fourth assertion kind, `fact`, and a claim can carry
+any JSON.
+
+For you that means `routed[]` can contain a string claim, and it routes the same
+way everything else does:
+
+```
+{ "assertion_id": "…", "verdict": "pending_tool_check",
+  "actor_kind": "platform",
+  "evidence": { "path": "taxonomy.order", "claimed": "Coleoptera",
+                "settleable_by": "gbif_lookup" } }
+```
+
+`claimed` is the value **verbatim**, including its quotes — `"2.4"` and `2.4` are
+different claims and a reviewer has to see which was made.
+
+**No migration.** The stored representation is unchanged, so nothing that reads
+`episodes.assertions` today needs updating, and a test asserts the exact stored
+bytes still round-trip.
+
+### The belt now records a real outcome for grounding
+
+The last item on your list. **The column alone would not have worked**, and the
+reason is worth having:
+
+> Every per-episode gate was `Retention::Counted`, and both `Recorded` gates are
+> not per-episode. `coherence` fires on an AgentWide correction and `admission` at
+> publish; `grounding`, `credit`, `rate_limit`, `attachment`, `input_binding` and
+> `output_schema` wrote no ledger row at all.
+
+So `episode_id` would have been NULL on every row that would ever exist, while
+making `not_recorded` **look** solved. The blocker was retention, not the key.
+
+Both landed. `gate_decisions.episode_id` exists, and **`grounding` is now
+`Recorded`** — so from the next deploy, the grounding rung on the belt carries a
+decision the gate actually made, not just a recomputation.
+
+That distinction is the interesting part for a screen. The trace already re-runs
+the contract over the retained response, so it can show per-field grades without
+any ledger. What it could not show is **what the gate decided at the time** — and
+those differ: re-running the contract today finds 10 violations that were never
+recorded, because the contract was not wired to those paths when the episodes ran.
+A recorded `approved` beside a recomputed `2 violations` is not a contradiction;
+it is the contract having been tightened afterwards, and it is the only way to see
+that from outside.
+
+**A new door comes with it.** `gate_api::a_review_door_only_exists_where_the
+_decisions_do` asserts both directions, so promoting grounding required giving it
+a review door — a ledger nobody can judge is the state this work exists to end.
+`grounding` now appears in `doors` on `/api/gates/grounding/decisions`, and its
+`why_manual` is the `Antaxius beieri` argument: the contract asserts what *could*
+have supplied a field, not what did.
+
+Two things not to be surprised by:
+
+* **`credit` and `rate_limit` will always have `episode_id: null`.** They decide
+  whether to run at all, before any artifact exists and possibly instead of one.
+  That is correct and final, not a gap to be filled.
+* **The ledger starts empty.** `grounding` records from the next execute onward;
+  nothing is backfilled.
+
+### What it still does not have
+
+* **`input_binding`, `attachment` and `output_schema` are still `Counted`**, so
+  their rungs stay `not_recorded`. Each is now a one-line change plus a door,
+  and the pattern is established — but each is also a decision about durable
+  write volume, and we would rather make them one at a time with a reason than
+  promote the set.
 
 ---
 

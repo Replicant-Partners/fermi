@@ -108,6 +108,24 @@ pub const GATE_DOORS: &[Door] = &[
                      individually plausible and nobody was asked to look at one.",
     },
     Door {
+        subject: "grounding",
+        method: "POST",
+        path: "/api/gates/:gate_id/decisions/:decision_id/review",
+        does: "Record whether this grounding verdict was right about the \
+               agent's output. Does not restore a nulled field or re-run the \
+               contract.",
+        why_manual: "Because the contract asserts what COULD have supplied a \
+                     field, not what did. `Sourced` means a tool of this \
+                     agent's could answer — it does not mean the value came from \
+                     that tool, and `Antaxius beieri` is the case: a \
+                     bush-cricket reported as a longhorn beetle, present, \
+                     non-null, correctly typed and declared sourced, with the \
+                     verified answer one table over. Every automated check \
+                     passed. Only a reader comparing the claim against the \
+                     source closes that gap, which is why this gate is the one \
+                     whose refusals most need a second opinion.",
+    },
+    Door {
         subject: "admission",
         method: "POST",
         path: "/api/gates/:gate_id/decisions/:decision_id/review",

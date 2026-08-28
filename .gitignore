@@ -119,3 +119,12 @@ forecasts/*.evidence.md
 .git-msg-*.txt
 
 .gitmsg-ux
+
+# Runtime workspace git repositories, created by WorkspaceGitManager.
+# State, not source: 1.2M and growing with every workspace.
+repos/
+
+# A whole second copy of the repo (5.2GB) left by a release check. Untracked
+# and unignored, it was walked by tests/provenance_floor_coverage.rs and made it
+# report findings in files that are not this build's source.
+.release-verify/

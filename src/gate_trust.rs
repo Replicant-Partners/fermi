@@ -131,6 +131,25 @@ pub struct GateSpec {
     /// Required, and the field that makes `admits_everything` actionable. A
     /// count of zero refusals is only alarming if someone has written down why.
     pub if_never_refuses: &'static str,
+    /// Does this gate decide **before** the artifact exists?
+    ///
+    /// # Why this is a field and not an inference
+    ///
+    /// It cannot be read off [`Clock`]: `credit` and `grounding` are both
+    /// `Invocation`, and one fires before the agent runs while the other fires
+    /// on its output. Nothing else in this struct distinguishes them.
+    ///
+    /// The distinction is load-bearing on the artifact trace. A gate that
+    /// decides before the artifact can never name one, so a NULL `episode_id`
+    /// is **permanent and correct** for it -- not a gap, not a backfill target,
+    /// and not something a reader should be invited to chase. Rendering that
+    /// identically to a gate that *should* have recorded and did not turns a
+    /// correct absence into a standing debt on every belt forever, which is
+    /// what the UX team reported seeing.
+    ///
+    /// `true` also implies the decision may be the reason no artifact exists: a
+    /// refused `credit` check means the run never happened.
+    pub decides_before_the_artifact: bool,
 }
 
 /// Every gate, in discriminant order.
@@ -138,6 +157,8 @@ pub const GATES: &[GateSpec] = &[
     GateSpec {
         gate: Gate::Coherence,
         id: "coherence",
+        // Decides about the artifact, so it can name one.
+        decides_before_the_artifact: false,
         clock: Clock::Invocation,
         retention: Retention::Recorded,
         site: "agent-bestiary/coherence-gate::CoherenceGate::check_against, \
@@ -154,8 +175,23 @@ pub const GATES: &[GateSpec] = &[
     GateSpec {
         gate: Gate::Grounding,
         id: "grounding",
+        // Decides about the artifact, so it can name one.
+        decides_before_the_artifact: false,
         clock: Clock::Invocation,
-        retention: Retention::Counted,
+        // Promoted from `Counted` by migration 221, which is a file whose only
+        // content is the argument: a change in what the platform durably records
+        // is a decision, and a decision made in a constant is one nobody can
+        // find.
+        //
+        // The short version. It was refused once, because a grounding verdict is
+        // n per-field findings and `reason` is one free-text column -- and that
+        // objection was about where the DETAIL lives, which is now
+        // `assertion_verifications`. The row carries the decision, not the
+        // findings. Volume measured rather than feared: ~30 episodes a day, and
+        // 214's rate-limit argument does not transfer because a tick fires per
+        // request including the floods it rejects, while this fires per completed
+        // execute.
+        retention: Retention::Recorded,
         site: "grounding_trust::enforce, at every execute boundary",
         refuses: "a field no tool of the agent's could have supplied, and prose \
                   that restates one",
@@ -168,6 +204,8 @@ pub const GATES: &[GateSpec] = &[
     GateSpec {
         gate: Gate::InputBinding,
         id: "input_binding",
+        // Decides about the artifact, so it can name one.
+        decides_before_the_artifact: false,
         clock: Clock::Invocation,
         retention: Retention::Counted,
         site: "port_trust::bind_input, from handlers::execution{,_stream}",
@@ -179,6 +217,8 @@ pub const GATES: &[GateSpec] = &[
     GateSpec {
         gate: Gate::Admission,
         id: "admission",
+        // Decides about the artifact, so it can name one.
+        decides_before_the_artifact: false,
         clock: Clock::Admission,
         retention: Retention::Recorded,
         site: "workflows::publish_pipeline, card_contract::validate",
@@ -191,6 +231,9 @@ pub const GATES: &[GateSpec] = &[
     GateSpec {
         gate: Gate::Credit,
         id: "credit",
+        // Decides whether the run may happen at all, so a refusal is the
+        // reason there is no artifact to name.
+        decides_before_the_artifact: true,
         clock: Clock::Invocation,
         retention: Retention::Counted,
         site: "handlers::execution, gas::charge_gas, handlers::agent_wallet, \
@@ -204,6 +247,9 @@ pub const GATES: &[GateSpec] = &[
     GateSpec {
         gate: Gate::RateLimit,
         id: "rate_limit",
+        // Decides whether the request is served at all, before anything
+        // downstream runs.
+        decides_before_the_artifact: true,
         clock: Clock::Invocation,
         retention: Retention::Counted,
         site: "api_server::rate_limit_middleware, api_server::RateLimiter::check",
@@ -217,6 +263,8 @@ pub const GATES: &[GateSpec] = &[
     GateSpec {
         gate: Gate::Attachment,
         id: "attachment",
+        // Decides about the artifact, so it can name one.
+        decides_before_the_artifact: false,
         clock: Clock::Invocation,
         retention: Retention::Counted,
         site: "attachments::check, from handlers::execution",
@@ -228,6 +276,8 @@ pub const GATES: &[GateSpec] = &[
     GateSpec {
         gate: Gate::OutputSchema,
         id: "output_schema",
+        // Decides about the artifact, so it can name one.
+        decides_before_the_artifact: false,
         clock: Clock::Invocation,
         // Counted rather than Recorded, for now. Promotion needs a widened
         // `gate_decision_reviews` CHECK and a door in `gate_api::GATE_DOORS`,
@@ -331,6 +381,13 @@ pub struct PendingDecision {
     pub decision: &'static str,
     pub reason: Option<String>,
     pub subject: Option<String>,
+    /// The artifact this decision was about, when one exists.
+    ///
+    /// `None` for gates that fire **before** the artifact does — `credit` and
+    /// `rate_limit` decide whether to run at all, and there may never be an
+    /// episode. That is the correct and final answer for them rather than a
+    /// backfill target.
+    pub episode_id: Option<uuid::Uuid>,
     pub decided_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -363,6 +420,35 @@ pub fn decided(gate: Gate, decision: Decision, reason: Option<&str>) {
 /// call site passes no subject, and widening the common signature to serve the
 /// rarer case would have meant touching all of them to add `None`.
 pub fn decided_about(gate: Gate, decision: Decision, reason: Option<&str>, subject: Option<&str>) {
+    decided_full(gate, decision, reason, subject, None)
+}
+
+/// [`decided_about`], plus the artifact the decision was about.
+///
+/// A third entry point rather than a fifth parameter on the common one, for the
+/// reason [`decided_about`] gives about the fourth: every existing call site
+/// passes no episode, and widening the common signature to serve the rarer case
+/// means touching all of them to add `None`.
+///
+/// Only gates that fire **after** the artifact exists can pass one. `credit` and
+/// `rate_limit` decide whether to run at all, so their `episode_id` is
+/// permanently `None` — see migration 220 on why that is final rather than a gap.
+pub fn decided_for_episode(
+    gate: Gate,
+    decision: Decision,
+    reason: Option<&str>,
+    episode_id: uuid::Uuid,
+) {
+    decided_full(gate, decision, reason, None, Some(episode_id))
+}
+
+fn decided_full(
+    gate: Gate,
+    decision: Decision,
+    reason: Option<&str>,
+    subject: Option<&str>,
+    episode_id: Option<uuid::Uuid>,
+) {
     let i = gate as usize;
     match decision {
         Decision::Approved => &APPROVED[i],
@@ -382,6 +468,7 @@ pub fn decided_about(gate: Gate, decision: Decision, reason: Option<&str>, subje
                 .then(|| reason.map(|r| r.chars().take(400).collect::<String>()))
                 .flatten(),
             subject: subject.map(|s| s.chars().take(200).collect()),
+            episode_id,
             decided_at: chrono::Utc::now(),
         });
     }
@@ -594,6 +681,7 @@ pub async fn flush(pool: &sqlx::PgPool) -> usize {
     let decisions: Vec<String> = batch.iter().map(|d| d.decision.to_string()).collect();
     let reasons: Vec<Option<String>> = batch.iter().map(|d| d.reason.clone()).collect();
     let subjects: Vec<Option<String>> = batch.iter().map(|d| d.subject.clone()).collect();
+    let episodes: Vec<Option<uuid::Uuid>> = batch.iter().map(|d| d.episode_id).collect();
     let decided: Vec<chrono::DateTime<chrono::Utc>> = batch.iter().map(|d| d.decided_at).collect();
 
     // One statement for the batch. `UNNEST` rather than a loop because a
@@ -601,13 +689,15 @@ pub async fn flush(pool: &sqlx::PgPool) -> usize {
     // refusing, and a gate whose expense scales with how often it says no is a
     // gate under pressure to say yes.
     let result = sqlx::query(
-        "INSERT INTO gate_decisions (gate, decision, reason, subject, decided_at)
-         SELECT * FROM UNNEST($1::text[], $2::text[], $3::text[], $4::text[], $5::timestamptz[])",
+        "INSERT INTO gate_decisions (gate, decision, reason, subject, episode_id, decided_at)
+         SELECT * FROM UNNEST($1::text[], $2::text[], $3::text[], $4::text[], $5::uuid[], \
+                              $6::timestamptz[])",
     )
     .bind(&gates)
     .bind(&decisions)
     .bind(&reasons)
     .bind(&subjects)
+    .bind(&episodes)
     .bind(&decided)
     .execute(pool)
     .await;
@@ -819,7 +909,14 @@ mod tests {
     #[test]
     fn the_ledger_says_which_gates_are_memory_only() {
         let s = ledger_status();
-        assert_eq!(s.recorded_gates, vec!["coherence", "admission"]);
+        // `grounding` joined the ledger in migration 221. The pin is updated
+        // rather than relaxed: this list is the claim `GateView::since` makes to
+        // a reader -- "these counters survive a restart" -- and it must move only
+        // when somebody means it to.
+        assert_eq!(
+            s.recorded_gates,
+            vec!["coherence", "grounding", "admission"]
+        );
         assert!(
             s.counted_only_gates.contains(&"rate_limit"),
             "a surface reporting rate-limit counters must be able to say `since boot`"

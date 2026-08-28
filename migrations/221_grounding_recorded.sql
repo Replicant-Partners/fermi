@@ -1,0 +1,75 @@
+-- Migration 221: nothing schema-side. This file is the argument.
+--
+-- `gate_trust::GATES` promotes `grounding` from `Retention::Counted` to
+-- `Retention::Recorded` in the same change as this migration. That is a Rust
+-- constant and needs no DDL — `gate_decisions` already accepts `'grounding'` in
+-- its CHECK, because migration 214 registered the whole of `gate_trust::GATE_IDS`
+-- rather than only the two gates that were recorded at the time.
+--
+-- The file exists because **a change in what the platform durably records is a
+-- decision, and a decision made in a constant is a decision nobody can find.**
+-- `git blame` on one line of a 300-line const table is not where the reasoning
+-- for a growing audit table should live.
+--
+-- ## Why now, when the answer was no before
+--
+-- The UX request asked for this promotion and it was refused, with a reason:
+-- `gate_decisions.reason` is one free-text column, a grounding verdict is *n*
+-- per-field findings, and pushing them in as prose would make the trace's most
+-- valuable field unparseable.
+--
+-- That argument was about **where the per-field detail lives**, and the detail
+-- now has a home: `episodes.assertions[]` and `assertion_verifications`, written
+-- by `verification_queue::enqueue`. So the ledger row no longer has to carry the
+-- findings. It carries the *decision* — exactly one of approved / refused /
+-- undetermined per episode — which is what a row in this table is for.
+--
+-- ## What it adds that re-running the contract does not
+--
+-- The artifact trace already re-runs the contract over the retained response, so
+-- it can show the per-field grades without any of this. What it cannot show is
+-- **what the gate decided at the time.**
+--
+-- Those differ, and measurably: re-running the contract over retained responses
+-- finds 10 violations that `episodes.tags` never recorded, because the contract
+-- was not wired to those paths when the episodes ran. A recorded decision that
+-- says `approved` beside a recomputation that says `2 violations` is not a
+-- contradiction — it is the contract having been tightened afterwards, and it is
+-- the only way to see that from the outside.
+--
+-- ## Volume, measured rather than feared
+--
+-- Migration 214 declined to record a rate-limit tick, because "one row per
+-- refused request turns a control into a load generator." That argument does not
+-- transfer, and the difference is which event fires it:
+--
+--   * a rate-limit tick fires per REQUEST, including the floods it exists to
+--     reject, so its volume is unbounded by design;
+--   * grounding fires once per COMPLETED EXECUTE.
+--
+-- Measured over the fortnight before this change: **1 to 76 episodes per day,
+-- median around 20.** Over the platform's whole history, 3,581 episodes — of
+-- which 516 are from an agent that has a field contract and would carry an actual
+-- opinion; the other 3,065 would record `undetermined`, which is a first-class
+-- decision and is kept for 214's stated reason: folding "the check could not run"
+-- into either verdict is how an absent check becomes indistinguishable from a
+-- passing one.
+--
+-- Thirty rows a day is not a load generator.
+--
+-- ## The obligation this creates
+--
+-- `gate_api::a_review_door_only_exists_where_the_decisions_do` asserts both
+-- directions: a review door only on a `Recorded` gate, and **a review door on
+-- every `Recorded` gate.** So promoting grounding requires a door in
+-- `GATE_DOORS`, and that is deliberate — a ledger nobody can judge is the state
+-- this whole line of work exists to end. The door ships in the same change.
+--
+-- ## Reversing it
+--
+-- Set the retention back to `Counted` and remove the door. Existing rows stay and
+-- remain readable; `gate_api::ledger_claim` will report `NotClaimed` for the gate
+-- rather than pretending the rows are current. No data is lost and no migration
+-- is needed, which is the property that made this safe to try.
+
+SELECT 1;

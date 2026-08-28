@@ -1298,6 +1298,24 @@ async fn run_migrations(db: &PgPool) {
         // `declared_by` and `source` restore the distinction between an
         // agent's intention and a belief about it (arXiv:2407.12532 §3.1).
         "migrations/218_intention_provenance.sql",
+        // 219 — the other half of 217. `GATE_IDS` gained `output_schema` and 214's
+        // CHECK on `gate_decisions.gate` was widened; 216's CHECK on
+        // `gate_decision_reviews.gate` was not, so the decision was recordable
+        // and its review was not. `seam_vocabulary_contract` found it with no
+        // traffic and no promotion, by comparing two declarations that nothing
+        // else compares — and 216's own registry entry had predicted this exact
+        // failure in prose before it happened.
+        "migrations/219_gate_review_output_schema.sql",
+        // 220 - `gate_decisions.episode_id`, so a recorded decision can be joined
+        // to the artifact it was about. Deliberately not a foreign key: the
+        // recorder inserts a whole batch in one statement, so one bad reference
+        // would reject every unrelated decision in the flush.
+        "migrations/220_gate_decisions_episode.sql",
+        // 221 - no DDL. The file is the argument for promoting `grounding` to
+        // `Retention::Recorded`, because a change in what the platform durably
+        // records is a decision and a decision made in a Rust constant is one
+        // nobody can find.
+        "migrations/221_grounding_recorded.sql",
     ];
 
     // Bootstrap the ledger before anything is recorded into it.
@@ -2930,6 +2948,22 @@ async fn main() {
             "/api/episodes/:episode_id/trace",
             get(handlers::loops::episode_trace_handler),
         )
+        // The verification queue, and the writer that drains it.
+        //
+        // `assertion_verifications` has existed since migration 205 and held 0
+        // rows: the audit's conclusion was that it needed a writer, not a
+        // schema. `verification_queue::enqueue` fills it at the execute
+        // boundary; these read it and settle an item. Until the settle existed,
+        // "nobody checked" and "checked and fine" rendered identically, and the
+        // rejection rate had no denominator.
+        .route(
+            "/api/verification-queue",
+            get(handlers::loops::verification_queue_handler),
+        )
+        .route(
+            "/api/verification-queue/:assertion_id/settle",
+            post(handlers::loops::settle_verification_handler),
+        )
         // Why every other surface here says `unknown` so often.
         //
         // Measured: of 206 agents that have produced an episode, 110 are
@@ -3019,6 +3053,11 @@ async fn main() {
         .route(
             "/api/specimen/:agent_name",
             get(handlers::specimen::specimen_handler),
+        )
+        // Artifacts to open a trace on, so the loop surface can lead with one.
+        .route(
+            "/api/episodes/recent",
+            get(handlers::specimen::recent_episodes_handler),
         )
         .route(
             "/api/me/apps-health",

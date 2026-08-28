@@ -223,7 +223,12 @@ pub fn extract_multiplier(summary: &str) -> Option<(f64, f64, f64)> {
     let (found, _rejected) = fermi::assertions::extract_from_prose(summary);
     found
         .first()
-        .map(|a| (a.value.p5, a.value.p50, a.value.p95))
+        // `and_then`, not `map(..unwrap())`. Every prose-extracted assertion is
+        // numeric today so the `None` arm looks unreachable -- which is exactly
+        // why it must not panic: the arm becomes live the moment a `Fact` reaches
+        // here, and the signature already says `Option`.
+        .and_then(|a| a.value.as_spread())
+        .map(|s| (s.p5, s.p50, s.p95))
 }
 
 // The claim binding, the outcome enum and the classification all live in
@@ -309,7 +314,25 @@ pub async fn apply_agent_multipliers(
             evidence.len(),
         ));
     };
-    let (p5, p50, p95) = (primary.value.p5, primary.value.p50, primary.value.p95);
+    // A driver multiplier has to be a number. A `Fact` -- a non-numeric claim
+    // like `taxonomy.order = "Coleoptera"` -- is a real assertion and is retained
+    // on the episode, but there is nothing to bind it to on a driver, so this
+    // reports the same "nothing bound" outcome as no assertion at all rather than
+    // panicking or inventing a value.
+    //
+    // Unreachable today because `extract_from_prose` only yields numeric kinds.
+    // Written out because the compiler asked, and because a `let ... else` that
+    // returns the honest outcome costs nothing next to an `unwrap` that would be
+    // a 500 in a request handler.
+    let Some(spread) = primary.value.as_spread() else {
+        return Ok(classify_claim(
+            binding,
+            driver_prefixes.len(),
+            0,
+            evidence.len(),
+        ));
+    };
+    let (p5, p50, p95) = (spread.p5, spread.p50, spread.p95);
     let assertion_id = primary.assertion_id;
     if assertions.len() > 1 {
         tracing::info!(

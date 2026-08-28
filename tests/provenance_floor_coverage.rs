@@ -74,6 +74,20 @@ fn repo_root() -> PathBuf {
 }
 
 /// Recursively collect `.rs` files, skipping build output.
+///
+/// # Dot-directories are skipped as a class, and the reason is a real failure
+///
+/// This walk named `.git` specifically and let every other dot-directory
+/// through. `.release-verify/` is a 5.2GB **whole second copy of this repo**
+/// left by a release check, so the scan found `consolidation.rs` three extra
+/// times, reported an unwired oracle in files that are not this build's source,
+/// and went red on a finding nobody could act on — the only remedy would have
+/// been exempting paths that should never have been walked.
+///
+/// That is the exemption rule inverted: an exemption must be no broader than the
+/// thing it exempts, and so must a scan. The property here is "source files in
+/// this repository"; a dot-directory is by convention not source, which is the
+/// general form of the rule `.git` was a single instance of.
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -83,7 +97,7 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
         let name = entry.file_name();
         let name = name.to_string_lossy();
         if path.is_dir() {
-            if name == "target" || name == ".git" || name == "node_modules" {
+            if name == "target" || name.starts_with('.') || name == "node_modules" {
                 continue;
             }
             rust_files(&path, out);

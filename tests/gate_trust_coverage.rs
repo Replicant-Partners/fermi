@@ -80,23 +80,51 @@ fn gate_call_sites(repo: &Path) -> Vec<String> {
                 }
                 let lo = i.saturating_sub(4);
                 let hi = (i + 4).min(lines.len());
-                // Every reporting entry point in `gate_trust`, not just the
-                // two that existed when this was written. `decided_about` was
-                // public and unused outside the module, so the omission was
-                // latent until the first caller appeared — and it failed as
-                // "this gate records nothing", which is the opposite of true.
-                // Note `decided(` is not a substring of `decided_about(`.
-                if lines[lo..hi].iter().any(|l| {
-                    l.contains("decided(")
-                        || l.contains("decided_ok(")
-                        || l.contains("decided_about(")
-                }) {
+                if lines[lo..hi].iter().any(|l| reports_a_decision(l)) {
                     found.push(line.clone());
                 }
             }
             found
         })
         .collect()
+}
+
+/// Does this line call one of `gate_trust`'s reporting entry points?
+///
+/// # Why this is derived and not a list
+///
+/// It **was** a list — `decided(`, `decided_ok(`, `decided_about(` — and the
+/// comment on it recorded that `decided_about` had been omitted until its first
+/// caller appeared, failing as *"this gate records nothing"*, which is the
+/// opposite of true.
+///
+/// It then happened again, identically, the moment `decided_for_episode` was
+/// added: `grounding` was reported as recording nothing on the very change that
+/// promoted it to `Retention::Recorded`. A list of entry points drifts every time
+/// somebody adds one, and it fails in the most misleading available direction —
+/// a gate that reports MORE looks like a gate that reports nothing.
+///
+/// So the shape is derived: `decided` followed by identifier characters and an
+/// open paren. Any future `decided_*` is covered without an edit here.
+///
+/// Deliberately not `contains("decided")`: this repository's comments say the
+/// word constantly, and prose counting as coverage is the exact mistake the
+/// enclosing scan exists to catch.
+fn reports_a_decision(line: &str) -> bool {
+    let mut rest = line;
+    while let Some(at) = rest.find("decided") {
+        let after = &rest[at + "decided".len()..];
+        let ident: usize = after
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .map(char::len_utf8)
+            .sum();
+        if after[ident..].starts_with('(') {
+            return true;
+        }
+        rest = &rest[at + "decided".len()..];
+    }
+    false
 }
 
 #[test]
@@ -248,4 +276,41 @@ fn the_crate_roots_deny_unreachable_code() {
         opted_out.len(),
         opted_out.join("\n  ")
     );
+}
+
+/// The entry-point matcher accepts every real call and no prose.
+///
+/// Its own falsifier, and it exists because the thing it replaced drifted twice.
+/// Both directions matter: a matcher that accepted everything would make the
+/// enclosing scan vacuous, and one that accepted too little reports a recording
+/// gate as silent.
+#[test]
+fn the_matcher_sees_every_entry_point_and_no_prose() {
+    for call in [
+        "    fermi::gate_trust::decided(Gate::Credit, d, None);",
+        "        decided_ok(Gate::Attachment, &deliverable);",
+        "    gate_trust::decided_about(Gate::OutputSchema, d, r, s);",
+        "    fermi::gate_trust::decided_for_episode(Gate::Grounding, d, r, id);",
+        // The one that has not been written yet. The point of deriving the
+        // shape is that this passes without anyone editing this file.
+        "    decided_someday_with_a_new_suffix(Gate::Coherence, d);",
+    ] {
+        assert!(
+            reports_a_decision(call),
+            "the matcher missed a real entry point, which reports a recording \
+             gate as silent: {call}"
+        );
+    }
+
+    for prose in [
+        "// `decided` is the reporting entry point for a gate.",
+        "/// Whether the gate decided anything at all.",
+        "    let decided: Vec<_> = batch.iter().map(|d| d.decided_at).collect();",
+    ] {
+        assert!(
+            !reports_a_decision(prose),
+            "prose counted as a call site, so a file that mentions the function \
+             without calling it would read as covered: {prose}"
+        );
+    }
 }

@@ -462,7 +462,12 @@ pub async fn execute_agent_handler(
     let has_contract = fermi::grounding_trust::contracts_for(&agent_id)
         .next()
         .is_some();
-    fermi::gate_trust::decided(
+    // `decided_for_episode`, so the ledger row can be joined to the artifact.
+    // `episode_id` is minted above and is the id the episode will be stored
+    // under, so the reference resolves once the write lands. It is not a foreign
+    // key -- see migration 220 on why the batched recorder cannot have one -- and
+    // `tests/gate_decision_lineage.rs` checks it instead.
+    fermi::gate_trust::decided_for_episode(
         fermi::gate_trust::Gate::Grounding,
         if !has_contract {
             fermi::gate_trust::Decision::Undetermined
@@ -474,6 +479,7 @@ pub async fn execute_agent_handler(
         (!grounding_report.is_clean())
             .then(|| format!("{} violation(s)", grounding_report.violations.len()))
             .as_deref(),
+        episode_id,
     );
     if !grounding_report.is_clean() {
         tracing::warn!(
