@@ -202,12 +202,7 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .map(|f| {
-                (
-                    f["name"].as_str().unwrap().to_string(),
-                    f["type"].clone(),
-                )
-            })
+            .map(|f| (f["name"].as_str().unwrap().to_string(), f["type"].clone()))
             .collect();
         assert!(!fields.is_empty(), "the description yielded no candidates");
         block

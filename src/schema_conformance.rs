@@ -207,7 +207,7 @@ mod tests {
     fn the_evaluator_vocabulary_is_stable() {
         assert_eq!(EVALUATOR, "schema_conformance");
         assert_eq!(DIMENSION, "schema_conformance");
-            assert_eq!(
+        assert_eq!(
             TIER,
             crate::seam_vocabulary::EvaluatorTier::PreFilter,
             "a schema check is deterministic and structural: nothing was \
