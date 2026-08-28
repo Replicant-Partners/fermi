@@ -1290,6 +1290,14 @@ async fn run_migrations(db: &PgPool) {
         // token Postgres rejects is a swallowed insert waiting for whoever
         // promotes the retention.
         "migrations/217_gate_decisions_output_schema.sql",
+        // Whose plan a row in `workspace_intentions` actually is. Every
+        // intention on the platform was written by the coordination strategist
+        // on some member's behalf, inferred from a transcript, and nothing
+        // recorded that — so the conflict checker compared one agent's guesses
+        // to each other and reported the result as the team's overlaps.
+        // `declared_by` and `source` restore the distinction between an
+        // agent's intention and a belief about it (arXiv:2407.12532 §3.1).
+        "migrations/218_intention_provenance.sql",
     ];
 
     // Bootstrap the ledger before anything is recorded into it.

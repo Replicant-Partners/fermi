@@ -192,9 +192,21 @@ fn every_unparented_delegation_root_says_why() {
 
     // Non-vacuity. If the field is renamed this suite silently checks nothing,
     // and a scan that has stopped matching looks exactly like a clean tree.
+    //
+    // The floor is 3, down from 4. `handlers::workspace::coherence` was the
+    // fourth: its argument was *"the strategist's own run persists no episode
+    // — this handler imports `agent_output_to_episode` and never calls it"*,
+    // which was true, checkable, and a description of a defect rather than a
+    // design. That handler now records its run and passes the id, so the site
+    // is gone rather than merely re-argued.
+    //
+    // Lower it only for that reason. A floor reduced because a site stopped
+    // matching the scan is the vacuity this assertion exists to catch, and the
+    // two are indistinguishable from the number alone — so the reason belongs
+    // here, next to the number.
     assert!(
-        explained >= 4,
-        "only {explained} explained site(s) found, expected at least 4. \
+        explained >= 3,
+        "only {explained} explained site(s) found, expected at least 3. \
          `{FIELD}` inside a `{ENCLOSING}` has probably been renamed or \
          reformatted, and this scan is now asserting nothing."
     );

@@ -595,11 +595,32 @@ Workspace messages accumulate
 
     → User triggers via Coherence shelf at Recommendations or Dream Notes tier
       (workspace/coherence.rs)
-      → the workspace's registered coordination_strategist_id is resolved
-        and executed through ToolAwareExecutor with a full ToolContext
+      → the workspace's registered coordination_strategist_id is resolved,
+        its KG context is retrieved, and it is executed through
+        ToolAwareExecutor with a full ToolContext
         (was: cohere_and_coordinate, hardcoded, via registry.execute_agent,
          which builds no ToolContext — so Stages 0 and 3 could not execute)
+      → the run is persisted as an episode of the strategist's own
 ```
+
+**Correction path (prospective — Stage 0), rewritten 2026-08-28:**
+```
+Strategist runs Stage 0
+    → get_intention_map → reads `grounding_reading` before trusting the map
+    → solicit_agent_plan(member, context)      ← the round trip
+      → the member is invoked and answers with ITS OWN plan:
+        action_type, description, targets, depends_on, teammate_assignment
+      → recorded as source='solicited', declared_by=strategist
+      → conflict-checked on write against the rest of the map
+    → declare_intention only for a member that could not be reached
+      → recorded as source='inferred' — a belief, not an intention
+```
+
+This stage previously ran the second half only. The strategist read twenty
+messages of transcript and called `declare_intention` once per member,
+describing what it *supposed* each was about to do. **No member was ever
+asked.** Every intention on the platform was one agent's guesswork about
+several others — see defect 6 below.
 
 **Correction path (outer — across sessions):**
 ```
@@ -642,6 +663,8 @@ than advisory: the correction changes the agent's memory permanently, not the
 direction of one conversation. The brief remains, but as a document for the
 humans reading along — it is not the mechanism.
 
+- Prospective (Stage 0): solicited plans align sub-tasks *before* the work,
+  which is the only point at which duplication is cheap to avoid.
 - Inner loop: the coherence update message steers the current conversation; the
   cascade changes what each member knows next time.
 - Outer loop: composition proposals — see Loop 4.A.
@@ -711,8 +734,36 @@ by `strategist_resolution_tests`, which is a source check for the same reason
 wrong value, it was a literal where a lookup belonged, and only the constant may
 name the agent.
 
+**A fifth, found 2026-08-28: the coordinator was the one agent excluded from
+Loop 1.** `evaluate_coherence_handler` was the only agent-execution path on the
+platform that called neither `enrich_with_kg_context` nor
+`agent_output_to_episode`. Every other path — `execution`, `execution_stream`,
+`workspace::messages`, `rabble_workspace`, and the `execute_agent` tool — does
+both.
+
+A closed circle of zero: no episodes, so nothing to consolidate, so no rules, so
+nothing to retrieve. The card opens Stage 4 with *"Read consolidated memory:
+review your past dreaming episodes for this workspace. What coherence patterns
+recur? Which principles are chronically weak?"* and nothing was behind that
+instruction. The agent appointed the platform's longitudinal learner opened
+every session as its first, and "chronically" was a word it had no way to mean.
+
+Why it survived: Loop 1's `episodes` stage counts rows platform-wide and was
+never empty. Nothing asked *which* agents produce them, and an agent that writes
+none is indistinguishable from one that has not run. Both halves are now wired,
+and the pre-minted episode id goes onto the `ToolContext` so work the strategist
+delegates hangs off its run instead of being recorded as orphan roots.
+
+**A sixth, found 2026-08-28: Stage 0 never asked anybody anything.** Recorded
+separately from the fifth because it is a different failure — not a missing
+call, but a mechanism doing something other than what its name says. See
+"Intention coordination" in §7 for the full account and the fix.
+
 Also verified working throughout: Γ(C) measurement, per-principle scoring, the
-auto-eval cadence, and the `coherence_update` message.
+auto-eval cadence, the `coherence_update` message, and the coordination-note
+cascade itself — `record_coordination_observation` → `coordination_note::deliver`
+writes a real episode into the member's memory, dual-gated, with the platform
+delivering the brief as a floor for any member the model did not target.
 
 Coherence signal semantics changed after the previous revision — see
 `754edd39` (relevance gating, uptake-based Symmetry, principle checks that can
@@ -1560,6 +1611,8 @@ is not an instrument.
 | 16 | ~~`create_snapshot` decoded a NULL aggregate into `(i32,)`, so the first snapshot for any agent always errored and the function has never once succeeded~~ | 1 | **Fixed 2026-08-21** — `query_scalar::<Option<i32>>`. Corroborated by 0 consolidation jobs with a snapshot id, ever. DB-backed regression test asserts both decode shapes |
 | 17 | ~~Creature dreaming resolved its extractor from `ANTHROPIC_API_KEY`, which this deployment does not set, so every creature dream ran with no extractor and reported `completed`~~ | 1 | **Fixed 2026-08-21** — both paths call `build_extraction_llm`; the creature path now refuses rather than charging a credit for a cycle that cannot learn |
 | 18 | ~~The coherence shelf hardcoded `cohere_and_coordinate` and never read `teams.coordination_strategist_id`, making three shipped strategists unreachable and any non-default assignment fail as a permission denial~~ | 3.A | **Fixed 2026-08-21** — resolves the registered strategist; locked by a source check, since the failure was a literal where a lookup belonged |
+| 19 | ~~The coherence shelf ran the strategist with no KG retrieval and dropped the run, so the one agent told to notice recurring patterns had no record that any earlier session existed~~ | 3.A / 1 | **Fixed 2026-08-28** — both halves wired; its run is now a parent episode for the work it delegates. Guarded by a scan that ignores imports, because this file already *imported* `agent_output_to_episode` without calling it |
+| 20 | ~~Stage 0 declared every member's intention on the member's behalf, so the conflict checker compared one agent's guesses to each other~~ | 3.A | **Fixed 2026-08-28** — mig-218 records `declared_by`/`source`; `solicit_agent_plan` asks; inferred-vs-inferred duplication suppressed. See §7 |
 | 14 | 127 workspaces have no composition identity, so Loop 4.A has nothing to version | 4.A | **Open.** Onboarding gap rather than loop defect |
 | 15 | 73 curated tool declarations remain undispatchable, quarantined in `known_debt` | all | Ratcheting down: 92 → 79 → 73. Breakdown below |
 | 10 | Valence-homophily threshold (spread < 0.25) exists only as prompt text | 3.B | Compute it, or stop documenting it as a mechanism |
@@ -1610,6 +1663,80 @@ again. `suggest_differentiation` reports the overlap axes and declines to
 prescribe the split: it holds two descriptions and no knowledge of the workspace
 goal, so any division of labour it invented would be a guess dressed as advice.
 
+#### The map was full and nobody had been asked — 2026-08-28
+
+Everything above was true and the stage still did not coordinate. The tools
+dispatched, the table filled, the conflict checker ran, and `suggest_differentiation`
+returned overlap axes. What none of it recorded was **whose plan a row is.**
+
+The only caller was the strategist's Stage 0, declaring on each member's behalf
+from a twenty-message transcript. `workspace_intentions` had `agent_id` — the
+agent a row is *about* — and no column for the agent that *wrote* it. So a
+member's own plan and the coordinator's guess about it were byte-identical, and
+every reader downstream treated them the same way.
+
+The consequence is worse than a missing field, because the duplication pass is
+built on the premise that two rows are two agents' plans:
+
+> When both rows were written by one coordinator, in one turn, from one
+> transcript, an OVERLAP_WARNING between them is not evidence that two agents
+> are about to duplicate work. It is evidence that the coordinator described the
+> same work twice, in two paraphrases — which is exactly what a cosine threshold
+> of 0.82 is tuned to fire on.
+
+So the check fired **most reliably in the case where it meant least**, and
+`suggest_differentiation` then told two agents to split work neither of them had
+ever claimed. The platform acted on its own guess and reported the result as
+coordination.
+
+**The distinction the fix restores** is ReMALIS's (arXiv:2407.12532 §3.1). Agent
+*i* holds a private intention `I_i = (γ_i, Σ_i, π_i, δ_i)` — goal, sub-goals,
+next-sub-goal distribution, desired teammate assignment. What another party can
+hold is a *belief* `b_j(I_i | m_ji) = f_Λ(m_ji)`, formed from a message *i*
+actually sent. These are different objects. §4.4 Table 3 prices the difference:
+
+| Regime | Aligned sub-tasks (easy / medium / hard) |
+|---|---|
+| No communication | 31% / 23% / 17% |
+| Basic propagation | 68% / 53% / 41% |
+| Selective propagation | 79% / 62% / 51% |
+| Full intention sharing | 91% / 71% / 62% |
+
+Declaring on an agent's behalf is the first row wearing the last row's
+vocabulary.
+
+**What changed (mig-218):**
+
+| Piece | Effect |
+|---|---|
+| `workspace_intentions.declared_by`, `.source` | `self` / `solicited` / `inferred` / `unattributed`. Old rows backfill to `unattributed` — the author is genuinely unrecorded and is not guessed at |
+| **`solicit_agent_plan`** | The `f_Λ` channel. Invokes the member with the peers' intentions in context, asks for `action_type`, `description`, `targets`, `depends_on`, `teammate_assignment`, records the answer as that agent's own |
+| `fermi::intentions` | Duplication between two `inferred` rows is **suppressed**. Resource and dependency conflicts are not — a named target is a checkable claim about a file either way |
+| `Grounding` | Every map read and every write returns `GROUNDED` / `PARTIAL` / `UNGROUNDED`. A CLEAR signal over an ungrounded map is not evidence of alignment; it is evidence nobody was asked |
+| Card Stage 0 | Leads with asking. `declare_intention` is now the fallback for a member that could not be reached, and the brief must say so |
+
+Two constraints worth stating because they were tempting to relax:
+
+**Provenance is derived from the caller, never accepted as input.** A `source`
+argument on `declare_intention` would hand the party with the most reason to
+overstate it — a model told that first-hand rows are treated more seriously — a
+field with which to assert its guess was a report. The platform knows who called
+and about whom; it does not need to be told. Locked by a test that also asserts
+neither tool's *schema* exposes the property, since an accepted-and-ignored
+argument still advertises the claim as available.
+
+**`δ_i` is returned, never written.** A solicited plan includes the agent's view
+of who should own what, and that is a coordination finding — where two members
+disagree about the division of labour, you have found something no TEC score
+surfaces and no transcript shows. But writing it as an intention would recreate,
+one hop further out, exactly the confusion between `I_j` and a belief about
+`I_j` that the whole change exists to end.
+
+Loop 3 now declares `plans` and `intentions` as **two stages**, counting
+solicited rows and all rows respectively. One combined count is what let the
+stage read as healthy: the map was full, so coordination looked like it was
+happening. Two stages make `plans ≪ intentions` visible as the finding it is.
+
 ---
 
 ## 8. What makes this architecture coherent
@@ -1623,7 +1750,9 @@ Each loop corrects at the appropriate timescale:
 
 Each loop uses a different corrective mechanism:
 - Loops 1 and 2: episodic memory → dreaming → semantic rules
-- Loop 3: TEC coherence → coordination observation written into member memory → semantic rule → changed behaviour next execution
+- Loop 3, prospective: solicited plans → conflict detection over first-hand
+  intentions → differentiation before the work rather than diagnosis after it
+- Loop 3, retrospective: TEC coherence → coordination observation written into member memory → semantic rule → changed behaviour next execution
 - Loop 4.A: Shapley attribution → composition proposals → human approval → team change
 - Loop 4.B: calibration scores + route provenance → routing weights → member selection
 - Loop 5.A: resolved ground truth → Brier / projection_accuracy → eval signals (no correction of its own — consumed by 1, 4.B and 5.B)
@@ -1664,6 +1793,8 @@ that worked, and a read path pointing somewhere else.**
   credential store.
 - Loop 3's gate read `coordination_strategist_id`; the shelf that invoked the
   strategist wrote its name as a literal.
+- The strategist's card told it to read its consolidated memory; the handler
+  that ran it wrote no episodes and retrieved no rules.
 
 None of these were visible as errors. Four of them were *documented* as working,
 and three were protected by a comment asserting some other component would
@@ -1674,19 +1805,53 @@ that says `broken` where it used to say `unmeasured`.
 
 The 2026-08-21 pass added a distinction to that list, and it is the one to
 carry forward. The first six above are read paths aimed at the wrong place. The
-last three are hops that were *reached on every cycle and never worked* — a
+next three are hops that were *reached on every cycle and never worked* — a
 call site is evidence that something was invoked, not that it returned. Three
 different mechanisms hid it: a deliberately non-fatal failure, a duplicated
 dependency resolution, and a constant that happened to agree with the data. Each
 one made a broken hop report success, which is why none showed up in the
 2026-08-15 audit that verified call sites.
 
+**The 2026-08-28 pass adds a third shape, and it is the hardest of the three to
+see: a mechanism that ran, returned, produced rows, and was doing something
+other than what its name said.**
+
+Stage 0's intention map filled up. The tools dispatched, the conflict checker
+ran, and every count was healthy. What it was actually doing was one agent
+writing down its guesses about several others and then comparing those guesses
+to each other — and because the guesses came from one model summarising one
+transcript in one turn, the duplication check fired *more* often than it would
+have on real plans. The instrument was not silent. It was confidently reporting
+a measurement of the coordinator's own prose.
+
+No row count can catch this, which is the point. `plans` and `intentions` are
+now two stages precisely so the question "how many of these did anyone actually
+say?" has a number of its own. The general rule the three shapes yield:
+
+> A count tells you a write happened. It never tells you what was written, who
+> wrote it, or whether the thing that read it back was entitled to treat it as
+> evidence. Provenance is not metadata — for any signal derived from more than
+> one row, it is part of the signal.
+
+And the corresponding rule for the guards: `every_agent_execution_path_persists_an_episode`
+was, in its first draft, a scan for the string `agent_output_to_episode` — which
+`coherence.rs` already contained, in an import it never called, with a comment
+beside it saying so. **The test passed against the exact defect it was written
+to catch.** Source scans must judge the code and not the header; the mutation
+script's second break is that state, and it must be red.
+
 **What is genuinely unfinished** is honest to state plainly. Every loop is
 wired, four have been observed turning on real data, and the two exceptions
 named in the previous revision are both closed: Loop 5.A's attribution now
 resolves at write time and its probe reports `MECHANISM SOUND`, and
-`intention_coordinator`'s six tools dispatch, so Loop 3's Stage 0 exists for the
-first time. Ontology development, however, has not yet been observed to work
+`intention_coordinator`'s six tools dispatch — though the 2026-08-28 pass
+revised what that closure was worth. Stage 0 existed from 2026-08-16 and did not
+coordinate until 2026-08-28, because a stage that records one agent's beliefs
+about the others is running, producing rows, and not doing the thing.
+`solicit_agent_plan` is new and has not yet been observed turning on real
+traffic; the query that will confirm it is
+`SELECT count(*) FROM workspace_intentions WHERE source = 'solicited'`, and
+`loop3.plans` reports it. Ontology development, however, has not yet been observed to work
 even once — the defect is understood and fixed, and §5 states the query that
 will confirm or refute it after the next deploy.
 

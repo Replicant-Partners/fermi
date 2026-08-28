@@ -24,6 +24,7 @@ use coherence_engine::SettlingEngine;
 use coherence_observer::ConversationObserver;
 
 use fermi::agent_backend::executor::AgentExecutor;
+use fermi::agent_backend::kg_context::enrich_with_kg_context;
 use fermi::agent_backend::tool_executor::ToolAwareExecutor;
 use fermi::agent_backend::tools::{ToolContext, ToolRegistry};
 use fermi::agent_backend::ExecutionContext;
@@ -262,14 +263,26 @@ pub async fn evaluate_coherence_handler(
                         "Coherence score: {:.0}% ({}). Principle scores: {:?}. Health indicators: {:?}.\n\n\
                          Recent conversation:\n{}\n\n\
                          Run Stage 0 (Pre-flight), Stage 2 (Diagnose) and Stage 3 (Coordinate).\n\n\
-                         Stage 0 first, and with the platform tools rather than a file: call \
-                         `get_intention_map` to see what the members have already declared, then \
-                         `declare_intention` for each agent whose next action you are about to \
-                         recommend — that agent's id, an `action_type`, and a one-line description. \
-                         A recommendation registered before it is acted on can be checked for \
-                         overlap; one written only into the brief cannot. Each declaration returns \
-                         a signal; on OVERLAP_WARNING call `suggest_differentiation` for the two \
-                         agents and fold the answer into Stage 3.\n\n\
+                         Stage 0 first, and with the platform tools rather than a file. Call \
+                         `get_intention_map` to see what the members have already declared, and \
+                         read its `grounding_reading` before you trust anything in it.\n\n\
+                         Then ASK. Call `solicit_agent_plan` for each member whose next action \
+                         matters to this diagnosis, passing `context` describing what the \
+                         workspace is trying to do. That agent answers with its own plan and the \
+                         platform records it as the agent's. This is the step that makes Stage 0 \
+                         coordination rather than narration: an intention you write on a member's \
+                         behalf from the transcript is your BELIEF about that agent, it is \
+                         recorded as `inferred`, and two inferred rows cannot be checked against \
+                         each other — their similarity measures your paraphrasing, not the team's \
+                         overlap. Use `declare_intention` only for a member `solicit_agent_plan` \
+                         could not reach, and say in the brief that you inferred it.\n\n\
+                         Each write returns a signal; on OVERLAP_WARNING call \
+                         `suggest_differentiation` for the two agents, check its \
+                         `grounding_caveat`, and fold the answer into Stage 3. A solicited plan \
+                         also returns that agent's `teammate_assignment` — its own view of who \
+                         should own what. Where two members' views of the division of labour \
+                         disagree, that is a coordination finding worth more than any TEC score, \
+                         and it is not visible from the transcript.\n\n\
                          Then Stage 2 and Stage 3: identify which TEC principles \
                          are weak and provide specific actionable recommendations.\n\n\
                          The incoherence has ALREADY been classified from the principle scores \
@@ -296,10 +309,67 @@ pub async fn evaluate_coherence_handler(
                     )
                 };
 
+                // SPEC_28 — this path calls `registry.execute_agent`
+                // directly (no ToolContext), so before this change it had
+                // no way to carry credentials at all and always drew on
+                // the platform's env key. `cohere_and_coordinate` is a
+                // platform-service agent, so resolving its DB row funds it
+                // from the `abw-system` principal's store.
+                //
+                // Resolved before the statement is built rather than after,
+                // because the KG enrichment below needs the agent's uuid and
+                // enrichment must happen before the card is moved into the
+                // execution context.
+                let strategist = crate::resolve_agent(&state, &strategist_name).await;
+
+                // ── Loop 1, for the agent that coordinates Loop 3 ──────────
+                //
+                // This was the only execution path on the platform that never
+                // called it. `execution`, `execution_stream`,
+                // `workspace::messages`, `rabble_workspace` and the
+                // `execute_agent` tool all enrich; the strategist did not, and
+                // the strategist is the agent whose card opens Stage 4 with
+                // *"Read consolidated memory: review your past dreaming
+                // episodes for this workspace. What coherence patterns recur?
+                // Which principles are chronically weak?"*
+                //
+                // Nothing was behind that instruction. Paired with the episode
+                // write added after the run below, it was a closed circle of
+                // zero: no episodes, so nothing to consolidate, so no rules, so
+                // nothing to retrieve — and the agent told to be the platform's
+                // longitudinal learner was the one agent excluded from
+                // longitudinal learning. Every session it opened, it opened as
+                // though it were the first.
+                let card = match strategist.as_ref() {
+                    Ok(db_agent) => {
+                        let t_kg = tokio::time::Instant::now();
+                        let (enriched, _) = enrich_with_kg_context(
+                            &state.memory_store,
+                            &state.embedder,
+                            db_agent.agent_id,
+                            &query_text,
+                            card,
+                        )
+                        .await;
+                        tracing::info!(
+                            elapsed_ms = t_kg.elapsed().as_millis() as u64,
+                            agent = %strategist_name,
+                            site = "workspace_coherence_strategist",
+                            "kg_context_enrich"
+                        );
+                        enriched
+                    }
+                    // Unregistered: unfunded below, and unenriched here. Not
+                    // silently — an agent that cannot be resolved cannot have
+                    // memory looked up for it, and saying so beats a card that
+                    // looks enriched and is not.
+                    Err(_) => card,
+                };
+
                 let agent_stmt = ast::AgentStmt {
                     name: strategist_name.clone(),
                     agent_type: Some(card.agent_type.clone()),
-                    query: query_text,
+                    query: query_text.clone(),
                     executor: Some(ast::ExecutorType::LLM),
                     schedule: None,
                     driver_refs: vec![],
@@ -309,13 +379,6 @@ pub async fn evaluate_coherence_handler(
                 let program = ast::Program {
                     statements: vec![ast::Statement::Agent(agent_stmt.clone())],
                 };
-                // SPEC_28 — this path calls `registry.execute_agent`
-                // directly (no ToolContext), so before this change it had
-                // no way to carry credentials at all and always drew on
-                // the platform's env key. `cohere_and_coordinate` is a
-                // platform-service agent, so resolving its DB row funds it
-                // from the `abw-system` principal's store.
-                let strategist = crate::resolve_agent(&state, &strategist_name).await;
                 let credentials = match &strategist {
                     Ok(db_agent) => {
                         crate::build_execution_credentials(&state, db_agent, &card).await
@@ -356,23 +419,24 @@ pub async fn evaluate_coherence_handler(
                 let slug = get_workspace_slug(&state.db, ws_uuid)
                     .await
                     .unwrap_or_else(|_| ws_uuid.to_string());
+
+                // Minted before the run, so children stamp it while the parent
+                // row is still being produced — the same contract
+                // `execute_agent` uses (mig-198). `episodes.parent_episode_id`
+                // carries no foreign key, so the order is safe.
+                let strategist_episode_id = uuid::Uuid::new_v4();
+
                 let tool_context = Arc::new(ToolContext {
-                    // The strategist's own run persists no episode — this handler
-                    // imports `agent_output_to_episode` and never calls it — so
-                    // there is nothing for a delegated child to point at, and
-                    // anything delegated from here is recorded as a root.
+                    // The strategist's run is now an episode of its own (see
+                    // the write after `execute` below), so work it delegates —
+                    // `solicit_agent_plan` asking each member for its plan,
+                    // `execute_agent` — hangs off it instead of being recorded
+                    // as a root with no caller.
                     //
-                    // Not the same as "no episodes come out of this path":
-                    // `coordination_note::deliver` writes one per member below.
-                    // Those belong to the MEMBER, as its own dreaming material,
-                    // and parenting them to a strategist run that has no row
-                    // would be a foreign key to nothing.
-                    //
-                    // Stated rather than left bare. Every other `None` on this
-                    // field carries its argument, and this was the one that did
-                    // not — which is why
-                    // `tests/episode_lineage_coverage.rs` now requires one.
-                    parent_episode_id: None,
+                    // Distinct from the notes `coordination_note::deliver`
+                    // writes further down: those belong to the MEMBER, as its
+                    // own dreaming material, and are deliberately unparented.
+                    parent_episode_id: Some(strategist_episode_id),
                     memory_store: state.memory_store.clone(),
                     embedder: state.embedder.clone(),
                     registry: state.registry.clone(),
@@ -397,7 +461,69 @@ pub async fn evaluate_coherence_handler(
                     tool_context,
                 );
                 match tool_executor.execute(&agent_stmt, &context).await {
-                    Ok(output) => output.metadata.reasoning,
+                    Ok(output) => {
+                        // ── The other half of Loop 1 for the coordinator ────
+                        //
+                        // Retrieval above is worthless without this. Rules are
+                        // distilled from episodes, and the strategist produced
+                        // none: the shelf ran it, posted its brief to chat, and
+                        // dropped the run. So there was never anything for
+                        // consolidation to dream on, and the agent asked to
+                        // notice *recurring* coherence patterns had no record
+                        // that any previous session had happened.
+                        //
+                        // Non-fatal and counted. A coherence evaluation must
+                        // not fail because a memory write did, and a lost
+                        // episode is a dreaming cycle that will not happen —
+                        // which is precisely the absence that went unnoticed
+                        // here for the life of the feature.
+                        if let Ok(db_agent) = strategist.as_ref() {
+                            let mut episode =
+                                agent_output_to_episode(db_agent.agent_id, &query_text, &output);
+                            episode.episode_id = strategist_episode_id;
+                            episode.persona_version_at_write = Some(db_agent.persona_version);
+                            // Findable as coordination work. Stage 4's
+                            // "which principles are chronically weak" is a
+                            // question about this tag's history.
+                            episode.tags.push("coordination_session".to_string());
+                            episode.tags.push(format!("workspace:{ws_uuid}"));
+
+                            let embed_text = format!(
+                                "{} {}",
+                                query_text,
+                                output.metadata.reasoning.as_deref().unwrap_or("")
+                            );
+                            let provenance =
+                                state.embedder.generate_provenanced(&embed_text).await.ok();
+                            let source_ref = json!({
+                                "kind": "workspace_coherence_strategist",
+                                "agent_id": db_agent.agent_id,
+                                "workspace_id": ws_uuid,
+                                "depth": depth,
+                            });
+                            fermi::write_accounting::observe(
+                                fermi::write_accounting::Sink::Episodes,
+                                state
+                                    .memory_store
+                                    .store_episode_with_provenance(
+                                        episode,
+                                        provenance.as_ref(),
+                                        Some(source_ref),
+                                    )
+                                    .await,
+                            );
+                        } else {
+                            tracing::warn!(
+                                agent = %strategist_name,
+                                workspace = %ws_uuid,
+                                "strategist has no DB row; its run was not recorded \
+                                 as an episode and will not reach its own dreaming \
+                                 cycle"
+                            );
+                        }
+                        let _ = state.registry.record_execution(&strategist_name, &output);
+                        output.metadata.reasoning
+                    }
                     Err(e) => {
                         eprintln!("cohere_and_coordinate failed: {:?}", e);
                         Some(format!("Strategist unavailable: {:?}", e))

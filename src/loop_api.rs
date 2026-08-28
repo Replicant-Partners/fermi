@@ -227,6 +227,20 @@ pub const SUBJECT_SCOPES: &[(&str, &str, SubjectScope)] = &[
     // ── loop3 ────────────────────────────────────────────────────────────
     (
         "loop3",
+        "plans",
+        SubjectScope::PerAgent {
+            // `agent_id`, not `declared_by`. The question this answers is "has
+            // anyone ever asked THIS agent what it intends to do", which is
+            // about the subject of the row. `declared_by` would answer "how
+            // often has this agent asked others", which is a fact about one
+            // coordinator and would read as zero for every member on a
+            // perfectly coordinated team.
+            sql: "SELECT count(*)::bigint FROM workspace_intentions \
+                  WHERE agent_id = $1 AND source = 'solicited'",
+        },
+    ),
+    (
+        "loop3",
         "intentions",
         SubjectScope::PerAgent {
             sql: "SELECT count(*)::bigint FROM workspace_intentions WHERE agent_id = $1",
@@ -1013,6 +1027,15 @@ mod tests {
                  coherence measurement they are meant to be coordinated \
                  against would let the map be filled by something with no view \
                  of the workspace.",
+            ),
+            (
+                "loop3",
+                "plans",
+                "`solicit_agent_plan`, called by the strategist during the same \
+                 Stage 0, so its door is `settled`'s too. A direct endpoint \
+                 would let a member be asked for a plan with nothing to \
+                 coordinate it against, which is the interrogation half of \
+                 Stage 0 without the half that makes it worth answering.",
             ),
         ];
 

@@ -261,8 +261,26 @@ pub const LOOPS: &[FeedbackLoop] = &[
                 it within a session.",
         stages: &[
             Stage {
+                id: "plans",
+                what: "a member is asked for its plan and answers",
+                // `source = 'solicited'` and nothing weaker. A row the
+                // strategist inferred from the transcript is its belief about
+                // an agent, not the agent's plan, and counting the two together
+                // is what let this stage read as full for a year while no
+                // member had ever been asked anything (mig-218).
+                sink_sql: "SELECT count(*)::bigint AS n FROM workspace_intentions \
+                            WHERE source = 'solicited'",
+                writer: "agent_backend::tools_legacy::execute_solicit_agent_plan",
+                trigger: Trigger::Prompted {
+                    asked_by: "handlers::workspace::coherence, depth=recommendations, \
+                               Stage 0",
+                },
+                accounted: None,
+                gated_by: None,
+            },
+            Stage {
                 id: "intentions",
-                what: "agents declare what they are about to do",
+                what: "the intention map holds what agents are about to do",
                 sink_sql: "SELECT count(*)::bigint AS n FROM workspace_intentions",
                 writer: "agent_backend::tools_legacy::execute_declare_intention",
                 // Was `Trigger::None`: six tools implemented, wired to dispatch,
@@ -280,6 +298,17 @@ pub const LOOPS: &[FeedbackLoop] = &[
                 // pressed it since the prompt changed" from "the strategist
                 // ignored the instruction". `Manual` would license `no_input`,
                 // which claims the first.
+                //
+                // Split from `plans` above rather than left as one stage, and
+                // the split is the point. This sink counts every row in the
+                // map; `plans` counts only the ones a member was actually asked
+                // for. Before mig-218 they were the same number, and the map
+                // being full was read as the team having coordinated — when in
+                // fact one agent had written every row about all the others
+                // from a transcript, and nobody had been asked anything. Two
+                // stages, so `plans` ≪ `intentions` is visible as the finding
+                // it is instead of hiding inside a single healthy-looking
+                // count.
                 trigger: Trigger::Prompted {
                     asked_by: "handlers::workspace::coherence, depth=recommendations, \
                                Stage 0",

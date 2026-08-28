@@ -335,6 +335,34 @@ fn builtin_tools_core() -> Vec<BuiltinToolDef> {
             requires_workspace: true,
             ..Default::default()
         },
+        // The propagation channel (mig-218). `declare_intention` lets an agent
+        // register a plan; this one goes and asks for it. Placed next to its
+        // sibling because the difference between them is the whole of Stage 0's
+        // honesty: one records what you believe, the other records what was
+        // said.
+        BuiltinToolDef {
+            name: "solicit_agent_plan",
+            description: "Ask a workspace member what it intends to do next, and record its answer in the intention map as that agent's own plan (source=solicited). Returns the plan, the conflict signal against the rest of the map, and the agent's view of who should own what. Use this before declaring anything on a member's behalf: an intention you inferred from the transcript is your belief about that agent, and two such beliefs cannot be checked against each other.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "agent_id": {
+                        "type": "string",
+                        "description": "The member to ask, by agent name or id. Must be a member of this workspace."
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": "Optional: what the workspace is trying to do right now, so the agent plans against the real goal rather than only against the transcript."
+                    }
+                },
+                "required": ["agent_id"]
+            }),
+            requires_workspace: true,
+            // It invokes another agent and spends against the caller's
+            // credentials, so the anti-recursion tool set must be able to strip
+            // it for the same reason it strips `execute_agent`.
+            is_delegation: true,
+        },
         BuiltinToolDef {
             name: "check_conflicts",
             description: "Check all active intentions for conflicts. Returns a list of conflict signals (CLEAR, OVERLAP_WARNING, CONFLICT_ALERT, DEPENDENCY_WAIT, BUDGET_GATE) with explanations.",
@@ -2809,6 +2837,7 @@ impl ToolRegistry {
             "fermi_execute_fpl" => execute_fermi_execute_fpl(input).await,
             "fermi_sensitivity_analysis" => execute_fermi_sensitivity_analysis(input).await,
             "declare_intention" => execute_declare_intention(input, ctx).await,
+            "solicit_agent_plan" => execute_solicit_agent_plan(input, ctx).await,
             "check_conflicts" => execute_check_conflicts(input, ctx).await,
             "get_intention_map" => execute_get_intention_map(ctx).await,
             "clear_intention" => execute_clear_intention(input, ctx).await,
@@ -3228,7 +3257,8 @@ async fn load_intentions(
 ) -> Result<Vec<crate::intentions::Intention>, String> {
     let rows = sqlx::query(
         "SELECT i.intention_id, i.agent_id, a.agent_name, i.action_type, i.tool,
-                i.description, i.targets, i.depends_on, i.embedding
+                i.description, i.targets, i.depends_on, i.embedding,
+                i.source, i.declared_by
            FROM workspace_intentions i
            JOIN agents a ON a.agent_id = i.agent_id
           WHERE i.workspace_id = $1 AND i.status = 'active'
@@ -3261,6 +3291,21 @@ async fn load_intentions(
                 .ok()
                 .flatten()
                 .map(|v| v.to_vec()),
+            // A read failure lands on `Unattributed` rather than on a stronger
+            // claim (mig-218). If the column is missing because the migration
+            // has not run, every row reads as second-hand — which suppresses
+            // duplication detection until it has, and that is the right way
+            // round: no overlap warnings beats warnings we cannot vouch for.
+            source: crate::intentions::IntentionSource::from_db(
+                r.try_get::<String, _>("source")
+                    .unwrap_or_default()
+                    .as_str(),
+            ),
+            declared_by: r
+                .try_get::<Option<Uuid>, _>("declared_by")
+                .ok()
+                .flatten()
+                .map(|u| u.to_string()),
         })
         .collect())
 }
@@ -3290,43 +3335,36 @@ fn intention_ctx(ctx: &ToolContext) -> Result<(Uuid, &sqlx::PgPool), String> {
     Ok((ws, db))
 }
 
-async fn execute_declare_intention(
-    input: &serde_json::Value,
+/// The one place an intention row is written.
+///
+/// Shared by `declare_intention` (a model choosing to register a plan) and
+/// `solicit_agent_plan` (the platform recording an answer it asked for), so the
+/// supersede-then-insert-then-check sequence has a single implementation and
+/// the two paths cannot drift on provenance.
+///
+/// `source` is decided by the caller and never by the input, which is the whole
+/// point of mig-218: a tool argument saying "this is the agent's own plan"
+/// would be a claim the platform cannot check, made by the party with the most
+/// reason to overstate it.
+#[allow(clippy::too_many_arguments)]
+async fn write_intention(
+    db: &sqlx::PgPool,
     ctx: &ToolContext,
-) -> Result<String, String> {
-    let (workspace_id, db) = intention_ctx(ctx)?;
-    let agent_id = resolve_agent_id(input, "agent_id", ctx).await?;
-
-    let action_type = input
-        .get("action_type")
-        .and_then(|v| v.as_str())
-        .unwrap_or("research");
+    workspace_id: Uuid,
+    agent_id: Uuid,
+    action_type: &str,
+    tool: Option<&str>,
+    description: &str,
+    targets: &[String],
+    depends_on: &[String],
+    source: crate::intentions::IntentionSource,
+) -> Result<serde_json::Value, String> {
     if !matches!(
         action_type,
         "tool_call" | "research" | "synthesis" | "writing" | "review" | "idle"
     ) {
         return Err(format!("unknown action_type: {action_type}"));
     }
-    let description = input
-        .get("description")
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| "description is required".to_string())?;
-    let tool = input.get("tool").and_then(|v| v.as_str());
-    let str_list = |key: &str| -> Vec<String> {
-        input
-            .get(key)
-            .and_then(|v| v.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|x| x.as_str().map(str::to_string))
-                    .collect()
-            })
-            .unwrap_or_default()
-    };
-    let targets = str_list("targets");
-    let depends_on = str_list("depends_on");
 
     // Embed the description so duplication detection is semantic. Populated
     // here, on the write path — not deferred to a worker that will not do it.
@@ -3360,8 +3398,8 @@ async fn execute_declare_intention(
     let intention_id: Uuid = sqlx::query_scalar(
         "INSERT INTO workspace_intentions
            (workspace_id, agent_id, action_type, tool, description,
-            targets, depends_on, embedding)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+            targets, depends_on, embedding, source, declared_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
          RETURNING intention_id",
     )
     .bind(workspace_id)
@@ -3369,9 +3407,11 @@ async fn execute_declare_intention(
     .bind(action_type)
     .bind(tool)
     .bind(description)
-    .bind(&targets)
-    .bind(&depends_on)
+    .bind(targets)
+    .bind(depends_on)
     .bind(embedding)
+    .bind(source.as_str())
+    .bind(ctx.current_agent_id)
     .fetch_one(db)
     .await
     .map_err(|e| format!("Failed to declare intention: {e}"))?;
@@ -3391,14 +3431,427 @@ async fn execute_declare_intention(
                 .unwrap_or_default(),
         ),
     );
+    let grounding = crate::intentions::Grounding::of(&intentions);
 
-    serde_json::to_string_pretty(&json!({
+    Ok(json!({
         "intention_id": intention_id,
+        "source": source.as_str(),
         "signal": crate::intentions::overall_signal(&conflicts),
         "conflicts": conflicts,
         "active_intentions": intentions.len(),
+        // Reported on every write, not only on request. A CLEAR signal over a
+        // map the team never confirmed is the reading most likely to be
+        // mistaken for coordination, so the caveat travels with the signal.
+        "grounding": grounding,
+        "grounding_reading": grounding.reading(),
     }))
-    .map_err(|e| format!("Serialization error: {e}"))
+}
+
+async fn execute_declare_intention(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let (workspace_id, db) = intention_ctx(ctx)?;
+    let agent_id = resolve_agent_id(input, "agent_id", ctx).await?;
+
+    let action_type = input
+        .get("action_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("research");
+    let description = input
+        .get("description")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "description is required".to_string())?;
+    let tool = input.get("tool").and_then(|v| v.as_str());
+    let str_list = |key: &str| -> Vec<String> {
+        input
+            .get(key)
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let targets = str_list("targets");
+    let depends_on = str_list("depends_on");
+
+    // Provenance, derived and not asked for (mig-218).
+    //
+    // An agent registering its own next action is stating an intention. An
+    // agent registering somebody else's is stating a belief about one, and
+    // until now the two produced identical rows — which mattered because the
+    // second case is the only one that has ever happened in production: the
+    // strategist's Stage 0 declares on every member's behalf from a transcript.
+    let source = match ctx.current_agent_id {
+        Some(caller) if caller == agent_id => crate::intentions::IntentionSource::SelfDeclared,
+        Some(_) => crate::intentions::IntentionSource::Inferred,
+        // No caller identity: we cannot claim first-hand, so we do not.
+        None => crate::intentions::IntentionSource::Unattributed,
+    };
+
+    let mut out = write_intention(
+        db,
+        ctx,
+        workspace_id,
+        agent_id,
+        action_type,
+        tool,
+        description,
+        &targets,
+        &depends_on,
+        source,
+    )
+    .await?;
+
+    if !source.is_first_hand() {
+        out["note"] = json!(
+            "Recorded as second-hand: you declared this for another agent, so it \
+             is your reading of that agent's plan rather than its own statement. \
+             Overlap detection between two second-hand rows is suppressed. Use \
+             solicit_agent_plan to ask the agent directly and record what it \
+             actually says."
+        );
+    }
+
+    serde_json::to_string_pretty(&out).map_err(|e| format!("Serialization error: {e}"))
+}
+
+/// `solicit_agent_plan` — ask a member what it is about to do, and record what
+/// it says.
+///
+/// # The gap this fills
+///
+/// Stage 0 has always been described as intention coordination, and what it
+/// actually did was: the strategist read twenty messages of transcript and
+/// called `declare_intention` once per member, describing what it *supposed*
+/// each was about to do. No member was ever asked. Every row in every intention
+/// map on the platform is one agent's guesswork about several others, and the
+/// conflict checker then compared those guesses to each other.
+///
+/// ReMALIS (arXiv:2407.12532 §3.1) separates the two objects the platform had
+/// collapsed. Agent *i* holds a private intention
+/// `I_i = (γ_i, Σ_i, π_i, δ_i)` — goal, sub-goals, next-sub-goal distribution,
+/// desired teammate assignment. What agent *j* can hold is a belief
+/// `b_j(I_i | m_ji) = f_Λ(m_ji)`, formed from a message *i* actually sent.
+/// §4.4 Table 3 measures what the difference is worth: sub-task alignment of
+/// 31%/23%/17% (easy/medium/hard) with no communication against 91%/71%/62%
+/// with full intention sharing.
+///
+/// This tool is `f_Λ`: the round trip that turns a belief into a report. It is
+/// the platform's own call, so the `solicited` provenance is something the
+/// platform can vouch for rather than a claim in a tool argument.
+///
+/// # Σ and δ are asked for, not inferred
+///
+/// The elicitation asks for sub-goals (`Σ_i`, as `depends_on`/`targets`) and
+/// for who else the agent thinks should take what (`δ_i`). Those are the two
+/// components a transcript reading cannot recover: a member's own view of its
+/// dependencies, and its own view of the division of labour. `δ_i` is returned
+/// to the caller rather than written, because an agent's opinion about a
+/// teammate's work is not that teammate's intention — which is the exact error
+/// this tool exists to stop.
+///
+/// # Authorisation
+///
+/// The target must be a member of this workspace. The caller is not otherwise
+/// gated, and deliberately: `declare_intention` already lets any workspace
+/// agent write a row about any other, and what this produces is a strictly
+/// better-grounded version of that same row. Gating it more tightly than the
+/// weaker tool would push callers toward the weaker tool.
+async fn execute_solicit_agent_plan(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let (workspace_id, db) = intention_ctx(ctx)?;
+    let target_id = resolve_agent_id(input, "agent_id", ctx).await?;
+
+    // Membership. Asking a non-member for its plan and filing the answer in
+    // this workspace's map would put an outsider's work into the team's
+    // conflict checks.
+    let is_member: Option<i32> = sqlx::query_scalar(
+        "SELECT 1 FROM workspace_agents WHERE workspace_id = $1 AND agent_id = $2",
+    )
+    .bind(workspace_id)
+    .bind(target_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| format!("Failed to check membership: {e}"))?;
+    if is_member.is_none() {
+        return Err(format!(
+            "Agent {target_id} is not a member of this workspace; refusing to \
+             record its plan in this workspace's intention map."
+        ));
+    }
+
+    let agent_name: String =
+        sqlx::query_scalar("SELECT agent_name FROM agents WHERE agent_id = $1")
+            .bind(target_id)
+            .fetch_optional(db)
+            .await
+            .map_err(|e| format!("Failed to resolve agent name: {e}"))?
+            .ok_or_else(|| format!("Agent {target_id} has no name row"))?;
+
+    let context_note = input
+        .get("context")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+
+    // What everyone else has already said, so the agent plans against the team
+    // rather than in isolation. This is the propagation half: without it the
+    // answer is a private intention that was merely collected, and §3.1's point
+    // is that the value is in `i` knowing `I_j` before choosing `a_i`.
+    let existing = load_intentions(db, workspace_id).await?;
+    let peers: Vec<String> = existing
+        .iter()
+        .filter(|i| i.agent_id != target_id.to_string())
+        .map(|i| {
+            format!(
+                "- {} ({}): {} [{}]",
+                i.agent_name,
+                i.action_type,
+                i.description,
+                // The agent is told which peer entries are first-hand, so it
+                // does not defer to the coordinator's guess about a third party
+                // as though the third party had said it.
+                if i.source.is_first_hand() {
+                    "stated by that agent"
+                } else {
+                    "inferred by the coordinator, unconfirmed"
+                }
+            )
+        })
+        .collect();
+
+    let query = format!(
+        "Before you act, state your plan so the workspace can coordinate.\n\n\
+         {}{}\
+         Reply with ONLY a JSON object, no prose around it:\n\
+         {{\n\
+         \"action_type\": one of tool_call|research|synthesis|writing|review|idle,\n\
+         \"description\": one sentence naming the specific next action you intend to take,\n\
+         \"targets\": [files or named outputs you will write or consume],\n\
+         \"depends_on\": [named outputs you need from someone else before you can start],\n\
+         \"teammate_assignment\": [{{\"agent\": name, \"should_take\": what you think they should own}}]\n\
+         }}\n\n\
+         This is your own plan, recorded as yours. Say `idle` for action_type if \
+         you have nothing to do next — that is a useful answer and better than \
+         inventing work. If your plan overlaps something a peer above has \
+         already stated, say what you will do differently in `description`.",
+        context_note
+            .map(|c| format!("Coordination context: {c}\n\n"))
+            .unwrap_or_default(),
+        if peers.is_empty() {
+            "No other agent has declared an intention yet.\n\n".to_string()
+        } else {
+            format!("What your teammates have declared:\n{}\n\n", peers.join("\n"))
+        },
+    );
+
+    // Minted before the run so the child's own delegated episode carries it,
+    // the same contract `execute_agent` uses (mig-198).
+    let child_episode_id = Uuid::new_v4();
+
+    let card = ctx
+        .registry
+        .get(&agent_name)
+        .map_err(|e| format!("Agent not found in registry: {e}"))?;
+    let (card, _) = crate::agent_backend::kg_context::enrich_with_kg_context(
+        &ctx.memory_store,
+        &ctx.embedder,
+        target_id,
+        &query,
+        card,
+    )
+    .await;
+
+    let stmt = crate::ast::AgentStmt {
+        name: agent_name.clone(),
+        agent_type: Some(card.agent_type.clone()),
+        query: query.clone(),
+        executor: None,
+        schedule: None,
+        driver_refs: vec![],
+        depends_on: vec![],
+        confidence_threshold: None,
+    };
+    let exec_context = crate::agent_backend::executor::ExecutionContext {
+        program: crate::ast::Program { statements: vec![] },
+        agent_card: card,
+        creature_id: None,
+        cognition_tier: None,
+        credentials: ctx.credentials.clone(),
+        attachments: Vec::new(),
+    };
+
+    // No tools. A plan is a statement, not an action, and the whole premise of
+    // Stage 0 is that it runs *before* anything is done.
+    let output = ctx
+        .registry
+        .execute_agent(&stmt, &exec_context)
+        .await
+        .map_err(|e| format!("Could not reach {agent_name} for its plan: {e}"))?;
+
+    record_delegated_episode(ctx, target_id, child_episode_id, &query, &output).await;
+
+    let raw = output.metadata.reasoning.clone().unwrap_or_default();
+    let plan = extract_json_object(&raw).ok_or_else(|| {
+        format!(
+            "{agent_name} did not return a parseable plan, so nothing was \
+             recorded. Its reply was: {}",
+            raw.chars().take(400).collect::<String>()
+        )
+    })?;
+
+    let description = plan
+        .get("description")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            format!("{agent_name}'s plan had no `description`; nothing was recorded.")
+        })?;
+    let action_type = plan
+        .get("action_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("research");
+    let list = |key: &str| -> Vec<String> {
+        plan.get(key)
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(|s| s.trim().to_string()))
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    let mut out = write_intention(
+        db,
+        ctx,
+        workspace_id,
+        target_id,
+        action_type,
+        plan.get("tool").and_then(|v| v.as_str()),
+        description,
+        &list("targets"),
+        &list("depends_on"),
+        crate::intentions::IntentionSource::Solicited,
+    )
+    .await?;
+
+    out["agent"] = json!(agent_name);
+    out["description"] = json!(description);
+    // δ_i — returned, never written. What this agent thinks a teammate should
+    // own is an input to coordination and is not that teammate's intention.
+    // Writing it would recreate, one hop further out, exactly the confusion
+    // between `I_j` and a belief about `I_j` that this tool exists to end.
+    out["teammate_assignment"] = plan
+        .get("teammate_assignment")
+        .cloned()
+        .unwrap_or(json!([]));
+    out["assignment_note"] = json!(
+        "`teammate_assignment` is this agent's opinion about who should do what. \
+         It is NOT recorded as anyone's intention. Solicit those agents \
+         directly if you want their own answer."
+    );
+
+    serde_json::to_string_pretty(&out).map_err(|e| format!("Serialization error: {e}"))
+}
+
+/// Pull the first balanced JSON object out of a model reply.
+///
+/// Models fence JSON, preface it, or apologise after it, and a plan lost to a
+/// stray "Here you go:" would be recorded as the agent refusing to coordinate.
+/// Brace-counting rather than a regex because plans nest.
+fn extract_json_object(raw: &str) -> Option<serde_json::Value> {
+    if let Ok(v @ serde_json::Value::Object(_)) = serde_json::from_str(raw.trim()) {
+        return Some(v);
+    }
+    let start = raw.find('{')?;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (offset, ch) in raw[start..].char_indices() {
+        if in_string {
+            match ch {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    let end = start + offset + ch.len_utf8();
+                    return serde_json::from_str(&raw[start..end]).ok();
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod plan_parsing_tests {
+    use super::extract_json_object;
+
+    /// Models fence, preface and apologise around JSON. A plan lost to a stray
+    /// "Here you go:" would be recorded as the member refusing to coordinate,
+    /// and the strategist would fall back to inferring — which is the exact
+    /// behaviour `solicit_agent_plan` exists to replace.
+    #[test]
+    fn a_plan_survives_the_usual_model_packaging() {
+        let bare = r#"{"action_type":"research","description":"read the CPI series"}"#;
+        let fenced = format!("Here is my plan:\n```json\n{bare}\n```\nLet me know.");
+        for raw in [bare.to_string(), fenced, format!("  \n{bare}\n\n")] {
+            let v = extract_json_object(&raw).expect("should parse");
+            assert_eq!(v["description"], "read the CPI series", "from {raw:?}");
+        }
+    }
+
+    /// Plans nest — `teammate_assignment` is an array of objects — so the
+    /// extractor counts braces rather than stopping at the first `}`.
+    #[test]
+    fn a_nested_plan_is_not_truncated_at_the_first_brace() {
+        let raw = r#"Plan: {"description":"x","teammate_assignment":[{"agent":"bob","should_take":"the CPI half"}]} done"#;
+        let v = extract_json_object(raw).expect("should parse");
+        assert_eq!(v["teammate_assignment"][0]["agent"], "bob");
+    }
+
+    /// A brace inside a string is not a brace. Descriptions quote code.
+    #[test]
+    fn braces_inside_strings_do_not_confuse_the_depth_count() {
+        let raw =
+            r#"{"description":"emit a {placeholder} and a \"quote\"","action_type":"writing"}"#;
+        let v = extract_json_object(raw).expect("should parse");
+        assert_eq!(v["action_type"], "writing");
+    }
+
+    /// No plan is not an empty plan.
+    ///
+    /// The caller turns `None` into an error naming the agent and quoting its
+    /// reply, and records nothing. Returning an empty object here would file a
+    /// blank intention under that agent's name — worse than the inference it
+    /// replaced, because it would carry `solicited` provenance.
+    #[test]
+    fn prose_with_no_object_yields_nothing() {
+        assert!(extract_json_object("I'm not sure what to do next.").is_none());
+        assert!(extract_json_object("").is_none());
+        assert!(extract_json_object("{ unbalanced").is_none());
+        assert!(extract_json_object("[1,2,3]").is_none());
+    }
 }
 
 async fn execute_check_conflicts(
@@ -3424,10 +3877,17 @@ async fn execute_check_conflicts(
     };
 
     let conflicts = crate::intentions::detect_conflicts(&intentions, &produced, only.as_deref());
+    let grounding = crate::intentions::Grounding::of(&intentions);
     serde_json::to_string_pretty(&json!({
         "signal": crate::intentions::overall_signal(&conflicts),
         "conflicts": conflicts,
         "checked": intentions.len(),
+        // A CLEAR signal means two different things depending on this, and
+        // until mig-218 the caller could not tell them apart: "the team's
+        // stated plans do not collide" versus "nobody has stated a plan and
+        // the map is your own reading of a transcript".
+        "grounding": grounding,
+        "grounding_reading": grounding.reading(),
         "note": if intentions.iter().any(|i| i.embedding.is_none()) {
             Some("Some intentions carry no embedding; duplication detection is \
                   incomplete for those. Resource and dependency signals are unaffected.")
@@ -3450,13 +3910,22 @@ async fn execute_get_intention_map(ctx: &ToolContext) -> Result<String, String> 
                 "targets": i.targets,
                 "depends_on": i.depends_on,
                 "has_embedding": i.embedding.is_some(),
+                // Whose plan this is, and who said so (mig-218). Without these
+                // a map the coordinator wrote entirely by itself is
+                // indistinguishable from one the team filled in.
+                "source": i.source.as_str(),
+                "first_hand": i.source.is_first_hand(),
+                "declared_by": i.declared_by,
             })
         })
         .collect();
+    let grounding = crate::intentions::Grounding::of(&intentions);
     serde_json::to_string_pretty(&json!({
         "workspace_id": workspace_id,
         "active": entries.len(),
         "intentions": entries,
+        "grounding": grounding,
+        "grounding_reading": grounding.reading(),
     }))
     .map_err(|e| format!("Serialization error: {e}"))
 }
@@ -3551,10 +4020,32 @@ async fn execute_suggest_differentiation(
     };
 
     serde_json::to_string_pretty(&json!({
-        "agent_a": {"name": a.agent_name, "intent": a.description, "targets": a.targets},
-        "agent_b": {"name": b.agent_name, "intent": b.description, "targets": b.targets},
+        "agent_a": {
+            "name": a.agent_name, "intent": a.description, "targets": a.targets,
+            "source": a.source.as_str(), "first_hand": a.source.is_first_hand(),
+        },
+        "agent_b": {
+            "name": b.agent_name, "intent": b.description, "targets": b.targets,
+            "source": b.source.as_str(), "first_hand": b.source.is_first_hand(),
+        },
         "shared_targets": shared_targets,
         "description_similarity": similarity,
+        // The caveat has to travel with the suggestion. Telling two agents to
+        // divide work on the strength of two sentences the coordinator wrote
+        // about them is the failure mode this whole column exists to name.
+        "grounding_caveat": match (a.source.is_first_hand(), b.source.is_first_hand()) {
+            (true, true) => None,
+            (false, false) => Some(
+                "NEITHER intention is first-hand. Both descriptions are your own \
+                 reading, so their similarity measures your paraphrasing and not \
+                 these agents' plans. Solicit both plans before asking anyone to \
+                 differentiate."
+            ),
+            _ => Some(
+                "One of these intentions is your inference rather than the \
+                 agent's own statement. Say which when you raise the overlap."
+            ),
+        },
         "guidance": "These two intentions overlap on the axes above. Decide the                      split yourselves — you have the workspace goal and this tool                      does not. State the division explicitly in the conversation                      so the other agent can rely on it.",
     }))
     .map_err(|e| format!("Serialization error: {e}"))
