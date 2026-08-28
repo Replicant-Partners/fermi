@@ -58,6 +58,91 @@ use sqlx::Row;
 
 use crate::AppState;
 
+/// `GET /api/episodes/recent`
+///
+/// Artifacts you can open a trace on. Exists so the loop surface can lead with
+/// something concrete rather than with a census — a loop is a path an artifact
+/// takes, and until there is an artifact to point at, the path is a diagram.
+///
+/// It grades nothing. Whether a trace has content is decided by whether the
+/// agent declares a field contract, which is a membership test against
+/// `grounding_trust::FIELD_CONTRACTS`; the grading itself belongs to the trace
+/// endpoint and is not repeated here.
+pub async fn recent_episodes_handler(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db = &state.db;
+
+    let contracted: std::collections::HashSet<&str> = fermi::grounding_trust::FIELD_CONTRACTS
+        .iter()
+        .map(|c| c.agent_id)
+        .collect();
+    let mut names: Vec<&str> = contracted.iter().copied().collect();
+    names.sort_unstable();
+    let owned: Vec<String> = names.iter().map(|s| s.to_string()).collect();
+
+    // Two lists, because they answer different questions, and merging them
+    // would answer the second one dishonestly. `recent` is unsorted by
+    // contract: it is what actually ran, and most of it is ungraded, which is
+    // the true state of the platform. Sorting contracted rows to the top of a
+    // single list made every visible artifact graded and quietly implied that
+    // graded is the norm. `graded` is the separate short list, so there is
+    // always an artifact with a populated belt to open even when none is
+    // recent.
+    let sql = "SELECT e.episode_id, a.agent_name, e.created_at, e.query,
+                      (a.agent_name = ANY($1)) AS contracted
+                 FROM episodes e
+                 JOIN agents a ON a.agent_id = e.agent_id
+                WHERE e.response_text IS NOT NULL
+                  AND a.agent_name NOT LIKE 'test\\_agent\\_%'";
+
+    let recent_rows = sqlx::query(&format!("{sql} ORDER BY e.created_at DESC LIMIT 18"))
+        .bind(&owned)
+        .fetch_all(db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("recent: {e}")))?;
+
+    let graded_rows = sqlx::query(&format!(
+        "{sql} AND a.agent_name = ANY($1) ORDER BY e.created_at DESC LIMIT 6"
+    ))
+    .bind(&owned)
+    .fetch_all(db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("graded: {e}")))?;
+
+    let shape = |r: &sqlx::postgres::PgRow| {
+        json!({
+            "episode_id": r.try_get::<uuid::Uuid, _>("episode_id").ok(),
+            "agent": r.get::<String, _>("agent_name"),
+            "at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at")
+                    .ok().map(|t| t.to_rfc3339()),
+            "query": r.try_get::<Option<String>, _>("query").ok().flatten(),
+            "contracted": r.try_get::<Option<bool>, _>("contracted").ok().flatten()
+                            .unwrap_or(false),
+        })
+    };
+
+    let episodes: Vec<Value> = recent_rows.iter().map(shape).collect();
+    let graded: Vec<Value> = graded_rows.iter().map(shape).collect();
+    let graded_in_recent = episodes
+        .iter()
+        .filter(|e| e["contracted"].as_bool().unwrap_or(false))
+        .count();
+
+    Ok(Json(json!({
+        "episodes": episodes,
+        "graded": graded,
+        "graded_in_recent": graded_in_recent,
+        "contracted_agents": names,
+        "note": "`contracted` means the agent declares a field contract, so its \
+                 trace has graded checkpoints. The rest have a belt with nothing \
+                 to grade — which is the default, is the majority, and is not an \
+                 error. `episodes` is what actually ran, in order, ungraded rows \
+                 included; `graded` is a separate short list so there is always \
+                 one with a populated belt to open.",
+    })))
+}
+
 /// `GET /api/specimen/:agent_name`
 pub async fn specimen_handler(
     State(state): State<AppState>,
