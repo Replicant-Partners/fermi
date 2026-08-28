@@ -131,7 +131,8 @@ pub async fn specimen_handler(
 
     // ── Recent episodes ──────────────────────────────────────────────────
     let episodes = sqlx::query(
-        "SELECT query, execution_status, error_details, cost_usd::float8 AS cost_usd, created_at
+        "SELECT episode_id, query, execution_status, error_details,
+                cost_usd::float8 AS cost_usd, created_at
            FROM episodes WHERE agent_id = $1
           ORDER BY created_at DESC LIMIT 15",
     )
@@ -141,13 +142,12 @@ pub async fn specimen_handler(
     .unwrap_or_default();
 
     // ── Health: what the platform can and cannot say about THIS agent ────
-    let observation = fermi::native_evaluators::Observation {
-        writes: fermi::write_accounting::accounts(),
-        gates: fermi::gate_trust::accounts(),
-        loops: fermi::loop_model::evaluate(db).await,
-        liveness: fermi::liveness_trust::latest(),
-        gate_ledger: Some(fermi::gate_trust::ledger_status()),
-    };
+    // `collect`, not a hand-built literal. This site reassembled the snapshot
+    // field by field and was byte-for-byte identical to `Observation::collect`;
+    // adding `declarations` is what exposed it, because the copy silently
+    // omitted the new field and every declaration-resolved panel here would have
+    // reported `no_census` while the endpoint looked fine.
+    let observation = fermi::native_evaluators::Observation::collect(db).await;
 
     let mut health = Vec::new();
     for p in fermi::panel_absence::PANELS {
@@ -226,6 +226,9 @@ pub async fn specimen_handler(
             "eval_runs": rec.try_get::<Option<i64>, _>("eval_runs").ok().flatten().unwrap_or(0),
             "last_eval": rec.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("last_eval").ok().flatten().map(|t| t.to_rfc3339()),
             "episodes": episodes.iter().map(|e| json!({
+                // The handle the artifact trace needs. Without it the Record tab
+                // lists executions nobody can open.
+                "episode_id": e.try_get::<uuid::Uuid, _>("episode_id").ok(),
                 "query": e.try_get::<Option<String>, _>("query").ok().flatten(),
                 "status": e.try_get::<Option<String>, _>("execution_status").ok().flatten(),
                 "error": e.try_get::<Option<String>, _>("error_details").ok().flatten(),

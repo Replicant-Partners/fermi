@@ -117,6 +117,32 @@ pub enum Resolver {
     /// The durable half of the gate ledger: what is pending, what was dropped,
     /// and which gates are memory-only.
     GateLedger,
+    /// The declaration ladder: **the panel is empty because the subjects have
+    /// not declared the structure it renders.**
+    ///
+    /// # Why this is not a `Resolver::Undeclared`
+    ///
+    /// The first draft of this was a variant meaning *"the subject declared
+    /// nothing"*, to be applied across the unresolved panels. That is a category
+    /// error and it is worth recording, because the abstraction it came from is
+    /// correct one level down.
+    ///
+    /// A [`Resolver`] answers *"which contract can explain THIS PANEL's
+    /// emptiness, platform-wide"*. `declaration_ladder::Silence::Undeclared`
+    /// answers *"why is there nothing for THIS SUBJECT"*. Those are different
+    /// questions at different scopes: four of the five panels that were
+    /// unresolved genuinely are the platform's work — nothing watches dyad
+    /// formation, `eval_runs` has no liveness contract — and relabelling them as
+    /// the agents' fault would be the exact mistake in reverse, moving our
+    /// backlog onto authors who cannot act on it.
+    ///
+    /// So this variant is narrower and says something a panel can actually own:
+    /// **the platform has a contract, and it measures a declaration.** The
+    /// per-subject answer lives with the subject, in
+    /// `declaration_ladder::attribute`, where the agent is known.
+    ///
+    /// `rung` is a [`crate::declaration_ladder::LADDER`] token.
+    Declaration { rung: &'static str },
     /// No contract answers this panel yet.
     ///
     /// `why` must say what would make it answerable. An unresolved panel is a
@@ -368,13 +394,19 @@ pub const PANELS: &[Panel] = &[
         scope: Scope::Platform,
         surface: "unbuilt — Population lens, label-set health",
         shows: "which declared ports can actually form a seam",
-        resolved_by: Resolver::Unresolved {
-            why: "Measured once by `scripts/port_census.py` (513 labels, 14 \
-                  on both sides, 499 orphans) and never since. A census in a \
-                  comment is not a contract. Resolve by promoting the census \
-                  to a rung so the ratio moves on the panel when the \
-                  vocabulary converges.",
-        },
+        // Was `Unresolved`, and its own `why` named the exit condition:
+        // *"Measured once by `scripts/port_census.py` (513 labels, 14 on both
+        // sides, 499 orphans) and never since. A census in a comment is not a
+        // contract. Resolve by promoting the census to a rung."* That rung now
+        // exists as `declaration_ladder`'s `ports`, so leaving this unresolved
+        // would be leaving a resolved thing marked unresolved — which is what
+        // the shrink-only rule on that list is for.
+        //
+        // The stale figures are worth noting as a second finding: re-measured
+        // today it is 289 distinct `produces` labels, 236 `accepts`, and 13 on
+        // both sides. The comment's 513/14/499 had drifted, which is precisely
+        // what a census in a comment does.
+        resolved_by: Resolver::Declaration { rung: "ports" },
         if_empty: "No declared port label appears on both an accepts and a \
                    produces, so no two agents can be shown to compose.",
     },
@@ -651,6 +683,11 @@ pub fn rung_of(r: &Resolver) -> Option<u8> {
         Resolver::LoopStage { .. }
         | Resolver::Gate(_)
         | Resolver::GateLedger
+        // A declaration is a property of the subject, not a rung of the
+        // platform's own ladder. Claiming a position would put two different
+        // orderings in one column, which is the reason loops and gates decline
+        // one too.
+        | Resolver::Declaration { .. }
         | Resolver::Unresolved { .. } => None,
     }
 }
@@ -670,6 +707,7 @@ pub fn resolve(p: &Panel, o: &Observation) -> Absence {
         Resolver::LoopStage { loop_id, stage } => resolve_loop(p, loop_id, stage, &o.loops),
         Resolver::Gate(g) => resolve_gate(p, g, o),
         Resolver::GateLedger => resolve_gate_ledger(p, o),
+        Resolver::Declaration { rung } => resolve_declaration(p, rung, o),
         Resolver::Unresolved { why } => Absence {
             panel: p.id,
             rung: None,
@@ -679,6 +717,106 @@ pub fn resolve(p: &Panel, o: &Observation) -> Absence {
             detail: format!("{} {}", p.if_empty, why),
             remediation: None,
         },
+    }
+}
+
+/// Answer a panel from what the fleet has declared.
+///
+/// Three states, and the middle one is the whole reason this resolver exists.
+///
+/// * **no census** — `unknown`. Not zero coverage: an absent measurement
+///   reported as zero coverage is the most alarming available reading and would
+///   be indistinguishable from a fleet that has declared nothing.
+/// * **nobody declares the rung** — `unknown`, and it is the *authors'* work.
+///   The panel cannot fill because its input does not exist yet.
+/// * **the rung is declared and the panel is still empty** — `idle`, and this is
+///   a real finding rather than a shrug: the declarations exist and what they
+///   describe does not converge. For `ecology.seams` that is exactly the
+///   interesting answer — 93 of 96 real agents declare ports and only 13 labels
+///   appear on both an `accepts` and a `produces`, so the vocabulary is present
+///   and fragmented. Before this, that read as "no contract watches it".
+fn resolve_declaration(p: &Panel, rung: &'static str, o: &Observation) -> Absence {
+    let ladder_rung = crate::declaration_ladder::LADDER
+        .iter()
+        .find(|d| d.rung == rung);
+    let base = Absence {
+        panel: p.id,
+        rung: None,
+        answered_by: "declaration_ladder",
+        reading: Reading::Unknown,
+        token: "no_census",
+        detail: format!(
+            "{} The declaration census could not be gathered, so whether any \
+             agent declares `{rung}` is unknown — which is not the same as no \
+             agent declaring it.",
+            p.if_empty
+        ),
+        remediation: None,
+    };
+    let Some(census) = o.declarations.as_ref() else {
+        return base;
+    };
+    let Some(spec) = ladder_rung else {
+        // A panel naming a rung the ladder does not declare. Reported rather
+        // than treated as zero coverage, for the same reason as the missing
+        // census: silence about a measurement is not a measurement.
+        return Absence {
+            token: "unknown_rung",
+            detail: format!(
+                "{} This panel is resolved by a declaration rung `{rung}` that \
+                 `declaration_ladder::LADDER` does not declare, so nothing is \
+                 actually measuring it.",
+                p.if_empty
+            ),
+            ..base
+        };
+    };
+    if census.real == 0 {
+        return Absence {
+            token: "no_subjects",
+            detail: format!(
+                "{} No agent outside the test fixtures has produced an episode, \
+                 so there is no population whose declarations could fill this.",
+                p.if_empty
+            ),
+            ..base
+        };
+    }
+    let declared = census
+        .by_rung
+        .iter()
+        .find(|(r, _)| *r == rung)
+        .map(|(_, n)| *n)
+        .unwrap_or(0);
+    if declared == 0 {
+        return Absence {
+            token: "undeclared",
+            detail: format!(
+                "{} None of the {} real agents declares `{rung}`. {} This is the \
+                 agents' authors' work rather than the platform's: the contract \
+                 exists and its input does not.",
+                p.if_empty, census.real, spec.without_it
+            ),
+            remediation: Some(
+                "GET /api/declarations lists, per agent, the cheapest missing \
+                 declaration and who owns it.",
+            ),
+            ..base
+        };
+    }
+    Absence {
+        panel: p.id,
+        rung: None,
+        answered_by: "declaration_ladder",
+        reading: Reading::Idle,
+        token: "declared",
+        detail: format!(
+            "{} {} of {} real agents declare `{rung}`, so the input exists. An \
+             empty panel here is a statement about what those declarations add \
+             up to, not about whether anyone made them.",
+            p.if_empty, declared, census.real
+        ),
+        remediation: None,
     }
 }
 
@@ -1207,7 +1345,8 @@ mod tests {
             vec![
                 "gates.register",
                 "ecology.cohabitation",
-                "ecology.seams",
+                // "ecology.seams" resolved: `declaration_ladder`'s `ports` rung
+                // is the contract its own `why` asked for.
                 "agent.eval_runs",
                 "agent.dyads",
             ],
@@ -1238,6 +1377,104 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A census that could not be gathered is not zero coverage.
+    ///
+    /// The two states are opposite in meaning and identical in shape: an empty
+    /// [`crate::declaration_ladder::Census`] reports every rung at zero, which
+    /// says *no agent in the fleet has declared anything* — the most alarming
+    /// reading available, and one a failed query has no standing to make. This is
+    /// the same rule as `liveness_trust`'s `unknown`, applied to a measurement
+    /// rather than to a count, and it is why `Observation::declarations` is an
+    /// `Option` rather than a `Census` with a `Default`.
+    #[test]
+    fn a_missing_census_is_not_reported_as_zero_coverage() {
+        let p = panel("ecology.seams").expect("the seams panel is declared");
+        let a = resolve(p, &empty_observation());
+        assert_eq!(a.token, "no_census");
+        assert_eq!(a.reading, Reading::Unknown);
+        assert_ne!(
+            a.token, "undeclared",
+            "a census that was never gathered was reported as a fleet that has \
+             declared nothing — which would send authors to declare a rung they \
+             may already have"
+        );
+    }
+
+    /// Declared-and-empty is `idle`; nobody-declared-it is `unknown`.
+    ///
+    /// The distinction the declaration resolver exists for, and the reason
+    /// `ecology.seams` stopped being `Unresolved`. Its old reading was *"no
+    /// contract watches which ports can form a seam"*. The truth is more useful
+    /// and more specific: 93 of 96 real agents declare ports and only 13 labels
+    /// appear on both an `accepts` and a `produces`, so the vocabulary exists and
+    /// is fragmented. That is a finding about convergence rather than a gap in
+    /// the platform, and only `idle` says so — `unknown` would keep it filed as
+    /// something nobody had got round to.
+    #[test]
+    fn a_declared_rung_makes_an_empty_panel_idle_rather_than_unknowable() {
+        let p = panel("ecology.seams").expect("the seams panel is declared");
+
+        let declared = Observation {
+            declarations: Some(crate::declaration_ladder::census(&[
+                ("weather_oracle".to_string(), vec!["ports"]),
+                ("football_analyst".to_string(), vec!["ports"]),
+            ])),
+            ..Observation::default()
+        };
+        let a = resolve(p, &declared);
+        assert_eq!(a.reading, Reading::Idle);
+        assert_eq!(a.token, "declared");
+        assert!(
+            a.detail.contains("2 of 2"),
+            "the reading must carry the coverage it rests on, or a reader cannot \
+             tell 2 of 2 from 2 of 400: {}",
+            a.detail
+        );
+
+        let undeclared = Observation {
+            declarations: Some(crate::declaration_ladder::census(&[(
+                "weather_oracle".to_string(),
+                vec![],
+            )])),
+            ..Observation::default()
+        };
+        let a = resolve(p, &undeclared);
+        assert_eq!(
+            a.reading,
+            Reading::Unknown,
+            "a rung nobody declares must not read `idle`: the panel cannot fill \
+             because its input does not exist, which is not the same as the panel \
+             being correctly empty"
+        );
+        assert_eq!(a.token, "undeclared");
+        assert!(
+            a.remediation.is_some(),
+            "an undeclared rung is somebody's work item and must say whose"
+        );
+    }
+
+    /// A fleet of nothing but fixtures is not a fleet that declared nothing.
+    ///
+    /// 110 of the 206 agents that have produced an episode are `test_agent_*`
+    /// rows. If they were the only population, `by_rung` would read zero
+    /// everywhere and `undeclared` would be technically true and useless — it
+    /// would tell an author to declare a rung on rows that are about to be
+    /// deleted. `no_subjects` is the honest reading.
+    #[test]
+    fn a_fleet_of_only_fixtures_reports_no_subjects_rather_than_undeclared() {
+        let p = panel("ecology.seams").expect("the seams panel is declared");
+        let o = Observation {
+            declarations: Some(crate::declaration_ladder::census(&[
+                ("test_agent_1".to_string(), vec![]),
+                ("test_agent_2".to_string(), vec![]),
+            ])),
+            ..Observation::default()
+        };
+        let a = resolve(p, &o);
+        assert_eq!(a.token, "no_subjects");
+        assert_eq!(a.reading, Reading::Unknown);
     }
 
     /// With nothing gathered, nothing may be reported as a fault either.

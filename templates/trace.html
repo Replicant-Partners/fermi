@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="en" class="theme-hasui">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Trace — Agent Bestiary</title>
+  <link rel="stylesheet" href="/static/css/variables.css"/>
+  <link rel="stylesheet" href="/static/css/common.css"/>
+  <link rel="stylesheet" href="/static/css/components.css"/>
+  <style>
+  body{font-family:"Berkeley Mono","JetBrains Mono",monospace;line-height:1.5;background:var(--bg0-hard);font-size:13px;margin:0;}
+  a{color:var(--fg3);text-decoration:none;} a:hover{color:var(--yellow);}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 20px 60px;}
+
+  .head{padding:18px 0 12px;border-bottom:1px solid var(--bg2);margin-bottom:18px;}
+  .head h1{font-size:1rem;color:var(--yellow);margin:0 0 3px;}
+  .head .sub{font-size:0.72rem;color:var(--fg4);}
+  .head .meta{font-size:0.7rem;color:var(--fg4);margin-top:6px;display:flex;gap:12px;flex-wrap:wrap;}
+
+  .badge{display:inline-block;font-size:0.62rem;text-transform:uppercase;letter-spacing:0.06em;
+         padding:1px 6px;border:1px solid;}
+  .r-idle{color:var(--fg3);border-color:var(--bg3);}
+  .r-fault{color:var(--red,#fb4934);border-color:var(--red,#fb4934);}
+  .r-unknown{color:var(--purple,#d3869b);border-color:var(--purple,#d3869b);border-style:dashed;}
+
+  .block{margin-bottom:24px;}
+  .block h2{font-size:0.72rem;color:var(--fg2);margin:0 0 8px;text-transform:uppercase;
+            letter-spacing:0.07em;padding-bottom:4px;border-bottom:1px solid var(--bg2);}
+  .note{font-size:0.71rem;color:var(--fg4);font-style:italic;line-height:1.5;margin:-2px 0 12px;}
+
+  /* ── The belt ─────────────────────────────────────────────────────────
+     Always drawn, in every state. A belt that omits the checkpoints it
+     cannot report on looks shorter and safer than it is. ── */
+  .belt{position:relative;padding:26px 0 8px;overflow-x:auto;}
+  .belt-line{position:absolute;top:44px;left:14px;right:14px;height:2px;background:var(--bg2);}
+  .belt-token{position:absolute;top:39px;width:12px;height:12px;border-radius:50%;
+              background:var(--fg2);border:2px solid var(--bg0-hard);z-index:3;}
+  .cps{display:flex;justify-content:space-between;position:relative;z-index:2;min-width:520px;gap:6px;}
+  .cp{flex:1;text-align:center;}
+  .cp-ring{width:30px;height:30px;margin:0 auto;border-radius:50%;
+           display:flex;align-items:center;justify-content:center;
+           background:var(--bg0-hard);font-size:0.8rem;}
+  /* control can refuse: solid ring. metric only records: dashed, open. */
+  .cp.control  .cp-ring{border:2px solid var(--bg3);}
+  .cp.metric   .cp-ring{border:2px dashed var(--bg3);}
+  .cp.fired-clean .cp-ring{border-color:var(--green);color:var(--green);}
+  .cp.fired-bad   .cp-ring{border-color:var(--red,#fb4934);color:var(--red,#fb4934);}
+  .cp.unreported  .cp-ring{opacity:0.4;}
+  .cp-name{font-size:0.66rem;color:var(--fg3);margin-top:5px;}
+  .cp.unreported .cp-name{color:var(--fg4);}
+  .cp-enf{font-size:0.57rem;text-transform:uppercase;letter-spacing:0.05em;margin-top:1px;}
+  .cp.control .cp-enf{color:var(--fg4);}
+  .cp.metric  .cp-enf{color:var(--yellow);}
+  .cp-out{font-size:0.58rem;color:var(--fg4);margin-top:1px;}
+
+  .belt-why{margin-top:12px;}
+  .why{font-size:0.71rem;color:var(--fg4);line-height:1.5;padding:5px 0 5px 9px;
+       border-left:1px solid var(--bg3);margin-bottom:5px;}
+  .why b{color:var(--fg3);}
+  .why.metric{border-left-color:var(--yellow);}
+  .passed-through{border-left:3px solid var(--red,#fb4934);background:rgba(251,73,52,0.07);
+                  padding:9px 12px;font-size:0.75rem;color:var(--fg3);line-height:1.5;margin-top:10px;}
+  .passed-through b{color:var(--red,#fb4934);}
+
+  /* ── Fields ── */
+  .fgroup{margin-bottom:12px;}
+  .fgroup-h{font-size:0.68rem;color:var(--fg4);margin-bottom:4px;}
+  .field{display:flex;gap:9px;align-items:flex-start;padding:5px 0;border-top:1px solid var(--bg2);}
+  .pips{width:26px;flex-shrink:0;letter-spacing:1px;font-size:0.7rem;}
+  .s2{color:var(--green);} .s1{color:var(--yellow);} .s0{color:var(--red,#fb4934);}
+  .fbody{flex:1;min-width:0;}
+  .fname{font-size:0.74rem;color:var(--fg2);}
+  .fval{font-size:0.72rem;color:var(--fg3);margin-top:2px;word-break:break-word;
+        max-height:3.2em;overflow:hidden;}
+  .fval.null{color:var(--fg4);font-style:italic;}
+  .fgrade{font-size:0.64rem;color:var(--fg4);margin-top:2px;}
+  .settle{font-size:0.65rem;margin-top:3px;}
+  .settle.tool{color:var(--aqua);}
+  .settle.human{color:var(--purple,#d3869b);}
+
+  .floor{border:1px solid var(--bg2);background:var(--bg1);padding:9px 12px;font-size:0.75rem;
+         color:var(--fg3);line-height:1.5;}
+  .floor b{color:var(--yellow);}
+
+  /* ── Owner affordances: three registers, not three labels ── */
+  .task{border-left:3px solid var(--aqua);background:rgba(69,133,136,0.08);padding:10px 13px;}
+  .task h3{font-size:0.78rem;color:var(--aqua);margin:0 0 4px;}
+  .backlog{border-left:3px solid var(--bg3);background:var(--bg1);padding:10px 13px;}
+  .backlog h3{font-size:0.78rem;color:var(--fg4);margin:0 0 4px;}
+  .transient{padding:8px 0;font-size:0.72rem;color:var(--fg4);font-style:italic;}
+  .owner-body{font-size:0.74rem;color:var(--fg3);line-height:1.55;}
+  .owner-next{font-size:0.73rem;margin-top:7px;}
+  .chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;}
+  .chip{font-size:0.64rem;padding:1px 6px;border:1px solid var(--bg3);color:var(--fg4);}
+  .chip.have{border-color:var(--green);color:var(--green);}
+  .chip.miss{border-style:dashed;}
+
+  .caveat{border:1px solid var(--bg2);background:var(--bg1);padding:8px 11px;margin-bottom:7px;
+          font-size:0.72rem;color:var(--fg3);line-height:1.5;}
+  .caveat .ck{color:var(--green);}
+  .caveat .dns{color:var(--fg3);margin-top:4px;}
+  .caveat .dns b{color:var(--yellow);}
+  .empty{padding:16px 8px;font-size:0.76rem;color:var(--fg4);}
+  .absent{color:var(--fg4);font-style:italic;}
+  </style>
+</head>
+<body>
+  <div id="nav-root"></div>
+  <div class="wrap"><div id="content"><div class="empty">Loading…</div></div></div>
+
+  <script src="/static/js/widgets/nav.js"></script>
+  <script src="/static/js/theme.js"></script>
+  <script>
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
+    ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const EID = decodeURIComponent(location.pathname.split("/").filter(Boolean).pop() || "");
+  const READINGS = ["idle","fault","unknown"];
+  const reading = r => READINGS.includes(r) ? r : "unknown";
+
+  // strength, not grade. `tool_no_match` sorts above `unavailable_no_tool_source`
+  // and both are strength 0 — different words for the same amount of reliance.
+  const pips = s => {
+    const n = Math.max(0, Math.min(2, s ?? 0));
+    return `<span class="pips s${n}">${"▰".repeat(n)}${"▱".repeat(2-n)}</span>`;
+  };
+  const STRENGTH_WORD = {
+    2: "reproducible — a tool, a transform or a citation can produce it again",
+    1: "a judgement. Legitimate, and not a retrieval",
+    0: "nothing to rely on yet",
+  };
+
+  function belt(d) {
+    const cps = (d.belt || []).map(b => {
+      const o = b.outcome || {};
+      const graded = o.outcome === "graded";
+      const viol = graded && (o.violations || 0) > 0;
+      const cls = [
+        b.enforcement === "control" ? "control" : "metric",
+        graded ? (viol ? "fired-bad" : "fired-clean") : "unreported",
+      ].join(" ");
+      const glyph = graded ? (viol ? "✕" : "✓") : "·";
+      const out = graded
+        ? (viol ? `${o.violations} of ${o.fields}` : `${o.fields || 0} graded`)
+        : (o.outcome || "").replace(/_/g, " ");
+      return `<div class="cp ${cls}">
+        <div class="cp-ring">${glyph}</div>
+        <div class="cp-name">${esc(b.rung)}</div>
+        <div class="cp-enf">${esc(b.enforcement)}</div>
+        <div class="cp-out">${esc(out)}</div>
+      </div>`;
+    }).join("");
+
+    // Why each checkpoint reads as it does. `not_recorded` is most of the belt
+    // today and the reason is one missing column, not a silent gate.
+    const whys = (d.belt || []).map(b => {
+      const o = b.outcome || {};
+      const bits = [];
+      if (o.because) bits.push(`<b>${esc(b.rung)}</b> — ${esc(o.because)}`);
+      if (b.why_not_control) bits.push(
+        `<b>${esc(b.rung)} records but cannot refuse</b> — ${esc(b.why_not_control)}`);
+      return bits.map(t =>
+        `<div class="why ${b.enforcement === "metric" ? "metric" : ""}">${t}</div>`).join("");
+    }).join("");
+
+    // The image that matters: a checkpoint that found a violation and could not
+    // stop it, because on this route it only records.
+    const leaked = (d.belt || []).find(b =>
+      b.enforcement === "metric" && (b.outcome || {}).violations > 0);
+    const leak = leaked ? `<div class="passed-through">
+      <b>The artifact passed through.</b> The <b>${esc(leaked.rung)}</b> checkpoint
+      found ${leaked.outcome.violations} field(s) it could not source and recorded them —
+      it does not refuse on this route, so nothing was stopped and the response was
+      returned and persisted as it stands. That is the difference between a control
+      and a metric, and it is the reason this belt draws them differently.</div>` : "";
+
+    return `<div class="block">
+      <h2>The belt</h2>
+      <div class="note">
+        Every checkpoint the artifact was declared to pass, in order, whether or not
+        its decision about <i>this</i> artifact was recorded. A solid ring can refuse;
+        a dashed ring only records.
+      </div>
+      <div class="belt">
+        <div class="belt-line"></div>
+        <div class="belt-token" style="left:calc(100% - 20px)"></div>
+        <div class="cps">${cps}</div>
+      </div>
+      ${leak}
+      <div class="belt-why">${whys}</div>
+    </div>`;
+  }
+
+  function fields(d) {
+    const fs = d.fields || [];
+    if (!fs.length) return "";
+    const groups = [2, 1, 0].map(s => {
+      const g = fs.filter(f => (f.strength ?? 0) === s);
+      if (!g.length) return "";
+      return `<div class="fgroup">
+        <div class="fgroup-h">${pips(s)} &nbsp;${g.length} field(s) — ${esc(STRENGTH_WORD[s])}</div>
+        ${g.map(f => {
+          const isNull = f.value === null || f.value === undefined;
+          const settle = (f.strength ?? 0) < 2
+            ? (f.settleable_by
+                ? `<div class="settle tool">A tool could settle this: <b>${esc(f.settleable_by)}</b></div>`
+                : `<div class="settle human">No data source could settle this — it needs a person,
+                   and the gap is itself a request for the integration that would close it.</div>`)
+            : "";
+          return `<div class="field">
+            ${pips(f.strength)}
+            <div class="fbody">
+              <div class="fname">${esc(f.name)}</div>
+              <div class="fval ${isNull ? "null" : ""}">${isNull ? "null" : esc(String(f.value))}</div>
+              <div class="fgrade">${esc(f.grade)}</div>
+              ${settle}
+            </div>
+          </div>`;
+        }).join("")}
+      </div>`;
+    }).join("");
+
+    return `<div class="block">
+      <h2>What it claimed</h2>
+      <div class="note">
+        The value is what the agent actually said, never stripped — it is the only
+        evidence that could answer which model fabricates what. Read the pips
+        (reliance), not the grade name: two different grades can mean the same
+        amount of nothing.
+      </div>
+      ${groups}
+      <div class="floor">
+        <b>Weakest link:</b> ${esc(d.floor || "—")} ${pips(d.floor_strength)}.
+        A conclusion is only as good as the weakest thing it rests on, so this
+        document as a whole relies on no more than that.
+      </div>
+    </div>`;
+  }
+
+  // Three values, three registers. Getting this wrong does not produce a wrong
+  // number — it produces a wrong backlog.
+  function ownerBlock(d) {
+    const lg = d.legibility || {}, si = d.silence || {};
+    const chips = (arr, cls) => (arr || []).map(x =>
+      `<span class="chip ${cls}">${esc(x)}</span>`).join("");
+
+    const declared = `<div class="chips">${chips(lg.present, "have")}${chips(lg.missing, "miss")}</div>`;
+
+    if (d.owner === "agent_author") {
+      return `<div class="block"><h2>Why the belt is quiet</h2>
+        <div class="task">
+          <h3>This is the agent author's to declare</h3>
+          <div class="owner-body">
+            ${esc(d.detail || "")}
+            Nothing here failed. No rung could produce a verdict because the agent
+            has not declared what its output should look like, so there was nothing
+            to check against.
+          </div>
+          ${declared}
+          ${si.rung ? `<div class="owner-next">Cheapest next step:
+            <b>declare ${esc(si.rung)}</b> — the ladder is ordered by what it costs
+            an author, so this is the least expensive useful move.
+            <a href="/declarations">See the full worklist →</a></div>` : ""}
+        </div></div>`;
+    }
+    if (d.owner === "platform") {
+      return `<div class="block"><h2>Whose job this is</h2>
+        <div class="backlog"><h3>Platform backlog — not yours</h3>
+          <div class="owner-body">${esc(d.detail || "")}</div>
+          ${declared}
+        </div></div>`;
+    }
+    return `<div class="block"><h2>Whose job this is</h2>
+      <div class="transient">Nobody's. ${esc(d.detail || "Nothing to do here.")}</div></div>`;
+  }
+
+  function routed(d) {
+    const r = d.routed || [];
+    if (!r.length) return "";
+    return `<div class="block"><h2>Routed for verification</h2>
+      <div class="note">Unverified is a work item, not a discard.</div>
+      ${r.map(x => `<div class="caveat">
+        <div><b>${esc(x.verdict)}</b> · ${esc(x.actor_kind)} · ${esc(x.actor || "")}</div>
+        ${x.evidence ? `<div class="dns">${esc(JSON.stringify(x.evidence).slice(0,240))}</div>` : ""}
+      </div>`).join("")}</div>`;
+  }
+
+  function caveats(d) {
+    const c = d.caveats || [];
+    if (!c.length) return "";
+    return `<div class="block"><h2>What this does and does not establish</h2>
+      ${c.map(x => `<div class="caveat">
+        <div class="ck">✓ ${esc(x.checked)}</div>
+        <div class="dns"><b>Does not show:</b> ${esc(x.does_not_show)}</div>
+      </div>`).join("")}</div>`;
+  }
+
+  function render(d) {
+    const rd = reading(d.reading);
+    const m = d.model || {};
+    const head = `<div class="head">
+      <h1>Artifact trace</h1>
+      <div class="sub">One episode, and the checkpoints it passed</div>
+      <div class="meta">
+        <span><a href="/specimen/${encodeURIComponent(d.agent.name)}">${esc(d.agent.name)}</a></span>
+        <span>${esc(m.model_used || "model not recorded")}</span>
+        <span>v${m.persona_version_at_write ?? 1}</span>
+        <span>${esc((d.at || "").slice(0,19).replace("T"," "))}</span>
+        <span class="badge r-${rd}">${esc((d.token || "").replace(/_/g," "))}</span>
+        ${d.corpus_eligible ? "" : `<span class="absent">not corpus-eligible</span>`}
+      </div>
+      ${d.input && d.input.query ? `<div class="meta"><span class="absent">
+        “${esc(String(d.input.query).slice(0,150))}”</span></div>` : ""}
+    </div>`;
+
+    const chain = d.parent_episode_id
+      ? `<div class="block"><h2>Correction chain</h2>
+         <div class="owner-body">Corrects
+         <a href="/trace/${esc(d.parent_episode_id)}">the previous attempt →</a></div></div>`
+      : "";
+
+    document.getElementById("content").innerHTML =
+      head + belt(d) + fields(d) + routed(d) + ownerBlock(d) + chain + caveats(d);
+  }
+
+  async function boot() {
+    if (window.Nav) Nav.init({ current: "bestiary" });
+    try {
+      const res = await fetch(`/api/episodes/${encodeURIComponent(EID)}/trace`);
+      if (res.status === 401) {
+        document.getElementById("content").innerHTML =
+          `<div class="empty">Sign in to read a trace.
+           <a href="/auth/google">Google</a> · <a href="/auth/github">GitHub</a></div>`;
+        return;
+      }
+      if (res.status === 404) {
+        document.getElementById("content").innerHTML =
+          `<div class="empty">No episode <b>${esc(EID)}</b>.</div>`;
+        return;
+      }
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      render(await res.json());
+    } catch (e) {
+      document.getElementById("content").innerHTML =
+        `<div class="empty">Could not read the trace: ${esc(e.message)}.
+         No belt is shown rather than an empty one — an artifact that passed no
+         checkpoint and one we cannot read are different claims.</div>`;
+    }
+  }
+  boot();
+  </script>
+</body>
+</html>

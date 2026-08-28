@@ -1973,6 +1973,11 @@ pub async fn admin_liveness_handler(
         liveness: fermi::liveness_trust::latest(),
         // Which of the counters above can say more than "since boot".
         gate_ledger: Some(fermi::gate_trust::ledger_status()),
+        // What the fleet declared about itself. This literal is kept rather
+        // than replaced by `collect` because it deliberately reuses the
+        // `attempts`/`gates`/`loops` computed above, so the whole endpoint
+        // describes one instant without querying twice.
+        declarations: fermi::native_evaluators::declaration_census(&state.db).await,
     };
     let native = fermi::native_evaluators::run(&observation);
 

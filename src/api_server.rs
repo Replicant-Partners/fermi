@@ -1271,6 +1271,15 @@ async fn run_migrations(db: &PgPool) {
         // every row. Now compares against `measured_at`, which the table has
         // carried since 141 and nothing used.
         "migrations/215_projection_anchor_invariant.sql",
+        // 216 — `gate_decision_reviews`. 214 gave the platform a record of what
+        // it refused; this gives a person somewhere to say whether the refusal
+        // was right. `gate_api::GATE_DOORS` was empty and the comment on it said
+        // the emptiness was the finding: nothing anywhere let a person act on a
+        // gate. The arithmetic reason it matters is that `gate_trust`'s readings
+        // come from approve/refuse counts, and a gate that approves 90% and
+        // refuses the other 10% *wrongly* reads `discriminating` — the healthy
+        // state. Correctness is not a property of a count.
+        "migrations/216_gate_decision_reviews.sql",
         // 217 — widens `gate_decisions_gate_check` for `output_schema`.
         // `Gate::OutputSchema` counts documents that contradict the schema
         // their own producer declared, decided at every delegation hop in
@@ -2880,6 +2889,56 @@ async fn main() {
         // for "what is stopping things" should not have to know first whether
         // the answer is a chain or a control.
         .route("/api/gates", get(handlers::loops::list_gates_handler))
+        // What a gate actually refused, and what anybody has said about it.
+        .route(
+            "/api/gates/:gate_id/decisions",
+            get(handlers::loops::gate_decisions_handler),
+        )
+        // The one door into a gate, and it records rather than overrides.
+        //
+        // There is still no override — a gate a person can wave through is not
+        // much of a gate, and nothing here re-runs, reverses or retries a
+        // decision. What was missing was a *judgement*, and the argument is
+        // arithmetic: every reading on this surface is computed from
+        // approve/refuse counts, and a gate that approves 90% and refuses the
+        // other 10% wrongly reads `discriminating` — the healthy state. No
+        // count distinguishes a correct refusal from an incorrect one, so a
+        // reviewer is not a convenience on top of the measurement, it is the
+        // only instrument that can see that failure.
+        .route(
+            "/api/gates/:gate_id/decisions/:decision_id/review",
+            post(handlers::loops::review_gate_decision_handler),
+        )
+        // One artifact, and the checkpoints it passed.
+        //
+        // The inversion the UX team asked for, and they were right about why:
+        // every other surface here has the POPULATION as its primary object,
+        // which is legible only to someone already holding the machine in their
+        // head. This one's primary object is the thing travelling.
+        //
+        // Not under /api/observatory: a person asking "what happened to this
+        // answer" should not have to know the platform has an observatory.
+        .route(
+            "/api/episodes/:episode_id/trace",
+            get(handlers::loops::episode_trace_handler),
+        )
+        // Why every other surface here says `unknown` so often.
+        //
+        // Measured: of 206 agents that have produced an episode, 110 are
+        // `test_agent_*` rows declaring nothing, and of the 96 real ones 93
+        // declare ports, 2 a checkable schema and 7 a field contract. So the
+        // dominant cause of `unknown` platform-wide is the SUBJECT declaring no
+        // structure to check against — not a stalled loop, not a cold counter,
+        // and not a contract the platform failed to write.
+        //
+        // Beside the other three because it is the one that says whose backlog
+        // the silence belongs on. `Unresolved` is ours; `Undeclared` is the
+        // agent author's, and collapsing them made 89 agents' missing
+        // declarations look like 89 contracts we owed.
+        .route(
+            "/api/declarations",
+            get(handlers::loops::list_declarations_handler),
+        )
         // Third instance. `native_evaluators` already turns counters into
         // sentences with remedies and was reachable through exactly one
         // admin-scoped diagnostics blob — the `remedy` field existed and nobody
@@ -3173,6 +3232,7 @@ async fn main() {
         .route("/loops", get(handlers::pages::loops_view))
         .route("/gates", get(handlers::pages::loops_view))
         .route("/specimen/:agent_name", get(handlers::pages::specimen_view))
+        .route("/trace/:episode_id", get(handlers::pages::trace_view))
         .route(
             "/api/ecology/overview",
             get(handlers::ecology::ecology_overview_handler),

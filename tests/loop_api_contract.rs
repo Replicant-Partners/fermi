@@ -119,6 +119,7 @@ fn the_loop_surface_is_routed() {
         "/api/gates",
         "/api/evaluators",
         "/api/agents/:agent_id/coordination-notes",
+        "/api/gates/:gate_id/decisions",
     ] {
         assert!(
             router_declares(&router, path),

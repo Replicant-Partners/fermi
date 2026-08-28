@@ -271,17 +271,39 @@ pub async fn execute_agent_stream_handler(
                 // execute endpoints must check, or the unchecked one becomes
                 // the one callers use. `enforce` is a no-op for agents with no
                 // field contract.
+                // The document as the agent produced it, and the same
+                // document after enforcement. Both are needed and they are
+                // different: `enforce` NULLS ungrounded fields, so the claimed
+                // values -- the evidence for every later verification -- exist
+                // only in the first.
+                //
+                // Hoisted out of the block below, which used to scope `report`
+                // and mutate a local. The schema check further down then
+                // re-extracted and re-enforced, with a comment admitting the
+                // compromise, so `enforce` ran twice per streamed response and
+                // nothing could reach the claimed values. One pass now serves
+                // all three readers.
+                let claimed_doc = output
+                    .raw_response
+                    .as_deref()
+                    .and_then(fermi::agent_backend::envelope::extract_json);
+                let mut enforced_doc = claimed_doc.clone();
+                let grounding_report = match enforced_doc.as_mut() {
+                    Some(doc) => fermi::grounding_trust::enforce(&agent_id_clone, doc),
+                    None => fermi::grounding_trust::Report::default(),
+                };
+                // Every contracted field, with its grade and the claim behind
+                // it, from the report just computed rather than a second pass.
+                let graded = match claimed_doc.as_ref() {
+                    Some(doc) => fermi::grounding_trust::graded_fields(
+                        &agent_id_clone,
+                        doc,
+                        &grounding_report,
+                    ),
+                    None => Vec::new(),
+                };
                 {
-                    let report = match output
-                        .raw_response
-                        .as_deref()
-                        .and_then(fermi::agent_backend::envelope::extract_json)
-                    {
-                        Some(mut doc) => {
-                            fermi::grounding_trust::enforce(&agent_id_clone, &mut doc)
-                        }
-                        None => fermi::grounding_trust::Report::default(),
-                    };
+                    let report = grounding_report;
                     if !report.is_clean() {
                         tracing::warn!(
                             agent = %agent_id_clone,
@@ -318,19 +340,16 @@ pub async fn execute_agent_stream_handler(
                 // widening a scope for a second consumer, which is a larger
                 // change to a closure than this earns.
                 {
-                    let doc = output
-                        .raw_response
-                        .as_deref()
-                        .and_then(fermi::agent_backend::envelope::extract_json)
-                        .map(|mut d| {
-                            fermi::grounding_trust::enforce(&agent_id_clone, &mut d);
-                            d
-                        });
+                    // The enforced document from the single pass above.
+                    // "Enforce first, then verify what remains" still holds --
+                    // it is the same ordering, with one enforcement instead of
+                    // two.
+                    let doc = enforced_doc.as_ref();
                     let schema = declared_output_contract
                         .as_ref()
                         .and_then(|oc| oc.get("schema"))
                         .filter(|v| v.is_object());
-                    let status = match (schema, doc.as_ref()) {
+                    let status = match (schema, doc) {
                         (Some(sch), Some(d)) => {
                             let r = fermi::schema_validate::validate(sch, d);
                             if r.is_valid() {
@@ -448,6 +467,69 @@ pub async fn execute_agent_stream_handler(
                         None
                     }
                 };
+
+                // ── Loop 2's routine half, mirroring `execution.rs` ──────
+                //
+                // `spawn_raise` above passes `None` for the episode id because
+                // on this path the row is written HERE, below it. The enqueue
+                // cannot do that: `assertion_verifications.episode_id` is a
+                // real foreign key, so it has to wait for the write and take
+                // the id the write returned. That is why this block is here and
+                // not beside the grounding pass.
+                //
+                // `episode_id` is an `Option` because storage on this path
+                // logs and continues. No episode means no enqueue — and that
+                // is a loss worth seeing rather than papering over, so it is
+                // counted as a failed write rather than skipped silently.
+                if !graded.is_empty() {
+                    let db = state_clone.db.clone();
+                    let agent = agent_id_clone.clone();
+                    let graded_for_queue = graded.clone();
+                    match episode_id {
+                        Some(eid) => {
+                            tokio::spawn(async move {
+                                let e = fermi::verification_queue::enqueue(
+                                    &db,
+                                    eid,
+                                    &agent,
+                                    &graded_for_queue,
+                                )
+                                .await;
+                                if e.queued > 0 {
+                                    tracing::info!(
+                                        agent = %agent,
+                                        episode = %eid,
+                                        queued = e.queued,
+                                        to_tool = e.to_tool,
+                                        to_human = e.to_human,
+                                        already_settled = e.already_settled,
+                                        "contracted fields queued for verification (stream)"
+                                    );
+                                }
+                                if e.is_problem() {
+                                    tracing::warn!(
+                                        agent = %agent,
+                                        episode = %eid,
+                                        failed = e.failed,
+                                        not_representable = ?e.not_representable,
+                                        "some contracted claims could not be queued \
+                                         for verification; each is a claim nobody \
+                                         will ever check"
+                                    );
+                                }
+                            });
+                        }
+                        None => {
+                            tracing::warn!(
+                                agent = %agent_id_clone,
+                                fields = graded.len(),
+                                "the episode write failed, so {} contracted \
+                                 claim(s) could not be queued for verification",
+                                graded.len()
+                            );
+                        }
+                    }
+                }
 
                 // Retain the agent's quantified judgement as a claim.
                 //

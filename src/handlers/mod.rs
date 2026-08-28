@@ -6,21 +6,25 @@
 
 /// Is this row test cruft rather than a real agent?
 ///
-/// Integration tests have been inserting `test_agent_<uuid>` rows into the
-/// shared database for a long time (v0.10.20's audit found 565). Several
-/// surfaces filtered them out with an inline
-/// `!name.starts_with("test_agent_")`, and several — notably the
-/// Observatory fleet endpoints — did not, which is why the clinical view
-/// opens on a wall of `test_agent_*` entries instead of the operator's
-/// actual agents.
+/// **Re-exported, not defined here.** The definition moved to
+/// [`fermi::declaration_ladder::is_test_cruft`] when the declaration ladder
+/// needed it: 110 of the 206 agents that have produced an episode are
+/// `test_agent_*` rows declaring nothing at all, so the predicate is now
+/// load-bearing for *which worklist an agent belongs to* — pruning cruft and
+/// retrofitting a real agent are different efforts with different owners, and
+/// mixing them makes the retrofit look twice its size.
 ///
-/// One definition, so the next surface can't drift. Note this only hides
-/// them; deleting them is `/api/admin/agents/cleanup-test-cruft`, which is
-/// safety-gated (zero executions, past a grace period, never curated or
-/// system tier).
-pub fn is_test_cruft(agent_name: &str) -> bool {
-    agent_name.starts_with("test_agent_")
-}
+/// The ladder lives in the library and the five callers here are in the binary,
+/// so the choice was one definition in the library or two definitions. Kept as a
+/// re-export rather than moving the call sites, because the call sites are the
+/// point: several surfaces once filtered inline and several — notably the
+/// Observatory fleet endpoints — did not, which is why the clinical view opened
+/// on a wall of `test_agent_*` entries instead of the operator's actual agents.
+///
+/// This only hides them; deleting them is
+/// `/api/admin/agents/cleanup-test-cruft`, which is safety-gated (zero
+/// executions, past a grace period, never curated or system tier).
+pub use fermi::declaration_ladder::is_test_cruft;
 
 pub mod admin;
 pub mod admin_rbac;

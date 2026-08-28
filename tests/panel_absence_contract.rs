@@ -57,6 +57,10 @@ async fn snapshot(pool: &PgPool) -> Observation {
         loops: fermi::loop_model::evaluate(pool).await,
         liveness: Some(report),
         gate_ledger: Some(fermi::gate_trust::ledger_status()),
+        // The real census. `None` here would make every declaration-resolved
+        // panel report `no_census`, and the suite would pass while proving
+        // nothing about the one resolver that reads the fleet.
+        declarations: fermi::native_evaluators::declaration_census(pool).await,
     }
 }
 

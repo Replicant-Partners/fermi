@@ -57,7 +57,7 @@ Comprehensive reference for all environment variables used by the Agent Bestiary
 | `DEEPSEEK_BASE_URL` | No | `https://api.deepseek.com/v1` | Override base URL for DeepSeek API (e.g. for Azure-hosted DeepSeek). |
 | `KIMI_API_KEY` | No | - | Moonshot AI API key. Enables Kimi models (128k, 32k, 8k context variants) in the model catalogue. OpenAI-compatible. |
 | `KIMI_BASE_URL` | No | `https://api.moonshot.cn/v1` | Override base URL for Kimi API. |
-| `REDUCT_API_KEY` | No | - | Reduct.video API key (v3). Enables video transcript analysis and highlight reel creation tools (`reduct_*`). Auth via `X-Auth-Key` header. |
+| `REDUCT_API_KEY` | No | - | Reduct.video workspace API key (v3). Enables the five `reduct_*` tools — the only credential `video_analyst` needs, and without it every one of its tool calls fails. Auth via `X-Auth-Key` header against `https://app.reduct.video/api/v3`. Generate it from the Reduct backstage at `/backstage/api/` (Professional or Enterprise plan); that path is the logged-in docs app, **not** the request base URL. Owner-owned agents may instead carry `REDUCT_API_KEY` in their scoped secret store, which is preferred and takes precedence — this env var is the fallback for platform-operated (`system` / `curated`) agents, which by design have no per-owner secrets. |
 
 ---
 

@@ -627,6 +627,16 @@ pub async fn specimen_view() -> Response {
     app_shell("templates/specimen.html")
 }
 
+/// One artifact, and the checkpoints it passed.
+///
+/// The inversion the loop surfaces needed: the primary object is the episode and
+/// the loops are the routes it can take. A census tells you 3,576 episodes
+/// accumulated; this tells you what happened to one of them, which is the only
+/// version a reader can follow without already holding the machine in their head.
+pub async fn trace_view() -> Response {
+    app_shell("templates/trace.html")
+}
+
 pub async fn observatory_hitl_view() -> Response {
     app_shell("templates/observatory_hitl.html")
 }

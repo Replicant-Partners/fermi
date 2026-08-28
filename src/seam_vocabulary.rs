@@ -264,6 +264,79 @@ closed_vocabulary! {
     Platform => "platform",
 }
 
+closed_vocabulary! {
+    /// `gate_decision_reviews.verdict` — was the gate right?
+    ///
+    /// The only vocabulary in the platform that can distinguish a **correct**
+    /// refusal from an incorrect one. `gate_trust`'s readings are computed from
+    /// approve/refuse counts, and `refuses_everything` catches only the extreme:
+    /// asked, and approved nothing. A gate that approves 90% and refuses the
+    /// other 10% wrongly reads `discriminating`, which the surface renders as
+    /// healthy. No counter can tell those apart, because correctness is a
+    /// judgement about the subject rather than a property of the count.
+    enum GateReviewVerdict;
+    /// The wire forms of [`GateReviewVerdict`], generated from it.
+    const GATE_REVIEW_VERDICT;
+    /// The gate was right.
+    ///
+    /// Requires no rationale, and the asymmetry is load-bearing rather than
+    /// lenient: making the cheap confirmation as expensive as the finding means
+    /// nobody reviews the routine decisions, and then the denominator is
+    /// unknown. "3 overturned" and "3 overturned of 400 reviewed" are different
+    /// findings and only the second is actionable.
+    Upheld => "upheld",
+    /// The gate was wrong. **Requires a rationale**, enforced by
+    /// `gate_decision_reviews_rationale_check` in migration 216.
+    ///
+    /// This is the row that says the platform was wrong and should cause an
+    /// engineering change. An uncited overturn is a complaint; the citation is
+    /// what makes it followable, which is migration 205's argument for the
+    /// `human_sourced` citation CHECK, applied to the verdict that carries the
+    /// same weight.
+    Overturned => "overturned",
+    /// The record does not contain enough to judge the decision from.
+    ///
+    /// A first-class verdict, not a missing one. `gate_decisions.reason` is free
+    /// text truncated at the writer, and forcing a reviewer to pick upheld or
+    /// overturned when it says too little manufactures agreement. *The ledger
+    /// does not record enough to review its own decisions* is a finding about
+    /// the ledger, reported by `gate_review::Standing::Inconclusive`, and it
+    /// would be invisible if this token did not exist.
+    Unclear => "unclear",
+}
+
+/// Expand `$body!(Type, ARRAY)` once for every vocabulary this registry owns.
+///
+/// # Why this exists rather than five lists
+///
+/// The four checks below each held their own hand-written list of the types:
+/// `the_wire_form_is_the_declared_token`,
+/// `every_owned_vocabulary_binds_as_text`,
+/// `every_declared_token_parses_back_to_its_variant`, and
+/// `every_registry_owned_vocabulary_is_generated_from_a_type`. Adding a fifth
+/// vocabulary meant editing four lists, and the failure mode of a missed edit is
+/// the worst available: the new type is simply **not checked**, every list still
+/// agrees with itself, and the suite is green. That is this module's own subject
+/// matter — two sides holding an opinion about one vocabulary with nothing
+/// comparing them — relocated from the Rust/Postgres seam to a Rust/Rust one.
+///
+/// It was found by adding the fifth. Three of the four lists would have silently
+/// skipped [`GateReviewVerdict`]; the fourth failed, and only because it happened
+/// to assert a count.
+///
+/// A macro rather than an array because two of the four checks need the *type*
+/// and not a value: `<T as Type<Postgres>>::type_info()` and `wire_form::<T>` are
+/// resolved at compile time, so a `Vec` of anything cannot carry them.
+macro_rules! for_each_owned_vocabulary {
+    ($body:ident) => {
+        $body!(DeltaDirection, DELTA_DIRECTION);
+        $body!(ResolutionMode, RESOLUTION_MODE);
+        $body!(EvaluatorTier, EVALUATOR_TIER);
+        $body!(ActorKind, ACTOR_KIND);
+        $body!(GateReviewVerdict, GATE_REVIEW_VERDICT);
+    };
+}
+
 /// `episodes.provenance` — how the episode came to be believed.
 ///
 /// The authority is `agent_bestiary_memory::Provenance`; this array is the
@@ -351,6 +424,52 @@ pub const VOCABULARIES: &[Vocabulary] = &[
               batch insert whose error is swallowed by design. \
               `gate_ids_match_the_declared_gates` pins the Rust side against \
               GATES; this pins it against Postgres.",
+    },
+    Vocabulary {
+        table: "gate_decision_reviews",
+        column: "verdict",
+        tokens: GATE_REVIEW_VERDICT,
+        constraint: Some("gate_decision_reviews_verdict_check"),
+        owned_by: None,
+        producers: "gate_review::record, from handlers::loops::review_gate_decision_handler",
+        why: "The only judgement in the platform that can call a gate wrong. A \
+              token the column rejects means the reviewer pressed the button, \
+              saw a success, and the finding was never written — and the finding \
+              is the whole point: `gate_trust` counts decisions and cannot tell \
+              a correct refusal from an incorrect one. `unclear` is the token \
+              most likely to be dropped by a second implementation, for the same \
+              reason `undetermined` is on `gate_decisions.decision`: two-state \
+              thinking about a judgement is the default, and it turns `the \
+              ledger does not say enough` into a fabricated verdict.",
+    },
+    Vocabulary {
+        table: "gate_decision_reviews",
+        column: "gate",
+        tokens: gate_trust::GATE_IDS,
+        constraint: Some("gate_decision_reviews_gate_check"),
+        owned_by: Some("src/gate_trust.rs"),
+        producers: "gate_review::record, denormalised from the reviewed gate_decisions row",
+        why: "Denormalised from `gate_decisions.gate` so the per-gate standing \
+              is one index scan rather than a join. Two CHECKs over one \
+              vocabulary is exactly the drift this registry is for: widening \
+              `gate_trust::GATES` and migration 214's constraint while leaving \
+              216's alone makes the new gate's decisions recordable and its \
+              reviews unwritable, which is the worse half — the decision is \
+              logged, the reviewer is told nothing, and the gate reads \
+              unreviewed forever.",
+    },
+    Vocabulary {
+        table: "gate_decision_reviews",
+        column: "actor_kind",
+        tokens: ACTOR_KIND,
+        constraint: Some("gate_decision_reviews_actor_kind_check"),
+        owned_by: None,
+        producers: "gate_review::record",
+        why: "The same three-token set as `assertion_verifications.actor_kind` \
+              and the same reason for existing: `reviewed` with no actor kind is \
+              how a queue becomes a rubber stamp. Sharing the type rather than \
+              the spelling is what stops the second table inventing a fourth \
+              actor — which is how `severity = 'L1'` happened, one table over.",
     },
     Vocabulary {
         table: "anomaly_events",
@@ -524,27 +643,28 @@ mod tests {
     #[test]
     fn the_wire_form_is_the_declared_token() {
         let mut checked = 0;
-        for v in DeltaDirection::ALL {
-            assert_eq!(wire_form(v), v.as_str());
-            checked += 1;
+        let mut expected = 0;
+        macro_rules! encodes_its_token {
+            ($t:ident, $arr:ident) => {
+                for v in $t::ALL {
+                    assert_eq!(wire_form(v), v.as_str());
+                    checked += 1;
+                }
+                expected += $arr.len();
+            };
         }
-        for v in ResolutionMode::ALL {
-            assert_eq!(wire_form(v), v.as_str());
-            checked += 1;
-        }
-        for v in EvaluatorTier::ALL {
-            assert_eq!(wire_form(v), v.as_str());
-            checked += 1;
-        }
-        for v in ActorKind::ALL {
-            assert_eq!(wire_form(v), v.as_str());
-            checked += 1;
-        }
+        for_each_owned_vocabulary!(encodes_its_token);
         assert_eq!(
-            checked,
-            DELTA_DIRECTION.len() + RESOLUTION_MODE.len() + EVALUATOR_TIER.len() + ACTOR_KIND.len(),
+            checked, expected,
             "a variant exists that this test does not encode"
         );
+        // The count is over the macro's own expansion, so it cannot catch a
+        // vocabulary missing from `for_each_owned_vocabulary!` — only a variant
+        // whose `ALL` and array disagree, which the macro makes impossible. The
+        // list itself is held by
+        // `every_registry_owned_vocabulary_is_generated_from_a_type`, which
+        // compares it against `VOCABULARIES` in both directions.
+        assert!(checked > 0, "the expansion produced nothing");
     }
 
     /// Every column these types bind is `text`.
@@ -565,32 +685,35 @@ mod tests {
     #[test]
     fn every_owned_vocabulary_binds_as_text() {
         use sqlx::{Postgres, Type, TypeInfo};
-        for name in [
-            <DeltaDirection as Type<Postgres>>::type_info().name(),
-            <ResolutionMode as Type<Postgres>>::type_info().name(),
-            <EvaluatorTier as Type<Postgres>>::type_info().name(),
-            <ActorKind as Type<Postgres>>::type_info().name(),
-        ] {
-            assert_eq!(name.to_ascii_lowercase(), "text");
+        macro_rules! binds_as_text {
+            ($t:ident, $arr:ident) => {
+                assert_eq!(
+                    <$t as Type<Postgres>>::type_info()
+                        .name()
+                        .to_ascii_lowercase(),
+                    "text",
+                    "{} does not bind as text, so its first write fails at \
+                     runtime with `type does not exist` on a path that swallows \
+                     the error",
+                    stringify!($t)
+                );
+            };
         }
+        for_each_owned_vocabulary!(binds_as_text);
     }
 
     /// Wire → Rust, for every token, and a rejection that proves the round trip
     /// is doing work.
     #[test]
     fn every_declared_token_parses_back_to_its_variant() {
-        for v in DeltaDirection::ALL {
-            assert_eq!(DeltaDirection::from_str(v.as_str()).as_ref(), Ok(v));
+        macro_rules! round_trips {
+            ($t:ident, $arr:ident) => {
+                for v in $t::ALL {
+                    assert_eq!($t::from_str(v.as_str()).as_ref(), Ok(v));
+                }
+            };
         }
-        for v in ResolutionMode::ALL {
-            assert_eq!(ResolutionMode::from_str(v.as_str()).as_ref(), Ok(v));
-        }
-        for v in EvaluatorTier::ALL {
-            assert_eq!(EvaluatorTier::from_str(v.as_str()).as_ref(), Ok(v));
-        }
-        for v in ActorKind::ALL {
-            assert_eq!(ActorKind::from_str(v.as_str()).as_ref(), Ok(v));
-        }
+        for_each_owned_vocabulary!(round_trips);
         // The severity that started all of this, offered to a vocabulary that
         // has no room for it. If this parsed, everything above would prove
         // nothing.
@@ -608,13 +731,14 @@ mod tests {
     /// and leave the write site free to spell anything.
     #[test]
     fn every_registry_owned_vocabulary_is_generated_from_a_type() {
-        let generated: &[(&str, &[&str])] = &[
-            ("DeltaDirection", DELTA_DIRECTION),
-            ("ResolutionMode", RESOLUTION_MODE),
-            ("EvaluatorTier", EVALUATOR_TIER),
-            ("ActorKind", ACTOR_KIND),
-        ];
-        let mut backed = 0;
+        let mut generated: Vec<(&str, &[&str])> = Vec::new();
+        macro_rules! collect {
+            ($t:ident, $arr:ident) => {
+                generated.push((stringify!($t), $arr));
+            };
+        }
+        for_each_owned_vocabulary!(collect);
+
         for v in VOCABULARIES {
             if v.owned_by.is_some() {
                 continue;
@@ -627,16 +751,35 @@ mod tests {
                 v.table,
                 v.column
             );
-            backed += 1;
         }
-        assert_eq!(
-            backed,
-            generated.len(),
-            "there are {} generated vocabularies and {backed} registry-owned \
-             entries using them; a type with no registry entry is unchecked \
-             against the live constraint, which is the one check with no \
-             substitute",
-            generated.len()
+
+        // And the other direction, which is the half with no substitute: a type
+        // no `VOCABULARIES` entry points at is never compared against a live
+        // CHECK, so the type and the column can disagree freely.
+        //
+        // This used to be `assert_eq!(backed, generated.len())`, which is a
+        // *proxy* for the property and stops being one the first time a single
+        // type governs two columns. `ActorKind` now does —
+        // `assertion_verifications.actor_kind` and
+        // `gate_decision_reviews.actor_kind` are one vocabulary over two tables,
+        // which is the whole point of sharing the type — and the count assertion
+        // failed on that correct state. A check that fires on the behaviour it
+        // wants is §5.2's road to deletion, so it is stated directly instead.
+        for (name, tokens) in &generated {
+            assert!(
+                VOCABULARIES
+                    .iter()
+                    .any(|v| v.owned_by.is_none() && v.tokens == *tokens),
+                "`{name}` is a registry-owned type with no entry in \
+                 `VOCABULARIES`, so nothing compares it against a live CHECK — \
+                 the one check here with no substitute. Either register the \
+                 column it governs, or delete the type."
+            );
+        }
+        assert!(
+            !generated.is_empty(),
+            "`for_each_owned_vocabulary!` expanded to nothing, so both \
+             directions above are vacuous"
         );
     }
 

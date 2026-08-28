@@ -362,6 +362,37 @@ pub const CROSS_CHECK_EXEMPTIONS: &[(&str, &str, &str)] = &[
          comparing counts would test iNaturalist's stability, not this agent's \
          honesty.",
     ),
+    // ── video_analyst ──────────────────────────────────────────────
+    //
+    // Only two of five, and stating why the other three are absent from this
+    // list is the useful half: `transcripts`, `clips` and `blocks_written` are
+    // cross-checked INTERNALLY, against the same document, because a document
+    // that reports both which transcripts it read and which recordings its
+    // clips came from has made its own contradiction expressible. The two here
+    // are the ones with no second statement inside the row to compare against.
+    (
+        "video_analyst",
+        "project",
+        "The platform stores no copy of anyone's Reduct workspace — no project \
+         table, no recording inventory. A REPLAY against `GET /project/{id}` \
+         would settle it exactly and is cheap, because a project's recording \
+         ids are near-immutable and the endpoint is not rate-limited the way \
+         transcription is; it needs a workspace key on the checking side, which \
+         is the only thing standing between this and being written. Cheapest \
+         real external check on this agent and the one to write first.",
+    ),
+    (
+        "video_analyst",
+        "reel",
+        "A reel id can only be confirmed by asking Reduct whether it exists, \
+         and the platform holds no copy. Note what this exemption does NOT \
+         cover: whether the reel's blocks match the clips claimed is checked \
+         internally under `blocks_written`, so the gap here is narrow — an id \
+         that was never minted, on a run that claimed `reel_published`. The \
+         replay is `GET /project/{id}` and reading `reels[]`, which is the same \
+         call the `project` exemption above already wants, so both close \
+         together or neither does.",
+    ),
 ];
 
 /// Is this `Sourced` field knowingly un-cross-checked?
@@ -609,11 +640,41 @@ pub fn extracted_floor<'a>(sources: impl IntoIterator<Item = &'a str>) -> &'stat
 /// historical episode's groundedness is recoverable — those rows get `None`,
 /// which must be read as *unknown*, never as clean.
 pub fn response_floor(agent_id: &str, response_text: &str) -> Option<&'static str> {
-    let mut doc: Value = match serde_json::from_str::<Value>(response_text) {
-        Ok(v) if v.is_object() => v,
-        // Prose. An extraction from prose is ungrounded by construction: there
-        // are no typed fields to have been sourced.
-        _ => return Some(PROV_UNAVAILABLE),
+    // `extract_json`, not `serde_json::from_str`.
+    //
+    // # The measured defect this fixes
+    //
+    // This function used a bare `from_str` and returned `unavailable` the moment
+    // it failed, with the comment *"Prose. An extraction from prose is ungrounded
+    // by construction: there are no typed fields to have been sourced."* That
+    // sentence is a true statement about a `from_str` parse reported as a fact
+    // about the agent's output — the audit's §19 defect, in a new costume.
+    //
+    // Agents wrap their document in prose. `envelope::extract_json` has always
+    // known that and does a balanced-brace scan for the largest object, which is
+    // why `handlers::execution` can grade a response this function called
+    // ungradeable. Two implementations of *get the document out of the response*,
+    // disagreeing, with the weaker one behind the trust calculation — §3.4.
+    //
+    // Measured over production before the change, across the seven contracted
+    // agents that have ever run and retained a response:
+    //
+    //   * **0 of 94** responses are bare JSON;
+    //   * **64 of 94** carry an embedded document this scan recovers;
+    //   * **28 of 28** semantic rules carrying a provenance floor read
+    //     `unavailable_no_tool_source`.
+    //
+    // So every rule on the platform was graded as resting on nothing, and the
+    // reason was a parse that gave up rather than a contract that looked. Note
+    // what is NOT claimed: recovering a document does not mean the contract can
+    // grade it, because the contracted paths may be absent. The floor after this
+    // change is whatever grading actually finds — measured, not asserted.
+    let mut doc: Value = match crate::agent_backend::envelope::extract_json(response_text) {
+        Some(v) => v,
+        // No document anywhere in the response. Genuinely ungrounded: there are
+        // no typed fields to have been sourced, and now that is a finding about
+        // the response rather than about the parser.
+        None => return Some(PROV_UNAVAILABLE),
     };
     if contracts_for(agent_id).next().is_none() {
         // No contract, so nothing is known about this agent's grounding.
@@ -622,6 +683,80 @@ pub fn response_floor(agent_id: &str, response_text: &str) -> Option<&'static st
     }
     let report = enforce(agent_id, &mut doc);
     Some(floor(report.provenance.iter().map(|(_, v)| *v)))
+}
+
+/// One contracted field, as the agent left it, with the contract's verdict on it.
+///
+/// # Why this type exists
+///
+/// [`enforce`] computes exactly this and then discards all but a count.
+/// `Report.violations` carries `path`, `removed` and `kind`; `Report.provenance`
+/// carries the per-block grade; and `stamp_grounding` reduces the pair to
+/// `grounding:violations` plus `grounding:count-N` tags. So the field name, the
+/// value the model actually claimed, and the reason it was refused are computed
+/// on every execute path and dropped with the local.
+///
+/// This is the shape the artifact trace's `fields[]` needs and the shape the
+/// verification queue routes on, and it is assembled here rather than by the
+/// caller because every part of it is this module's knowledge: the contract, the
+/// path grammar, the block grouping and the ladder.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GradedField {
+    /// Dotted path into the agent's document.
+    pub path: &'static str,
+    /// The block the path belongs to, which is what carries the grade.
+    pub block: &'static str,
+    /// **What the agent claimed, verbatim.** `Null` when the field is absent.
+    ///
+    /// Retained rather than summarised, for `Violation.removed`'s reason: this is
+    /// the only evidence that could ever answer which model fabricates what, and
+    /// a null cannot be labelled.
+    pub value: Value,
+    /// The block's grade, from the ladder.
+    pub provenance: &'static str,
+    /// The tool that could settle this field, when one is declared.
+    ///
+    /// `Some` for [`Grounding::Sourced`] and `None` otherwise, which is precisely
+    /// the tool-versus-person routing the verification queue needs — so the route
+    /// is *derived* from the contract rather than declared a second time.
+    pub settleable_by: Option<&'static str>,
+}
+
+/// Every contracted field of one document, graded.
+///
+/// `report` must be the report [`enforce`] produced **for this document**, and
+/// the argument is taken rather than recomputed so a caller cannot end up with
+/// two reports describing different instants. Note that `enforce` mutates the
+/// document it grades — it nulls ungrounded fields — so a caller wanting the
+/// claimed values must pass the document as it was **before** enforcement, or
+/// pass `Report.violations`' `removed` values back in. `value` is `Null` for a
+/// field the document never had, which is a different fact from a field that was
+/// nulled and is why the two are not merged here.
+pub fn graded_fields(agent_id: &str, doc: &Value, report: &Report) -> Vec<GradedField> {
+    contracts_for(agent_id)
+        .map(|c| {
+            let block = block_of(c.path);
+            GradedField {
+                path: c.path,
+                block,
+                value: get_path(doc, c.path).cloned().unwrap_or(Value::Null),
+                // The block's grade, or `unavailable` when the report has no
+                // entry for it. Not `None` and not a pass: a contracted field
+                // whose block the report never graded is exactly the state the
+                // ladder's bottom rung is for.
+                provenance: report
+                    .provenance
+                    .iter()
+                    .find(|(b, _)| b == block)
+                    .map(|(_, v)| *v)
+                    .unwrap_or(PROV_UNAVAILABLE),
+                settleable_by: match c.grounding {
+                    Grounding::Sourced { tool, .. } => Some(tool),
+                    _ => None,
+                },
+            }
+        })
+        .collect()
 }
 
 // ─── contract ──────────────────────────────────────────────────────────
@@ -2351,6 +2486,206 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               the worst outcome this contract can produce.",
         cross_check_sql: None,
     },
+    // ── video_analyst ──────────────────────────────────────────────
+    //
+    // Tools: the five `reduct_*` arms, a pass-through to Reduct.video API v3.
+    // The agent was authored with a prompt that named all five and a card that
+    // declared none of them, no output type and no field contract, so nothing
+    // it ever said could be checked against anything. It has 0 executions,
+    // which is the only reason this is a retrofit and not a cleanup.
+    //
+    // What makes this agent worth contracting is that its fabrication has a
+    // shape no other agent's does. A wrong megabase count is wrong on its face
+    // to anyone who looks it up. A wrong CLIP RANGE is not wrong on its face at
+    // all: the quote reads correctly, the reel plays, and the footage is of
+    // something else. The failure is invisible at exactly the moment of
+    // consumption, which is why the boundaries are contracted separately from
+    // the editorial judgement that chose them — see the two blocks below.
+    //
+    // Three of the five sourced blocks carry real cross-checks and they are
+    // INTERNAL: they compare the document against itself and need no external
+    // call, no API key and no second copy of anything. That is unusual here and
+    // it is a property of the output shape rather than of good luck — a
+    // document that states both which transcripts it read and which recordings
+    // its clips came from has made the interesting contradiction expressible.
+    // The two that cannot be checked that way are exempt, with what a replay
+    // would cost.
+    FieldContract {
+        agent_id: "video_analyst",
+        path: "project",
+        grounding: Grounding::Sourced {
+            tool: "reduct_get_project",
+            response_field: "id, title, recordings[].id, reels[].id",
+        },
+        why: "`GET /api/v3/project/{id}` returns the project with its \
+              recordings and reels, or refuses an id the workspace does not \
+              hold. Ids rather than counts, because a count is arithmetic the \
+              agent performed and this block records what Reduct said. The \
+              defect it exposes is the quiet one: a project_id inferred from \
+              the wording of the request rather than read from \
+              `reduct_list_projects` lets every later call succeed against the \
+              wrong project.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "video_analyst",
+        path: "transcripts",
+        grounding: Grounding::Sourced {
+            tool: "reduct_get_transcript",
+            response_field: "the segments returned per recording, and their \
+                             absence where the endpoint returned none",
+        },
+        why: "The precondition for every other check in this contract: it is \
+              what makes \"did you actually read it\" answerable. \
+              `recordings_read` and `recordings_without_transcript` are two \
+              lists over one call and are kept apart because Reduct \
+              transcribes asynchronously — an untranscribed recording is the \
+              tool answering honestly, and collapsing the two would turn a \
+              known gap into an apparent success.",
+        // Internal, and the cheapest possible: no recording may be in both
+        // lists. A document claiming to have read a transcript it also reports
+        // as absent has contradicted itself in one object, and that is
+        // checkable without leaving the row.
+        cross_check_sql: Some(
+            "SELECT count(*)::bigint AS mismatches \
+               FROM episodes e \
+               JOIN agents a ON a.agent_id = e.agent_id, \
+               LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
+                                    THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
+              WHERE a.agent_name = 'video_analyst' \
+                {{COHORT}} \
+                AND jsonb_typeof(j.doc #> '{transcripts,recordings_read}') = 'array' \
+                AND jsonb_typeof(j.doc #> '{transcripts,recordings_without_transcript}') = 'array' \
+                AND EXISTS (SELECT 1 \
+                              FROM jsonb_array_elements(j.doc #> '{transcripts,recordings_read}') AS r(id) \
+                             WHERE (j.doc #> '{transcripts,recordings_without_transcript}') @> r.id)",
+        ),
+    },
+    FieldContract {
+        agent_id: "video_analyst",
+        path: "clips",
+        grounding: Grounding::Sourced {
+            tool: "reduct_get_transcript",
+            response_field: "segments[].start, segments[].end, \
+                             segments[].speaker and segments[].text, copied \
+                             verbatim for the selected ranges",
+        },
+        why: "Every value here is a retrieval even though the choice of which \
+              values was a judgement, and separating those two facts is the \
+              point of the whole contract. The boundaries exist in a Reduct \
+              transcript and nowhere else, so a composed timecode is not a \
+              weaker version of a real one — it is a reel that plays the wrong \
+              footage while quoting the right sentence. The reasoning that \
+              selected the ranges is `curation`, stamped `model_inference`, so \
+              a consumer reads two stamps instead of one that would have to \
+              lie about half its block.",
+        // Internal, and the load-bearing one: a clip from a recording the
+        // document itself does not claim to have read, or a ragged set of
+        // index-aligned arrays. Both are the fabrication signature for this
+        // agent and both are visible in the row.
+        cross_check_sql: Some(
+            "SELECT count(*)::bigint AS mismatches \
+               FROM episodes e \
+               JOIN agents a ON a.agent_id = e.agent_id, \
+               LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
+                                    THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
+              WHERE a.agent_name = 'video_analyst' \
+                {{COHORT}} \
+                AND jsonb_typeof(j.doc #> '{clips,recording_ids}') = 'array' \
+                AND jsonb_array_length(j.doc #> '{clips,recording_ids}') > 0 \
+                AND ( jsonb_typeof(j.doc #> '{clips,start_seconds}') <> 'array' \
+                   OR jsonb_typeof(j.doc #> '{clips,end_seconds}') <> 'array' \
+                   OR jsonb_array_length(j.doc #> '{clips,recording_ids}') \
+                      <> jsonb_array_length(j.doc #> '{clips,start_seconds}') \
+                   OR jsonb_array_length(j.doc #> '{clips,recording_ids}') \
+                      <> jsonb_array_length(j.doc #> '{clips,end_seconds}') \
+                   OR jsonb_typeof(j.doc #> '{transcripts,recordings_read}') <> 'array' \
+                   OR EXISTS (SELECT 1 \
+                                FROM jsonb_array_elements(j.doc #> '{clips,recording_ids}') AS r(id) \
+                               WHERE NOT ((j.doc #> '{transcripts,recordings_read}') @> r.id)) )",
+        ),
+    },
+    FieldContract {
+        agent_id: "video_analyst",
+        path: "reel",
+        grounding: Grounding::Sourced {
+            tool: "reduct_create_reel",
+            response_field: "the created reel's id and title, as returned by \
+                             POST /api/v3/project/{project_id}/reel",
+        },
+        why: "Reduct mints the reel id, so the agent cannot know it without \
+              having made the call: a populated `reel_id` on a run with no \
+              recorded call is fabrication of the crispest kind, and unlike a \
+              wrong timestamp it is trivially falsifiable. A read-only run — \
+              asked to propose clips, not to publish — leaves this null, which \
+              is a complete and successful outcome and not a missing field.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "video_analyst",
+        path: "blocks_written",
+        grounding: Grounding::Sourced {
+            tool: "reduct_add_block",
+            response_field: "the per-block responses from POST \
+                             /api/v3/project/{project_id}/reel/{reel_id}/block, \
+                             counted by outcome",
+        },
+        why: "Separate from `reel` because creating a reel and populating it \
+              are separate calls that fail separately, and \"reel created, \
+              every block rejected\" is a real state the platform could not \
+              previously see: the agent reports a reel, and the reel plays \
+              nothing. Counting by outcome rather than reporting a single total \
+              is what makes the partially-written reel expressible.",
+        // Internal: on a published run the accepted clip-block count must equal
+        // the number of clips the same document declares. A disagreement is
+        // either a silently dropped clip or a count nobody measured, and both
+        // are worth a row.
+        cross_check_sql: Some(
+            "SELECT count(*)::bigint AS mismatches \
+               FROM episodes e \
+               JOIN agents a ON a.agent_id = e.agent_id, \
+               LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
+                                    THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
+              WHERE a.agent_name = 'video_analyst' \
+                {{COHORT}} \
+                AND j.doc #>> '{curation,mode}' = 'reel_published' \
+                AND jsonb_typeof(j.doc #> '{blocks_written,clip_block_count}') = 'number' \
+                AND jsonb_typeof(j.doc #> '{clips,start_seconds}') = 'array' \
+                AND (j.doc #>> '{blocks_written,clip_block_count}')::numeric \
+                    <> jsonb_array_length(j.doc #> '{clips,start_seconds}')",
+        ),
+    },
+    FieldContract {
+        agent_id: "video_analyst",
+        path: "curation",
+        grounding: Grounding::Inferred {
+            from: "the transcript text retrieved into `transcripts`, the brief \
+                   in the user's query, and the selection criteria stated in \
+                   the agent's system prompt",
+        },
+        why: "The product. \"Meaningful\", \"compelling\" and \"insightful\" \
+              are not fields in any Reduct response, and two runs over one \
+              transcript may legitimately disagree about which four minutes \
+              matter — which is exactly what makes this not a retrieval. \
+              Nulling it would prove the contract cannot tell an agent that \
+              fabricates from one that reasons. Stamped `model_inference` as a \
+              constant so no run can present a chosen moment as a looked-up \
+              one.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "video_analyst",
+        path: "summary",
+        grounding: Grounding::Narrative,
+        why: "The least protected field in the document and the most read: it \
+              is the one place a timecode the transcript never carried, or a \
+              quote from a recording nobody opened, can reappear as a sentence \
+              a human trusts. Scanned for the same reason every other summary \
+              here is — clearing an unsupported claim out of a structured \
+              field while leaving it in the prose just moves it to where it \
+              does the damage.",
+        cross_check_sql: None,
+    },
 ];
 
 // ─── enforcement ───────────────────────────────────────────────────────
@@ -3109,6 +3444,64 @@ mod tests {
             strength(verdict) < strength(PROV_TOOL),
             "a photo determination is being treated as strong as a retrieval"
         );
+    }
+
+    /// A chosen moment must never be stamped as strongly as a retrieved one.
+    ///
+    /// The whole of `video_analyst`'s contract rests on one asymmetry: the
+    /// clip boundaries came out of a transcript and the decision to keep them
+    /// did not. If `enforce` stamped both blocks alike, a downstream publisher
+    /// could not tell a range Reduct supplied from a range a model composed —
+    /// and the reel plays either way, which is what makes this failure worse
+    /// than a wrong number in a data field.
+    #[test]
+    fn a_clip_range_is_retrieved_and_choosing_it_is_not() {
+        let mut doc = serde_json::json!({
+            "transcripts": { "recordings_read": ["r_a91"], "format": "json" },
+            "clips": {
+                "recording_ids": ["r_a91"],
+                "start_seconds": [412.6],
+                "end_seconds": [448.2],
+                "quotes": ["We stopped using it the week the export broke."]
+            },
+            "curation": { "mode": "analysis_only", "themes": ["Why they churned"] },
+            "reel": { "reel_id": null, "title": null },
+            "blocks_written": { "clip_block_count": null },
+            "summary": "One clip, 36 seconds, from the only recording with a transcript."
+        });
+        enforce("video_analyst", &mut doc);
+
+        let stamp = |k: &str| {
+            doc.get(k)
+                .and_then(|v| v.as_str())
+                .unwrap_or_else(|| panic!("{k} was not stamped"))
+                .to_string()
+        };
+
+        assert_eq!(stamp("clips_provenance"), PROV_TOOL);
+        assert_eq!(stamp("curation_provenance"), PROV_INFERRED);
+        assert!(
+            strength(&stamp("curation_provenance")) < strength(&stamp("clips_provenance")),
+            "an editorial choice is being treated as strong as a transcript \
+             lookup, which is the one thing this agent's contract exists to \
+             prevent"
+        );
+
+        // A read-only run is a complete run. The two write blocks are empty and
+        // must say so as `tool_no_match` rather than being nulled as ungrounded
+        // — nothing was fabricated here, nothing was asked.
+        assert_eq!(stamp("reel_provenance"), PROV_NO_MATCH);
+        assert_eq!(stamp("blocks_written_provenance"), PROV_NO_MATCH);
+
+        // And the prose survives: it asserts nothing the blocks above cannot
+        // support, so nulling it would be the check destroying honest output.
+        assert!(
+            doc.get("summary").and_then(|v| v.as_str()).is_some(),
+            "an honest summary was stripped"
+        );
+        // Prose gets no stamp. A retrieval verdict about a paragraph is a
+        // category error, and `summary` is declared Narrative for that reason.
+        assert!(doc.get("summary_provenance").is_none());
     }
 
     #[test]
@@ -4427,6 +4820,237 @@ mod tests {
             response_floor("weather_oracle", &complete),
             Some(PROV_INFERRED),
             "a complete document floors at the judgement ceiling"
+        );
+    }
+
+    /// A document wrapped in prose is graded, not dismissed.
+    ///
+    /// # The measured defect
+    ///
+    /// `response_floor` used a bare `serde_json::from_str` and returned
+    /// `unavailable` the moment it failed, explaining itself with *"Prose. An
+    /// extraction from prose is ungrounded by construction: there are no typed
+    /// fields to have been sourced."* That is a true statement about a `from_str`
+    /// parse presented as a fact about the agent's output.
+    ///
+    /// Agents wrap their document in prose, and `envelope::extract_json` has
+    /// always known that — which is why `handlers::execution` grades responses
+    /// this function called ungradeable. Measured across the seven contracted
+    /// agents that have run and retained a response: **0 of 94 are bare JSON, 64
+    /// of 94 carry an embedded document**, and **28 of 28** semantic rules with a
+    /// provenance floor read `unavailable_no_tool_source`. Every rule on the
+    /// platform was graded as resting on nothing, because of a parse that gave up
+    /// rather than a contract that looked.
+    ///
+    /// The fixture is the `complete` document from the test above, wrapped the
+    /// way a model actually returns it. Asserting equality with the bare form
+    /// rather than a literal is deliberate: the point is that the wrapper makes
+    /// **no difference**, and a hardcoded expectation would drift from the
+    /// contract while still looking like it tested something.
+    #[test]
+    fn a_document_wrapped_in_prose_is_graded_rather_than_dismissed() {
+        let doc = json!({
+            "summary": "Bucket 32 at EGLC.",
+            "settlement_target": { "station": "EGLC", "unit": "celsius" },
+            "stages": {
+                "forecast": { "n_members": 143, "ensemble_mean": 33.4, "ensemble_sd": 1.167 },
+                "calibration": { "predictive_sd": 0.909, "calibrated_probability": 0.152,
+                                  "climatology_base_rate": 0.03, "sd_was_measured": true },
+                "pricing": { "implied_probability": 0.135, "book_tradeable": true }
+            },
+            "final_probability": 0.152,
+            "multiplier": 1.15
+        })
+        .to_string();
+
+        let bare = response_floor("weather_oracle", &doc);
+        assert!(
+            bare.is_some(),
+            "the bare fixture must grade, or this test proves nothing about the \
+             wrapper"
+        );
+
+        // The three shapes a model actually returns. Each must grade identically
+        // to the bare document.
+        for (label, wrapped) in [
+            (
+                "fenced code block",
+                format!("Here is the forecast:\n\n```json\n{doc}\n```\n"),
+            ),
+            (
+                "leading prose",
+                format!("Based on the ensemble I estimate the following. {doc}"),
+            ),
+            (
+                "trailing prose",
+                format!("{doc}\n\nLet me know if you need another bucket."),
+            ),
+        ] {
+            assert_eq!(
+                response_floor("weather_oracle", &wrapped),
+                bare,
+                "a document returned as a {label} graded differently from the \
+                 same document bare. The contract must see the agent's output, \
+                 not the packaging — and 64 of 94 retained responses from \
+                 contracted agents are packaged like this."
+            );
+        }
+    }
+
+    /// A response with no document anywhere is still ungrounded.
+    ///
+    /// The other half, and it has to stay true or the fix above would have
+    /// bought the floor by accepting anything. `{}` is the adversarial case: a
+    /// balanced-brace scan finds an object, and an empty object has none of the
+    /// contracted paths, so it must floor on the missing sourced blocks rather
+    /// than rise for having parsed.
+    #[test]
+    fn recovering_a_document_is_not_the_same_as_finding_content() {
+        assert_eq!(
+            response_floor("weather_oracle", "No forecast is available today."),
+            Some(PROV_UNAVAILABLE),
+            "a response with no braces at all has no document to grade"
+        );
+        // An empty object parses. It must not grade better than prose.
+        let empty = response_floor("weather_oracle", "Here you go: {}");
+        assert_eq!(
+            empty,
+            Some(PROV_NO_MATCH),
+            "an empty document floored above its missing sourced blocks, so the \
+             brace scan is buying a floor rather than finding content"
+        );
+        assert!(
+            strength(empty.unwrap()) == 0,
+            "whatever an empty document floors at, it must carry no reliance: \
+             got `{}` at strength {}",
+            empty.unwrap(),
+            strength(empty.unwrap())
+        );
+    }
+
+    /// A contracted field whose block the report never graded floors at the
+    /// bottom rung, and carries the claimed value verbatim.
+    ///
+    /// # Why the default matters more than it looks
+    ///
+    /// [`enforce`] emits a `provenance` entry only for blocks it actually saw, so
+    /// a contracted field whose block is **absent from the report is the common
+    /// case** — every contracted agent declares more fields than any one response
+    /// carries. Defaulting those to anything above the bottom rung would make an
+    /// ungraded field indistinguishable from a verified one on the artifact
+    /// trace, which is `gate_trust::never_asked` being coloured as a pass, one
+    /// layer down.
+    ///
+    /// The claimed value travels beside the grade for `Violation.removed`'s
+    /// reason: it is the only evidence that could ever answer which model
+    /// fabricates what, and a null cannot be labelled.
+    #[test]
+    fn an_ungraded_block_floors_at_the_bottom_and_keeps_the_claim() {
+        let doc = json!({"advanced_metrics": {"xg": 1.83}});
+
+        let graded = graded_fields(
+            "football_analyst",
+            &doc,
+            &Report {
+                violations: vec![],
+                provenance: vec![("advanced_metrics".to_string(), PROV_TOOL)],
+            },
+        );
+        let xg: Vec<_> = graded
+            .iter()
+            .filter(|f| f.path == "advanced_metrics.xg")
+            .collect();
+        assert_eq!(
+            xg.len(),
+            1,
+            "`advanced_metrics.xg` is a declared path for football_analyst; if \
+             this is 0 the contract was renamed and every assertion below is \
+             vacuous"
+        );
+        assert_eq!(xg[0].provenance, PROV_TOOL);
+        assert_eq!(
+            xg[0].value,
+            json!(1.83),
+            "the value the model claimed must survive verbatim"
+        );
+
+        // The same document, and a report that graded nothing.
+        let ungraded = graded_fields(
+            "football_analyst",
+            &doc,
+            &Report {
+                violations: vec![],
+                provenance: vec![],
+            },
+        );
+        let xg = ungraded
+            .iter()
+            .find(|f| f.path == "advanced_metrics.xg")
+            .expect("same declared path");
+        assert_eq!(
+            xg.provenance, PROV_UNAVAILABLE,
+            "an ungraded block must floor at the bottom rung, not inherit a pass"
+        );
+        assert_eq!(
+            strength(xg.provenance),
+            0,
+            "whatever token an ungraded block gets, it must carry no reliance"
+        );
+        assert_eq!(
+            xg.value,
+            json!(1.83),
+            "the claim is retained whether or not the contract could grade it — \
+             an ungradeable claim is exactly the one worth keeping"
+        );
+    }
+
+    /// `settleable_by` is derived from the contract, not declared twice.
+    ///
+    /// `Grounding::Sourced { tool }` already names the tool that could answer the
+    /// field, which is why the tool-versus-person routing in the verification
+    /// queue costs nothing to wire: it is a read of the contract rather than a
+    /// second declaration that could disagree with it.
+    #[test]
+    fn the_settling_tool_is_read_from_the_contract() {
+        let doc = json!({});
+        let fields = graded_fields(
+            "genome_profiler",
+            &doc,
+            &Report {
+                violations: vec![],
+                provenance: vec![],
+            },
+        );
+        assert!(
+            !fields.is_empty(),
+            "genome_profiler has declared paths; an empty result makes this vacuous"
+        );
+        // Every field's `settleable_by` must agree with its own contract entry,
+        // for every field, rather than being spot-checked on one.
+        for f in &fields {
+            let c = contracts_for("genome_profiler")
+                .find(|c| c.path == f.path)
+                .expect("every graded field comes from a contract");
+            let expected = match c.grounding {
+                Grounding::Sourced { tool, .. } => Some(tool),
+                _ => None,
+            };
+            assert_eq!(
+                f.settleable_by, expected,
+                "`{}` disagrees with its contract about which tool could settle \
+                 it, so the queue would route it to the wrong side",
+                f.path
+            );
+        }
+        assert!(
+            fields.iter().any(|f| f.settleable_by.is_some()),
+            "no field on genome_profiler is settleable by any tool, so the \
+             `Some` branch above was never exercised"
+        );
+        assert!(
+            fields.iter().any(|f| f.settleable_by.is_none()),
+            "no field on genome_profiler routes to a person, so the `None` \
+             branch above was never exercised"
         );
     }
 

@@ -56,6 +56,21 @@ const NO_RAISE: &[(&str, &str)] = &[
          no `MemoryStore` is in scope. The generating path in \
          `creatures::agent_modules` raises for the same agent and contract.",
     ),
+    (
+        "src/handlers/loops.rs",
+        "the artifact trace re-runs the contract over a RETAINED response to \
+         display a historical episode's grade. It is a GET. Raising here would \
+         make `anomaly_events` a function of UI traffic: one row per page load, \
+         attributed to an episode that ran weeks ago, and Loop 2's count \
+         determined by how often someone opens a screen. That is the opposite of \
+         what the raise is for. The finding is real and worth having — re-running \
+         the contract over retained bytes surfaces 10 violations that were never \
+         recorded, because the contract was not wired to those paths when the \
+         episodes ran — but its home is the trace payload a reviewer reads, not \
+         the exception channel. Whether a historical violation should be \
+         backfilled into `anomaly_events` ONCE is a real question and a different \
+         one; it needs a de-duplication key this table does not have.",
+    ),
 ];
 
 fn rust_sources(root: &Path, out: &mut Vec<PathBuf>) {

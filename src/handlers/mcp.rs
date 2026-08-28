@@ -302,7 +302,23 @@ pub async fn mcp_agent_rpc(
                 db: Some(state.db.clone()),
                 gas_fees: Some(state.gas_fees.clone()),
                 user_id: principal.as_ref().map(|p| p.user_id()),
-                user_secrets: None,
+                // Third-party TOOL credentials for the agent's owner — the
+                // same resolution `/execute` performs, and it belongs here for
+                // the same reason. This was `None`, which read as "this path
+                // has no owner secrets" when what it meant was "nobody looked":
+                // a published tool with a credential (`reduct_*`, `fmp_*`) then
+                // fell through to the process env, so an owner-owned agent ran
+                // a third-party call on the PLATFORM's key. That is the
+                // cross-tenant leak SPEC_28 closed for LLM providers, on the
+                // deterministic surface instead of the reasoning one — and
+                // note the line below already resolves per-agent LLM
+                // credentials correctly, so the two halves of one execution
+                // disagreed about whose money it was.
+                //
+                // Returns `None` for `system` and `curated` tiers by design
+                // (`is_platform_funded`), which is exactly when env IS the
+                // right source.
+                user_secrets: crate::resolve_agent_owner_secrets(&state, &db_agent).await,
                 // SPEC_28 — funds any agent execution a dispatched tool
                 // triggers (e.g. delegate_to_agent) from THIS agent's
                 // owning principal, not the calling MCP client's.

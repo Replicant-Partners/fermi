@@ -248,13 +248,12 @@ pub async fn rounds_handler(
     });
 
     // ── Instrument: what this platform can and cannot tell you ───────────
-    let observation = fermi::native_evaluators::Observation {
-        writes: fermi::write_accounting::accounts(),
-        gates: fermi::gate_trust::accounts(),
-        loops: fermi::loop_model::evaluate(db).await,
-        liveness: fermi::liveness_trust::latest(),
-        gate_ledger: Some(fermi::gate_trust::ledger_status()),
-    };
+    // `collect`, not a hand-built literal. This site reassembled the snapshot
+    // field by field and was byte-for-byte identical to `Observation::collect`;
+    // adding `declarations` is what exposed it, because the copy silently
+    // omitted the new field and every declaration-resolved panel here would have
+    // reported `no_census` while the endpoint looked fine.
+    let observation = fermi::native_evaluators::Observation::collect(db).await;
 
     let instrument: Vec<Value> = panel_absence::PANELS
         .iter()

@@ -861,3 +861,162 @@ async fn the_weather_checks_are_live_or_say_they_are_inert() {
         println!("       {cohort} of them produced by the current prompt");
     }
 }
+
+// ─── live tier: can the video_analyst checks go red? ───────────────────
+//
+// # Why this probe is over a synthetic document and not the corpus
+//
+// Every other falsifiability probe in this file asks the corpus whether the
+// comparison bites: `the_taxonomy_cross_check_can_actually_fail` counts
+// AGREEING profiles, on the reasoning that zero agreements and zero
+// disagreements together mean the JOIN never matches. That reasoning needs
+// rows.
+//
+// `video_analyst` has none. It has never executed — the card named five
+// `reduct_*` tools it did not declare, and carried no output type, so nothing
+// it produced could have been checked even if it had run. A corpus probe here
+// would itself return zero and be indistinguishable from the unrunnable check
+// it exists to detect, which is the `fermi_leaderboard` failure exactly.
+//
+// So the subject is the PREDICATE rather than the data. Each check's SQL is
+// split at `{{COHORT}}` — everything after it is a predicate over `j.doc` and
+// nothing else — and re-hosted over one synthetic document. The predicate is
+// taken from `FIELD_CONTRACTS` rather than restated here, which is the part
+// that matters: a probe carrying its own copy of the rule passes whenever the
+// copy is wrong in the same way as the original.
+//
+// What this establishes is narrower than the corpus probes and is stated
+// plainly: the check is *falsifiable*, not that it is *live*. Liveness arrives
+// with the first episode, and until then the cross-check run correctly reports
+// INERT.
+
+/// Re-host one declared check's predicate over a single supplied document.
+fn predicate_over_one_doc(agent: &str, path: &str) -> String {
+    let sql = FIELD_CONTRACTS
+        .iter()
+        .find(|c| c.agent_id == agent && c.path == path)
+        .and_then(|c| c.cross_check_sql)
+        .unwrap_or_else(|| panic!("{agent}.{path} declares no cross_check_sql"));
+
+    let (_, predicate) = sql.split_once(COHORT_PLACEHOLDER).unwrap_or_else(|| {
+        panic!(
+            "{agent}.{path}: no {COHORT_PLACEHOLDER}, so the predicate cannot \
+             be separated from the episode source"
+        )
+    });
+    assert!(
+        !predicate.contains(" e.") && !predicate.contains(" a."),
+        "{agent}.{path}: the predicate reads `episodes` or `agents` directly, \
+         so it cannot be re-hosted over a document. Either keep the predicate \
+         to `j.doc` or drop this probe rather than weakening it."
+    );
+
+    format!("SELECT count(*)::bigint AS mismatches FROM (SELECT $1::jsonb AS doc) j WHERE true {predicate}")
+}
+
+#[tokio::test]
+#[ignore = "needs DATABASE_URL; run via scripts/grounding_contract_live.sh"]
+async fn the_video_analyst_checks_can_actually_go_red() {
+    let url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&url)
+        .await
+        .expect("connect");
+
+    // One well-formed document: three clips, all from a recording whose
+    // transcript this same document claims to have read, arrays aligned, and a
+    // published block count that matches the clip count.
+    let clean = serde_json::json!({
+        "transcripts": {
+            "recordings_read": ["r_a91", "r_b02"],
+            "recordings_without_transcript": ["r_c73"],
+            "format": "json"
+        },
+        "clips": {
+            "recording_ids": ["r_a91", "r_a91", "r_b02"],
+            "start_seconds": [412.6, 903.1, 145.0],
+            "end_seconds": [448.2, 941.7, 189.4]
+        },
+        "curation": { "mode": "reel_published" },
+        "blocks_written": { "clip_block_count": 3 }
+    });
+
+    // One defect per check, each the failure the check was written for.
+    let cases: &[(&str, &str, &str, serde_json::Value)] = &[
+        (
+            "transcripts",
+            "a recording reported as both read and untranscribed",
+            "/transcripts/recordings_without_transcript",
+            serde_json::json!(["r_c73", "r_a91"]),
+        ),
+        (
+            "clips",
+            "a clip from a recording the document never claims to have read",
+            "/clips/recording_ids",
+            serde_json::json!(["r_a91", "r_a91", "r_zz9"]),
+        ),
+        (
+            "clips",
+            "ragged index-aligned arrays — an end with no start",
+            "/clips/end_seconds",
+            serde_json::json!([448.2, 941.7]),
+        ),
+        (
+            "clips",
+            "a timecode string where a number of seconds belongs",
+            "/clips/start_seconds",
+            serde_json::json!("6:52"),
+        ),
+        (
+            "blocks_written",
+            "a published reel reporting fewer blocks than it declared clips",
+            "/blocks_written/clip_block_count",
+            serde_json::json!(2),
+        ),
+    ];
+
+    for path in ["transcripts", "clips", "blocks_written"] {
+        let sql = predicate_over_one_doc("video_analyst", path);
+        let green: i64 = sqlx::query_scalar(&sql)
+            .bind(&clean)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or_else(|e| panic!("video_analyst.{path}: predicate did not run: {e}"));
+        assert_eq!(
+            green, 0,
+            "video_analyst.{path}: the predicate fires on a well-formed \
+             document. A check that reports a correct document as fabricated \
+             gets switched off, and the switching-off looks like cleanup."
+        );
+        println!("  green      video_analyst.{path} — clean document passes");
+    }
+
+    for (path, defect, pointer, replacement) in cases {
+        let mut doc = clean.clone();
+        *doc.pointer_mut(pointer)
+            .unwrap_or_else(|| panic!("probe pointer {pointer} does not exist in the clean doc")) =
+            replacement.clone();
+
+        let sql = predicate_over_one_doc("video_analyst", path);
+        let red: i64 = sqlx::query_scalar(&sql)
+            .bind(&doc)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or_else(|e| panic!("video_analyst.{path}: predicate did not run: {e}"));
+        assert_eq!(
+            red, 1,
+            "video_analyst.{path}: the check does NOT fire on {defect}. \
+             A cross-check that cannot go red reports healthy forever, which \
+             is worse than declaring the field un-cross-checkable and saying \
+             why in CROSS_CHECK_EXEMPTIONS."
+        );
+        println!("  red        video_analyst.{path} — {defect}");
+    }
+
+    println!(
+        "  FALSIFIABLE — the three predicates distinguish a clean document \
+         from five defects. Not yet LIVE: video_analyst has no episodes, so \
+         the cross-check run reports INERT and is right to."
+    );
+}

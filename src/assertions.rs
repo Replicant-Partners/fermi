@@ -336,7 +336,142 @@ impl Route {
     }
 }
 
-// ─── recovering assertions from prose ──────────────────────────────────
+// ─── contracted fields ─────────────────────────────────────────────────
+
+/// Why a contracted field did not become an assertion.
+///
+/// Returned rather than logged, and counted by the caller. A field the queue
+/// cannot represent is a gap in the queue's coverage, and the one thing that must
+/// not happen is for it to be invisible: an empty queue that is empty because
+/// nothing could be enqueued reads exactly like one that is empty because nothing
+/// is wrong.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotEnqueued {
+    pub path: &'static str,
+    pub why: &'static str,
+}
+
+/// Turn one graded contracted field into an assertion the queue can key on.
+///
+/// # Why this is the half that fills the queue
+///
+/// All 94 assertions in production are 75 [`AssertionKind::Multiplier`] and 19
+/// [`AssertionKind::Probability`] — **zero** [`AssertionKind::Quantity`]. Neither
+/// of those is verifiable: [`Assertion::route`] sends them to
+/// [`Route::InheritFromBasis`], correctly, because *you cannot verify a
+/// multiplier.* So the prose extractor cannot produce a queue item however well
+/// it works, and the queue's first real content has to come from contracted
+/// **fields**, which purport to be retrievals and are therefore checkable.
+///
+/// # `TypedField`, constructed for the first time
+///
+/// [`ExtractionPath::TypedField`] has existed since this module was written, is
+/// documented as *"the only path that can reach the top of the ladder"*, and
+/// **nothing has ever built one.** Every assertion in production is
+/// [`ExtractionPath::Prose`], capped at `model_inference`. That cap is what gives
+/// the retrofit a gradient, and this is the path that rewards it.
+///
+/// `schema` records **which declaration the field was read against**, and for a
+/// contracted field that is the field contract rather than a JSON Schema. Spelled
+/// `contract:<agent>` so a reader can tell the two apart: a field read from a
+/// published `output_contract.schema` and one read against a Rust const are
+/// different acts of extraction, and preserving that difference is what
+/// `ExtractionPath` is for.
+///
+/// # The numeric limit, stated rather than worked around
+///
+/// [`Assertion::value`] is a [`Spread`], so only a numeric field can become an
+/// assertion. `taxonomy.order = "Coleoptera"` cannot — and it is a real claim
+/// that was really wrong in the canonical `Antaxius beieri` case. Widening
+/// `value` to carry a non-numeric claim would change a stored JSONB shape that 94
+/// live rows and 124 empty arrays already use, so it is a declared follow-up
+/// rather than something done quietly here. Until then those fields come back as
+/// [`NotEnqueued`] and the caller counts them, so the queue's coverage is visible
+/// instead of assumed.
+///
+/// A degenerate spread (`p5 == p50 == p95`) is the honest record of a retrieval:
+/// the agent stated one number and claimed no interval, and inventing one would
+/// put a range into the record that no agent asserted.
+pub fn from_graded_field(
+    agent_id: &str,
+    f: &crate::grounding_trust::GradedField,
+) -> Result<Assertion, NotEnqueued> {
+    // Absent is not a claim. A contracted field the document never carried has
+    // nothing to verify, and enqueuing it would fill the queue with the agent's
+    // silence rather than its assertions.
+    if f.value.is_null() {
+        return Err(NotEnqueued {
+            path: f.path,
+            why: "the document did not carry this field, so there is no claim to \
+                  verify. Absence is the contract's business, not the queue's.",
+        });
+    }
+    let Some(n) = f.value.as_f64() else {
+        return Err(NotEnqueued {
+            path: f.path,
+            why: "the claim is not numeric and `Assertion::value` is a `Spread`. \
+                  A real gap: `taxonomy.order = \"Coleoptera\"` is checkable and \
+                  was wrong in the `Antaxius beieri` case. Widening `value` \
+                  changes a stored JSONB shape and is a declared follow-up.",
+        });
+    };
+    if !n.is_finite() {
+        return Err(NotEnqueued {
+            path: f.path,
+            why: "the claim is a non-finite number, which `Spread::validate` \
+                  refuses. Dropped rather than repaired, for the same reason a \
+                  malformed spread is.",
+        });
+    }
+
+    Ok(Assertion {
+        assertion_id: Uuid::new_v4(),
+        // A contracted field purports to be a retrieval — that is what makes it
+        // checkable, and what makes it the only kind that can produce a queue
+        // item. `Grounding::Inferred` fields are also `Quantity` here and are
+        // filtered by `route`, not by mislabelling their kind.
+        kind: AssertionKind::Quantity,
+        value: Spread {
+            p5: n,
+            p50: n,
+            p95: n,
+        },
+        // The block's grade, and the whole reason this is worth writing: a
+        // `Quantity` with an EMPTY basis floors at `pending_human_check`
+        // regardless of how well sourced its block was, so the basis is what
+        // lets a tool-verified field be recognised as one.
+        basis: vec![f.provenance.to_string()],
+        extraction: ExtractionPath::TypedField {
+            schema: format!("contract:{agent_id}"),
+            field_path: f.path.to_string(),
+        },
+        // A contracted field names a field, not a driver. Binding to a driver is
+        // the claim's job and needs a workspace.
+        target_hint: None,
+        raw: Some(f.value.to_string()),
+    })
+}
+
+/// Every contracted field of one document that the queue can carry, and why the
+/// rest could not.
+///
+/// The pair is the point. A caller that took only the assertions would report an
+/// empty queue identically whether nothing was wrong or nothing was
+/// representable, which is the distinction this whole surface exists to keep.
+pub fn from_graded_fields(
+    agent_id: &str,
+    fields: &[crate::grounding_trust::GradedField],
+) -> (Vec<Assertion>, Vec<NotEnqueued>) {
+    let mut out = Vec::new();
+    let mut skipped = Vec::new();
+    for f in fields {
+        match from_graded_field(agent_id, f) {
+            Ok(a) => out.push(a),
+            Err(e) => skipped.push(e),
+        }
+    }
+    (out, skipped)
+}
 
 /// Name of the prose pattern, recorded in [`ExtractionPath::Prose`].
 ///
@@ -569,8 +704,9 @@ pub fn extract_probabilities_from_prose(text: &str) -> (Vec<Assertion>, Vec<Stri
 mod tests {
     use super::*;
     use crate::grounding_trust::{
-        PROV_HUMAN_ENDORSED, PROV_HUMAN_SOURCED, PROV_REJECTED, PROV_TOOL,
+        PROV_HUMAN_ENDORSED, PROV_HUMAN_SOURCED, PROV_NO_MATCH, PROV_REJECTED, PROV_TOOL,
     };
+    use serde_json::json;
 
     fn spread(p5: f64, p50: f64, p95: f64) -> Spread {
         Spread { p5, p50, p95 }
@@ -1069,5 +1205,205 @@ mod tests {
         assert!(s.contains("\"path\":\"typed_field\""), "{s}");
         let back: Assertion = serde_json::from_str(&s).unwrap();
         assert_eq!(a, back);
+    }
+
+    // ── contracted fields ───────────────────────────────────────────────
+
+    fn graded(
+        path: &'static str,
+        value: serde_json::Value,
+        provenance: &'static str,
+        tool: Option<&'static str>,
+    ) -> crate::grounding_trust::GradedField {
+        crate::grounding_trust::GradedField {
+            path,
+            block: path.split('.').next().unwrap_or(path),
+            value,
+            provenance,
+            settleable_by: tool,
+        }
+    }
+
+    /// The basis is what the write buys, and this is the measurement of it.
+    ///
+    /// A `Quantity` with an **empty** basis floors at `pending_human_check`
+    /// however well sourced its block was — that is `entitled_provenance`'s
+    /// documented behaviour and it is correct, because a measurement with no
+    /// stated source is work to be done. So an assertion minted from a
+    /// tool-verified field without carrying the block's grade would enqueue a
+    /// person to go and re-check something a tool already answered.
+    ///
+    /// This pair is the whole argument for `from_graded_field` existing rather
+    /// than the caller building an `Assertion` inline.
+    #[test]
+    fn carrying_the_blocks_grade_is_the_difference_between_verified_and_pending() {
+        let f = graded(
+            "form.xg_last_5",
+            json!(1.83),
+            PROV_TOOL,
+            Some("call_football_api"),
+        );
+        let a = from_graded_field("football_analyst", &f).expect("a numeric claim enqueues");
+
+        assert_eq!(a.basis, vec![PROV_TOOL.to_string()]);
+        assert_eq!(
+            a.entitled_provenance(),
+            PROV_TOOL,
+            "a tool-verified block must reach the top of the ladder; \
+             `ExtractionPath::TypedField` is the only path that allows it"
+        );
+        assert_eq!(
+            a.route(true),
+            Route::None,
+            "an already-reproducible claim must not be queued: a queue that \
+             contains everything is not a queue"
+        );
+
+        // The counterfactual, stated so the value of the basis is measured and
+        // not asserted. Same field, same value, basis dropped.
+        let bare = Assertion {
+            basis: vec![],
+            ..a.clone()
+        };
+        assert_eq!(
+            bare.entitled_provenance(),
+            PROV_PENDING_HUMAN,
+            "with the grade dropped the same claim becomes a work item for a \
+             person, which is exactly the cost of not writing the basis"
+        );
+        assert_ne!(bare.entitled_provenance(), a.entitled_provenance());
+    }
+
+    /// A sourced field with nothing behind it routes to the tool that could
+    /// settle it; an unsourced one routes to a person.
+    ///
+    /// The routing is **derived from the contract**, not declared a second time:
+    /// `Grounding::Sourced { tool }` already names the tool, which is why this
+    /// costs nothing to wire and why `settleable_by` is an `Option` rather than a
+    /// separate flag. `null` is not merely "a person must do it" — per the paper
+    /// it is also a prioritised request for the data integration that would close
+    /// it, which is the same gap seen from the other side.
+    #[test]
+    fn the_route_comes_from_the_contract_and_not_from_a_second_declaration() {
+        let sourced_but_empty = graded(
+            "genome.estimated_size_mb",
+            json!(2.4),
+            PROV_NO_MATCH,
+            Some("gbif_lookup"),
+        );
+        let a = from_graded_field("genome_profiler", &sourced_but_empty).expect("enqueues");
+        assert_eq!(
+            a.route(
+                a.basis
+                    .iter()
+                    .any(|_| sourced_but_empty.settleable_by.is_some())
+            ),
+            Route::Automated,
+            "a tool is declared for this field, so a person must not be asked"
+        );
+
+        let unsourced = graded(
+            "genome.estimated_size_mb",
+            json!(2.4),
+            PROV_UNAVAILABLE,
+            None,
+        );
+        let b = from_graded_field("genome_profiler", &unsourced).expect("enqueues");
+        assert_eq!(
+            b.route(unsourced.settleable_by.is_some()),
+            Route::Human,
+            "no tool can settle this, so it is a person's work and a tool \
+             integration request at the same time"
+        );
+        assert_eq!(b.route(false).pending_verdict(), Some(PROV_PENDING_HUMAN));
+        assert_eq!(a.route(true).pending_verdict(), Some(PROV_PENDING_TOOL));
+    }
+
+    /// Absence is not a claim.
+    ///
+    /// A contracted field the document never carried has nothing to verify.
+    /// Enqueuing it would fill the queue with the agent's silence — and every
+    /// contracted agent has more absent fields than present ones, so the queue
+    /// would be mostly noise on arrival and abandoned.
+    #[test]
+    fn an_absent_field_is_not_a_queue_item() {
+        let f = graded("genome.estimated_size_mb", json!(null), PROV_NO_MATCH, None);
+        let e = from_graded_field("genome_profiler", &f).expect_err("absence must not enqueue");
+        assert_eq!(e.path, "genome.estimated_size_mb");
+        assert!(e.why.contains("did not carry"), "{}", e.why);
+    }
+
+    /// A non-numeric claim is refused **and counted**, never silently dropped.
+    ///
+    /// `taxonomy.order = "Coleoptera"` is the canonical case: the bush-cricket
+    /// `Antaxius beieri` reported as a longhorn beetle, every check passing
+    /// because the field was present, non-null and correctly typed. It is
+    /// exactly the claim most worth verifying and the queue cannot currently
+    /// carry it, because `Assertion::value` is a `Spread`.
+    ///
+    /// That gap is returned as a value so the caller can report it. An empty
+    /// queue that is empty because nothing could be enqueued reads identically to
+    /// one that is empty because nothing is wrong, and those must never look the
+    /// same on this surface.
+    #[test]
+    fn a_non_numeric_claim_is_refused_with_its_reason_rather_than_dropped() {
+        let f = graded(
+            "taxonomy.order",
+            json!("Coleoptera"),
+            PROV_TOOL,
+            Some("gbif_lookup"),
+        );
+        let e = from_graded_field("genome_profiler", &f).expect_err("a string cannot be a Spread");
+        assert!(
+            e.why.contains("not numeric"),
+            "the refusal must say why, so the coverage gap is visible: {}",
+            e.why
+        );
+
+        // And the pair form keeps both halves.
+        let (enqueued, skipped) = from_graded_fields(
+            "genome_profiler",
+            &[
+                graded("genome.estimated_size_mb", json!(2.4), PROV_NO_MATCH, None),
+                f,
+            ],
+        );
+        assert_eq!(enqueued.len(), 1);
+        assert_eq!(skipped.len(), 1);
+    }
+
+    /// A contracted field is read as a `TypedField`, and that is load-bearing.
+    ///
+    /// `ExtractionPath::Prose` is capped at `model_inference`, so a contracted
+    /// field mislabelled as prose could never be tool-verified however good its
+    /// source — the cap would silently defeat the whole point of the contract.
+    /// Every assertion in production today is `Prose`; this is the first
+    /// `TypedField` the platform mints.
+    #[test]
+    fn a_contracted_field_is_a_typed_field_and_not_prose() {
+        let f = graded("form.xg_last_5", json!(1.83), PROV_TOOL, Some("t"));
+        let a = from_graded_field("football_analyst", &f).unwrap();
+        match &a.extraction {
+            ExtractionPath::TypedField { schema, field_path } => {
+                assert_eq!(field_path, "form.xg_last_5");
+                assert!(
+                    schema.starts_with("contract:"),
+                    "the schema must say which declaration the field was read \
+                     against; a field contract is not a JSON Schema and the two \
+                     must be distinguishable: {schema}"
+                );
+            }
+            other => panic!(
+                "a contracted field was recorded as {other:?}, which caps it at model_inference"
+            ),
+        }
+        assert_eq!(a.extraction.ceiling(), None, "a typed field has no ceiling");
+        assert_eq!(
+            a.raw.as_deref(),
+            Some("1.83"),
+            "the claimed value must be retained verbatim: it is the only evidence \
+             that could answer which model fabricates what, and a null cannot be \
+             labelled"
+        );
     }
 }

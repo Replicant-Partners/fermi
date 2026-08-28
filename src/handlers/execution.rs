@@ -410,23 +410,38 @@ pub async fn execute_agent_handler(
     // `enforce` is a pure function over the document and returns an empty
     // report for any agent without a contract, so this is a no-op for most of
     // the catalogue and cannot fail a run.
-    // The document AFTER enforcement, kept rather than dropped.
+    // The document **as the agent produced it**, kept before enforcement.
     //
-    // This enforced into a binding local to the match arm and threw it away,
-    // keeping only the report. That was enough while nothing downstream needed
-    // the cleaned document; schema validation does, and it has to see the
-    // cleaned one. Order is load-bearing and `envelope::build` states the
-    // rule: enforce first, then verify what remains. A schema pinning an
-    // unsourceable field to `null` would otherwise reject a document
-    // grounding was about to clean, and the agent would be blamed for
-    // something the platform then fixed.
-    let mut enforced_doc = output
+    // `enforce` mutates: it nulls ungrounded fields. So the claimed values — the
+    // evidence for every later verification, and the only thing that could ever
+    // answer which model fabricates what — exist only in this copy. Reading them
+    // off the enforced document would find the nulls the platform just wrote and
+    // record the agent as having claimed nothing.
+    let claimed_doc = output
         .raw_response
         .as_deref()
         .and_then(fermi::agent_backend::envelope::extract_json);
+    // The document AFTER enforcement, kept rather than dropped.
+    //
+    // This was `match claimed_doc.clone()`, which enforced into a binding
+    // local to the match arm and threw it away, keeping only the report. That
+    // was enough while nothing downstream needed the cleaned document; schema
+    // validation does, and it has to see the cleaned one. Order is
+    // load-bearing and `envelope::build` states the rule: enforce first, then
+    // verify what remains. A schema pinning an unsourceable field to `null`
+    // would otherwise reject a document grounding was about to clean, and the
+    // agent would be blamed for something the platform then fixed.
+    let mut enforced_doc = claimed_doc.clone();
     let grounding_report = match enforced_doc.as_mut() {
         Some(doc) => fermi::grounding_trust::enforce(&agent_id, doc),
         None => fermi::grounding_trust::Report::default(),
+    };
+    // Every contracted field, with its grade and the claim behind it. Computed
+    // from the report rather than by a second pass, so the two cannot describe
+    // different instants.
+    let graded = match claimed_doc.as_ref() {
+        Some(doc) => fermi::grounding_trust::graded_fields(&agent_id, doc, &grounding_report),
+        None => Vec::new(),
     };
     // The invocation gate's own verdict, counted — in three states, not two.
     //
@@ -702,6 +717,59 @@ pub async fn execute_agent_handler(
         Some(stored_episode_id),
         grounding_report.clone(),
     );
+
+    // ── Loop 2's other half: what needs checking ──────────────────────────
+    //
+    // `spawn_raise` above handles the EXCEPTION — a field the contract says
+    // could have no source. This handles the ROUTINE: every contracted field the
+    // agent did claim, queued for whoever can settle it. The two are deliberately
+    // different channels and must stay so. `anomaly_events` is rare by design and
+    // a row per marked field would flood the HITL queue and destroy the semantics
+    // that keep Loop 2 informative; `assertion_verifications` is the queue that
+    // is *supposed* to have volume, and it has held 0 rows since migration 205
+    // for want of a writer.
+    //
+    // Below the episode write for `spawn_raise`'s reason, and enforced the same
+    // way: `assertion_verifications.episode_id` is a real foreign key and
+    // `stored_episode_id` does not exist before the line above, so moving this
+    // up is a compile error rather than a race.
+    //
+    // Spawned and non-fatal. An agent must not fail to answer because the queue
+    // of things to check about its answer could not be written; the cost is paid
+    // explicitly through `write_accounting::Sink::AssertionVerifications`.
+    if !graded.is_empty() {
+        let db = state.db.clone();
+        let agent = agent_id.clone();
+        tokio::spawn(async move {
+            let e =
+                fermi::verification_queue::enqueue(&db, stored_episode_id, &agent, &graded).await;
+            if e.queued > 0 {
+                tracing::info!(
+                    agent = %agent,
+                    episode = %stored_episode_id,
+                    queued = e.queued,
+                    to_tool = e.to_tool,
+                    to_human = e.to_human,
+                    already_settled = e.already_settled,
+                    "contracted fields queued for verification"
+                );
+            }
+            // `is_problem` is false for an empty queue that is empty because
+            // everything was already reproducible, or because nothing was a
+            // checkable proposition. Warning on those would fill the log on the
+            // runs that went best, which is how a warning stops being read.
+            if e.is_problem() {
+                tracing::warn!(
+                    agent = %agent,
+                    episode = %stored_episode_id,
+                    failed = e.failed,
+                    not_representable = ?e.not_representable,
+                    "some contracted claims could not be queued for verification; \
+                     each is a claim nobody will ever check"
+                );
+            }
+        });
+    }
 
     // Make this turn visible to drift + anomaly detection. Without a timeline
     // entry the observability worker never sees live traffic, so the HITL

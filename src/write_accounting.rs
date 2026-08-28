@@ -100,6 +100,7 @@ pub enum Sink {
     CoherenceEvaluations = 13,
     SchemaMigrations = 14,
     GateDecisions = 15,
+    AssertionVerifications = 16,
 }
 
 /// What a sink is, who writes it non-fatally, and why that is allowed.
@@ -267,6 +268,24 @@ pub const SINKS: &[SinkSpec] = &[
                        This is the rung composing in the right direction — the \
                        thing that watches the gates is watched by the thing \
                        that watches the writes.",
+    },
+    SinkSpec {
+        sink: Sink::AssertionVerifications,
+        table: "assertion_verifications",
+        writer: "verification_queue::enqueue, from the execute boundary",
+        why_nonfatal: "An agent must not fail to answer because the queue of \
+                       things to check about its answer could not be written — \
+                       that turns an observability outage into a refusal of \
+                       service, the one failure mode worse than the missing \
+                       record. The cost is real and specific: a lost enqueue is \
+                       a claim nobody will ever check, and it is invisible \
+                       precisely because a claim that was never queued looks \
+                       exactly like one that needed no checking. This table has \
+                       held zero rows since migration 205 and nothing could say \
+                       whether that was an empty queue or a rejected write — the \
+                       `severity = 'L1'` shape — so the attempts are counted \
+                       here and `Enqueued` carries the three reasons a queue \
+                       stays empty apart.",
     },
 ];
 

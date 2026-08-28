@@ -138,6 +138,136 @@ fn every_execute_boundary_enforces_the_grounding_contract() {
 /// Rule 5.1: a check that has never failed has not been tested. A literal that
 /// no source file contains must produce a failure for every boundary — if this
 /// passes, the detection logic is inert and the test above proves nothing.
+/// The two general execute paths must both queue contracted claims.
+///
+/// # Why this is a second scan and not a third boundary
+///
+/// [`EXECUTE_BOUNDARIES`] includes `agent_backend/envelope.rs`, and the
+/// delegation hop **cannot** enqueue: `assertion_verifications.episode_id` is a
+/// real foreign key and the hop writes no episode. So the property is narrower
+/// than enforcement — it belongs to the pair of endpoints that persist an
+/// episode, and stating it over the wider list would either fail on a file that
+/// is correct or need an exemption that hides the real rule.
+///
+/// # Why it is enforced at all
+///
+/// `execution_stream.rs` says it in its own comment: *"Deliberately mirrors
+/// `execution.rs` rather than sharing a helper: the two handlers already
+/// duplicate their episode, credit and royalty logic, and the thing worth
+/// preventing is not the duplication but the two paths silently DIVERGING. Keep
+/// them edited in pairs."* That instruction was a comment, and comments do not
+/// fail builds. It has already been ignored twice on this exact pair: grounding
+/// was wired into `execution.rs` and not the stream, and claims were retained on
+/// `execution.rs` since mig-187 and never on the stream — which was the whole of
+/// the remaining loss after migration 213, because the console prefers the
+/// stream.
+///
+/// The consequence here is the same shape: whichever endpoint does not queue
+/// becomes the one whose claims are never checked, and the queue looks healthy
+/// because the other endpoint is filling it.
+const QUEUE_BOUNDARIES: &[(&str, &str)] = &[
+    ("src/handlers/execution.rs", "POST /api/agents/:id/execute"),
+    (
+        "src/handlers/execution_stream.rs",
+        "the SSE streaming variant, which the Fermi Console prefers",
+    ),
+];
+
+/// The enqueue call, and the input it must have.
+///
+/// Both, because either alone is satisfiable while the feature is dead:
+/// `graded_fields` with nothing consuming it grades and discards, and `enqueue`
+/// over an empty vector is a call site that can never write a row. That is the
+/// `provenance_floor_coverage` lesson — a scan asserting presence of a call and
+/// nothing about its argument passed completely while producing the exact defect
+/// it existed to prevent.
+const ENQUEUE_CALL: &str = "verification_queue::enqueue";
+const GRADED_CALL: &str = "grounding_trust::graded_fields";
+
+/// Lines that are not comments. The filter that stops a mention counting as a
+/// call — this repository's comments name modules they do not invoke constantly.
+fn code_lines(src: &str) -> impl Iterator<Item = &str> {
+    src.lines().filter(|l| {
+        let t = l.trim_start();
+        !t.starts_with("//") && !t.starts_with("///") && !t.starts_with("*")
+    })
+}
+
+#[test]
+fn both_execute_paths_queue_contracted_claims_for_verification() {
+    let mut missing = Vec::new();
+
+    for (path, why) in QUEUE_BOUNDARIES {
+        let src = match fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) => {
+                missing.push(format!(
+                    "{path}: could not be read ({e}). If this file moved, move \
+                     the entry — do not delete it."
+                ));
+                continue;
+            }
+        };
+        if !code_lines(&src).any(|l| l.contains(ENQUEUE_CALL)) {
+            missing.push(format!(
+                "{path} does not call `{ENQUEUE_CALL}`\n         why it \
+                 matters: {why} — whichever endpoint does not queue becomes the \
+                 one whose claims are never checked"
+            ));
+        } else if !code_lines(&src).any(|l| l.contains(GRADED_CALL)) {
+            missing.push(format!(
+                "{path} calls `{ENQUEUE_CALL}` and never `{GRADED_CALL}`, so the \
+                 enqueue has no contracted fields to work from and can never \
+                 write a row\n         why it matters: {why}"
+            ));
+        }
+    }
+
+    assert!(
+        missing.is_empty(),
+        "\n\n  {} execute path(s) do not queue contracted claims:\n\n         {}\n\n\
+         `assertion_verifications` held 0 rows from migration 205 until this \
+         writer existed. A path that grades its fields and does not queue them \
+         puts it back, silently, for that path only.\n",
+        missing.len(),
+        missing.join("\n\n         ")
+    );
+}
+
+/// The queue scan can tell present from absent, and a comment from a call.
+///
+/// Its own falsifier, beside the enforcement one, because it is a separate
+/// detector over a separate list. Same two properties: a sentinel that must not
+/// be found anywhere, and the comment filter biting.
+#[test]
+fn the_queue_scan_can_actually_fail() {
+    let sentinel = "verification_queue::enqueue_a_call_that_does_not_exist";
+    for (path, _) in QUEUE_BOUNDARIES {
+        let Ok(src) = fs::read_to_string(path) else {
+            continue;
+        };
+        assert!(
+            !src.contains(sentinel),
+            "{path} contains the sentinel, so the scan cannot distinguish \
+             present from absent"
+        );
+    }
+
+    let commented = "// fermi::verification_queue::enqueue(&db, id, &agent, &graded);";
+    assert!(
+        !code_lines(commented).any(|l| l.contains(ENQUEUE_CALL)),
+        "a commented-out enqueue was counted as coverage — the scan would pass a \
+         path that had deleted its queue write"
+    );
+    // And the positive direction, so the filter is not simply rejecting
+    // everything: a real call on a real line must be seen.
+    let real = "    let e = fermi::verification_queue::enqueue(&db, id, &agent, &graded).await;";
+    assert!(
+        code_lines(real).any(|l| l.contains(ENQUEUE_CALL)),
+        "the filter rejects a genuine call site, so the scan is vacuous"
+    );
+}
+
 #[test]
 fn the_scan_can_actually_fail() {
     let sentinel = "grounding_trust::enforce_a_call_that_does_not_exist";

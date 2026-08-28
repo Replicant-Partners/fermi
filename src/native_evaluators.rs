@@ -115,6 +115,16 @@ pub struct Observation {
     /// than of any one gate: the counters above are in-memory and reset on
     /// restart, and this is how a reader learns which of them say `since boot`.
     pub gate_ledger: Option<crate::gate_trust::LedgerStatus>,
+    /// What the fleet has declared about itself.
+    ///
+    /// Here rather than fetched per panel because it answers a question no other
+    /// field can: every other member of this struct measures what the PLATFORM
+    /// did, and this measures what the SUBJECTS declared. Measured over
+    /// production, 110 of 206 agents that have produced an episode are
+    /// `test_agent_*` rows declaring nothing, and 89 of the 96 real ones have no
+    /// field contract — so this is the dominant explanation for `unknown` across
+    /// every surface, and it was the one thing a snapshot could not see.
+    pub declarations: Option<crate::declaration_ladder::Census>,
 }
 
 impl Observation {
@@ -126,8 +136,47 @@ impl Observation {
             loops: loop_model::evaluate(pool).await,
             liveness: crate::liveness_trust::latest(),
             gate_ledger: Some(gate_trust::ledger_status()),
+            declarations: declaration_census(pool).await,
         }
     }
+}
+
+/// Measure what the fleet has declared, for [`Observation::collect`].
+///
+/// `None` on any failure rather than a default, and the distinction is the whole
+/// point of the `Option`: an empty `Census` would report every rung at zero
+/// coverage, which is indistinguishable from a fleet that has declared nothing
+/// and is the most alarming available reading. A resolver that cannot get the
+/// census must say so, not infer the worst.
+pub async fn declaration_census(pool: &sqlx::PgPool) -> Option<crate::declaration_ladder::Census> {
+    use sqlx::Row;
+    let rows = sqlx::query(crate::declaration_ladder::CENSUS_SQL)
+        .fetch_all(pool)
+        .await
+        .ok()?;
+    let mut measured: Vec<(String, Vec<&'static str>)> = Vec::new();
+    for r in &rows {
+        let Ok(name) = r.try_get::<String, _>("agent_name") else {
+            continue;
+        };
+        let mut rungs: Vec<&'static str> = Vec::new();
+        if r.try_get::<bool, _>("ports").unwrap_or(false) {
+            rungs.push("ports");
+        }
+        if r.try_get::<bool, _>("output_type").unwrap_or(false) {
+            rungs.push("output_type");
+        }
+        if r.try_get::<bool, _>("output_schema").unwrap_or(false) {
+            rungs.push("output_schema");
+        }
+        // The fourth rung is a Rust const and no SQL can see it. Asked of the
+        // owner rather than duplicated into the query.
+        if crate::declaration_ladder::has_field_contract(&name) {
+            rungs.push("field_contract");
+        }
+        measured.push((name, rungs));
+    }
+    Some(crate::declaration_ladder::census(&measured))
 }
 
 /// A check on the platform's own machinery.
@@ -602,6 +651,12 @@ mod tests {
             loops: vec![loop_state("loop1", None, None)],
             liveness: Some(liveness(6, vec![])),
             gate_ledger: None,
+            // `None`, not an empty census. No evaluator here reads it — the
+            // declaration ladder answers panels rather than scoring the
+            // platform's machinery — and an empty `Census` would assert every
+            // rung is at zero coverage, which is a claim this control world has
+            // no business making.
+            declarations: None,
         }
     }
 

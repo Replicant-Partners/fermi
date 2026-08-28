@@ -273,10 +273,14 @@
 
       <div class="block">
         <h3>Recent executions</h3>
+        <div class="note">Each execution opens its artifact trace — the checkpoints it
+          passed, what it claimed, and what could not be sourced.</div>
         ${r.episodes.length ? `<table><thead><tr><th>When</th><th>Query</th>
           <th>Status</th><th class="num">Cost</th></tr></thead><tbody>
           ${r.episodes.map(e => `<tr>
-            <td class="dim">${esc((e.at || "").slice(0,10))}</td>
+            <td class="dim">${e.episode_id
+              ? `<a href="/trace/${esc(e.episode_id)}">${esc((e.at || "").slice(0,10))}</a>`
+              : esc((e.at || "").slice(0,10))}</td>
             <td>${esc((e.query || "").slice(0,70))}</td>
             <td class="${e.status === "success" ? "ok" : "bad"}">${esc(e.status || "—")}
               ${e.error ? `<div class="dim">${esc(e.error.slice(0,80))}</div>` : ""}</td>

@@ -45,6 +45,12 @@ pub async fn evaluate_coherence_handler(
     body: Option<Json<Value>>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let user_id = principal.user_id();
+    // Taken before anything runs. It bounds the duplicate check on the
+    // coordination-brief delivery below: a targeted note the strategist writes
+    // during THIS run suppresses the platform's generic one, and a note from a
+    // previous session must not. Without a cutoff the second evaluation of a
+    // workspace would deliver nothing because the first one had.
+    let run_started_at = chrono::Utc::now();
     let ws_uuid: uuid::Uuid = workspace_id
         .parse()
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
@@ -351,6 +357,21 @@ pub async fn evaluate_coherence_handler(
                     .await
                     .unwrap_or_else(|_| ws_uuid.to_string());
                 let tool_context = Arc::new(ToolContext {
+                    // The strategist's own run persists no episode — this handler
+                    // imports `agent_output_to_episode` and never calls it — so
+                    // there is nothing for a delegated child to point at, and
+                    // anything delegated from here is recorded as a root.
+                    //
+                    // Not the same as "no episodes come out of this path":
+                    // `coordination_note::deliver` writes one per member below.
+                    // Those belong to the MEMBER, as its own dreaming material,
+                    // and parenting them to a strategist run that has no row
+                    // would be a foreign key to nothing.
+                    //
+                    // Stated rather than left bare. Every other `None` on this
+                    // field carries its argument, and this was the one that did
+                    // not — which is why
+                    // `tests/episode_lineage_coverage.rs` now requires one.
                     parent_episode_id: None,
                     memory_store: state.memory_store.clone(),
                     embedder: state.embedder.clone(),
@@ -388,6 +409,108 @@ pub async fn evaluate_coherence_handler(
     } else {
         None
     };
+
+    // ── Loop 3's terminal half, delivered by the platform ──────────────────
+    //
+    // The brief reaches each member's episodic memory. This is the step the card
+    // is explicit about — *"an agent does not read the brief, it dreams on its
+    // episodes"* — and it had never once happened: `coordinator_observation`
+    // stood at 0 of 3,576 episodes.
+    //
+    // The mechanism was the problem, not the prompt. Both the card's Stage 3
+    // and the query above ask the strategist to call
+    // `record_coordination_observation` for each member, and asking a language
+    // model to perform a side effect makes the loop's closure contingent on it
+    // electing to. The content of a coordination finding is a judgement and is
+    // the model's; the delivery is bookkeeping and is ours.
+    //
+    // So: the strategist's targeted notes win, and for any member it did not
+    // write to, the platform delivers the brief. `deliver` skips a member the
+    // model already covered *during this run*, which is what `run_started_at`
+    // is for — without it the second evaluation of a workspace would deliver
+    // nothing because the first one had.
+    //
+    // Spawned, non-fatal, and counted through `write_accounting::Sink::Episodes`.
+    // A coherence evaluation must not fail because a member's memory write did,
+    // and a lost note is a dreaming cycle that will not happen.
+    if let Some(brief) = consultant_output.clone() {
+        let members: Vec<uuid::Uuid> =
+            sqlx::query_scalar("SELECT agent_id FROM workspace_agents WHERE workspace_id = $1")
+                .bind(ws_uuid)
+                .fetch_all(&state.db)
+                .await
+                .unwrap_or_default();
+
+        // The strategist itself is a member of nothing it should be lecturing:
+        // a note about the team, written into the coordinator's own memory,
+        // would be consolidated as though it were an observation about the
+        // coordinator's behaviour.
+        // Re-read rather than reaching into the block above: `strategist` is
+        // scoped to the premium branch, and the delivery runs whether or not
+        // that branch resolved a DB row. A workspace with no registered
+        // strategist still gets its brief delivered — attributed to the member
+        // rather than to a coordinator that does not exist, which is honest and
+        // keeps `strategist_agent_id` non-null.
+        let strategist_id: Option<uuid::Uuid> =
+            sqlx::query_scalar("SELECT coordination_strategist_id FROM teams WHERE id = $1")
+                .bind(ws_uuid)
+                .fetch_optional(&state.db)
+                .await
+                .ok()
+                .flatten()
+                .flatten();
+        let summary = format!(
+            "Coherence {:.0}% ({}) over {} utterances. {}",
+            eval.global_score * 100.0,
+            eval.quality_label,
+            eval.utterance_count,
+            snapshot.feedback_action
+        );
+        let db = state.db.clone();
+        let store = state.memory_store.clone();
+        let embedder = state.embedder.clone();
+
+        tokio::spawn(async move {
+            let (mut written, mut targeted, mut problems) = (0usize, 0usize, Vec::new());
+            for member in members {
+                if Some(member) == strategist_id {
+                    continue;
+                }
+                let d = fermi::coordination_note::deliver(
+                    &db,
+                    &store,
+                    embedder.as_ref(),
+                    ws_uuid,
+                    strategist_id.unwrap_or(member),
+                    member,
+                    &brief,
+                    &summary,
+                    Some(run_started_at),
+                )
+                .await;
+                match &d {
+                    fermi::coordination_note::Delivery::Written { .. } => written += 1,
+                    // The outcome to hope for: the model did the better thing.
+                    fermi::coordination_note::Delivery::AlreadyTargeted => targeted += 1,
+                    _ => problems.push(format!("{member}: {d:?}")),
+                }
+            }
+            tracing::info!(
+                workspace = %ws_uuid,
+                delivered = written,
+                already_targeted = targeted,
+                "coordination brief delivered to member memory"
+            );
+            if !problems.is_empty() {
+                tracing::warn!(
+                    workspace = %ws_uuid,
+                    problems = ?problems,
+                    "some members did not receive the coordination brief; each is \
+                     a dreaming cycle that will not happen"
+                );
+            }
+        });
+    }
 
     // Post coherence update to workspace chat
     let chat_content = if let Some(ref consultant) = consultant_output {
@@ -1288,6 +1411,36 @@ mod strategist_resolution_tests {
         std::fs::read_to_string(path).unwrap()
     }
 
+    /// The handler, without this test module.
+    ///
+    /// **A scan over a file that contains the scan is satisfied by its own
+    /// assertion string.** Two of the checks below were written against
+    /// [`source`] and were green for that reason and no other:
+    /// `src.contains("t.coordination_strategist_id")` was matched by the very
+    /// line asserting it, and so was the coordination-floor check added
+    /// alongside this helper. The floor check was broken by deleting the entire
+    /// delivery block from the handler and it stayed green — the harness in
+    /// `scripts/break_coordination_note.py` is what caught it, on its first
+    /// run, and it would have shipped otherwise.
+    ///
+    /// A positive source check must therefore read only the code it is about.
+    /// `#[cfg(test)]` is the boundary, and it is asserted rather than assumed:
+    /// if the module were ever renamed or moved above the handler, silently
+    /// scanning nothing is the same failure one layer down.
+    fn handler_source() -> String {
+        let src = source();
+        let cut = src
+            .find("#[cfg(test)]")
+            .expect("coherence.rs has a #[cfg(test)] boundary to cut at");
+        let handler = src[..cut].to_string();
+        assert!(
+            handler.len() > src.len() / 2,
+            "the #[cfg(test)] boundary is not below the handler — this view is scanning \
+             almost nothing, which is how a positive source check passes vacuously"
+        );
+        handler
+    }
+
     /// The coherence shelf must resolve the workspace's registered strategist,
     /// not name one.
     ///
@@ -1329,11 +1482,70 @@ mod strategist_resolution_tests {
     /// satisfied by deleting the strategist invocation entirely.
     #[test]
     fn coherence_shelf_reads_the_registered_strategist() {
-        let src = source();
+        // `handler_source`, not `source`: this assertion's own string literal
+        // satisfies it otherwise, and did.
+        let src = handler_source();
         assert!(
             src.contains("t.coordination_strategist_id"),
             "coherence.rs no longer reads teams.coordination_strategist_id — the shelf is \
              back to invoking a strategist the workspace did not register"
+        );
+    }
+
+    /// The platform delivers the brief itself; it does not only ask a model to.
+    ///
+    /// Loop 3's terminal half — *the brief reaches each member's episodic
+    /// memory* — produced **0 rows in 3,576 episodes** for the life of the
+    /// feature. Nothing was broken: `record_coordination_observation` existed,
+    /// was dispatched, was exposed to the strategist, and both the card's Stage
+    /// 3 and this handler's prompt asked for it by name. The strategist simply
+    /// never called it, and there is no version of a prompt that makes a side
+    /// effect a guarantee.
+    ///
+    /// So this is a source check rather than a behavioural one, and the reason
+    /// is the shape of the regression it guards. The compiler does not own
+    /// "`deliver` is called from the coherence shelf": deleting this block
+    /// leaves `coordination_note::deliver` with one caller and a clean build,
+    /// the coherence endpoint returning exactly the same 200, and Loop 3 back
+    /// at zero with nothing anywhere saying so. That is precisely how it stood
+    /// before this work, and it stood that way for the life of the feature.
+    #[test]
+    fn the_platform_delivers_the_coordination_brief_and_does_not_only_ask_for_it() {
+        let src = handler_source();
+        assert!(
+            src.contains("coordination_note::deliver("),
+            "coherence.rs no longer delivers the coordination brief to member memory. \
+             Loop 3's terminal half is then contingent on the strategist electing to call \
+             record_coordination_observation — which it did zero times in 3,576 episodes."
+        );
+    }
+
+    /// The floor's duplicate check is bounded to *this run*.
+    ///
+    /// `deliver`'s `since` argument is what makes the floor idempotent per run
+    /// rather than per workspace. Pass `None` and every evaluation delivers a
+    /// second copy of the brief into every member's dreaming material; pass a
+    /// cutoff older than this run — the workspace's creation, say — and the
+    /// *second* coherence evaluation of a workspace delivers nothing at all,
+    /// because the first one already had. The second failure is the dangerous
+    /// one: it looks like the floor is wired, it goes green, and the loop is
+    /// closed exactly once per workspace forever.
+    ///
+    /// So the cutoff must be the timestamp taken at the top of *this* handler
+    /// invocation, and only that.
+    #[test]
+    fn the_floor_suppresses_duplicates_within_the_run_and_not_across_runs() {
+        let src = handler_source();
+        assert!(
+            src.contains("let run_started_at = chrono::Utc::now();"),
+            "coherence.rs no longer stamps run_started_at at the top of the handler, so the \
+             floor's duplicate check has no per-run cutoff to use"
+        );
+        assert!(
+            src.contains("Some(run_started_at),"),
+            "the coordination floor no longer bounds its duplicate check to this run. With \
+             None it re-delivers the brief on every evaluation; with a wider cutoff it \
+             delivers once per workspace and never again."
         );
     }
 }

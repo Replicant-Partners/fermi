@@ -1179,7 +1179,8 @@ fn builtin_tools_core() -> Vec<BuiltinToolDef> {
                     },
                     "format": {
                         "type": "string",
-                        "description": "Transcript format: 'json' (with timestamps) or 'txt' (plain text). Default: json",
+                        "enum": ["json", "txt"],
+                        "description": "Transcript format. 'json' carries per-segment start/end timestamps and is the only form clip boundaries may be taken from; 'txt' is prose with no timestamps. Default: json",
                         "default": "json"
                     }
                 },
@@ -1232,11 +1233,11 @@ fn builtin_tools_core() -> Vec<BuiltinToolDef> {
                     },
                     "start": {
                         "type": "number",
-                        "description": "Start time in seconds (required for doc-range blocks)"
+                        "description": "Start time in SECONDS as a number, e.g. 412.6 (required for doc-range blocks). Not a timecode string: '6:52' is rejected."
                     },
                     "end": {
                         "type": "number",
-                        "description": "End time in seconds (required for doc-range blocks)"
+                        "description": "End time in SECONDS as a number, e.g. 448.2 (required for doc-range blocks). Must be greater than start."
                     },
                     "text": {
                         "type": "string",
@@ -2645,11 +2646,11 @@ impl ToolRegistry {
             "edit_image" => execute_edit_image(input).await,
             "write_workspace_file" => execute_write_workspace_file(input, ctx).await,
             "speak_text" => execute_speak_text(input).await,
-            "reduct_list_projects" => execute_reduct_list_projects().await,
-            "reduct_get_project" => execute_reduct_get_project(input).await,
-            "reduct_get_transcript" => execute_reduct_get_transcript(input).await,
-            "reduct_create_reel" => execute_reduct_create_reel(input).await,
-            "reduct_add_block" => execute_reduct_add_block(input).await,
+            "reduct_list_projects" => execute_reduct_list_projects(ctx).await,
+            "reduct_get_project" => execute_reduct_get_project(input, ctx).await,
+            "reduct_get_transcript" => execute_reduct_get_transcript(input, ctx).await,
+            "reduct_create_reel" => execute_reduct_create_reel(input, ctx).await,
+            "reduct_add_block" => execute_reduct_add_block(input, ctx).await,
             "delegate_to_agent" => execute_delegate_to_agent(input, ctx).await,
             "evaluate_coherence" => execute_evaluate_coherence(input, ctx).await,
             "coherence_snapshot" => execute_coherence_snapshot(ctx).await,
@@ -3015,21 +3016,6 @@ async fn execute_record_coordination_observation(
     let target = resolve_agent_id(input, "agent_id", ctx).await?;
 
     // Gate 2 — target must be a member of this workspace.
-    let is_member: Option<i32> = sqlx::query_scalar(
-        "SELECT 1 FROM workspace_agents WHERE workspace_id = $1 AND agent_id = $2",
-    )
-    .bind(workspace_id)
-    .bind(target)
-    .fetch_optional(db)
-    .await
-    .map_err(|e| format!("Failed to check workspace membership: {e}"))?;
-    if is_member.is_none() {
-        return Err(format!(
-            "Agent {target} is not a member of this workspace; refusing to write \
-             into its memory."
-        ));
-    }
-
     let observation = input
         .get("observation")
         .and_then(|v| v.as_str())
@@ -3041,88 +3027,55 @@ async fn execute_record_coordination_observation(
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
-    // What the member will actually consolidate. Phrased as a second-person
-    // observation because that is how it will read once it becomes a rule in
-    // the agent's own knowledge graph.
-    let query = format!("Coordination observation from this workspace: {observation}");
-    let body = if session_summary.is_empty() {
-        observation.to_string()
-    } else {
-        format!("{observation}\n\nSession context: {session_summary}")
-    };
+    // The episode write itself lives in `fermi::coordination_note`, shared with
+    // the platform-side delivery in `handlers::workspace::coherence`. One
+    // implementation, per §3.4 — and the reason there are two callers at all is
+    // that this one, the model-invoked one, produced 0 of 3,576 episodes for the
+    // life of the feature. The platform now delivers the brief as a floor and
+    // this remains the better path: a note targeted at one member about its own
+    // behaviour.
+    //
+    // `since: None` — a targeted note is never a duplicate of itself. The
+    // duplicate check exists so the platform's generic delivery yields to this
+    // call, not the other way round.
+    let delivery = crate::coordination_note::deliver(
+        db,
+        &ctx.memory_store,
+        ctx.embedder.as_ref(),
+        workspace_id,
+        caller,
+        target,
+        observation,
+        session_summary,
+        None,
+    )
+    .await;
 
-    // Embed it, or the member cannot cluster it and cannot retrieve it. Every
-    // path that reads episodes for consolidation filters `embedding IS NOT
-    // NULL`; an unembedded observation is written and then invisible.
-    let provenance = ctx
-        .embedder
-        .generate_provenanced(&format!("{query} {body}"))
-        .await
-        .map_err(|e| format!("Failed to embed observation: {e}"))?;
-
-    let episode = agent_bestiary_memory::Episode {
-        episode_id: Uuid::new_v4(),
-        agent_id: target,
-        timestamp_ref: chrono::Utc::now(),
-        query,
-        context: json!({
-            "kind": "coordination_observation",
-            "workspace_id": workspace_id,
-            "strategist_agent_id": caller,
-        }),
-        execution_status: agent_bestiary_memory::ExecutionStatus::Success,
-        error_details: None,
-        execution_time_ms: 0,
-        tokens_used: None,
-        cost_usd: None,
-        // Not a run: no provider was called on this agent's behalf. Leaving
-        // these null is what keeps `agent_execution_rollup` honest alongside
-        // the provenance filter added in mig-200.
-        input_tokens: None,
-        output_tokens: None,
-        cost_basis: None,
-        cost_rate_key: None,
-        parent_episode_id: None,
-        response_text: Some(body),
-        assertions: None,
-        embedding: None, // set from `provenance` by the storing call below
-        consolidated: false,
-        tags: vec![
-            "coordination_observation".to_string(),
-            "dreaming_material".to_string(),
-        ],
-        provenance: agent_bestiary_memory::Provenance::CoordinatorObservation,
-        // Above an ordinary episode (0.5) so it survives the top-30 extraction
-        // budget in a busy agent, well below a human correction (1.0). The
-        // strategist is an LLM making a second-order judgement about behaviour,
-        // not ground truth, and should not outrank what the agent actually did.
-        authority_weight: 0.6,
-        dyad_id: None,
-        persona_version_at_write: None,
-        provider_used: None,
-        model_used: None,
-    };
-
-    let source_ref = json!({
-        "kind": "coordination_observation",
-        "workspace_id": workspace_id,
-        "strategist_agent_id": caller,
-    });
-    let episode_id = ctx
-        .memory_store
-        .store_episode_with_provenance(episode, Some(&provenance), Some(source_ref))
-        .await
-        .map_err(|e| format!("Failed to write observation: {e}"))?;
-
-    serde_json::to_string_pretty(&json!({
-        "episode_id": episode_id,
-        "agent_id": target,
-        "workspace_id": workspace_id,
-        "status": "recorded",
-        "message": "Observation written to the member's episodic memory. It will be \
-                    consolidated into a semantic rule on that agent's next dreaming cycle.",
-    }))
-    .map_err(|e| format!("Serialization error: {e}"))
+    match delivery {
+        crate::coordination_note::Delivery::Written { episode_id } => {
+            serde_json::to_string_pretty(&json!({
+                "episode_id": episode_id,
+                "agent_id": target,
+                "workspace_id": workspace_id,
+                "status": "recorded",
+                "message": "Observation written to the member's episodic memory. It will be \
+                            consolidated into a semantic rule on that agent's next dreaming cycle.",
+            }))
+            .map_err(|e| format!("Serialization error: {e}"))
+        }
+        crate::coordination_note::Delivery::NotAMember => Err(format!(
+            "Agent {target} is not a member of this workspace; refusing to write \
+             into its memory."
+        )),
+        crate::coordination_note::Delivery::AlreadyTargeted => Err(
+            "A coordination observation for this member already exists for this \
+             run. Unreachable from this path, which passes no cutoff."
+                .to_string(),
+        ),
+        crate::coordination_note::Delivery::Failed { error } => {
+            Err(format!("Failed to write observation: {error}"))
+        }
+    }
 }
 
 // ─── FPL execution as in-process platform tools ────────────────────
@@ -7235,16 +7188,65 @@ async fn execute_speak_text(input: &serde_json::Value) -> Result<String, String>
 }
 
 // ─── Reduct.video API tools ────────────────────────────────────────
+//
+// Reduct's REST API is version 3 and lives under `/api/v3`. The interactive
+// documentation is at `/backstage/api/`, which is a logged-in single-page app
+// and NOT the request path — pointing a client at it yields a redirect to
+// `/login`, which is worth recording because the two are one character apart in
+// a card description and only one of them is callable.
 
 const REDUCT_BASE_URL: &str = "https://app.reduct.video/api/v3";
 
-fn reduct_api_key() -> Result<String, String> {
-    std::env::var("REDUCT_API_KEY")
-        .map_err(|_| "REDUCT_API_KEY not set — Reduct.video tools unavailable".to_string())
+/// Name of the credential, in both the scoped secret store and the env.
+const REDUCT_KEY_NAME: &str = "REDUCT_API_KEY";
+
+/// The workspace API key for this execution.
+///
+/// Scoped secret store first, process env second — the ordering
+/// `RemoteMcpAuth` already documents (`secret_key`, then `env` "for
+/// platform-owned integrations"). It matters here for a specific case rather
+/// than for symmetry: `video_analyst` is `curated`, so
+/// `resolve_agent_owner_secrets` returns `None` for it by design and the env
+/// key is the correct source. A **fork** of it is owner-owned, carries its
+/// owner's `REDUCT_API_KEY` in `user_secrets`, and — while these functions
+/// took no `ToolContext` at all — could not reach it. That fork would then
+/// have read someone else's workspace on the platform's key, which is the
+/// cross-tenant leak SPEC_28 closed for LLM providers and had left open for
+/// tool credentials.
+///
+/// `ctx` is `Option` so the two keyless call shapes in this file stay
+/// possible; `None` means env only, which is what a context-free caller
+/// honestly has.
+fn reduct_api_key(ctx: Option<&ToolContext>) -> Result<String, String> {
+    if let Some(k) = ctx
+        .and_then(|c| c.user_secrets.as_ref())
+        .and_then(|s| s.get(REDUCT_KEY_NAME))
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        return Ok(k.to_string());
+    }
+    match std::env::var(REDUCT_KEY_NAME) {
+        Ok(k) if !k.trim().is_empty() => Ok(k.trim().to_string()),
+        // Owner-facing, and deliberately does not tell the reader to set an
+        // env var: the person who can fix this for an owned agent is its
+        // owner, on their profile page. Same rule as
+        // `ExecutionError::Unfunded`.
+        _ => Err(format!(
+            "No {REDUCT_KEY_NAME} available, so the Reduct.video tools cannot \
+             run. An agent's owner sets it under Profile → Agent Secrets at \
+             {}/profile; for a platform-operated agent it is deployment \
+             configuration. Generate the key from Reduct at \
+             https://app.reduct.video/backstage/api/ (Professional or \
+             Enterprise plan). Report this rather than describing clips you \
+             could not read.",
+            crate::agent_backend::credentials::abw_base_url(),
+        )),
+    }
 }
 
-async fn reduct_get(path: &str) -> Result<serde_json::Value, String> {
-    let api_key = reduct_api_key()?;
+async fn reduct_get(path: &str, ctx: Option<&ToolContext>) -> Result<serde_json::Value, String> {
+    let api_key = reduct_api_key(ctx)?;
     let url = format!("{}{}", REDUCT_BASE_URL, path);
     let client = reqwest::Client::new();
     let response = client
@@ -7266,8 +7268,12 @@ async fn reduct_get(path: &str) -> Result<serde_json::Value, String> {
         .map_err(|e| format!("Failed to parse Reduct response: {}", e))
 }
 
-async fn reduct_post(path: &str, body: &serde_json::Value) -> Result<serde_json::Value, String> {
-    let api_key = reduct_api_key()?;
+async fn reduct_post(
+    path: &str,
+    body: &serde_json::Value,
+    ctx: Option<&ToolContext>,
+) -> Result<serde_json::Value, String> {
+    let api_key = reduct_api_key(ctx)?;
     let url = format!("{}{}", REDUCT_BASE_URL, path);
     let client = reqwest::Client::new();
     let response = client
@@ -7291,22 +7297,28 @@ async fn reduct_post(path: &str, body: &serde_json::Value) -> Result<serde_json:
         .map_err(|e| format!("Failed to parse Reduct response: {}", e))
 }
 
-async fn execute_reduct_list_projects() -> Result<String, String> {
-    let data = reduct_get("/project").await?;
+async fn execute_reduct_list_projects(ctx: &ToolContext) -> Result<String, String> {
+    let data = reduct_get("/project", Some(ctx)).await?;
     serde_json::to_string_pretty(&data).map_err(|e| format!("Serialization error: {}", e))
 }
 
-async fn execute_reduct_get_project(input: &serde_json::Value) -> Result<String, String> {
+async fn execute_reduct_get_project(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
     let project_id = input
         .get("project_id")
         .and_then(|v| v.as_str())
         .ok_or("Missing required parameter: project_id")?;
 
-    let data = reduct_get(&format!("/project/{}", project_id)).await?;
+    let data = reduct_get(&format!("/project/{}", project_id), Some(ctx)).await?;
     serde_json::to_string_pretty(&data).map_err(|e| format!("Serialization error: {}", e))
 }
 
-async fn execute_reduct_get_transcript(input: &serde_json::Value) -> Result<String, String> {
+async fn execute_reduct_get_transcript(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
     let project_id = input
         .get("project_id")
         .and_then(|v| v.as_str())
@@ -7317,6 +7329,11 @@ async fn execute_reduct_get_transcript(input: &serde_json::Value) -> Result<Stri
         .and_then(|v| v.as_str())
         .ok_or("Missing required parameter: recording_id")?;
 
+    // Anything other than an explicit `txt` is `json`, and that default is
+    // load-bearing rather than tidy: only the JSON form carries segment
+    // timestamps, and a transcript without timestamps is one a model can only
+    // guess clip boundaries from. A typo in this argument must not silently
+    // downgrade the caller to the representation that invites fabrication.
     let format = input
         .get("format")
         .and_then(|v| v.as_str())
@@ -7330,7 +7347,7 @@ async fn execute_reduct_get_transcript(input: &serde_json::Value) -> Result<Stri
 
     if ext == "txt" {
         // Plain text transcript — fetch as text, not JSON
-        let api_key = reduct_api_key()?;
+        let api_key = reduct_api_key(Some(ctx))?;
         let url = format!("{}{}", REDUCT_BASE_URL, path);
         let client = reqwest::Client::new();
         let response = client
@@ -7351,12 +7368,15 @@ async fn execute_reduct_get_transcript(input: &serde_json::Value) -> Result<Stri
             .await
             .map_err(|e| format!("Failed to read transcript: {}", e))
     } else {
-        let data = reduct_get(&path).await?;
+        let data = reduct_get(&path, Some(ctx)).await?;
         serde_json::to_string_pretty(&data).map_err(|e| format!("Serialization error: {}", e))
     }
 }
 
-async fn execute_reduct_create_reel(input: &serde_json::Value) -> Result<String, String> {
+async fn execute_reduct_create_reel(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
     let project_id = input
         .get("project_id")
         .and_then(|v| v.as_str())
@@ -7370,13 +7390,17 @@ async fn execute_reduct_create_reel(input: &serde_json::Value) -> Result<String,
     let data = reduct_post(
         &format!("/project/{}/reel", project_id),
         &json!({ "title": title }),
+        Some(ctx),
     )
     .await?;
 
     serde_json::to_string_pretty(&data).map_err(|e| format!("Serialization error: {}", e))
 }
 
-async fn execute_reduct_add_block(input: &serde_json::Value) -> Result<String, String> {
+async fn execute_reduct_add_block(
+    input: &serde_json::Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
     let project_id = input
         .get("project_id")
         .and_then(|v| v.as_str())
@@ -7398,14 +7422,27 @@ async fn execute_reduct_add_block(input: &serde_json::Value) -> Result<String, S
                 .get("recording_id")
                 .and_then(|v| v.as_str())
                 .ok_or("doc-range block requires recording_id")?;
+            // `as_f64` rejects `"412.6"` and `"6:52"` alike, and the error
+            // below says which was wanted. A formatted timecode is the
+            // characteristic mistake here — see `abw/video_highlight_reel`'s
+            // `clips.start_seconds` — and it must fail at the call rather than
+            // be coerced into a number that plays the wrong moment.
             let start = input
                 .get("start")
                 .and_then(|v| v.as_f64())
-                .ok_or("doc-range block requires start time")?;
+                .ok_or("doc-range block requires `start` as a NUMBER of seconds (e.g. 412.6), not a timecode string")?;
             let end = input
                 .get("end")
                 .and_then(|v| v.as_f64())
-                .ok_or("doc-range block requires end time")?;
+                .ok_or("doc-range block requires `end` as a NUMBER of seconds (e.g. 448.2), not a timecode string")?;
+            if end <= start {
+                return Err(format!(
+                    "doc-range block has end ({end}) at or before start ({start}). \
+                     Reduct would store a zero- or negative-length clip, which \
+                     plays as nothing and reads in the reel as a clip that \
+                     exists."
+                ));
+            }
 
             json!({
                 "type": "doc-range",
@@ -7436,6 +7473,7 @@ async fn execute_reduct_add_block(input: &serde_json::Value) -> Result<String, S
     let data = reduct_post(
         &format!("/project/{}/reel/{}/block", project_id, reel_id),
         &body,
+        Some(ctx),
     )
     .await?;
 

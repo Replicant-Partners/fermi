@@ -100,6 +100,47 @@ use std::path::Path;
 // integration test cannot reach, so it is re-exported by the library for this
 // purpose. See `fermi::claim_outcome`.
 use fermi::claim_outcome::{classify_claim, ClaimBinding, ClaimOutcome};
+use fermi::coordination_note::{self, Delivery};
+use fermi::declaration_ladder::{self as dl, Disposition, Legibility, Owner, Silence};
+use fermi::gate_review::{self, ReviewTally};
+
+/// Does `advanced_metrics` carry reliance, under this report?
+///
+/// A helper rather than two inline closures because both worlds must share the
+/// document and the filter exactly -- the first version of this pair inlined them,
+/// invented a block name `football_analyst` does not declare, and the resulting
+/// empty filter made `all()` vacuously true in BOTH worlds. The registry's own
+/// `fires` assertion caught it on the first run, which is the machinery working on
+/// the machinery.
+///
+/// `is_empty()` is the guard that makes it impossible to repeat: if the contract's
+/// paths are ever renamed the filter goes empty and this returns `false`, so the
+/// **quiet** world fails loudly instead of the pair going quietly vacuous.
+fn graded_block_carries_reliance(provenance: Vec<(String, &'static str)>) -> bool {
+    let doc = serde_json::json!({"advanced_metrics": {"xg": 1.83}});
+    let report = gt::Report {
+        violations: vec![],
+        provenance,
+    };
+    let fields: Vec<_> = gt::graded_fields("football_analyst", &doc, &report)
+        .into_iter()
+        .filter(|f| f.block == "advanced_metrics")
+        .collect();
+    !fields.is_empty() && fields.iter().all(|f| gt::strength(f.provenance) >= 2)
+}
+
+/// A review tally, for the `gate_review` pairs below.
+///
+/// `reviewed` is derived from the three counts by `ReviewTally::reviewed`, so
+/// there is no fourth number here to get wrong — which is the point of the type
+/// and worth not defeating in the fixture.
+fn tally(upheld: i64, overturned: i64, unclear: i64) -> ReviewTally {
+    ReviewTally {
+        upheld,
+        overturned,
+        unclear,
+    }
+}
 
 /// One check, and the two worlds that prove it can tell them apart.
 struct Falsification {
@@ -195,6 +236,14 @@ fn agent_state(loop_id: &'static str, stages: &[(&'static str, i64)]) -> LoopSta
         stops_at: None,
         reason: None,
         status: "turning",
+    }
+}
+
+/// A gate that promises durability, asked `n` times.
+fn recorded_gate(approved: u64) -> GateAccount {
+    GateAccount {
+        retention: fermi::gate_trust::Retention::Recorded,
+        ..gate_account(approved, 0)
     }
 }
 
@@ -756,6 +805,468 @@ const FALSIFICATIONS: &[Falsification] = &[
                  A `does_not_show` that paraphrases `checked` satisfies the \
                  type and closes the gap with nothing.",
     },
+    Falsification {
+        check: "gate_api::ledger_claim",
+        owner: "src/gate_api.rs",
+        // Permissive reading: "this gate's durability claim is fine."
+        //
+        // Quiet world: recorded, asked, and the ledger has the rows. Loud
+        // world: recorded, asked forty times, ledger empty — the surface says
+        // these counters survive a restart and nothing is behind that.
+        passes: || {
+            !matches!(
+                gate_api::ledger_claim(&recorded_gate(40), 40),
+                gate_api::LedgerClaim::Unbacked { .. }
+            )
+        },
+        fires: || {
+            !matches!(
+                gate_api::ledger_claim(&recorded_gate(40), 0),
+                gate_api::LedgerClaim::Unbacked { .. }
+            )
+        },
+        models: "`gate_decisions` was declared by migration 214, and until it \
+                 ran the platform had a record of every request it served and \
+                 none of any it refused — which is how a gate refusing 100% of \
+                 agent-wide interventions stayed invisible. A gate reporting \
+                 `since: ledger` over an empty table makes the same claim on \
+                 the same evidence, and the table holds zero rows today.",
+    },
+    // ── coordination_note ─────────────────────────────────────────
+    Falsification {
+        check: "coordination_note::is_problem",
+        owner: "src/coordination_note.rs",
+        // Permissive reading: "nothing went wrong with this delivery."
+        //
+        // The quiet world is the outcome to *hope for*: the strategist already
+        // wrote a targeted note, so the platform's floor was not needed. The
+        // loud world is a write into the memory of an agent that was never in
+        // the room.
+        passes: || !coordination_note::is_problem(&Delivery::AlreadyTargeted),
+        fires: || !coordination_note::is_problem(&Delivery::NotAMember),
+        models: "The floor exists to be unnecessary. If the strategist writes a \
+                 targeted note for every member, every delivery returns \
+                 `AlreadyTargeted` — and a caller that logged that as a warning \
+                 would fill the log on exactly the runs that went best, which is \
+                 how a warning stops being read. `NotAMember` is the opposite: \
+                 writing a coordination observation into the dreaming material \
+                 of an agent that was never in the workspace is an injection, \
+                 not a skip.",
+    },
+    // ── gate_review ───────────────────────────────────────────────
+    // -- declaration_ladder ------------------------------------------
+    Falsification {
+        check: "declaration_ladder::whose_work",
+        owner: "src/declaration_ladder.rs",
+        // Permissive reading: "the platform will handle it; nothing is required
+        // of the agent's author."
+        passes: || dl::whose_work(&Silence::Unresolved) == Owner::Platform,
+        fires: || dl::whose_work(&Silence::Undeclared { rung: "ports" }) == Owner::Platform,
+        models: "The reason this module exists. `panel_absence::Resolver` had five \
+                 ways to explain an absence and none of them was `the subject \
+                 declared nothing`, so an undeclared agent's silence collapsed \
+                 into `Unresolved { why }` -- which reads as *the platform has not \
+                 written a contract for this*. Measured: 89 of 96 real producing \
+                 agents have no field contract, so the platform appeared to owe 89 \
+                 contracts it does not owe. Getting this wrong does not produce a \
+                 wrong number, it produces a wrong BACKLOG, and a backlog nobody \
+                 can act on is one nobody does.",
+    },
+    Falsification {
+        check: "declaration_ladder::attribute",
+        owner: "src/declaration_ladder.rs",
+        // Permissive reading: "nobody has to do anything about this silence."
+        passes: || dl::whose_work(&dl::attribute(true, &Legibility::Opaque, 0)) == Owner::NoOne,
+        fires: || dl::whose_work(&dl::attribute(false, &Legibility::Opaque, 0)) == Owner::NoOne,
+        models: "Two silences that were one word. On a freshly booted server every \
+                 gate reads `never_asked`, every loop counter is zero, and none of \
+                 it is a finding -- the counters are process-local and resolve \
+                 themselves on the next request. An undeclared agent's silence \
+                 looks identical and is permanent. Attributing the cold counter to \
+                 a missing declaration sends an author to write a contract for a \
+                 reading that fixes itself; attributing the missing declaration to \
+                 a cold counter tells them to wait forever. The ordering inside \
+                 `attribute` is the whole content of the function.",
+    },
+    Falsification {
+        check: "declaration_ladder::disposition",
+        owner: "src/declaration_ladder.rs",
+        // Permissive reading: "this row is worth working on."
+        passes: || dl::disposition("weather_oracle", &Legibility::Opaque) != Disposition::Prune,
+        fires: || dl::disposition("test_agent_abc", &Legibility::Declared) != Disposition::Prune,
+        models: "110 of the 206 agents that have produced an episode are \
+                 `test_agent_<uuid>` fixtures declaring nothing at all. Pruning \
+                 one is a delete behind a safety gate; retrofitting a real agent \
+                 is authoring work with a domain expert, and reported as one \
+                 number the retrofit looks twice its real size. The `fires` world \
+                 is the ordering inside `disposition`: a fixture that somehow \
+                 declared every rung must still be `Prune`, or the coverage \
+                 numerator fills with rows that are about to be deleted. The fleet \
+                 has no such row today, which is exactly why it has to be \
+                 asserted rather than observed.",
+    },
+    Falsification {
+        check: "declaration_ladder::legibility",
+        owner: "src/declaration_ladder.rs",
+        // Permissive reading: "this agent has declared something."
+        passes: || dl::legibility(&["ports"]) != Legibility::Opaque,
+        fires: || dl::legibility(&["something_new"]) != Legibility::Opaque,
+        models: "Coverage rising by inventing a rung name. The ladder is served \
+                 over the API, and a client -- or a future rung added in another \
+                 module -- could offer a token this one does not declare. Counting \
+                 an unrecognised token as progress is the same defect as \
+                 `gate_review::tally_from_counts` folding an undeclared verdict \
+                 into the nearest bucket: it makes the drift invisible in the one \
+                 place it shows up as data.",
+    },
+    Falsification {
+        check: "declaration_ladder::is_test_cruft",
+        owner: "src/declaration_ladder.rs",
+        // Permissive reading: "this is a real agent."
+        passes: || !dl::is_test_cruft("weather_oracle"),
+        fires: || !dl::is_test_cruft("test_agent_9f2c"),
+        models: "v0.10.20's audit found 565 of these rows in the shared database, \
+                 and 110 of them have produced episodes. Several surfaces filtered \
+                 them with an inline prefix check and several -- notably the \
+                 Observatory fleet endpoints -- did not, so the clinical view \
+                 opened on a wall of fixtures instead of the operator's agents. \
+                 Registered now rather than treated as a trivial string check, \
+                 because it became load-bearing: it is the pivot deciding whether \
+                 an agent lands on the retrofit worklist or the prune list, and \
+                 those have different owners and different costs.",
+    },
+    // -- graded contracted fields ------------------------------------
+    Falsification {
+        check: "grounding_trust::graded_fields",
+        owner: "src/grounding_trust.rs",
+        // Permissive reading: "this field's grade carries reliance."
+        passes: || {
+            graded_block_carries_reliance(vec![("advanced_metrics".to_string(), gt::PROV_TOOL)])
+        },
+        // The same document, and a report that graded nothing -- which is what
+        // `enforce` returns for any block it did not see.
+        fires: || graded_block_carries_reliance(vec![]),
+        models: "`enforce` emits a provenance entry only for blocks it actually \
+                 saw, so a contracted field whose block is absent from the report \
+                 is the COMMON case, not an edge one -- every contracted agent has \
+                 more absent fields than present ones. Defaulting those to \
+                 anything above the bottom rung would make an ungraded field \
+                 indistinguishable from a verified one on the artifact trace, \
+                 which is the same over-read as `gate_trust::never_asked` being \
+                 coloured as a pass. The value the model claimed is carried \
+                 verbatim beside it for `Violation.removed`'s reason: it is the \
+                 only evidence that could ever answer which model fabricates \
+                 what, and a null cannot be labelled.",
+    },
+    Falsification {
+        check: "assertions::from_graded_field",
+        owner: "src/assertions.rs",
+        // Permissive reading: "nobody needs to check this claim."
+        //
+        // Registered voluntarily: `assertions` is not in `TRUST_MODULES`, so the
+        // coverage scan does not demand it. It holds `entitled_provenance`,
+        // `route` and `pending_verdict` -- three trust decisions -- and belongs
+        // there. Adding it means registering the module's whole public surface,
+        // which is its own task; this at least leaves the new decision covered.
+        passes: || {
+            let f = gt::GradedField {
+                path: "form.xg_last_5",
+                block: "form",
+                value: serde_json::json!(1.83),
+                provenance: gt::PROV_TOOL,
+                settleable_by: Some("call_football_api"),
+            };
+            fermi::assertions::from_graded_field("football_analyst", &f)
+                .map(|a| a.route(true) == fermi::assertions::Route::None)
+                .unwrap_or(false)
+        },
+        fires: || {
+            // The same field, sourced, with nothing behind it.
+            let f = gt::GradedField {
+                path: "form.xg_last_5",
+                block: "form",
+                value: serde_json::json!(1.83),
+                provenance: gt::PROV_NO_MATCH,
+                settleable_by: Some("call_football_api"),
+            };
+            fermi::assertions::from_graded_field("football_analyst", &f)
+                .map(|a| a.route(true) == fermi::assertions::Route::None)
+                .unwrap_or(false)
+        },
+        models: "A `Quantity` with an EMPTY basis floors at \
+                 `pending_human_check` however well sourced its block was -- that \
+                 is `entitled_provenance`'s documented and correct behaviour, \
+                 because a measurement with no stated source is work to be done. \
+                 So an assertion minted from a tool-verified field WITHOUT \
+                 carrying the block's grade enqueues a person to re-check \
+                 something a tool already answered, and a queue that contains \
+                 everything is not a queue. This is the entire argument for the \
+                 function existing rather than the caller building an `Assertion` \
+                 inline, and the two worlds differ only in the grade.",
+    },
+    // -- verification_queue ------------------------------------------
+    Falsification {
+        check: "verification_queue::is_problem",
+        owner: "src/verification_queue.rs",
+        // Permissive reading: "nothing here needs anyone's attention."
+        passes: || {
+            !fermi::verification_queue::Enqueued {
+                already_settled: 9,
+                inherits_from_basis: 4,
+                ..Default::default()
+            }
+            .is_problem()
+        },
+        fires: || {
+            !fermi::verification_queue::Enqueued {
+                not_representable: vec!["taxonomy.order: not numeric".to_string()],
+                ..Default::default()
+            }
+            .is_problem()
+        },
+        models: "`assertion_verifications` has held 0 rows since migration 205 \
+                 and nothing could say WHY, which is the `severity = 'L1'` shape: \
+                 an empty table that might be an empty queue or might be a \
+                 rejected write. Three causes have to stay apart. Nine claims \
+                 already reproducible is the BEST case and must be quiet -- a \
+                 caller that warned on it would fill the log on the runs that \
+                 went well, and a queue containing everything is not a queue. \
+                 `not_representable` must speak: a contracted field the queue \
+                 cannot carry is a hole in its coverage, and \
+                 `taxonomy.order = \"Coleoptera\"` is the canonical case -- the \
+                 claim most worth verifying, in the `Antaxius beieri` failure \
+                 where every check passed because the field was present, \
+                 non-null and correctly typed. Skipped silently, the queue reads \
+                 healthy while the checkable claims go unchecked.",
+    },
+    // -- artifact_trace ----------------------------------------------
+    Falsification {
+        check: "artifact_trace::reading",
+        owner: "src/artifact_trace.rs",
+        // Permissive reading: "this artifact's journey is a pass."
+        passes: || {
+            let g = vec![fermi::grounding_trust::GradedField {
+                path: "advanced_metrics.xg",
+                block: "advanced_metrics",
+                value: serde_json::json!(1.83),
+                provenance: gt::PROV_TOOL,
+                settleable_by: Some("call_football_api"),
+            }];
+            fermi::artifact_trace::reading(0, &g, &Legibility::Declared).0 == Reading::Idle
+        },
+        fires: || {
+            // Nothing graded, because the agent declares no field contract.
+            fermi::artifact_trace::reading(0, &[], &Legibility::Opaque).0 == Reading::Idle
+        },
+        models: "3,571 of 3,576 episodes carry no grounding stamp, because 89 of \
+                 96 real producing agents have no field contract. So an artifact \
+                 with NO checkpoints is what this endpoint returns most of the \
+                 time, and it is the default screen rather than an edge case. \
+                 Rendering it as a clean journey end to end is the over-read the \
+                 whole architecture refuses -- the same rule as \
+                 `gate_trust::never_asked` and `liveness_trust::Inert`, applied \
+                 to the one surface a non-author reads. The misleading version \
+                 also looks BETTER, which is why it has to be asserted rather \
+                 than left to judgement.",
+    },
+    Falsification {
+        check: "artifact_trace::whose_journey_is_incomplete",
+        owner: "src/artifact_trace.rs",
+        // Permissive reading: "the platform owes something here."
+        //
+        // Adapted on the `Owner` the reading returns, which is the field a
+        // backlog is built from.
+        passes: || {
+            fermi::artifact_trace::reading(1, &[], &Legibility::Declared).3 == Owner::Platform
+        },
+        fires: || fermi::artifact_trace::reading(0, &[], &Legibility::Opaque).3 == Owner::Platform,
+        models: "The same misattribution `declaration_ladder` exists to prevent, \
+                 arriving on the artifact surface instead of the census. A \
+                 violation IS the platform's -- the contract fired and something \
+                 got through. An agent that declared no contract is its author's, \
+                 and 89 of 96 producing agents are in that state, so billing them \
+                 to the platform produces a backlog of 89 items nobody can act \
+                 on. This surface is the one a non-author reads, so it is where \
+                 getting it wrong costs the most.",
+    },
+    // -- artifact_hash -----------------------------------------------
+    Falsification {
+        check: "artifact_hash::of_episode",
+        owner: "src/artifact_hash.rs",
+        // Permissive reading: "grounding changed nothing about this document."
+        passes: || {
+            let doc = serde_json::json!({"taxonomy": {"order": "Orthoptera"}});
+            let wrapped = format!("Here you go:\n\n```json\n{doc}\n```\n");
+            fermi::artifact_hash::of_episode(Some("q"), Some(&wrapped), Some(&doc))
+                .enforcement_changed_the_bytes
+                == Some(false)
+        },
+        fires: || {
+            let doc = serde_json::json!({"taxonomy": {"order": "Orthoptera"}});
+            let wrapped = format!("Here you go:\n\n```json\n{doc}\n```\n");
+            let nulled = serde_json::json!({"taxonomy": {"order": null}});
+            fermi::artifact_hash::of_episode(Some("q"), Some(&wrapped), Some(&nulled))
+                .enforcement_changed_the_bytes
+                == Some(false)
+        },
+        models: "Comparing the RAW response against the ENFORCED document would \
+                 report that grounding modified the document on every response \
+                 wrapped in prose -- and 64 of 94 retained responses from \
+                 contracted agents are wrapped that way, so the field would read \
+                 `true` almost always and mean nothing. The comparison therefore \
+                 re-extracts and compares document to document. The same \
+                 confusion, one layer down, is what made `response_floor` return \
+                 `unavailable` for 94 of 94 responses: a fact about a parse \
+                 reported as a fact about the artifact.",
+    },
+    Falsification {
+        check: "artifact_hash::of_document",
+        owner: "src/artifact_hash.rs",
+        // Permissive reading: "these two documents are the same."
+        passes: || {
+            let a: serde_json::Value =
+                serde_json::from_str(r#"{"a":1,"b":{"x":1,"y":2}}"#).unwrap();
+            let b: serde_json::Value =
+                serde_json::from_str(r#"{"b":{"y":2,"x":1},"a":1}"#).unwrap();
+            fermi::artifact_hash::of_document(&a) == fermi::artifact_hash::of_document(&b)
+        },
+        fires: || {
+            let a = serde_json::json!({"genome": {"estimated_size_mb": 2400}});
+            let b = serde_json::json!({"genome": {"estimated_size_mb": 2401}});
+            fermi::artifact_hash::of_document(&a) == fermi::artifact_hash::of_document(&b)
+        },
+        models: "A document digest is meaningless unless serialisation is \
+                 canonical: with insertion-ordered maps `{\"a\":1,\"b\":2}` and \
+                 `{\"b\":2,\"a\":1}` are the same document and different bytes. \
+                 `serde_json`'s default `Map` is a `BTreeMap` so keys sort -- but \
+                 that is one feature flag away from false and ANY dependency in \
+                 the tree can enable `preserve_order` without this crate \
+                 noticing. If it happens, two identical documents get different \
+                 digests and any determinism check built on them reports drift \
+                 that is not there. Asserted rather than inferred from the \
+                 absence of a flag.",
+    },
+    Falsification {
+        check: "gate_review::standing",
+        owner: "src/gate_review.rs",
+        // Permissive reading: "this gate has no finding against it."
+        passes: || {
+            gate_review::reading(gate_review::standing(50, tally(50, 0, 0))).0 != Reading::Fault
+        },
+        fires: || {
+            gate_review::reading(gate_review::standing(50, tally(40, 1, 3))).0 != Reading::Fault
+        },
+        models: "The Γ arithmetic bug's successor, which every counter in the \
+                 system is blind to. `gate_trust::refuses_everything` catches the \
+                 extreme — asked, and approved nothing — and that is how a \
+                 coherence gate rejecting 100% of agent-wide interventions was \
+                 eventually found. A gate that approves 90% of what it sees and \
+                 refuses the other 10% WRONGLY reads `discriminating`, which \
+                 `/api/gates` renders as the healthy state, and no arrangement of \
+                 approve/refuse totals distinguishes it from a gate working \
+                 perfectly. Correctness is not a property of a count. One \
+                 reviewer's overturn is the entire signal, so a `standing` that \
+                 folded it in with the upheld ones would leave the platform \
+                 exactly where it was before migration 216.",
+    },
+    Falsification {
+        check: "gate_review::reading",
+        owner: "src/gate_review.rs",
+        // Permissive reading: "this standing is a pass."
+        //
+        // Registered separately from `standing` because it is a separate
+        // incident, not a second branch: `standing` is about noticing an
+        // overturn, this is about refusing to call an *unread* ledger green.
+        passes: || {
+            gate_review::reading(gate_review::standing(50, tally(50, 0, 0))).0 == Reading::Idle
+        },
+        fires: || {
+            gate_review::reading(gate_review::standing(400, tally(0, 0, 0))).0 == Reading::Idle
+        },
+        models: "A full ledger nobody has read. That is the state every gate \
+                 starts in and the state the platform was in for its entire life \
+                 — migration 214 gave the two recorded gates a ledger and nothing \
+                 anywhere let a person judge a row in it, which is why \
+                 `GATE_DOORS` was `&[]`. `0 overturned` is literally true of an \
+                 unreviewed gate, and a surface that coloured it as a pass would \
+                 assert the gate is sound on evidence about none of its \
+                 decisions. Same rule as `liveness_trust::Inert` and \
+                 `gate_trust::never_asked`: not asked is not a pass.",
+    },
+    Falsification {
+        check: "gate_review::tally_from_counts",
+        owner: "src/gate_review.rs",
+        // Permissive reading: "every verdict in the column is one I know."
+        passes: || {
+            gate_review::tally_from_counts(&[(
+                fermi::seam_vocabulary::GateReviewVerdict::Unclear
+                    .as_str()
+                    .to_string(),
+                3,
+            )])
+            .is_ok()
+        },
+        fires: || gate_review::tally_from_counts(&[("needs_more_thought".to_string(), 3)]).is_ok(),
+        models: "Half of `severity = 'L1'`, from the other side. That defect was \
+                 a Rust write site holding a token the CHECK refused; this is a \
+                 CHECK holding a token no Rust variant spells, which happens \
+                 whenever a constraint is widened in a migration and the enum is \
+                 not. `seam_vocabulary_contract` catches it against the schema; \
+                 this catches it against the ROWS, which is the only place a \
+                 value written before the constraint was narrowed can show up. \
+                 Folding the unknown token into the nearest bucket — the obvious \
+                 implementation — makes both invisible.",
+    },
+    Falsification {
+        check: "gate_review::classify_write_error",
+        owner: "src/gate_review.rs",
+        // Permissive reading: "nothing recognisable; hand the caller the
+        // database's own words." Which is right for a deadlock and wrong for a
+        // constraint this module named itself.
+        passes: || {
+            matches!(
+                gate_review::classify_write_error(None, "deadlock detected"),
+                gate_review::Refusal::Rejected { .. }
+            )
+        },
+        fires: || {
+            matches!(
+                gate_review::classify_write_error(
+                    Some("gate_decision_reviews_rationale_check"),
+                    "violates check constraint"
+                ),
+                gate_review::Refusal::Rejected { .. }
+            )
+        },
+        models: "The rationale rule has exactly one implementation and it is \
+                 Postgres's — a Rust pre-check would be the §3.4 violation that \
+                 reads as defensive good practice. The cost of that choice is \
+                 that a missing rationale arrives as a database error, and \
+                 untranslated it becomes a 500 with a Postgres string in it at \
+                 the exact moment a reviewer was told their finding had been \
+                 filed. Pinned on the CONSTRAINT NAME rather than the message, \
+                 because message text is a locale-and-version artifact and the \
+                 name is something migration 216 chose; if 216 renames it, this \
+                 is what says the translation stopped working.",
+    },
+    Falsification {
+        check: "gate_review::is_client_error",
+        owner: "src/gate_review.rs",
+        // Permissive reading: "this one is ours, not the caller's."
+        passes: || {
+            !gate_review::is_client_error(&gate_review::Refusal::UnknownToken { column: "verdict" })
+        },
+        fires: || !gate_review::is_client_error(&gate_review::Refusal::RationaleRequired),
+        models: "Both errors here are wrong in a way that trains a reviewer to \
+                 stop. A missing rationale answered 500 says the platform is \
+                 broken, so they stop reviewing and file a bug against the wrong \
+                 thing. Drift between the CHECK and the type answered 400 says \
+                 their input was malformed, so they retype a verdict that cannot \
+                 be accepted by any input at all — the typed path cannot produce \
+                 a token the column refuses, so if it happens it is ours. That \
+                 second one is the `severity = 'L1'` failure wearing a client \
+                 error's clothes.",
+    },
     // ── evaluator_api ─────────────────────────────────────────────
     Falsification {
         check: "evaluator_api::read",
@@ -1277,10 +1788,19 @@ const EXEMPT: &[(&str, &str)] = &[
     ),
     (
         "grounding_trust::response_floor",
-        "Falsified by `an_uncontracted_agent_has_an_unknown_floor_not_a_clean_one` \
-         — the distinction that matters, because `None` must be read as unknown \
-         and never as clean. It needs a registered card to mean anything, which \
-         a fixture in this file could not supply honestly.",
+        "Falsified by three tests in its own module, each needing a registered \
+         card that a fixture in this file could not supply honestly. \
+         `an_uncontracted_agent_has_an_unknown_floor_not_a_clean_one` holds the \
+         distinction that matters most — `None` must be read as unknown and never \
+         as clean. \
+         `a_document_wrapped_in_prose_is_graded_rather_than_dismissed` covers the \
+         measured defect: a bare `from_str` dismissed 94 of 94 retained responses \
+         from contracted agents as `ungrounded by construction` while the \
+         platform's own `extract_json` could read 64 of them. \
+         `recovering_a_document_is_not_the_same_as_finding_content` covers the \
+         symmetric error — a recovered document that contains none of its \
+         contracted fields must still floor on the fields it is missing. Both \
+         breaks are in `scripts/break_response_floor.py`.",
     ),
     (
         "grounding_trust::matches",
@@ -1304,6 +1824,16 @@ const EXEMPT: &[(&str, &str)] = &[
     ),
     ("native_evaluators::severity", ACCESSOR),
     ("native_evaluators::collect", IMPURE),
+    (
+        "native_evaluators::declaration_census",
+        "A gatherer, not a decision: it runs `declaration_ladder::CENSUS_SQL` and \
+         folds the rows through `census`, which is itself exempted with its own \
+         reason. Its one judgement — `None` on failure rather than an empty \
+         `Census`, because zero coverage everywhere is the most alarming \
+         available reading and must not be inferred from a query that did not \
+         run — is asserted by `panel_absence`'s \
+         `a_missing_census_is_not_reported_as_zero_coverage`.",
+    ),
     ("native_evaluators::registry", ENUMERATOR),
     // outcome_trust
     (
@@ -1323,6 +1853,80 @@ const EXEMPT: &[(&str, &str)] = &[
          judgement is `router_declares`'s, registered above with the prefix \
          case that motivated it; `a_missing_door_is_reported_with_its_subject` \
          pins the formatting.",
+    ),
+    // declaration_ladder
+    (
+        "declaration_ladder::has_field_contract",
+        "Delegates to `grounding_trust::contracts_for`, which owns the roster. A \
+         second opinion about whether an agent has a field contract is the \
+         Section 3.4 violation this whole ladder is built to surface one layer up.",
+    ),
+    (
+        "declaration_ladder::census",
+        "A fold over `legibility` and `is_test_cruft`, both registered above. Its \
+         own judgement -- that cruft belongs in the denominator and not the \
+         numerator -- cannot be falsified by input alone, because both closures \
+         would call the same fold; it is pinned by \
+         `the_census_keeps_the_two_worklists_separate`, which asserts the ports \
+         rung reads 2 of 2 real agents rather than 2 of 5.",
+    ),
+    // artifact_hash
+    (
+        "artifact_hash::of_text",
+        "A SHA-256 over bytes, prefixed with its algorithm name. There is no \
+         judgement in it: the two decisions in this module are canonicality \
+         (`of_document`) and what counts as a change (`of_episode`), and both are \
+         registered. The prefix itself is pinned by \
+         `a_changed_value_changes_the_digest`.",
+    ),
+    // artifact_trace
+    (
+        "artifact_trace::belt",
+        "Assembles `command_registry::Command.gates` against \
+         `gate_trust::GATES` and holds no opinion: the rung order, the \
+         control-or-metric status and the refusal text all belong to those two. \
+         Pinned by `every_rung_says_whether_it_can_actually_refuse`, which \
+         asserts over BOTH execute commands that a rung demoted to a metric says \
+         why -- the field a belt diagram most easily hides.",
+    ),
+    (
+        "artifact_trace::fields",
+        "Dresses `GradedField` for a client and delegates the only calculation \
+         in it to `grounding_trust::floor`. Pinned by \
+         `the_documents_floor_is_the_weakest_of_its_blocks`, which asserts \
+         against `floor` itself rather than a literal, so the test cannot drift \
+         from the ladder while still looking like it tested something.",
+    ),
+    // verification_queue
+    (
+        "verification_queue::enqueue",
+        "The database write. Its routing judgement is \
+         `assertions::Assertion::route`, which the contract answers via \
+         `settleable_by`, and its emptiness judgement is `is_problem`, \
+         registered above. What is left here is an INSERT and a fold, and the \
+         part of it no offline world can exercise — whether the row the platform \
+         writes is one `assertion_verifications` accepts — is asserted by \
+         `tests/verification_queue_contract.rs` against a real server, for the \
+         same reason `gate_review_contract.rs` exists: the constraint names and \
+         the CHECK vocabularies are only knowable from Postgres.",
+    ),
+    // gate_review
+    (
+        "gate_review::reviewed",
+        "`upheld + overturned + unclear`. Deliberately derived and not stored, so \
+         it cannot disagree with the three counts it summarises — which is why \
+         `gate_api::tally` needs a whole separate partition test and this needs \
+         none. Pinned by `the_tally_partitions_by_construction`.",
+    ),
+    // coordination_note
+    (
+        "coordination_note::deliver",
+        "Two queries and an episode write. The membership refusal and the \
+         duplicate-suppression window are the judgements, and both are visible \
+         in the `Delivery` it returns — `is_problem` is registered above with \
+         the case that matters. The write itself is counted through \
+         `write_accounting::Sink::Episodes`, which owns the question of whether \
+         it landed.",
     ),
     // evaluator_api
     (
@@ -1475,6 +2079,10 @@ const SCANS: &[(&str, Proof)] = &[
         Proof::Falsifier("the_scan_sees_a_path_the_router_does_not_have"),
     ),
     (
+        "tests/episode_lineage_coverage.rs",
+        Proof::Falsifier("the_scan_sees_a_bare_none_and_accepts_an_argued_one"),
+    ),
+    (
         "tests/taxonomy_parity.rs",
         Proof::Parity {
             why: "It runs `fermi::taxonomy` and `scripts/taxonomy.py` over the \
@@ -1503,6 +2111,12 @@ const TRUST_MODULES: &[&str] = &[
     "loop_api",
     "gate_api",
     "evaluator_api",
+    "coordination_note",
+    "gate_review",
+    "declaration_ladder",
+    "verification_queue",
+    "artifact_trace",
+    "artifact_hash",
     "surface",
 ];
 

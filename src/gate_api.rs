@@ -53,23 +53,143 @@ use crate::surface::{Caveat, Door};
 
 /// Every human door into a gate.
 ///
-/// **Empty, and that is the finding.** There is no endpoint anywhere that lets a
-/// person act on a gate: no way to review what a gate refused, no way to
-/// override a refusal, no way to record that a refusal was wrong. `gate_trust`
-/// counts decisions and migration 214 gave them a ledger, and the whole surface
-/// is read-only.
+/// # What this list was, and why it changed
 ///
-/// That is not obviously wrong — a gate a person can wave through is not much of
-/// a gate — but it is a decision nobody has made explicitly, and until this list
-/// existed there was nowhere to notice it. The rule is the same as everywhere
-/// else here: it may only grow with a reason, and an entry must argue for being
-/// manual.
+/// It was `&[]`, and the emptiness was the finding: no endpoint anywhere let a
+/// person act on a gate. No way to review what a gate refused, no way to record
+/// that a refusal was wrong. `gate_trust` counted decisions, migration 214 gave
+/// them a ledger, and the whole surface was read-only.
 ///
-/// The nearest thing that exists is Loop 2's HITL queue, which acts on
-/// *anomalies* rather than on gate decisions. Those are different objects: an
-/// anomaly is a defect found in an output, a gate decision is a refusal to
-/// produce one.
-pub const GATE_DOORS: &[Door] = &[];
+/// Half of that was right and stays right. There is still **no override** — a
+/// gate a person can wave through is not much of a gate, nothing below re-runs,
+/// reverses or retries a decision, and `gate_review::Overturned` changes no
+/// behaviour.
+///
+/// The other half was a hole, and the argument is arithmetic rather than
+/// ergonomic. Every reading this module computes comes from approve/refuse
+/// **counts**. `refuses_everything` catches the Γ bug's signature exactly —
+/// asked, and approved nothing. It cannot catch a gate that approves 90% of what
+/// it sees and refuses the other 10% *wrongly*: that reads `discriminating`,
+/// which this surface renders as the healthy state, and every counter agrees with
+/// it. Correctness is not a property of a count. So a reviewer's judgement is not
+/// a convenience on top of the measurement; it is the only instrument that can
+/// see the failure the measurement is blind to.
+///
+/// # Why only the two `Retention::Recorded` gates
+///
+/// A review is a judgement about *one decision*, so it needs a decision to point
+/// at, and only `Recorded` gates write one. `coherence` and `admission` have a
+/// ledger; the other five are in-memory counters whose individual decisions do
+/// not survive the process, and a door offering to review a row that does not
+/// exist is the 404-after-the-belief this module's router scan exists to prevent.
+///
+/// That is a real limitation and worth stating rather than hiding: **five of the
+/// seven gates cannot be reviewed at all**, because nothing recorded what they
+/// decided. Promoting one to `Recorded` is the way in, and `gate_trust::GATES`
+/// is where that argument belongs — migration 214's comment on why a rate-limit
+/// tick is deliberately not recorded is the shape of the counter-argument.
+///
+/// # The rule, unchanged
+///
+/// May only grow with a reason, and an entry must argue for being manual.
+pub const GATE_DOORS: &[Door] = &[
+    Door {
+        subject: "coherence",
+        method: "POST",
+        path: "/api/gates/:gate_id/decisions/:decision_id/review",
+        does: "Record whether this refusal was right, and why it was wrong if it \
+               was not. Does not override the decision or re-run the gate.",
+        why_manual: "Because no counter can answer it. The coherence gate refuses \
+                     an AgentWide correction the agent's world model rejects, and \
+                     whether the world model was right about that particular \
+                     correction is a judgement about the correction's content. \
+                     This is the gate whose 100% refusal rate hid the Γ \
+                     arithmetic bug, and it hid there because the refusals were \
+                     individually plausible and nobody was asked to look at one.",
+    },
+    Door {
+        subject: "admission",
+        method: "POST",
+        path: "/api/gates/:gate_id/decisions/:decision_id/review",
+        does: "Record whether refusing to publish this agent was right, and why \
+               it was not if it was not. Does not admit the agent.",
+        why_manual: "Because the cost of a wrong refusal here falls on someone who \
+                     cannot see it. An author whose card is refused for an \
+                     untyped interface gets a message; an author refused for a \
+                     checker bug gets the same message, and the platform cannot \
+                     tell those apart from the inside. The only signal that \
+                     separates them is a reviewer reading the refusal against \
+                     the card, and `if_never_refuses` on this gate says the \
+                     alternative reading is that every authored card was perfect.",
+    },
+];
+
+/// The durable ledger for one gate, newest first.
+///
+/// `$1` is the gate id. Read-only, and the only query this module owns —
+/// everything else here is over in-memory counters.
+///
+/// **Refusals first, then everything else.** A reader opening this is asking
+/// what was stopped, and an approval stream is the wrong thing to make them
+/// page through. The ordering is part of the contract, not a default.
+/// `id` is selected and it is load-bearing: it is the handle a reviewer's POST
+/// carries. Until the review door existed nothing needed it, and a read that
+/// returns rows a client cannot then act on is how a door ends up unbuildable
+/// after the endpoint is written.
+pub const LEDGER_SQL: &str = "SELECT id, gate::text, decision::text, reason, subject, \
+                                     decided_at \
+                                FROM gate_decisions \
+                               WHERE gate = $1 \
+                               ORDER BY (decision = 'refused') DESC, decided_at DESC \
+                               LIMIT 200";
+
+/// How many decisions of each kind this gate has on file, durably.
+///
+/// Separate from [`LEDGER_SQL`] so a surface can say "nothing here, and nothing
+/// anywhere" apart from "nothing in the last 200".
+pub const LEDGER_COUNT_SQL: &str = "SELECT count(*)::bigint FROM gate_decisions WHERE gate = $1";
+
+/// Does this gate's `since: "ledger"` claim hold?
+///
+/// A gate declared [`Retention::Recorded`] promises its decisions survive a
+/// restart, and [`GateView::since`] tells a surface to render them as more than
+/// a since-boot figure. That promise is only worth the ledger behind it.
+///
+/// The failure this catches is specific and has happened to this table already:
+/// `gate_decisions` was declared by migration 214, and until that migration ran
+/// the platform had *a record of every request it served and none of any it
+/// refused*. A gate reporting `since: ledger` over an empty ledger is making the
+/// same claim with the same evidence.
+///
+/// Three states, because "the ledger is empty" and "the gate has decided
+/// nothing" are different and only the first is a finding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LedgerClaim {
+    /// Recorded, asked, and the ledger has rows. The claim holds.
+    Backed { rows: i64 },
+    /// **Recorded, asked, and the ledger is empty.** The surface is telling a
+    /// reader these counters survive a restart and they do not.
+    Unbacked { asked: u64 },
+    /// Recorded and never asked. Nothing to record yet, so nothing is claimed.
+    NothingToRecord,
+    /// Counted-only. It never claimed durability, so there is nothing to check.
+    NotClaimed,
+}
+
+/// Classify one gate's ledger claim.
+pub fn ledger_claim(a: &GateAccount, ledger_rows: i64) -> LedgerClaim {
+    if a.retention != Retention::Recorded {
+        return LedgerClaim::NotClaimed;
+    }
+    if a.asked() == 0 {
+        return LedgerClaim::NothingToRecord;
+    }
+    if ledger_rows > 0 {
+        LedgerClaim::Backed { rows: ledger_rows }
+    } else {
+        LedgerClaim::Unbacked { asked: a.asked() }
+    }
+}
 
 /// Every caveat a gate surface must carry.
 pub const GATE_CAVEATS: &[Caveat] = &[
@@ -83,6 +203,20 @@ pub const GATE_CAVEATS: &[Caveat] = &[
                         `anomaly_events`' row count. It is surfaced because a \
                         control that never fires and a control that is not \
                         wired produce identical observations everywhere else.",
+    },
+    Caveat {
+        subject: "gate.review.upheld",
+        checked: "Every reviewed decision by this gate was judged correct, and \
+                  at least one was judged.",
+        does_not_show: "That the gate is refusing the right things. It says the \
+                        decisions someone looked at were right, and reviewers \
+                        choose what to look at — an `upheld` standing over 3 of \
+                        400 decisions is a sample, not a verdict, and the \
+                        selection is not random. `reviewed` and the ledger total \
+                        are both carried so the ratio is visible; a surface that \
+                        renders this tick without the denominator is asserting \
+                        the gate is sound on evidence about under one percent of \
+                        its decisions.",
     },
     Caveat {
         subject: "gate.never_asked",
@@ -341,6 +475,59 @@ mod tests {
         );
     }
 
+    /// A durability claim with nothing behind it is the finding.
+    #[test]
+    fn a_recorded_gate_with_an_empty_ledger_is_unbacked() {
+        // Asked forty times, ledger empty: the surface says these survive a
+        // restart and they do not.
+        assert_eq!(
+            ledger_claim(&account(40, 0, Retention::Recorded), 0),
+            LedgerClaim::Unbacked { asked: 40 }
+        );
+        // Asked and recorded: the claim holds.
+        assert_eq!(
+            ledger_claim(&account(40, 0, Retention::Recorded), 40),
+            LedgerClaim::Backed { rows: 40 }
+        );
+        // Never asked. Nothing to record, so nothing is claimed — and calling
+        // this `Unbacked` would report a finding on every gate after a deploy.
+        assert_eq!(
+            ledger_claim(&account(0, 0, Retention::Recorded), 0),
+            LedgerClaim::NothingToRecord
+        );
+        // Counted-only never promised durability.
+        assert_eq!(
+            ledger_claim(&account(40, 0, Retention::Counted), 0),
+            LedgerClaim::NotClaimed
+        );
+    }
+
+    /// The ledger queries read one gate and write nothing.
+    #[test]
+    fn the_ledger_queries_are_read_only_and_bind_the_gate() {
+        for (label, sql) in [("ledger", LEDGER_SQL), ("count", LEDGER_COUNT_SQL)] {
+            let q = sql.to_ascii_lowercase();
+            assert!(q.trim_start().starts_with("select"), "{label}");
+            for w in ["insert", "update ", "delete", "drop", "alter", "truncate"] {
+                assert!(!q.contains(w), "{label} contains `{w}`");
+            }
+            // Without `$1` it returns every gate's decisions under one gate's
+            // name — the same substitution the per-agent loop view exists to
+            // prevent, one domain over.
+            assert!(
+                sql.contains("$1"),
+                "{label} does not bind the gate, so it would show every gate's \
+                 decisions as this one's"
+            );
+        }
+        // Refusals first. A reader opening this asks what was stopped.
+        assert!(
+            LEDGER_SQL.contains("(decision = 'refused') DESC"),
+            "the ledger does not surface refusals first, so the thing a reader \
+             came for is behind however many approvals happened to be newer"
+        );
+    }
+
     /// The shared rules apply to gate doors too, empty or not.
     ///
     /// Asserted over an empty list on purpose: the day someone adds a door here
@@ -359,6 +546,60 @@ mod tests {
         }
     }
 
+    /// A review door only on a gate whose decisions exist.
+    ///
+    /// A review is a judgement about **one decision**, so it needs a row to point
+    /// at, and only a `Retention::Recorded` gate writes one. Offering the door on
+    /// a counted-only gate would put a reviewer in front of a queue that is
+    /// permanently empty for a reason no message on the screen could explain —
+    /// its decisions never left the process — and the reviewer's conclusion would
+    /// be that the gate has never refused anything.
+    ///
+    /// Asserted rather than left to the door's prose, because the prose in
+    /// `GATE_DOORS` makes exactly this argument and prose does not fail a build.
+    /// The likely way it breaks is not someone adding a bad door: it is someone
+    /// demoting a gate from `Recorded` to `Counted` to reduce write volume, which
+    /// is a reasonable change that silently strands whatever doors point at it.
+    #[test]
+    fn a_review_door_only_exists_where_the_decisions_do() {
+        for d in GATE_DOORS {
+            if !d.path.contains("/decisions/") {
+                continue;
+            }
+            let spec = gate_trust::GATES
+                .iter()
+                .find(|g| g.id == d.subject)
+                .expect("checked above");
+            assert_eq!(
+                spec.retention,
+                Retention::Recorded,
+                "`{}` offers a per-decision door and is `Counted`, so its \
+                 decisions are process-local and there is nothing to review. \
+                 Either promote it in `gate_trust::GATES` — migration 214's \
+                 comment on the rate-limit gate is the counter-argument — or \
+                 remove the door.",
+                d.subject
+            );
+        }
+        // And the other direction, so the door set cannot be quietly emptied:
+        // every `Recorded` gate has one. A ledger with no reviewer is the state
+        // the platform was in for its whole life.
+        for g in gate_trust::GATES
+            .iter()
+            .filter(|g| g.retention == Retention::Recorded)
+        {
+            assert!(
+                GATE_DOORS
+                    .iter()
+                    .any(|d| d.subject == g.id && d.path.contains("/decisions/")),
+                "`{}` records every decision it makes and nobody can say whether \
+                 any of them was right. That is the state `gate_review` exists to \
+                 end; a ledger with no reviewer is a record nobody reads.",
+                g.id
+            );
+        }
+    }
+
     /// Every caveat is a caveat.
     #[test]
     fn every_gate_caveat_says_what_a_tick_does_not_mean() {
@@ -373,5 +614,24 @@ mod tests {
                  reader cannot tell it from the other state that does"
             );
         }
+        // `gate_review::Standing::Upheld` is the only state on this surface that
+        // maps to `Reading::Idle` on the strength of a human judgement, and it is
+        // the narrowest pass here: it says the decisions *someone chose to look
+        // at* were right. Reviewers pick what to review and the selection is not
+        // random, so an `all_upheld` standing over 3 of 400 decisions is a sample
+        // and the tick reads as a verdict.
+        //
+        // Asserted separately from the loop above because its argument is the
+        // opposite one — those two need a caveat because `unknown` is ambiguous;
+        // this needs one because `idle` is not.
+        assert!(
+            GATE_CAVEATS
+                .iter()
+                .any(|c| c.subject == "gate.review.upheld"),
+            "the only human-judged pass on this surface has no caveat. A green \
+             tick from `gate_review` without its denominator asserts a gate is \
+             sound on evidence about however few of its decisions anyone \
+             happened to open."
+        );
     }
 }

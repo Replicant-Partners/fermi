@@ -318,11 +318,86 @@ pub mod loop_api;
 // is a pattern rather than a rename: the door and the caveat are shared, and
 // the model, measurement and interpretation stay with `gate_trust`.
 //
-// `GATE_DOORS` is empty, and that is a finding: nothing anywhere lets a person
+// `GATE_DOORS` was empty, and that was a finding: nothing anywhere let a person
 // act on a gate — no review of what it refused, no override, no record that a
-// refusal was wrong. Defensible, and until this list existed there was nowhere
-// to notice it had never been decided.
+// refusal was wrong. Until this list existed there was nowhere to notice it had
+// never been decided. It is no longer empty; see `gate_review`.
 pub mod gate_api;
+
+// What crossed the boundary, as a digest.
+//
+// Computed on read rather than stored, and that is the interesting choice:
+// `episodes.query` and `response_text` are both retained, so a hash of them is a
+// pure function of data the platform already holds — and a computed digest
+// cannot drift from the text it claims to describe, which a stored one can.
+//
+// It is also honest about what it cannot do. The seam check as originally framed
+// — this episode's input hash against the parent's output hash — does NOT work
+// here, because a delegated child receives a prompt built around the task rather
+// than its parent's output verbatim. The place equality would hold is the
+// envelope payload, and nothing hashes that yet.
+pub mod artifact_hash;
+
+// One artifact, and the checkpoints it passed — the instance-level counterpart
+// to `surface`.
+//
+// `surface` is population-level: how many loops turn, how many gates
+// discriminate. The UX team's verdict on it was right — it is legible only to
+// someone who already holds the machine in their head. This inverts the primary
+// object: one episode crossing one belt, passing checkpoints where rungs fire.
+// The two are the same structure from opposite ends.
+//
+// It holds no verdict of its own. Every judgement it renders belongs to a module
+// that already owns it and has a falsification registered — including the reason
+// an empty trace is empty, which comes from `declaration_ladder` because 3,571 of
+// 3,576 episodes have nothing to show and that is the agents' missing
+// declarations rather than a platform defect.
+pub mod artifact_trace;
+
+// Enqueuing a contracted field for verification — the writer
+// `assertion_verifications` has never had.
+//
+// The table has existed since migration 205, is keyed to both the assertion and
+// the episode, and carries the CHECK that makes a human verdict cost something.
+// It has held 0 rows for its whole life, and the audit's conclusion was exactly
+// right: it needs a writer, not a schema.
+//
+// The content comes from contracted FIELDS rather than from prose-extracted
+// numbers, and that is forced rather than chosen: all 94 assertions in production
+// are `Multiplier` or `Probability`, neither of which is verifiable, because you
+// cannot verify a multiplier. A contracted field purports to be a retrieval, so
+// it is checkable — and the contract already names the tool that could settle it,
+// which is why the tool-versus-person routing costs nothing to wire.
+pub mod verification_queue;
+
+// What must an agent declare before this substrate can say anything about it?
+//
+// Every trust surface reports `unknown` more often than anything else, and the
+// cause had never been separated from the other causes. Measured: of 206 agents
+// that have produced an episode, **110 are `test_agent_*` rows declaring
+// nothing**, and of the 96 real ones 93 declare ports, 2 a checkable schema and
+// 7 a field contract. So `unknown` is overwhelmingly the SUBJECT declaring no
+// structure to check against — not a stalled loop, not a cold counter, and not a
+// contract the platform failed to write.
+//
+// That distinction is the module's whole reason to exist: `Unresolved` is a work
+// item for us, `Undeclared` is a work item for the agent's author, and
+// collapsing them made 89 undeclared agents look like 89 contracts the platform
+// owed. It owes none of them.
+pub mod declaration_ladder;
+
+// The judgement half of the gate surface: was the refusal right?
+//
+// `gate_trust`'s readings come from approve/refuse counts, and no arrangement of
+// counts distinguishes a correct refusal from an incorrect one. A gate that
+// approves 90% and refuses the other 10% wrongly reads `discriminating`, which
+// the surface renders as healthy. Correctness is a judgement about the subject,
+// not a property of a count, so this is the only path by which "is this gate
+// refusing the right things" becomes answerable at all.
+//
+// It records and does not override. `Overturned` changes no behaviour; it makes
+// a wrong refusal visible to the person who can change the code.
+pub mod gate_review;
 
 // And over evaluators — third instance. `native_evaluators` already turns
 // counters into sentences with remedies, and was reachable through exactly one
@@ -330,6 +405,16 @@ pub mod gate_api;
 // `loop_stalled_in_code`'s known over-claim is recorded rather than silently
 // fixed: narrowing it flips a live verdict platform-wide.
 pub mod evaluator_api;
+
+// Delivering a coordination finding into a member agent's memory — Loop 3's
+// terminal half, which has produced 0 of 3,576 episodes.
+//
+// The mechanism was asking a language model to perform a side effect. The
+// *content* of a coordination finding is a judgement and belongs to the model;
+// the *delivery* is bookkeeping and belongs to the platform. Loop 3 asked the
+// model to do both, so its closure was contingent on a tool call the model
+// never made.
+pub mod coordination_note;
 
 // Port trust contract — whether the caller is sending what the agent said it
 // takes. `negotiate::bind_input` in the console answered this correctly and
