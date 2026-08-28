@@ -274,38 +274,44 @@ The two unreleased fixes (§1, §2) need nothing but the tag — they have been 
 fermi-console lib             385
 agent_selection_parity          3  (new)
 base_rate_latch_contract        4  (new)
-cargo build --release -p fermi-console   green, in a clean worktree
+cargo build --release -p fermi-console   green
 ```
 
-The release profile is verified in a detached `git worktree` at the tagged
-commit rather than in a working tree, for the reason in the next section.
+The release profile is verified in a detached `git worktree` pinned to the exact
+tagged commit, with `origin` re-fetched immediately beforehand — not in a
+working tree, and not at `HEAD`. The next section is why.
 
-## A false start, recorded
+## Two false starts, recorded
 
-The first attempt at this tag failed all three build jobs, and the cause is
-worth writing down because the reasoning was right and the action was not.
+This tag failed twice before it built, both times on the same call site, and the
+sequence is worth writing down because the second failure was caused by the fix
+for the first.
 
-A concurrent, uncommitted refactor of `src/assertions.rs` replaces the bare
-`(p5, p50, p95)` assertion value with a `Claim` enum. `cockpit.rs` was the one
-call site not migrated, so the working tree did not compile — and the console
-call site was "fixed" to `Claim::as_spread()`.
+A concurrent refactor of `src/assertions.rs` — authored in another session, on
+this same branch — replaces the bare `(p5, p50, p95)` assertion value with a
+`Claim` enum (`Numeric(Spread) | Literal(Value)`), so a non-numeric assertion is
+retained verbatim rather than coerced. `cockpit.rs` holds the one console call
+site.
 
-But `Claim` is not in the repository. The change was green in the one working
-tree that has the refactor and broken on every clean checkout, which is what CI
-builds:
+**Attempt 1** migrated that call site to `Claim::as_spread()` while the refactor
+was still *uncommitted*. Green in the working tree that had it, broken on every
+clean checkout — which is what CI builds:
+`no method named as_spread found for struct Spread`.
 
-```
-error[E0599]: no method named `as_spread` found for struct
-              `fermi::assertions::Spread`
-```
+**Attempt 2** reverted the migration, and verified the revert properly: a
+detached `git worktree` at the commit, `cargo build --release`, green. It failed
+anyway. The refactor had been committed as `8b3ed2c6` during the eighteen
+minutes that release build was running, so the worktree — created at the HEAD
+from *before* the build — was checked against a base that no longer existed:
+`no field p5 on type Claim`.
 
-The diagnosis had already been correct — *"`HEAD` compiles; the working tree
-does not"* — and the right conclusion was to leave a call site alone that was
-not broken. Reverted; `cockpit.rs:9385` is again a call site the `Claim`
-refactor will migrate when it lands, which is its author's to do.
+The migration is restored, and is now simply correct: `Claim` is in the tree.
 
-The general hazard: with an uncommitted change to a dependency present, no local
-`cargo` invocation answers *"does the commit build"*. A detached worktree does,
-and is now how this release is checked.
+The lesson is not "use a worktree", which attempt 2 did. It is that on a branch
+with another session pushing to it, **the base must be re-fetched at the moment
+of verification, and the worktree pinned to the exact commit being tagged** — not
+to `HEAD`, which is a moving target. Both failures were the same error at
+different scales: checking against a tree that was true when the check started
+and false when it finished.
 
-`src/assertions.rs` is untouched.
+`src/assertions.rs` itself was never touched from this side.
