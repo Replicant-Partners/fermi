@@ -1978,6 +1978,11 @@ pub async fn admin_liveness_handler(
         // `attempts`/`gates`/`loops` computed above, so the whole endpoint
         // describes one instant without querying twice.
         declarations: fermi::native_evaluators::declaration_census(&state.db).await,
+        // Whether a declared field contract grades anything end to end. Its own
+        // scan rather than derived from the counters above: those measure what
+        // the platform did, and this measures whether a subject's declaration
+        // was ever honoured.
+        conformance: fermi::native_evaluators::contract_conformance(&state.db).await,
     };
     let native = fermi::native_evaluators::run(&observation);
 

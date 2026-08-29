@@ -61,6 +61,10 @@ async fn snapshot(pool: &PgPool) -> Observation {
         // panel report `no_census`, and the suite would pass while proving
         // nothing about the one resolver that reads the fleet.
         declarations: fermi::native_evaluators::declaration_census(pool).await,
+        // The real scan, for the same reason as the census above: `None` would
+        // make the conformance evaluator report inconclusive and the suite would
+        // pass while proving nothing about whether a declared contract is wired.
+        conformance: fermi::native_evaluators::contract_conformance(pool).await,
     }
 }
 

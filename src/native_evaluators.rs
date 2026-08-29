@@ -125,6 +125,69 @@ pub struct Observation {
     /// field contract — so this is the dominant explanation for `unknown` across
     /// every surface, and it was the one thing a snapshot could not see.
     pub declarations: Option<crate::declaration_ladder::Census>,
+    /// Whether a declared field contract is wired all the way through.
+    ///
+    /// `None` on any failure rather than an empty vec, for the same reason as
+    /// `declarations`: no contracts measured and no contracts conformant are
+    /// different claims, and the second is the alarming one.
+    pub conformance: Option<Vec<ContractConformance>>,
+}
+
+/// One declared field contract, and how far it actually gets.
+///
+/// A contract can be declared, applied, fitted and recorded, and it fails at
+/// exactly one of those first. **Each failure has a different owner**, which is
+/// why this is four numbers rather than a boolean: the bestiary card reported
+/// nine agents as "not declared" when all nine declare a contract, and blamed
+/// the author for what was a platform gap.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ContractConformance {
+    pub agent: &'static str,
+    /// Pulses this agent has produced at all.
+    pub pulses: i64,
+    /// Pulses whose response carried a document to grade. **Rung 1**, and the
+    /// author's: grounding grades fields in a JSON document, and an agent that
+    /// answers in prose has nothing to grade however well the platform is wired.
+    pub with_document: i64,
+    /// Pulses carrying a grounding tag, so `enforce` demonstrably ran.
+    /// **Rung 2**, and the platform's.
+    pub graded: i64,
+    /// Pulses with a row in the gate ledger. **Rung 3**, and the platform's.
+    pub recorded: i64,
+}
+
+impl ContractConformance {
+    /// The first rung that fails, or `None` when the contract is wired through.
+    ///
+    /// Ordered by ownership so the answer names who acts, not just what is
+    /// missing. `pulses == 0` is deliberately not a failure: a contract on an
+    /// agent nobody has invoked is untested, not broken.
+    pub fn first_gap(&self) -> Option<(&'static str, &'static str)> {
+        if self.pulses == 0 {
+            return None;
+        }
+        if self.with_document == 0 {
+            return Some((
+                "emits_no_document",
+                "the agent's card or prompt — it answers in prose, so a field \
+                 contract has nothing to grade",
+            ));
+        }
+        if self.graded == 0 {
+            return Some((
+                "never_enforced",
+                "the platform — documents exist and no path ran `enforce` on them",
+            ));
+        }
+        if self.recorded == 0 {
+            return Some((
+                "never_recorded",
+                "the platform — the gate decided and wrote no ledger row, so the \
+                 belt cannot show what it decided",
+            ));
+        }
+        None
+    }
 }
 
 impl Observation {
@@ -137,8 +200,59 @@ impl Observation {
             liveness: crate::liveness_trust::latest(),
             gate_ledger: Some(gate_trust::ledger_status()),
             declarations: declaration_census(pool).await,
+            conformance: contract_conformance(pool).await,
         }
     }
+}
+
+/// Measure every declared field contract against what actually happened.
+///
+/// The check that would have caught the defect it was written after: nine of the
+/// ten agents declaring a contract had never produced a graded field, and no
+/// surface could say so because nothing asked. A contract is a claim about the
+/// platform, and an unexercised claim is the defect class this whole line of
+/// work exists to name.
+pub async fn contract_conformance(pool: &sqlx::PgPool) -> Option<Vec<ContractConformance>> {
+    use sqlx::Row;
+
+    let mut out = Vec::new();
+    for c in crate::grounding_trust::FIELD_CONTRACTS.iter() {
+        // One row per contract rather than one query: the set is ten long and
+        // this runs on the standing clock.
+        let row = sqlx::query(
+            "SELECT count(*)                                                        AS pulses,
+                    count(*) FILTER (WHERE e.response_text LIKE '%{%')              AS with_document,
+                    count(*) FILTER (WHERE 'grounding:enforced'   = ANY(e.tags)
+                                        OR 'grounding:violations' = ANY(e.tags))    AS graded
+               FROM episodes e
+               JOIN agents a ON a.agent_id = e.agent_id
+              WHERE a.agent_name = $1",
+        )
+        .bind(c.agent_id)
+        .fetch_optional(pool)
+        .await
+        .ok()??;
+
+        let recorded: i64 = sqlx::query_scalar(
+            "SELECT count(*)::bigint FROM gate_decisions gd
+               JOIN episodes e ON e.episode_id = gd.episode_id
+               JOIN agents a  ON a.agent_id = e.agent_id
+              WHERE gd.gate = 'grounding' AND a.agent_name = $1",
+        )
+        .bind(c.agent_id)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+
+        out.push(ContractConformance {
+            agent: c.agent_id,
+            pulses: row.try_get("pulses").unwrap_or(0),
+            with_document: row.try_get("with_document").unwrap_or(0),
+            graded: row.try_get("graded").unwrap_or(0),
+            recorded,
+        });
+    }
+    Some(out)
 }
 
 /// Measure what the fleet has declared, for [`Observation::collect`].
@@ -227,6 +341,103 @@ impl NativeEvaluator for RefusedWrites {
                      `last_error` on the sink — a CHECK violation means a \
                      vocabulary drifted; a foreign-key violation means the row \
                      it points at is written later than this one.",
+        }
+    }
+}
+
+/// Is a declared field contract wired all the way through?
+///
+/// The ratchet on the defect that produced it. A contract can be declared and
+/// never emit a document, never be enforced, or never be recorded, and the
+/// surfaces read all three as the same grey "unknown" - one of them blamed the
+/// agent's author for a platform gap.
+///
+/// **A declared contract that has never graded a field is not a passing
+/// contract.** It is an untested claim, which is the defect class of section 1
+/// wearing the machinery built to prevent it.
+pub struct ContractWiredThrough;
+impl NativeEvaluator for ContractWiredThrough {
+    fn id(&self) -> &'static str {
+        "contract_wired_through"
+    }
+    fn asks(&self) -> &'static str {
+        "Does every declared field contract actually grade something end to end?"
+    }
+    fn evaluate(&self, o: &Observation) -> Verdict {
+        let Some(rows) = o.conformance.as_ref() else {
+            return Verdict::Inconclusive {
+                why: "the conformance scan did not run, so no contract can be \
+                      called wired or broken"
+                    .into(),
+            };
+        };
+        if rows.is_empty() {
+            return Verdict::Inconclusive {
+                why: "no field contract is declared anywhere".into(),
+            };
+        }
+
+        // An agent nobody has invoked is untested, not broken - and counting it
+        // as either is the mistake. Reported, never scored.
+        let untested: Vec<&ContractConformance> = rows.iter().filter(|r| r.pulses == 0).collect();
+        let exercised: Vec<&ContractConformance> = rows.iter().filter(|r| r.pulses > 0).collect();
+
+        if exercised.is_empty() {
+            return Verdict::Inconclusive {
+                why: format!(
+                    "{} contract(s) declared and not one of their agents has been \
+                     invoked, so nothing has been exercised",
+                    rows.len()
+                ),
+            };
+        }
+
+        let gaps: Vec<String> = exercised
+            .iter()
+            .filter_map(|r| {
+                r.first_gap().map(|(token, owner)| {
+                    format!(
+                        "{} — {} ({} pulses, {} with a document, {} graded, {} recorded) — {}",
+                        r.agent, token, r.pulses, r.with_document, r.graded, r.recorded, owner
+                    )
+                })
+            })
+            .collect();
+
+        if gaps.is_empty() {
+            return Verdict::Healthy {
+                detail: format!(
+                    "{} contract(s) grade end to end{}",
+                    exercised.len(),
+                    if untested.is_empty() {
+                        String::new()
+                    } else {
+                        format!(", {} untested", untested.len())
+                    }
+                ),
+            };
+        }
+
+        Verdict::Finding {
+            // Critical when nothing conforms at all: a contract nothing enforces
+            // is a safety claim the platform is making and cannot keep.
+            severity: if gaps.len() == exercised.len() {
+                Severity::Critical
+            } else {
+                Severity::Warning
+            },
+            detail: format!(
+                "{} of {} exercised contract(s) never grade a field",
+                gaps.len(),
+                exercised.len()
+            ),
+            subjects: gaps,
+            remedy: "Read the token. `emits_no_document` is the card's problem — the \
+                     agent answers in prose, so a field contract has nothing to bind \
+                     to, and no platform wiring changes that. `never_enforced` is \
+                     ours: documents exist and no path ran `enforce`. \
+                     `never_recorded` is also ours: the gate decided and wrote no \
+                     ledger row, so the belt cannot show what it decided.",
         }
     }
 }
@@ -487,6 +698,7 @@ pub fn registry() -> Vec<Box<dyn NativeEvaluator>> {
         Box::new(LoopStalledInCode),
         Box::new(UndocumentedSilence),
         Box::new(GateAdmittingEverything),
+        Box::new(ContractWiredThrough),
     ]
 }
 
@@ -659,7 +871,76 @@ mod tests {
             // rung is at zero coverage, which is a claim this control world has
             // no business making.
             declarations: None,
+            // A conformant contract, so the control is genuinely healthy on
+            // this evaluator rather than merely inconclusive. `None` would pass
+            // too, and passing because nothing was measured is the reading this
+            // whole module exists to refuse.
+            conformance: Some(vec![ContractConformance {
+                agent: "control_agent",
+                pulses: 10,
+                with_document: 10,
+                graded: 10,
+                recorded: 10,
+            }]),
         }
+    }
+
+    /// A contract declared, exercised, and never grading a field is a finding.
+    /// This is the falsification for the defect the evaluator was written after:
+    /// nine of ten contracts had never graded anything and every surface read it
+    /// as grey.
+    #[test]
+    fn a_contract_that_never_grades_is_a_finding() {
+        let mut o = healthy_world();
+        o.conformance = Some(vec![ContractConformance {
+            agent: "football_analyst",
+            pulses: 217,
+            with_document: 8,
+            graded: 0,
+            recorded: 0,
+        }]);
+        let r = run(&o);
+        assert_ne!(r.status, "healthy", "{:#?}", r.scored);
+    }
+
+    /// An agent nobody has invoked is untested, not broken. Scoring it as a
+    /// finding would put work on somebody for a contract that has had no
+    /// occasion to fire.
+    #[test]
+    fn an_uninvoked_contract_is_not_a_finding() {
+        let mut o = healthy_world();
+        o.conformance = Some(vec![ContractConformance {
+            agent: "hud_field_scout",
+            pulses: 0,
+            with_document: 0,
+            graded: 0,
+            recorded: 0,
+        }]);
+        let r = run(&o);
+        assert_eq!(r.status, "healthy", "{:#?}", r.scored);
+    }
+
+    /// The gap must name the owner, because the card previously blamed the
+    /// author for a platform failure. Prose-only output is the author's; a
+    /// document nothing enforced is ours.
+    #[test]
+    fn the_gap_distinguishes_whose_problem_it_is() {
+        let prose = ContractConformance {
+            agent: "a",
+            pulses: 9,
+            with_document: 0,
+            graded: 0,
+            recorded: 0,
+        };
+        let unenforced = ContractConformance {
+            agent: "b",
+            pulses: 9,
+            with_document: 9,
+            graded: 0,
+            recorded: 0,
+        };
+        assert_eq!(prose.first_gap().unwrap().0, "emits_no_document");
+        assert_eq!(unenforced.first_gap().unwrap().0, "never_enforced");
     }
 
     #[test]
@@ -717,6 +998,15 @@ mod tests {
             .loops
             .push(loop_state("loop4", Some("proposed"), Some("no_trigger")));
         broken.liveness = Some(liveness(0, vec!["forecast_agent_claims"]));
+        // A contract declared, exercised, emitting documents, and never graded:
+        // the state nine of ten real contracts were in.
+        broken.conformance = Some(vec![ContractConformance {
+            agent: "prey_locator",
+            pulses: 94,
+            with_document: 9,
+            graded: 0,
+            recorded: 0,
+        }]);
 
         let report = run(&broken);
         let silent: Vec<_> = report
