@@ -163,6 +163,20 @@
   .fval.json{color:var(--fg3);white-space:pre-wrap;max-height:6.5em;overflow:hidden;
              border-left:1px solid var(--bg3);padding-left:7px;}
   .fgrade{font-size:0.64rem;color:var(--fg4);margin-top:2px;}
+  /* ── The claim's track ───────────────────────────────────────────
+     One claim, read left to right: what was said, which checkpoint looked at
+     it, what it decided, and where the claim went next. The stacked version
+     read as a list of unrelated attributes and hid that this is a journey. */
+  .track{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:0.7rem;}
+  .t-sep{color:var(--bg3);flex-shrink:0;}
+  .t-gate{color:var(--fg4);font-size:0.62rem;text-transform:uppercase;letter-spacing:0.05em;}
+  .t-grade{font-size:0.64rem;}
+  .t-grade.s2{color:var(--green);} .t-grade.s1{color:var(--yellow);}
+  .t-grade.s0{color:var(--red,#fb4934);}
+  .t-done{color:var(--green);font-size:0.64rem;}
+  .t-tool{color:var(--aqua);font-size:0.64rem;}
+  /* The one that needs a human is the one that must look like work. */
+  .t-person{color:var(--purple,#d3869b);font-size:0.64rem;}
   .settle{font-size:0.65rem;margin-top:3px;}
   .settle.tool{color:var(--aqua);}
   .settle.human{color:var(--purple,#d3869b);}
@@ -498,12 +512,27 @@
                 : `<div class="settle human">No data source could settle this — it needs a person,
                    and the gap is itself a request for the integration that would close it.</div>`)
             : "";
+          // The track: what was claimed, what the checkpoint made of it, and
+          // where it went. Left to right, because it is a journey and the
+          // stacked version read as a list of unrelated attributes.
+          const dest = (f.strength ?? 2) >= 2
+            ? `<span class="t-done">settled</span>`
+            : f.settleable_by
+              ? `<span class="t-tool">→ ${esc(f.settleable_by)}</span>`
+              : `<span class="t-person">→ needs a person</span>`;
           return `<div class="field">
             ${pips(f.strength)}
             <div class="fbody">
-              <div class="fname">${esc(f.name)}</div>
+              <div class="track">
+                <span class="fname">${esc(f.name)}</span>
+                <span class="t-sep">─▸</span>
+                <span class="t-gate">grounding</span>
+                <span class="t-sep">─▸</span>
+                <span class="t-grade s${f.strength ?? 0}">${esc(f.grade)}</span>
+                <span class="t-sep">─▸</span>
+                ${dest}
+              </div>
               <div class="fval ${v.cls}">${v.text}</div>
-              <div class="fgrade">${esc(f.grade)}</div>
               ${settle}
             </div>
           </div>`;
@@ -771,7 +800,10 @@ something specific about each checkpoint.")}</div></div>`;
     // Answer, then reasoning, then work. The epistemics used to come first and
     // that is why the page could not be read.
     document.getElementById("content").innerHTML =
-      head + payload(d) + verdict(d) + ladder(d) + fields(d) + routed(d)
+      // Claims come BEFORE the ladder. What the agent actually said, and what
+      // each checkpoint made of it, is the closest thing on the page to the
+      // intent being executed - and it was buried under the envelope checks.
+      head + payload(d) + verdict(d) + fields(d) + ladder(d) + routed(d)
       + feeds(d) + ownerBlock(d) + substrateBlock(d) + chain + caveats(d);
   }
 
