@@ -158,6 +158,13 @@ pub async fn bestiary_cards_handler(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let db = &state.db;
 
+    // Who declares a field contract at all. Needed to tell "nobody typed this
+    // agent" from "this agent is typed and nothing graded it".
+    let contracted: std::collections::HashSet<&str> = fermi::grounding_trust::FIELD_CONTRACTS
+        .iter()
+        .map(|c| c.agent_id)
+        .collect();
+
     // PULSE, and the economics. One grouped pass over the episode log rather
     // than a query per card.
     //
@@ -271,11 +278,25 @@ pub async fn bestiary_cards_handler(
                 },
                 "rules": rules.get(&name).copied().unwrap_or(0),
                 "series": series.get(&name).cloned().unwrap_or_else(|| vec![0; 14]),
-                // `graded == 0` is NOT a fidelity of zero. It means the agent
-                // declares no field contract, so nothing could be graded -
-                // authoring work, owned by the author, and not a finding.
+                // Three states, not two. Collapsing the middle one into
+                // `not_declared` reported `football_analyst` and `prey_locator`
+                // as undeclared when both declare a field contract in
+                // `grounding_trust::FIELD_CONTRACTS` - and hid the actual
+                // finding, which is that only 1 of the 10 contracted agents has
+                // a single graded pulse. Whose problem it is differs per state:
+                //
+                //   not_declared     no contract exists   -> the author's work
+                //   declared_ungraded contract exists, no pulse carries a
+                //                     grounding tag       -> the PLATFORM's, and
+                //                     it means grounding never ran on the route
+                //                     those pulses travelled
+                //   measured          graded pulses exist -> a real reading
                 "fidelity": if graded == 0 {
-                    json!({ "state": "not_declared", "graded": 0 })
+                    if contracted.contains(name.as_str()) {
+                        json!({ "state": "declared_ungraded", "graded": 0 })
+                    } else {
+                        json!({ "state": "not_declared", "graded": 0 })
+                    }
                 } else {
                     json!({
                         "state": "measured",
@@ -292,13 +313,16 @@ pub async fn bestiary_cards_handler(
     Ok(Json(json!({
         "cards": cards,
         "series_days": 14,
-        "contract": "`fidelity.state = not_declared` means the agent declares no field \
-                     contract, so nothing could be graded. It is authoring work and must \
-                     NOT render as a score of zero - 98 of 206 producing agents are \
-                     undeclared, and reading that as failure paints the whole bestiary red. \
-                     `rules` is what the agent holds; how often a rule is RETRIEVED is not \
-                     recorded anywhere, so no retrieval figure is served. `series` is daily \
-                     pulse counts over `series_days`, oldest first.",
+        "contract": "`fidelity.state` has THREE values and they have different owners. \
+                     `not_declared`: no field contract exists, so nothing could be graded - \
+                     authoring work, and it must NOT render as a score of zero, because most \
+                     of the catalogue is undeclared and reading that as failure paints the \
+                     whole register red. `declared_ungraded`: the agent DOES declare a \
+                     contract and not one pulse carries a grounding tag - that is a platform \
+                     finding, and it means grounding never ran on the route those pulses \
+                     travelled. `measured`: a real reading. `rules` is what the agent holds; \
+                     retrieval is not recorded anywhere, so no retrieval figure is served. \
+                     `series` is daily pulse counts over `series_days`, oldest first.",
     })))
 }
 

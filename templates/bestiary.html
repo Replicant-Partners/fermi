@@ -22,6 +22,9 @@
      red: most of the catalogue is undeclared and the register would be a wall
      of alarm about work nobody has started. */
   .s-na{color:var(--fg4);font-style:italic;}
+  /* Declared and never graded is the platform's problem, so it is a finding -
+     but a different one from a violation, and it gets its own register. */
+  .s-warn{color:var(--yellow);}
   /* The sparkline is the one thing allowed to move, and its shape is the
      measured rate. A dormant agent is a flat line, not a spinner. */
   .spark{display:block;flex-shrink:0;}
@@ -243,11 +246,16 @@
     // producing agents are undeclared and reading that as failure would paint
     // the whole bestiary red.
     const f = c.fidelity || {};
-    const fid = f.state === "not_declared"
-      ? `<span class="s-na" title="This agent declares no field contract, so nothing could be graded. Authoring work, not a finding.">not declared</span>`
-      : `<span class="${f.violations > 0 ? "s-bad" : "s-good"}"
-           title="${f.clean} of ${f.graded} pulses had every contracted field sourced">${
-          Math.round((f.clean_rate || 0) * 100)}% · ${f.graded} graded</span>`;
+    const fid =
+      f.state === "not_declared"
+        ? `<span class="s-na" title="No field contract exists for this agent, so nothing could be graded. Authoring work, not a finding.">not declared</span>`
+      : f.state === "declared_ungraded"
+        // The platform's problem, not the author's: a contract exists and
+        // grounding never ran on the route these pulses travelled.
+        ? `<span class="s-warn" title="This agent DOES declare a field contract, and not one pulse carries a grounding tag — grounding never ran on the route they travelled. A platform finding.">declared, ungraded</span>`
+        : `<span class="${f.violations > 0 ? "s-bad" : "s-good"}"
+             title="${f.clean} of ${f.graded} pulses had every contracted field sourced">${
+            Math.round((f.clean_rate || 0) * 100)}% · ${f.graded} graded</span>`;
 
     const cpp = c.cost_per_pulse != null
       ? `$${c.cost_per_pulse < 0.01 ? c.cost_per_pulse.toFixed(4) : c.cost_per_pulse.toFixed(3)}`
