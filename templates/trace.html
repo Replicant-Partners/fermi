@@ -215,6 +215,33 @@
   .act:disabled{opacity:0.4;cursor:default;}
   .act.act-no{border-color:var(--red,#fb4934);color:var(--red,#fb4934);}
   .act.act-no:hover:not(:disabled){background:var(--red,#fb4934);color:var(--bg0-hard);}
+  /* ── The five questions ───────────────────────────────────────── */
+  .q5{display:grid;grid-template-columns:230px 1fr;gap:14px;padding:9px 0 9px 11px;
+      border-left:2px solid var(--bg3);border-bottom:1px solid var(--bg2);}
+  .q5-q{font-size:0.8rem;color:var(--fg2);}
+  .q5-a{font-size:0.78rem;color:var(--fg3);line-height:1.5;}
+  .q5-a b{color:var(--fg2);}
+  .q5.t-ok{border-left-color:var(--green);}
+  .q5.t-warn{border-left-color:var(--yellow);}
+  .q5.t-bad{border-left-color:var(--red,#fb4934);}
+  .q5.t-bad .q5-a b{color:var(--red,#fb4934);}
+  .q5.t-na{border-left-color:var(--bg3);}
+  .q5.t-na .q5-a{color:var(--fg4);}
+
+  /* ── A claim, and what a person can do about it ─────────────────────── */
+  .claim{display:grid;grid-template-columns:26px 210px 1fr 130px;gap:10px;
+         align-items:baseline;padding:6px 0;border-top:1px solid var(--bg2);}
+  .c-name{font-size:0.74rem;color:var(--fg2);overflow:hidden;text-overflow:ellipsis;}
+  .c-val{font-size:0.71rem;color:var(--fg3);overflow:hidden;text-overflow:ellipsis;
+         white-space:nowrap;}
+  .c-val.null{color:var(--fg4);font-style:italic;}
+  .c-dest{font-size:0.64rem;text-align:right;}
+  .fgroup-legend{font-size:0.7rem;color:var(--fg4);line-height:1.5;margin:2px 0 6px;
+                 padding-left:9px;border-left:1px solid var(--bg3);}
+  /* The offer, stated as the gain rather than as the platform's verb. */
+  .offer{grid-column:2 / -1;display:flex;gap:6px;align-items:center;flex-wrap:wrap;
+         margin:3px 0 2px;}
+  .offer .why{font-size:0.66rem;color:var(--fg4);}
   .empty{padding:16px 8px;font-size:0.76rem;color:var(--fg4);}
   .absent{color:var(--fg4);font-style:italic;}
   </style>
@@ -234,6 +261,9 @@
   let SETTLEABLE = null;
   // Who called this, who it called, where it landed. Read rather than asserted.
   let LINEAGE = null;
+  // `fields[]` carries no assertion id, so the settle action is joined to a
+  // claim by its path through `routed[]`.
+  let ASSERTION_BY_PATH = {};
   const READINGS = ["idle","fault","unknown"];
   const reading = r => READINGS.includes(r) ? r : "unknown";
 
@@ -264,8 +294,8 @@
   }
 
   const STRENGTH_WORD = {
-    2: "reproducible — a tool, a transform or a citation can produce it again",
-    1: "a judgement. Legitimate, and not a retrieval",
+    2: "reproducible — a tool, transform or citation can produce these again",
+    1: "judgement — legitimate, and not a retrieval",
     0: "nothing to rely on yet",
   };
 
@@ -412,6 +442,86 @@
     </div>`;
   }
 
+  // ── The five questions ──────────────────────────────────────────
+  //
+  // What it means to trust an output, for someone who has never heard of this
+  // platform. Every internal token gets the human question it answers, and no
+  // internal noun survives into the answer. The ladder still exists underneath
+  // for whoever wants it.
+  //
+  // Question three is the one nothing asked: grounding checks whether a tool
+  // COULD have supplied a field, never whether the agent DID produce one, so a
+  // null inherits its block's provenance and reads as `tool_verified`.
+  function emptiness(fs) {
+    let total = 0, empty = 0;
+    const walk = v => {
+      if (v === null || v === undefined) { total++; empty++; return; }
+      if (Array.isArray(v)) { if (!v.length) { total++; } else v.forEach(walk); return; }
+      if (typeof v === "object") { Object.values(v).forEach(walk); return; }
+      total++;
+      if (v === "") empty++;
+    };
+    (fs || []).forEach(f => walk(f.value));
+    return { total, empty };
+  }
+
+  function questions(d) {
+    const a = readArtifact(d);
+    const fs = d.fields || [];
+    const e = emptiness(fs);
+    const byStrength = s => fs.filter(f => (f.strength ?? 0) === s).length;
+
+    const ran = a.by.credit || a.by.rate_limit;
+    const got = a.by.attachment || a.by.input_binding;
+
+    const rows = [
+      ["Was it allowed to run?",
+       ran ? "Yes — it had the budget and was inside its limits."
+           : "No check on this route.",
+       ran ? "ok" : "na"],
+
+      ["Did it get what it needed?",
+       got ? "Yes — the request carried what the agent expects."
+           : "No check on this route.",
+       got ? "ok" : "na"],
+
+      ["Did it actually do the work?",
+       e.total === 0
+         ? "Nothing it returned was examined."
+         : e.empty === 0
+           ? `Yes — all ${e.total} values came back filled in.`
+           : `<b>No — ${e.empty} of ${e.total} values came back empty.</b> The agent \
+              produced the shape of an answer without the content.`,
+       e.total === 0 ? "na" : e.empty === 0 ? "ok" : "bad"],
+
+      ["Where did the numbers come from?",
+       fs.length === 0
+         ? "Nothing was checked, so there is nothing to say."
+         : `${byStrength(2)} from a tool or citation, ${byStrength(1)} from the model's \
+            own judgement, ${byStrength(0)} from nothing that could be checked.`,
+       fs.length === 0 ? "na" : byStrength(0) > 0 ? "bad" : byStrength(1) > 0 ? "warn" : "ok"],
+
+      ["Could anything have stopped it?",
+       a.contentsGuarded
+         ? "Yes — a checkpoint read the contents and can refuse."
+         : a.inspectedContents
+           ? "<b>No.</b> A checkpoint read the contents and only records — whatever it \
+              found, the answer was returned anyway."
+           : "<b>No.</b> Nothing opened the answer to look inside it.",
+       a.contentsGuarded ? "ok" : "bad"],
+    ];
+
+    return `<div class="block">
+      <h2>Can you trust this?</h2>
+      <div class="note">Five questions, in the order they matter. The technical version is
+        further down.</div>
+      ${rows.map(([q, ans, tone]) => `<div class="q5 t-${tone}">
+        <div class="q5-q">${esc(q)}</div>
+        <div class="q5-a">${ans}</div>
+      </div>`).join("")}
+    </div>`;
+  }
+
   function payload(d) {
     const m = d.model || {};
     const ty = (d.output_contract_type || d.payload_type
@@ -504,39 +614,56 @@
     const groups = [2, 1, 0].map(s => {
       const g = fs.filter(f => (f.strength ?? 0) === s);
       if (!g.length) return "";
+      // One explanation per group, not per row. The old version repeated the
+      // same sentence on seven consecutive claims, which is the rule this page
+      // is supposed to hold: explain once, then show data.
+      const tools = [...new Set(g.map(f => f.settleable_by).filter(Boolean))];
+      const needPerson = g.filter(f => !f.settleable_by).length;
+      const legend = s >= 2 ? "" : `<div class="fgroup-legend">${
+          needPerson ? `<b>${needPerson}</b> of these can only be settled by a person —
+            no data source could produce them, and each gap is itself a request for the
+            integration that would close it. ` : ""}${
+          tools.length ? `A tool could settle the rest: <b>${tools.map(esc).join(", ")}</b>.` : ""
+        }</div>`;
+
       return `<div class="fgroup">
-        <div class="fgroup-h">${pips(s)} &nbsp;${g.length} field(s) — ${esc(STRENGTH_WORD[s])}</div>
+        <div class="fgroup-h">${pips(s)} <b>${g.length}</b> ${esc(STRENGTH_WORD[s])}</div>
+        ${legend}
         ${g.map(f => {
           const v = showValue(f.value);
-          const settle = (f.strength ?? 0) < 2
-            ? (f.settleable_by
-                ? `<div class="settle tool">A tool could settle this: <b>${esc(f.settleable_by)}</b></div>`
-                : `<div class="settle human">No data source could settle this — it needs a person,
-                   and the gap is itself a request for the integration that would close it.</div>`)
-            : "";
-          // The track: what was claimed, what the checkpoint made of it, and
-          // where it went. Left to right, because it is a journey and the
-          // stacked version read as a list of unrelated attributes.
           const dest = (f.strength ?? 2) >= 2
             ? `<span class="t-done">settled</span>`
             : f.settleable_by
-              ? `<span class="t-tool">→ ${esc(f.settleable_by)}</span>`
-              : `<span class="t-person">→ needs a person</span>`;
-          return `<div class="field">
+              ? `<span class="t-tool">${esc(f.settleable_by)}</span>`
+              : `<span class="t-person">needs a person</span>`;
+
+          // A weak claim is a call for a specific kind of work, and the offer
+          // is stated as the gain rather than as the platform's verb. Citing a
+          // source is not paperwork: `human_sourced` scores as high as
+          // `tool_verified` BECAUSE someone else can follow the citation.
+          //
+          // Settling needs an `assertion_id`, which `fields[]` does not carry -
+          // it is joined by path from `routed[]`. Where no queue item exists
+          // there is nothing to settle, and that is said rather than offered as
+          // a button that cannot work.
+          const aid = ASSERTION_BY_PATH[f.name];
+          const offer = (f.strength ?? 2) >= 2 ? "" : aid
+            ? `<div class="offer" data-assertion="${esc(aid)}">
+                 <input class="cite" placeholder="cite a source — a reference anyone can follow"/>
+                 <button class="act" data-verdict="human_sourced">Cite it</button>
+                 <button class="act act-no" data-verdict="rejected">Wrong</button>
+                 <span class="why">a citation makes this as strong as a tool result</span>
+                 <span class="settle-out"></span>
+               </div>`
+            : `<div class="offer"><span class="why">Nothing queued this claim, so there is
+                 nothing to settle yet — the queue is what a verdict attaches to.</span></div>`;
+
+          return `<div class="claim" title="grade: ${esc(f.grade || "")}">
             ${pips(f.strength)}
-            <div class="fbody">
-              <div class="track">
-                <span class="fname">${esc(f.name)}</span>
-                <span class="t-sep">─▸</span>
-                <span class="t-gate">grounding</span>
-                <span class="t-sep">─▸</span>
-                <span class="t-grade s${f.strength ?? 0}">${esc(f.grade)}</span>
-                <span class="t-sep">─▸</span>
-                ${dest}
-              </div>
-              <div class="fval ${v.cls}">${v.text}</div>
-              ${settle}
-            </div>
+            <span class="c-name">${esc(f.name)}</span>
+            <span class="c-val ${v.cls}">${v.text}</span>
+            <span class="c-dest">${dest}</span>
+            ${offer}
           </div>`;
         }).join("")}
       </div>`;
@@ -545,10 +672,9 @@
     return `<div class="block">
       <h2>What it claimed</h2>
       <div class="note">
-        The value is what the agent actually said, never stripped — it is the only
-        evidence that could answer which model fabricates what. Read the pips
-        (reliance), not the grade name: two different grades can mean the same
-        amount of nothing.
+        Every claim below was checked by <b>grounding</b> and by nothing else. Values are
+        what the agent actually said, never stripped. Read the pips — two different grade
+        names can mean the same amount of nothing. Hover a row for its grade.
       </div>
       ${groups}
       <div class="floor">
@@ -843,8 +969,10 @@ something specific about each checkpoint.")}</div></div>`;
       // Claims come BEFORE the ladder. What the agent actually said, and what
       // each checkpoint made of it, is the closest thing on the page to the
       // intent being executed - and it was buried under the envelope checks.
-      head + payload(d) + verdict(d) + fields(d) + ladder(d) + routed(d)
-      + feeds(d) + ownerBlock(d) + substrateBlock(d) + chain + caveats(d);
+      // The five questions lead. The ladder is the expert view and sits under
+      // them, per the prototyping call.
+      head + payload(d) + questions(d) + fields(d) + routed(d)
+      + feeds(d) + ownerBlock(d) + ladder(d) + substrateBlock(d) + chain + caveats(d);
   }
 
   // The action, posted where it is read.
@@ -853,7 +981,7 @@ something specific about each checkpoint.")}</div></div>`;
   // 400 is the reviewer's and fixable, so its body is shown verbatim; a 500 is
   // the platform's and must not read as the person's mistake.
   function wireSettle() {
-    document.querySelectorAll(".caveat[data-assertion]").forEach(box => {
+    document.querySelectorAll("[data-assertion]").forEach(box => {
       const id = box.dataset.assertion;
       const out = box.querySelector(".settle-out");
       box.querySelectorAll(".act").forEach(btn => {
@@ -934,7 +1062,13 @@ something specific about each checkpoint.")}</div></div>`;
         return;
       }
       if (!res.ok) throw new Error("HTTP " + res.status);
-      render(await res.json());
+      const trace = await res.json();
+      ASSERTION_BY_PATH = {};
+      (trace.routed || []).forEach(x => {
+        const p = (x.evidence || {}).path;
+        if (p && x.assertion_id) ASSERTION_BY_PATH[p] = x.assertion_id;
+      });
+      render(trace);
       wireSettle();
     } catch (e) {
       document.getElementById("content").innerHTML =
