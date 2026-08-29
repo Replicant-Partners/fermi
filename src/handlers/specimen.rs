@@ -143,6 +143,165 @@ pub async fn recent_episodes_handler(
     })))
 }
 
+/// `GET /api/bestiary/cards`
+///
+/// The stat line for every specimen, in one read.
+///
+/// A card carries a small fixed set of managed quantities rather than prose,
+/// because a number against a threshold can be managed and a paragraph cannot.
+/// Four positions, and each is a door into the surface that owns its detail.
+///
+/// Kept separate from `/api/bestiary` deliberately: that handler's query is
+/// large and actively edited, and these are aggregates over different tables.
+pub async fn bestiary_cards_handler(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db = &state.db;
+
+    // PULSE, and the economics. One grouped pass over the episode log rather
+    // than a query per card.
+    //
+    // FIDELITY comes from the grounding tags, and they already encode the
+    // distinction the card needs: `stamp_grounding` deliberately writes NOTHING
+    // for an agent with no contract, because "an agent with no contract has not
+    // been found compliant, and marking it so would be the original defect".
+    // So `graded = 0` means *not declared*, which is authoring work, and is not
+    // a score of zero. Given 98 of 206 producing agents are undeclared, getting
+    // that backwards would paint the whole bestiary red.
+    let rows = sqlx::query(
+        "SELECT a.agent_name,
+                count(*)                                             AS pulses,
+                max(e.created_at)                                    AS last_at,
+                sum(e.cost_usd)::float8                              AS cost_usd,
+                count(*) FILTER (WHERE e.execution_status = 'success') AS ok,
+                count(*) FILTER (WHERE 'grounding:enforced'   = ANY(e.tags)) AS clean,
+                count(*) FILTER (WHERE 'grounding:violations' = ANY(e.tags)) AS dirty
+           FROM episodes e
+           JOIN agents a ON a.agent_id = e.agent_id
+          WHERE a.agent_name NOT LIKE 'test\\_agent\\_%'
+          GROUP BY a.agent_name",
+    )
+    .fetch_all(db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("cards: {e}")))?;
+
+    // LEARNED. The rule count is real; how often a rule is retrieved is not
+    // recorded anywhere, so the card shows what it holds and says nothing about
+    // use. Claiming a retrieval figure we do not have would be the more
+    // expensive error.
+    let rule_rows = sqlx::query(
+        "SELECT a.agent_name, count(*) AS rules
+           FROM semantic_rules r
+           JOIN agents a ON a.agent_id = r.agent_id
+          GROUP BY a.agent_name",
+    )
+    .fetch_all(db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("rules: {e}")))?;
+
+    let mut rules: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for r in &rule_rows {
+        if let Ok(n) = r.try_get::<String, _>("agent_name") {
+            rules.insert(n, r.try_get::<i64, _>("rules").unwrap_or(0));
+        }
+    }
+
+    // The sparkline. Daily counts over a fortnight: the shape IS the measured
+    // rate, which is the only thing on a card allowed to move.
+    let series_rows = sqlx::query(
+        "SELECT a.agent_name, (e.created_at AT TIME ZONE 'UTC')::date AS d, count(*) AS n
+           FROM episodes e
+           JOIN agents a ON a.agent_id = e.agent_id
+          WHERE e.created_at > now() - interval '14 days'
+            AND a.agent_name NOT LIKE 'test\\_agent\\_%'
+          GROUP BY 1, 2",
+    )
+    .fetch_all(db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("series: {e}")))?;
+
+    let today = chrono::Utc::now().date_naive();
+    let mut series: std::collections::HashMap<String, Vec<i64>> = std::collections::HashMap::new();
+    for r in &series_rows {
+        let Ok(name) = r.try_get::<String, _>("agent_name") else {
+            continue;
+        };
+        let Ok(d) = r.try_get::<chrono::NaiveDate, _>("d") else {
+            continue;
+        };
+        let n = r.try_get::<i64, _>("n").unwrap_or(0);
+        let idx = (d - (today - chrono::Duration::days(13))).num_days();
+        if (0..14).contains(&idx) {
+            series
+                .entry(name)
+                .or_insert_with(|| vec![0; 14])
+                .get_mut(idx as usize)
+                .map(|slot| *slot = n);
+        }
+    }
+
+    let mut cards = serde_json::Map::new();
+    for r in &rows {
+        let name: String = match r.try_get("agent_name") {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let pulses: i64 = r.try_get("pulses").unwrap_or(0);
+        let ok: i64 = r.try_get("ok").unwrap_or(0);
+        let clean: i64 = r.try_get("clean").unwrap_or(0);
+        let dirty: i64 = r.try_get("dirty").unwrap_or(0);
+        let graded = clean + dirty;
+        let cost: Option<f64> = r.try_get::<Option<f64>, _>("cost_usd").ok().flatten();
+        let last_at = r
+            .try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("last_at")
+            .ok()
+            .flatten()
+            .map(|t| t.to_rfc3339());
+
+        cards.insert(
+            name.clone(),
+            json!({
+                "pulses": pulses,
+                "last_at": last_at,
+                "success_rate": if pulses > 0 { Some(ok as f64 / pulses as f64) } else { None },
+                "cost_usd": cost,
+                "cost_per_pulse": match (cost, pulses) {
+                    (Some(c), p) if p > 0 => Some(c / p as f64),
+                    _ => None,
+                },
+                "rules": rules.get(&name).copied().unwrap_or(0),
+                "series": series.get(&name).cloned().unwrap_or_else(|| vec![0; 14]),
+                // `graded == 0` is NOT a fidelity of zero. It means the agent
+                // declares no field contract, so nothing could be graded -
+                // authoring work, owned by the author, and not a finding.
+                "fidelity": if graded == 0 {
+                    json!({ "state": "not_declared", "graded": 0 })
+                } else {
+                    json!({
+                        "state": "measured",
+                        "graded": graded,
+                        "clean": clean,
+                        "violations": dirty,
+                        "clean_rate": clean as f64 / graded as f64,
+                    })
+                },
+            }),
+        );
+    }
+
+    Ok(Json(json!({
+        "cards": cards,
+        "series_days": 14,
+        "contract": "`fidelity.state = not_declared` means the agent declares no field \
+                     contract, so nothing could be graded. It is authoring work and must \
+                     NOT render as a score of zero - 98 of 206 producing agents are \
+                     undeclared, and reading that as failure paints the whole bestiary red. \
+                     `rules` is what the agent holds; how often a rule is RETRIEVED is not \
+                     recorded anywhere, so no retrieval figure is served. `series` is daily \
+                     pulse counts over `series_days`, oldest first.",
+    })))
+}
+
 /// `GET /api/workspaces/:workspace_id/flow`
 ///
 /// A workspace as its **seams**: who called whom, with what task, and whether

@@ -8,6 +8,26 @@
   <link rel="stylesheet" href="/static/css/common.css"/>
   <link rel="stylesheet" href="/static/css/components.css"/>
   <style>
+  /* ── Stat line: fixed positions, threshold colour, no prose ────────────── */
+  .stats{border-top:1px solid var(--bg2);padding:6px 10px 2px;
+         display:grid;grid-template-columns:1fr 1fr;gap:2px 10px;}
+  .stat{display:flex;align-items:center;gap:6px;font-size:0.66rem;min-width:0;}
+  .sk{color:var(--fg4);text-transform:uppercase;letter-spacing:0.05em;font-size:0.56rem;
+      width:52px;flex-shrink:0;}
+  .sv{color:var(--fg3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .stat.s-dim .sv,.stat.s-dim .sk{opacity:0.45;}
+  .s-good{color:var(--green);}
+  .s-bad{color:var(--red,#fb4934);}
+  /* Not declared is authoring work, not a failing score. It must never read as
+     red: most of the catalogue is undeclared and the register would be a wall
+     of alarm about work nobody has started. */
+  .s-na{color:var(--fg4);font-style:italic;}
+  /* The sparkline is the one thing allowed to move, and its shape is the
+     measured rate. A dormant agent is a flat line, not a spinner. */
+  .spark{display:block;flex-shrink:0;}
+  .spark .sp-on{fill:var(--aqua);}
+  .spark .sp-none{fill:var(--bg3);}
+  .stat.s-dim .spark .sp-on{fill:var(--bg3);}
   body{font-family:"Berkeley Mono","JetBrains Mono",monospace;line-height:1.5;background:var(--bg0-hard);font-size:13px;margin:0;}
   a{color:var(--fg3);text-decoration:none;}
   a:hover{color:var(--yellow);}
@@ -134,7 +154,7 @@
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
     ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
-  let DATA = null, LENS = "discover", SEAM = new Set();
+  let DATA = null, CARDS = null, LENS = "discover", SEAM = new Set();
 
   const NOTES = {
     discover: "Which specimens exist, and which do you want. The card is meant to be enough to decide with — cost is always the same corner, so you can scan a column of costs alone.",
@@ -178,6 +198,71 @@
     return `<span class="untried dim">untried, not failing</span>`;
   }
 
+  // ── The stat line ────────────────────────────────────────────────────────
+  //
+  // Fixed positions, same place on every card, coloured by whether a value is
+  // inside a threshold. A number against a threshold can be managed; a
+  // paragraph cannot, and every previous version of this surface rendered its
+  // epistemics as prose.
+  //
+  // Each stat is also a door: pulse opens the trace, learned opens the
+  // ontology. The card is a hub, not a summary.
+
+  // The shape IS the measured rate. The only thing on a card allowed to move,
+  // and it moves only because something moved.
+  function spark(series) {
+    const s = series || [];
+    const max = Math.max(1, ...s);
+    const w = 3, gap = 1, h = 12;
+    const bars = s.map((v, i) => {
+      const bh = v === 0 ? 1 : Math.max(1.5, (v / max) * h);
+      return `<rect x="${i * (w + gap)}" y="${h - bh}" width="${w}" height="${bh}"
+        class="${v === 0 ? "sp-none" : "sp-on"}"/>`;
+    }).join("");
+    return `<svg class="spark" width="${s.length * (w + gap)}" height="${h}"
+      viewBox="0 0 ${s.length * (w + gap)} ${h}">${bars}</svg>`;
+  }
+
+  const daysSince = iso => {
+    if (!iso) return null;
+    const d = new Date(iso);
+    return isNaN(d) ? null : Math.floor((Date.now() - d.getTime()) / 86400000);
+  };
+
+  function statline(s) {
+    const c = (CARDS || {})[s.agent_name];
+    if (!c) return "";
+    const ago = daysSince(c.last_at);
+
+    // Dormant is a contextual clue, not enforcement: no pulse in a fortnight.
+    const pulseCls = ago == null ? "s-dim" : ago > 14 ? "s-dim" : "";
+    const when = ago == null ? "never" : ago === 0 ? "today"
+               : ago === 1 ? "yesterday" : `${ago}d ago`;
+
+    // `not_declared` is authoring work, not a score of zero. 98 of 206
+    // producing agents are undeclared and reading that as failure would paint
+    // the whole bestiary red.
+    const f = c.fidelity || {};
+    const fid = f.state === "not_declared"
+      ? `<span class="s-na" title="This agent declares no field contract, so nothing could be graded. Authoring work, not a finding.">not declared</span>`
+      : `<span class="${f.violations > 0 ? "s-bad" : "s-good"}"
+           title="${f.clean} of ${f.graded} pulses had every contracted field sourced">${
+          Math.round((f.clean_rate || 0) * 100)}% · ${f.graded} graded</span>`;
+
+    const cpp = c.cost_per_pulse != null
+      ? `$${c.cost_per_pulse < 0.01 ? c.cost_per_pulse.toFixed(4) : c.cost_per_pulse.toFixed(3)}`
+      : "—";
+
+    return `<div class="stats">
+      <div class="stat ${pulseCls}"><span class="sk">pulse</span>
+        ${spark(c.series)}<span class="sv">${c.pulses} · ${when}</span></div>
+      <div class="stat"><span class="sk">fidelity</span><span class="sv">${fid}</span></div>
+      <div class="stat"><span class="sk">learned</span>
+        <span class="sv">${c.rules} rule${c.rules === 1 ? "" : "s"}</span></div>
+      <div class="stat"><span class="sk">per pulse</span><span class="sv">${cpp}</span></div>
+    </div>`;
+  }
+
   function card(s) {
     return `<a class="card" href="/specimen/${encodeURIComponent(s.agent_name)}">
       <div class="c-top">
@@ -195,6 +280,7 @@
         <div class="c-desc">${esc(s.description || "No description.")}</div>
         ${studs(s)}
       </div>
+      ${statline(s)}
       <div class="c-foot">
         <span class="prov p-${esc(s.provenance || "none")}"
               title="${esc(s.provenance || "no orchestra membership")}"></span>
@@ -334,9 +420,17 @@
   async function boot() {
     if (window.Nav) Nav.init({ current: "bestiary" });
     try {
-      const res = await fetch("/api/bestiary");
+      // The stat line is a separate read, and a soft one: if it fails the
+      // register still renders without stats rather than not at all.
+      const [res, cards] = await Promise.all([
+        fetch("/api/bestiary"),
+        fetch("/api/bestiary/cards")
+          .then(r => (r.ok ? r.json() : null))
+          .catch(() => null),
+      ]);
       if (!res.ok) throw new Error("HTTP " + res.status);
       DATA = await res.json();
+      CARDS = cards && cards.cards ? cards.cards : null;
     } catch (e) {
       document.getElementById("body").innerHTML =
         `<div class="empty">Could not load the register: ${esc(e.message)}.

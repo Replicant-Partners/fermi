@@ -3069,6 +3069,11 @@ async fn main() {
             "/api/episodes/recent",
             get(handlers::specimen::recent_episodes_handler),
         )
+        // The stat line for every specimen: pulse, fidelity, learned, cost.
+        .route(
+            "/api/bestiary/cards",
+            get(handlers::specimen::bestiary_cards_handler),
+        )
         // A workspace as its seams. Every arrow is an artifact crossing a
         // checkpoint, and this is the read that lets a screen say so.
         .route(
