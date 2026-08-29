@@ -423,6 +423,7 @@ pub mod coordination_note;
 // binding as if it were a finding. Canonical implementation lives here so
 // the server can verify rather than transcribe.
 pub mod port_trust;
+pub mod route_trust;
 
 // Card-declared contracts — the typing and field-to-tool rules an agent
 // must state about itself before it may be published.

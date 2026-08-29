@@ -267,6 +267,21 @@ pub async fn execute_agent_stream_handler(
                 if let Some(ref inv) = invocation {
                     crate::stamp_invocation(&mut episode, inv);
                 }
+                // And why it was chosen. Unconditional, for the same reason as
+                // on the non-streaming path: the block above only runs when the
+                // caller sends an invocation block, and both endpoints must
+                // stamp or the unstamped one becomes the one callers use.
+                if invocation
+                    .as_ref()
+                    .and_then(|i| i.get("route_reason"))
+                    .and_then(|v| v.as_str())
+                    .is_none()
+                {
+                    fermi::route_trust::stamp(
+                        &mut episode,
+                        fermi::route_trust::RouteSelection::CallerNamed,
+                    );
+                }
                 // Grounding, for the same reason the bind check is here: both
                 // execute endpoints must check, or the unchecked one becomes
                 // the one callers use. `enforce` is a no-op for agents with no

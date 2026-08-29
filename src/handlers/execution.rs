@@ -602,6 +602,29 @@ pub async fn execute_agent_handler(
     if let Some(ref inv) = body.invocation {
         crate::stamp_invocation(&mut episode, inv);
     }
+    // And why it was CHOSEN -- unconditionally, because the block above is
+    // behind `if let Some(invocation)` and most production requests send none.
+    // That is why `route:` appeared on 0 of 3,581 episodes while its
+    // server-computed sibling `ibind:` appeared on 90: the only producer of a
+    // caller-supplied `route_reason` is the desktop console, which the
+    // Dockerfile strips from the workspace. Three views -- `route_outcomes`,
+    // `domain_agent_ranking`, `declaration_quality_outcomes` -- were empty for
+    // this one reason, and Loop 4 could not turn without them.
+    //
+    // Same defect and same remedy as `bind_input` below: compute it here from
+    // what the server knows, rather than believing the caller's account.
+    if body
+        .invocation
+        .as_ref()
+        .and_then(|i| i.get("route_reason"))
+        .and_then(|v| v.as_str())
+        .is_none()
+    {
+        fermi::route_trust::stamp(
+            &mut episode,
+            fermi::route_trust::RouteSelection::CallerNamed,
+        );
+    }
     // And what the grounding contract made of the answer, so a consumer of
     // this episode can tell a checked document from an unchecked one.
     crate::stamp_grounding(&mut episode, &grounding_report);
