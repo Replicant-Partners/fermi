@@ -232,6 +232,8 @@
   const EID = decodeURIComponent(location.pathname.split("/").filter(Boolean).pop() || "");
   // Served, not hardcoded. Copying a declaration is how two lists drift.
   let SETTLEABLE = null;
+  // Who called this, who it called, where it landed. Read rather than asserted.
+  let LINEAGE = null;
   const READINGS = ["idle","fault","unknown"];
   const reading = r => READINGS.includes(r) ? r : "unknown";
 
@@ -742,15 +744,45 @@ something specific about each checkpoint.")}</div></div>`;
              another agent.</div>
          </div><div class="rung-v"><span class="v-elsewhere">not delegated</span></div></div>`;
 
-    const down = `<div class="rung"><div class="rung-b">
-        <div class="rung-q">Picked up by another agent</div>
-        <div class="rung-pw"><b>Not recorded — and this is a gap, not a no.</b>
-          Agents collaborate through workspace messages and workspace outputs, and
-          <b>neither carries an <code>episode_id</code></b>. So when this artifact was posted
-          into a workspace and a teammate read it, nothing linked the read back to this run.
-          The only traceable agent-to-agent edge is delegation, which covers
-          <b>12 of 3,581</b> episodes.</div>
-      </div><div class="rung-v"><span class="v-silent">unrecorded</span></div></div>`;
+    // Read, not asserted. The paragraph that used to live here claimed no
+    // episode_id existed anywhere - true when written, false the moment
+    // migration 222 shipped. Hardcoded prose outlived its fact.
+    const kids = (LINEAGE && LINEAGE.children) || [];
+    const sent = (LINEAGE && LINEAGE.delivered) || [];
+
+    const down = !LINEAGE
+      ? `<div class="rung"><div class="rung-b">
+           <div class="rung-q">Who this pulse hired</div>
+           <div class="rung-pw">The lineage read did not answer, so this says nothing
+             rather than reporting nobody.</div>
+         </div><div class="rung-v"><span class="v-inert">unread</span></div></div>`
+      : kids.length
+        ? `<div class="rung"><div class="rung-b">
+             <div class="rung-q">Who this pulse hired — ${kids.length}</div>
+             ${kids.map(k => `<div class="rung-pw">→ <b>${esc(k.agent)}</b>
+               ${k.status && k.status !== "success"
+                 ? `<span style="color:var(--red,#fb4934)">${esc(k.status)}</span>` : ""}
+               <a href="/trace/${encodeURIComponent(k.episode_id)}">trace it →</a></div>`).join("")}
+           </div><div class="rung-v"><span class="v-ok">delegated</span></div></div>`
+        : `<div class="rung"><div class="rung-b">
+             <div class="rung-q">Who this pulse hired</div>
+             <div class="rung-pw">Nobody. This agent did the work itself — a real answer,
+               not a missing one.</div>
+           </div><div class="rung-v"><span class="v-elsewhere">no delegation</span></div></div>`;
+
+    const deliv = !LINEAGE ? "" : sent.length
+      ? `<div class="rung"><div class="rung-b">
+           <div class="rung-q">Delivered to a team — ${sent.length}</div>
+           ${sent.map(s => `<div class="rung-pw">${esc(s.workspace || "a workspace")}
+             <span class="absent">${esc(s.message_type || "")}</span>
+             ${s.workspace_id ? `<a href="/flow/${encodeURIComponent(s.workspace_id)}">see the flow →</a>` : ""}</div>`).join("")}
+         </div><div class="rung-v"><span class="v-ok">delivered</span></div></div>`
+      : `<div class="rung"><div class="rung-b">
+           <div class="rung-q">Delivered to a team</div>
+           <div class="rung-pw">No workspace message carries this pulse. For anything that
+             ran before the join shipped that means <b>the link was never written</b> — not
+             that nobody read it. Those are different, and this cannot tell them apart.</div>
+         </div><div class="rung-v"><span class="v-inert">no link</span></div></div>`;
 
     return `<div class="block"><h2>What this artifact fed — the loops</h2>
       <div class="note">A gate decides whether an artifact is fit to enter a loop. This is
@@ -761,6 +793,7 @@ something specific about each checkpoint.")}</div></div>`;
         has a next hop. This is the axis the platform cannot yet answer.</div>
       ${up}
       ${down}
+      ${deliv}
     </div>`;
   }
 
@@ -871,13 +904,17 @@ something specific about each checkpoint.")}</div></div>`;
       // derive on the client what the platform declares.
       // The verdicts a reviewer may write, read from the platform rather than
       // held here. If it fails, no button is offered instead of a guessed one.
-      const [res, q] = await Promise.all([
+      const [res, q, lin] = await Promise.all([
         fetch(`/api/episodes/${encodeURIComponent(EID)}/trace`),
         fetch("/api/verification-queue")
           .then(r => (r.ok ? r.json() : null))
           .catch(() => null),
+        fetch(`/api/episodes/${encodeURIComponent(EID)}/lineage`)
+          .then(r => (r.ok ? r.json() : null))
+          .catch(() => null),
       ]);
       SETTLEABLE = q && q.settleable_verdicts ? q.settleable_verdicts : null;
+      LINEAGE = lin;
       if (res.status === 401) {
         document.getElementById("content").innerHTML =
           `<div class="empty">Sign in to read a trace.

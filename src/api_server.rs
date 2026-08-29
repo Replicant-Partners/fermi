@@ -3069,6 +3069,11 @@ async fn main() {
             "/api/episodes/recent",
             get(handlers::specimen::recent_episodes_handler),
         )
+        // Who called this pulse, who it called, and where its output landed.
+        .route(
+            "/api/episodes/:episode_id/lineage",
+            get(handlers::specimen::episode_lineage_handler),
+        )
         // Every exchange, across every agent. The aggregated stream.
         .route("/api/stream", get(handlers::specimen::stream_handler))
         // The stat line for every specimen: pulse, fidelity, learned, cost.

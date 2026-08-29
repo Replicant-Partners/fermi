@@ -143,6 +143,115 @@ pub async fn recent_episodes_handler(
     })))
 }
 
+/// `GET /api/episodes/:episode_id/lineage`
+///
+/// Who called this pulse, who it called, and where its output was consumed.
+///
+/// The trace could name its parent and nothing else, so the collaboration half
+/// of an artifact's journey was a paragraph asserting the data did not exist.
+/// It does: `parent_episode_id` is queryable in both directions, and since
+/// migration 222 a workspace message carries the episode it delivered.
+///
+/// Agents hire agents — `weather_oracle` calls `weather_ensemble_forecaster` and
+/// `weather_calibrator`, one pulse fanning out to two — and a trace that stops at
+/// the parent cannot show it.
+pub async fn episode_lineage_handler(
+    State(state): State<AppState>,
+    Path(episode_id): Path<uuid::Uuid>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db = &state.db;
+
+    let parent = sqlx::query(
+        "SELECT pe.episode_id, pa.agent_name, pe.created_at
+           FROM episodes e
+           JOIN episodes pe ON pe.episode_id = e.parent_episode_id
+           JOIN agents  pa ON pa.agent_id   = pe.agent_id
+          WHERE e.episode_id = $1",
+    )
+    .bind(episode_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("parent: {e}")))?
+    .map(|r| {
+        json!({
+            "episode_id": r.try_get::<uuid::Uuid, _>("episode_id").ok(),
+            "agent": r.try_get::<String, _>("agent_name").unwrap_or_default(),
+            "at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at")
+                    .ok().map(|t| t.to_rfc3339()),
+        })
+    });
+
+    // The direction the trace never looked. An agent that hired another is only
+    // visible from here.
+    let child_rows = sqlx::query(
+        "SELECT e.episode_id, a.agent_name, e.created_at, e.query, e.execution_status
+           FROM episodes e
+           JOIN agents a ON a.agent_id = e.agent_id
+          WHERE e.parent_episode_id = $1
+          ORDER BY e.created_at ASC",
+    )
+    .bind(episode_id)
+    .fetch_all(db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("children: {e}")))?;
+
+    let children: Vec<Value> = child_rows
+        .iter()
+        .map(|r| {
+            json!({
+                "episode_id": r.try_get::<uuid::Uuid, _>("episode_id").ok(),
+                "agent": r.try_get::<String, _>("agent_name").unwrap_or_default(),
+                "at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at")
+                        .ok().map(|t| t.to_rfc3339()),
+                "query": r.try_get::<Option<String>, _>("query").ok().flatten(),
+                "status": r.try_get::<Option<String>, _>("execution_status").ok().flatten(),
+            })
+        })
+        .collect();
+
+    // Where this pulse was delivered to a team. Possible since migration 222;
+    // absent on anything that ran before it, which is stated rather than
+    // rendered as "nobody read it".
+    let use_rows = sqlx::query(
+        "SELECT m.message_id, m.workspace_id, m.message_type, m.created_at, t.name
+           FROM workspace_messages m
+           LEFT JOIN teams t ON t.id = m.workspace_id
+          WHERE m.episode_id = $1
+          ORDER BY m.created_at ASC",
+    )
+    .bind(episode_id)
+    .fetch_all(db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("uses: {e}")))?;
+
+    let delivered: Vec<Value> = use_rows
+        .iter()
+        .map(|r| {
+            json!({
+                "workspace_id": r.try_get::<Option<uuid::Uuid>, _>("workspace_id").ok().flatten(),
+                "workspace": r.try_get::<Option<String>, _>("name").ok().flatten(),
+                "message_type": r.try_get::<Option<String>, _>("message_type").ok().flatten(),
+                "at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at")
+                        .ok().map(|t| t.to_rfc3339()),
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "parent": parent,
+        "children": children,
+        "delivered": delivered,
+        "contract": "`children` is who this pulse hired, read from \
+                     `episodes.parent_episode_id` in the direction the trace never \
+                     looked. An empty `children` means this pulse delegated to nobody - \
+                     that is a real answer, not a missing one. `delivered` is where the \
+                     output reached a team, and it is empty for anything that ran before \
+                     migration 222 added the join: absent because it predates the column, \
+                     NOT because nobody read it. Those are different and must not render \
+                     alike.",
+    })))
+}
+
 /// `GET /api/stream`
 ///
 /// Every exchange, newest first, across every agent.
