@@ -523,6 +523,62 @@ pub async fn post_workspace_message_handler(
                         // Use the id advertised to the tool context, so children
                         // that stamped it as their parent resolve to this row.
                         episode.episode_id = episode_id;
+
+                        // ─── The third door ──────────────────────────────────
+                        //
+                        // There are three paths that persist an episode, and
+                        // until now the trust machinery was wired into two of
+                        // them: `handlers::execution` and
+                        // `handlers::execution_stream` stamp invocation
+                        // provenance, the route, and grounding; this one
+                        // stamped none and never ran `enforce`.
+                        //
+                        // This is the path multi-agent work actually travels,
+                        // and the cost was measurable: of the ten agents that
+                        // declare a field contract, `context ? 'invocation'` was
+                        // true on 0 of their 531 pulses, and nine had never
+                        // produced a single graded field.
+                        let claimed_doc = output
+                            .raw_response
+                            .as_deref()
+                            .and_then(fermi::agent_backend::envelope::extract_json);
+                        let mut enforced_doc = claimed_doc.clone();
+                        let grounding_report = match enforced_doc.as_mut() {
+                            Some(doc) => fermi::grounding_trust::enforce(&agent_name2, doc),
+                            None => fermi::grounding_trust::Report::default(),
+                        };
+                        crate::stamp_grounding(&mut episode, &grounding_report);
+                        // And a ledger row, so the belt on this artifact carries
+                        // a decision the gate actually made rather than only a
+                        // recomputation. `Undetermined` when there is no
+                        // contract: the gate ran and formed no opinion, which is
+                        // not an approval.
+                        let has_contract = fermi::grounding_trust::contracts_for(&agent_name2)
+                            .next()
+                            .is_some();
+                        fermi::gate_trust::decided_for_episode(
+                            fermi::gate_trust::Gate::Grounding,
+                            if !has_contract {
+                                fermi::gate_trust::Decision::Undetermined
+                            } else if grounding_report.is_clean() {
+                                fermi::gate_trust::Decision::Approved
+                            } else {
+                                fermi::gate_trust::Decision::Refused
+                            },
+                            (!grounding_report.is_clean())
+                                .then(|| {
+                                    format!("{} violation(s)", grounding_report.violations.len())
+                                })
+                                .as_deref(),
+                            episode_id,
+                        );
+                        // Why this agent was reached: a person named it in the
+                        // workspace. Server-side, per `route_trust`.
+                        fermi::route_trust::stamp(
+                            &mut episode,
+                            fermi::route_trust::RouteSelection::CallerNamed,
+                        );
+
                         // Stamp the (agent, human) dyad from the message sender so
                         // workspace conversations feed the companion loop.
                         let dyad_id =
