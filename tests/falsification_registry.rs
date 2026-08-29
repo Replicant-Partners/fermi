@@ -223,6 +223,7 @@ fn agent_state(loop_id: &'static str, stages: &[(&'static str, i64)]) -> LoopSta
         name: "N",
         scope: "platform",
         claim: "C",
+        timescale: "hours",
         stages: stages
             .iter()
             .map(|(id, rows)| StageState {
@@ -285,6 +286,7 @@ fn loop_state(stops_at: Option<&'static str>, reason: Option<&'static str>) -> L
         name: "fixture",
         scope: "platform",
         claim: "a fixture",
+        timescale: "hours",
         stages: vec![StageState {
             id: "x",
             what: "w",
@@ -1464,6 +1466,7 @@ const FALSIFICATIONS: &[Falsification] = &[
                 name: "N",
                 scope: "platform",
                 claim: "C",
+                timescale: "hours",
                 stages: vec![StageState {
                     id: "x",
                     what: "w",
@@ -1484,6 +1487,7 @@ const FALSIFICATIONS: &[Falsification] = &[
                 name: "N",
                 scope: "platform",
                 claim: "C",
+                timescale: "hours",
                 stages: vec![StageState {
                     id: "x",
                     what: "w",

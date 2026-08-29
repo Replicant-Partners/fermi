@@ -142,6 +142,18 @@ pub struct FeedbackLoop {
     /// What the architecture claims this loop achieves. Quoted so a stalled
     /// loop shows the claim it is failing rather than only a count.
     pub claim: &'static str,
+    /// How long one turn takes, from `FEEDBACK_LOOPS.md` §2.
+    ///
+    /// The organising axis of that document's own table, and the reason it is
+    /// legible: it separates *an hours-scale loop that should have turned by
+    /// now* from *a months-scale loop that correctly has not*. Without it a
+    /// surface can only list loops in registry order, and every stalled loop
+    /// reads equally urgent.
+    ///
+    /// It was living in the architecture doc and being copied into the client,
+    /// which is the shape of thing that drifts. Declared here so there is one
+    /// source.
+    pub timescale: &'static str,
     pub stages: &'static [Stage],
 }
 
@@ -154,6 +166,7 @@ pub const LOOPS: &[FeedbackLoop] = &[
         claim: "An agent's own experience changes how it reasons: episodes \
                 cluster into semantic rules, and those rules are retrieved into \
                 the next prompt.",
+        timescale: "hours",
         stages: &[
             Stage {
                 id: "episodes",
@@ -205,6 +218,7 @@ pub const LOOPS: &[FeedbackLoop] = &[
         claim: "Agent behaviour aligns with human judgement on anomalous cases, \
                 and the correction cannot be bypassed by an agent that learns to \
                 sound plausible.",
+        timescale: "days",
         stages: &[
             Stage {
                 id: "anomaly",
@@ -259,6 +273,7 @@ pub const LOOPS: &[FeedbackLoop] = &[
         scope: "workspace",
         claim: "A composition notices its own incoherence and coordinates out of \
                 it within a session.",
+        timescale: "session",
         stages: &[
             Stage {
                 id: "plans",
@@ -366,6 +381,7 @@ pub const LOOPS: &[FeedbackLoop] = &[
         scope: "composition",
         claim: "Team composition changes in response to measured per-agent \
                 contribution.",
+        timescale: "months",
         stages: &[
             Stage {
                 id: "conformed",
@@ -438,6 +454,7 @@ pub const LOOPS: &[FeedbackLoop] = &[
         scope: "platform",
         claim: "A prediction is scored against an outcome that resolves \
                 independently of it.",
+        timescale: "months+",
         stages: &[
             Stage {
                 id: "committed",
@@ -478,6 +495,7 @@ pub const LOOPS: &[FeedbackLoop] = &[
         scope: "platform",
         claim: "A physical measurement is scored against what the model \
                 projected — the one signal an agent cannot talk its way out of.",
+        timescale: "offline",
         stages: &[
             Stage {
                 id: "projected",
@@ -699,6 +717,9 @@ pub struct LoopState {
     pub name: &'static str,
     pub scope: &'static str,
     pub claim: &'static str,
+    /// Carried through from the spec so a surface can order by it without
+    /// keeping its own copy. See [`FeedbackLoop::timescale`].
+    pub timescale: &'static str,
     pub stages: Vec<StageState>,
     /// The first stage with no rows, or `None` when every stage has produced.
     pub stops_at: Option<&'static str>,
@@ -774,6 +795,7 @@ pub async fn evaluate(pool: &sqlx::PgPool) -> Vec<LoopState> {
             name: l.name,
             scope: l.scope,
             claim: l.claim,
+            timescale: l.timescale,
             stages,
             stops_at,
             reason,
@@ -974,6 +996,7 @@ mod tests {
             name: "n",
             scope: "agent",
             claim: "c",
+            timescale: "hours",
             stages: vec![unread, produced],
             stops_at: Some("x"),
             reason: Some("probe_failed"),

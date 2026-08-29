@@ -227,19 +227,18 @@
   // From FEEDBACK_LOOPS.md §2, which is the legible version of this screen and
   // which this page previously ignored in favour of the endpoint's flat shape.
   //
-  // TIMESCALE IS NOT SERVED. It is a stable design property of each loop and it
-  // lives in the architecture doc rather than on `LoopSpec`, so this map is a
-  // copy and is labelled as one in the UI. An unrecognised loop gets "not
-  // declared" rather than a guess. Asked for as a field.
-  const TIMESCALE = {
-    loop1:  ["hours",    1],
-    loop2:  ["days",     2],
-    loop3:  ["session",  3],
-    loop4:  ["months",   5],
-    loop5a: ["months+",  6],
-    loop5b: ["offline",  7],
-  };
-  const scaleOf = id => TIMESCALE[id] || ["not declared", 99];
+  // Timescale is now SERVED on the loop (`timescale`). The client-side copy
+  // that used to live here is gone: it was a duplicate of a declaration, which
+  // is the shape of thing that drifts, and the whole point of the surface is to
+  // render declarations rather than re-derive them.
+  //
+  // Only the sort order is local, because ordering is a presentation choice and
+  // not a fact about the loop. An unrecognised timescale sorts last rather than
+  // being dropped.
+  const SCALE_ORDER = { hours: 1, days: 2, session: 3, weeks: 4,
+                        months: 5, "months+": 6, offline: 7 };
+  const scaleOf = l => [l.timescale || "not declared",
+                        SCALE_ORDER[l.timescale] ?? 99];
 
   // The nesting, also from §2. "Measurement is one loop, and the things that
   // act on it are others" - which is why 5a has three consumers and no
@@ -306,9 +305,19 @@
     // Branch on the served reason before doing any arithmetic of our own.
     const mapped = REASON_LIVENESS[l.reason];
     if (mapped) {
+      // `scheduler_off` now names the knob, so the finding ends in an action
+      // rather than in a diagnosis. `trigger_env` is served per stage.
+      let action = "";
+      if (l.reason === "scheduler_off") {
+        const s = (l.stages || []).find(x => x.trigger_env);
+        if (s) action = ` <b>Set <code>${esc(s.trigger_env)}</code></b> to a non-zero` +
+          ` number of seconds.` + (s.trigger_default_on === false
+            ? ` It defaults to off, so this engine has never run unless someone set it.`
+            : "");
+      }
       return { v: mapped[0], cls: mapped[1], why:
         `Reason served by the platform: <b>${esc(String(l.reason).replace(/_/g, " "))}</b>. ` +
-        esc(l.detail || "") };
+        esc(l.detail || "") + action };
     }
     // An unrecognised reason must not read as healthy.
     if (l.reason && l.reason !== "unobserved") {
@@ -344,13 +353,13 @@
 
   function hierarchy(d) {
     const loops = (d.loops || []).slice().sort((a, b) =>
-      scaleOf(a.id)[1] - scaleOf(b.id)[1]);
+      scaleOf(a)[1] - scaleOf(b)[1]);
 
     const rows = loops.map(l => {
       const w = wiring(l), lv = liveness(l);
       const feeds = (FEEDS[l.id] || []).filter(t => loops.some(x => x.id === t));
       return `<tr>
-        <td class="ts">${esc(scaleOf(l.id)[0])}</td>
+        <td class="ts">${esc(scaleOf(l)[0])}</td>
         <td><a href="#${esc(l.id)}" style="color:var(--fg2)">${esc(l.id)}</a>
             <div class="dim" style="font-size:0.68rem">${esc(l.name)}</div></td>
         <td>${w.ok
@@ -379,9 +388,9 @@
         sink is empty. <b>Inert</b> is not a pass — it means nothing has exercised the path
         yet. The verdict is taken from the platform's own <code>reason</code> wherever that
         settles it, and an unrecognised reason renders as indeterminate rather than benign.
-        Timescale and nesting are read from <code>FEEDBACK_LOOPS.md</code> §2 and are
-        <b>not served by the API</b>; a loop this page does not recognise shows
-        “not declared” rather than a guess.</div>`;
+        <b>Timescale is served by the API.</b> Nesting is still read from
+        <code>FEEDBACK_LOOPS.md</code> §2 and is <b>not</b> served — the one remaining
+        declaration this page keeps its own copy of.</div>`;
   }
 
   // ── Loops ──────────────────────────────────────────────────────────────

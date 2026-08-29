@@ -412,6 +412,24 @@ pub struct StageView {
     /// `nothing_calls_it` rather than `none` because it is a finding and should
     /// read as one in a table.
     pub trigger_label: &'static str,
+    /// The environment variable that switches this stage's engine on, when
+    /// there is one.
+    ///
+    /// `trigger_label: "sweeper"` correctly answers *how* the stage is driven,
+    /// and the loop's `reason: "scheduler_off"` correctly answers *why* it is
+    /// not producing. Neither names the knob, so a surface could report the
+    /// engine as off and could not tell anyone what to set. A finding that
+    /// cannot terminate in an action is the shape of finding that gets ignored.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trigger_env: Option<&'static str>,
+    /// Whether that engine runs without anyone setting the variable.
+    ///
+    /// `CONSOLIDATION_SWEEP_SECS` defaults to `0`, so Loop 1 -- individual
+    /// learning, the fastest and most important loop -- has an opt-in engine.
+    /// It turns here because the variable is set in this environment; unset, it
+    /// would stop silently and correctly report `scheduler_off`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trigger_default_on: Option<bool>,
     /// `-1` is never rendered. `measured` says whether to render at all.
     pub rows: i64,
     pub measured: bool,
@@ -445,6 +463,14 @@ pub struct LoopView {
     pub scope: &'static str,
     /// What the architecture claims this loop achieves.
     pub claim: &'static str,
+    /// How long one turn takes: `hours` | `days` | `session` | `months` |
+    /// `months+` | `offline`.
+    ///
+    /// The organising axis of `FEEDBACK_LOOPS.md` §2 and the reason that table
+    /// reads: it separates an hours-scale loop that should have turned by now
+    /// from a months-scale loop that correctly has not. Served because the
+    /// client was otherwise copying it out of the architecture doc.
+    pub timescale: &'static str,
     /// `turning` | `stalled` | `unmeasured`.
     pub status: &'static str,
     pub stops_at: Option<&'static str>,
@@ -496,6 +522,14 @@ pub fn view(state: &LoopState) -> LoopView {
             id: s.id,
             what: s.what,
             writer: s.writer,
+            trigger_env: match s.trigger {
+                Trigger::Scheduler { env, .. } => Some(env),
+                _ => None,
+            },
+            trigger_default_on: match s.trigger {
+                Trigger::Scheduler { default_on, .. } => Some(default_on),
+                _ => None,
+            },
             trigger: s.trigger,
             trigger_label: trigger_label(&s.trigger),
             rows: s.rows,
@@ -524,6 +558,7 @@ pub fn view(state: &LoopState) -> LoopView {
         name: state.name,
         scope: state.scope,
         claim: state.claim,
+        timescale: state.timescale,
         status: state.status,
         stops_at: state.stops_at,
         reason: state.reason,
@@ -739,6 +774,7 @@ mod tests {
             name: "N",
             scope: "platform",
             claim: "C",
+            timescale: "hours",
             stages,
             stops_at,
             reason,

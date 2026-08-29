@@ -1530,6 +1530,7 @@ mod tests {
             name: "Composition evolution",
             scope: "composition",
             claim: "c",
+            timescale: "hours",
             stages: vec![loop_model::StageState {
                 id: "claims",
                 what: "w",

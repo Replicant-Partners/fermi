@@ -599,6 +599,7 @@ mod tests {
             name: "n",
             scope: "agent",
             claim: "c",
+            timescale: "hours",
             stages: vec![],
             stops_at,
             reason,
@@ -617,6 +618,7 @@ mod tests {
             name: "n",
             scope: "agent",
             claim: "c",
+            timescale: "hours",
             stages: vec![crate::loop_model::StageState {
                 id: "first",
                 what: "w",
