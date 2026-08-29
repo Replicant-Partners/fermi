@@ -98,6 +98,14 @@
                  color:var(--fg4);cursor:pointer;font-size:1rem;font-family:inherit;}
   .note{font-size:0.71rem;color:var(--fg4);font-style:italic;line-height:1.5;margin:-2px 0 10px;}
   .empty{padding:14px 8px;font-size:0.76rem;color:var(--fg4);}
+  /* ── A pulse row is a door, and it has to look like one ──────────────────
+     The date was already a link and rendered in the body colour, so nothing
+     about the row said it could be opened. The whole row is the target now. */
+  tr.rowlink{cursor:pointer;}
+  tr.rowlink:hover{background:var(--bg1);}
+  tr.rowlink:hover td{color:var(--fg2);}
+  tr.rowlink .go{color:var(--bg3);font-size:0.66rem;text-align:right;white-space:nowrap;}
+  tr.rowlink:hover .go{color:var(--yellow);}
   </style>
 </head>
 <body>
@@ -272,21 +280,21 @@
       </div>
 
       <div class="block">
-        <h3>Recent executions</h3>
-        <div class="note">Each execution opens its artifact trace — the checkpoints it
-          passed, what it claimed, and what could not be sourced.</div>
-        ${r.episodes.length ? `<table><thead><tr><th>When</th><th>Query</th>
-          <th>Status</th><th class="num">Cost</th></tr></thead><tbody>
-          ${r.episodes.map(e => `<tr>
-            <td class="dim">${e.episode_id
-              ? `<a href="/trace/${esc(e.episode_id)}">${esc((e.at || "").slice(0,10))}</a>`
-              : esc((e.at || "").slice(0,10))}</td>
+        <h3>Pulses</h3>
+        <div class="note">Every invocation and its output. <b>Open one</b> to see the
+          checkpoints it crossed, what it claimed, and what could not be sourced.</div>
+        ${r.episodes.length ? `<table class="pulses"><thead><tr><th>When</th><th>Query</th>
+          <th>Status</th><th class="num">Cost</th><th></th></tr></thead><tbody>
+          ${r.episodes.map(e => `<tr ${e.episode_id
+              ? `class="rowlink" data-href="/trace/${esc(e.episode_id)}"` : ""}>
+            <td class="dim">${esc((e.at || "").slice(0,10))}</td>
             <td>${esc((e.query || "").slice(0,70))}</td>
             <td class="${e.status === "success" ? "ok" : "bad"}">${esc(e.status || "—")}
               ${e.error ? `<div class="dim">${esc(e.error.slice(0,80))}</div>` : ""}</td>
             <td class="num dim">${e.cost_usd != null ? "$" + e.cost_usd.toFixed(5) : "—"}</td>
+            <td class="go">${e.episode_id ? "trace →" : ""}</td>
           </tr>`).join("")}</tbody></table>`
-          : `<div class="absent">No execution recorded.</div>`}
+          : `<div class="absent">No pulse recorded.</div>`}
       </div>
     </div>`;
   }
@@ -396,6 +404,12 @@
     }
     render();
   }
+
+  // Delegated, so it survives every re-render of the panes.
+  document.addEventListener("click", ev => {
+    const tr = ev.target.closest && ev.target.closest("tr.rowlink");
+    if (tr && tr.dataset.href) location.href = tr.dataset.href;
+  });
 
   boot();
   </script>

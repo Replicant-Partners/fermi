@@ -58,6 +58,10 @@
   .lv.good{color:var(--green);border-color:var(--green);}
   .lv.bad{color:var(--red,#fb4934);border-color:var(--red,#fb4934);}
   .lv.indet{color:var(--purple,#d3869b);border-color:var(--purple,#d3869b);border-style:dashed;}
+  /* The one number that carries the finding, beside the token. Not a sentence. */
+  .metric{font-size:0.68rem;color:var(--fg4);margin-left:7px;font-variant-numeric:tabular-nums;
+          cursor:help;}
+  .lv[title],.wire[title]{cursor:help;}
   .contract{font-size:0.71rem;color:var(--fg4);font-style:italic;line-height:1.5;margin:6px 0 16px;}
 
   /* ── Section headers, so the page has an argument and not just blocks ── */
@@ -296,59 +300,67 @@
     upstream_unmeasured:      ["unreadable", "indet"],
   };
 
+  // Returns a token, a SHORT metric for the cell, and the long form for a
+  // hover. A table cell holds a value or a token, never a sentence - the
+  // paragraph-per-row version of this table was unreadable, and repeating the
+  // same explanation on every `Silent` row is what a legend is for.
   function liveness(l) {
-    if (l.status === "turning") return { v: "Ok", cls: "good", why:
-      "every stage produced" };
+    if (l.status === "turning") return { v: "Ok", cls: "good", short:
+      "every stage produced", why: "Every stage in the chain has rows." };
     if (l.status === "unmeasured" || !(l.stages || []).length) return { v: "unreadable",
-      cls: "indet", why: "a probe did not run, so the chain supports no verdict" };
+      cls: "indet", short: "probe did not run",
+      why: "A stage's count query did not run, so the chain supports no verdict either way." };
 
     // Branch on the served reason before doing any arithmetic of our own.
     const mapped = REASON_LIVENESS[l.reason];
     if (mapped) {
       // `scheduler_off` now names the knob, so the finding ends in an action
       // rather than in a diagnosis. `trigger_env` is served per stage.
+      let short = String(l.reason).replace(/_/g, " ");
       let action = "";
       if (l.reason === "scheduler_off") {
         const s = (l.stages || []).find(x => x.trigger_env);
-        if (s) action = ` <b>Set <code>${esc(s.trigger_env)}</code></b> to a non-zero` +
-          ` number of seconds.` + (s.trigger_default_on === false
-            ? ` It defaults to off, so this engine has never run unless someone set it.`
-            : "");
+        if (s) {
+          short = `set ${s.trigger_env}`;
+          action = ` Set ${s.trigger_env} to a non-zero number of seconds.` +
+            (s.trigger_default_on === false
+              ? ` It defaults to off, so this engine has never run unless someone set it.`
+              : "");
+        }
       }
-      return { v: mapped[0], cls: mapped[1], why:
-        `Reason served by the platform: <b>${esc(String(l.reason).replace(/_/g, " "))}</b>. ` +
-        esc(l.detail || "") + action };
+      return { v: mapped[0], cls: mapped[1], short,
+        why: `${l.detail || ""}${action}` };
     }
     // An unrecognised reason must not read as healthy.
     if (l.reason && l.reason !== "unobserved") {
-      return { v: "unreadable", cls: "indet", why:
-        `The platform reports <b>${esc(String(l.reason))}</b>, which this page does not ` +
-        `recognise. Treated as indeterminate rather than assumed benign.` };
+      return { v: "unreadable", cls: "indet", short: String(l.reason),
+        why: `The platform reports "${l.reason}", which this page does not recognise. ` +
+             `Treated as indeterminate rather than assumed benign.` };
     }
 
     const stages = l.stages || [];
     const at = stages.findIndex(s => s.is_first_empty);
-    if (at < 0) return { v: "Ok", cls: "good", why: "no stage reported empty" };
+    if (at < 0) return { v: "Ok", cls: "good", short: "no stage reported empty",
+      why: "No stage reported itself empty." };
 
+    const stop = stages[at].id;
     const upstream = at > 0 ? stages[at - 1] : null;
     const opportunities = upstream && upstream.measured !== false ? Number(upstream.rows) : null;
 
     if (opportunities === null) {
-      return { v: "Inert", cls: "indet", why:
-        `<b>${esc(stages[at].id)}</b> is the first stage, so nothing upstream can have ` +
-        `created an occasion for it. Not a pass — nothing has exercised this path.` };
+      return { v: "Inert", cls: "indet", short: `${stop} is first`,
+        why: `"${stop}" is the first stage, so nothing upstream can have created an ` +
+             `occasion for it. Nothing has exercised this path.` };
     }
     if (opportunities > 0) {
-      return { v: "Silent", cls: "bad", why:
-        `<b>${opportunities.toLocaleString()}</b> upstream row(s) should have caused ` +
-        `<b>${esc(stages[at].id)}</b> to write, and it has none. Not <i>Inert</i>: the ` +
-        `writer may be buggy or merely undeployed — different remedies, identical ` +
-        `consequence, so this does not guess.` };
+      return { v: "Silent", cls: "bad",
+        short: `${opportunities.toLocaleString()} → ${stop}: 0`,
+        why: `${opportunities.toLocaleString()} upstream row(s) should have caused ` +
+             `"${stop}" to write, and it has none.` };
     }
-    return { v: "Inert", cls: "indet", why:
-      `Nothing upstream of <b>${esc(stages[at].id)}</b> has produced either, so there has ` +
-      `been no occasion. <b>Not a pass</b> — a contract watching a feature nobody has ` +
-      `exercised, reporting healthy, is the original defect.` };
+    return { v: "Inert", cls: "indet", short: `no occasion yet`,
+      why: `Nothing upstream of "${stop}" has produced either, so there has been no ` +
+           `occasion for it to write.` };
   }
 
   function hierarchy(d) {
@@ -358,39 +370,36 @@
     const rows = loops.map(l => {
       const w = wiring(l), lv = liveness(l);
       const feeds = (FEEDS[l.id] || []).filter(t => loops.some(x => x.id === t));
+      // Token in the cell, sentence in the hover. Nothing here is a paragraph.
       return `<tr>
         <td class="ts">${esc(scaleOf(l)[0])}</td>
         <td><a href="#${esc(l.id)}" style="color:var(--fg2)">${esc(l.id)}</a>
             <div class="dim" style="font-size:0.68rem">${esc(l.name)}</div></td>
         <td>${w.ok
           ? `<span class="wire yes">wired</span>`
-          : `<span class="wire no">not wired</span>
-             <div class="caveat">${esc(w.why)}</div>`}</td>
-        <td><span class="lv ${lv.cls}">${esc(lv.v)}</span>
-            <div class="caveat">${lv.why}</div></td>
+          : `<span class="wire no" title="${esc(w.why)}">not wired</span>`}</td>
+        <td><span class="lv ${lv.cls}" title="${esc(lv.why)}">${esc(lv.v)}</span>
+            <span class="metric" title="${esc(lv.why)}">${esc(lv.short || "")}</span></td>
         <td class="dim" style="font-size:0.68rem">${feeds.length
-          ? "feeds " + feeds.map(esc).join(" · ")
-          : "<i>nothing acts on it</i>"}</td>
+          ? feeds.map(esc).join(" · ")
+          : "—"}</td>
       </tr>`;
     }).join("");
 
+    // One legend, once - not the same explanation repeated on every row.
     return `<div class="sec"><h2>The hierarchy</h2>
-        <div class="why"><b>Two columns, two claims, and they must not be merged.</b>
-          <i>Wired</i> means every hop has an executing call site. <i>Ok / Silent / Inert</i>
-          means whether it has moved on production data. Conflating them is how a
-          previous revision came to report closed loops that had never run — and this page
-          did exactly that until now.</div></div>
+        <div class="why">Wiring and liveness are two claims and are never merged.
+          Hover any token for the reason.</div></div>
       <table><thead><tr>
-        <th>Timescale</th><th>Loop</th><th>Wiring</th>
-        <th>Liveness · with opportunity count</th><th>Nesting</th>
+        <th>Timescale</th><th>Loop</th><th>Wired</th>
+        <th>Liveness</th><th>Feeds</th>
       </tr></thead><tbody>${rows}</tbody></table>
-      <div class="contract"><b>Silent</b> is the one to act on: opportunities exist and the
-        sink is empty. <b>Inert</b> is not a pass — it means nothing has exercised the path
-        yet. The verdict is taken from the platform's own <code>reason</code> wherever that
-        settles it, and an unrecognised reason renders as indeterminate rather than benign.
-        <b>Timescale is served by the API.</b> Nesting is still read from
-        <code>FEEDBACK_LOOPS.md</code> §2 and is <b>not</b> served — the one remaining
-        declaration this page keeps its own copy of.</div>`;
+      <div class="legend">
+        <span><span class="lv good">Ok</span> moved on production data</span>
+        <span><span class="lv bad">Silent</span> opportunities exist, sink empty — <b>act on this</b></span>
+        <span><span class="lv indet">Inert</span> no occasion yet — not a pass</span>
+        <span><span class="wire no">not wired</span> a stage nothing calls</span>
+      </div>`;
   }
 
   // ── Loops ──────────────────────────────────────────────────────────────
