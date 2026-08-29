@@ -280,6 +280,7 @@ pub async fn post_workspace_message_handler(
         },
         metadata: req.metadata.clone().unwrap_or(json!({})),
         created_at: chrono::Utc::now(),
+        episode_id: None,
     };
 
     let msg_id = state
@@ -657,7 +658,9 @@ pub async fn post_workspace_message_handler(
                         // Hand the agent UUID back out to the surrounding
                         // scope so the result-message construction can resolve
                         // the current version (Doc 12 § Capability 2).
-                        Ok::<_, (StatusCode, String)>((output, db_agent.agent_id))
+                        // `episode_id` rides out too, so the result message can
+                        // name the artifact this hop carried (migration 222).
+                        Ok::<_, (StatusCode, String)>((output, db_agent.agent_id, episode_id))
                     }
                     .await;
 
@@ -667,7 +670,14 @@ pub async fn post_workspace_message_handler(
                     // agent. Best-effort: if the lookup fails or the agent
                     // has no version history, the keys are present but null.
                     let agent_uuid_opt: Option<uuid::Uuid> =
-                        result.as_ref().ok().map(|(_, id)| *id);
+                        result.as_ref().ok().map(|(_, id, _)| *id);
+
+                    // The join (migration 222), extracted the same way and for
+                    // the same reason. `None` on the error path is correct: the
+                    // executor failed before persisting an episode, so there is
+                    // no artifact for this arrow to point at.
+                    let episode_id_opt: Option<uuid::Uuid> =
+                        result.as_ref().ok().map(|(_, _, eid)| *eid);
                     let (av_id, av_num): (Option<uuid::Uuid>, Option<i32>) = match agent_uuid_opt {
                         Some(agent_uuid) => state2
                             .memory_store
@@ -692,7 +702,7 @@ pub async fn post_workspace_message_handler(
                     //   - loop_iterations — tool-loop iteration count
                     //   - agent_version_{id,number} — Doc 12 § Capability 2
                     let (content, metadata, msg_type) = match result {
-                        Ok((output, _agent_uuid)) => {
+                        Ok((output, _agent_uuid, _episode_id)) => {
                             let raw_response =
                                 output.metadata.reasoning.clone().unwrap_or_default();
                             let evidence_summaries: Vec<&str> = output
@@ -747,6 +757,18 @@ pub async fn post_workspace_message_handler(
                         message_type: msg_type,
                         metadata,
                         created_at: chrono::Utc::now(),
+                        // The join, and the only site that carries a real one
+                        // (migration 222). The id is minted before the tool
+                        // context and is what the episode is stored under, so
+                        // this arrow in the workflow diagram can be joined to the
+                        // belt the gates drew for that same artifact.
+                        //
+                        // `None` when the executor failed before persisting an
+                        // episode. That is a real distinction and not a lost
+                        // reference: there is no artifact for the arrow to point
+                        // at, which is different from an artifact whose join was
+                        // never written.
+                        episode_id: episode_id_opt,
                     };
                     let _ = state2
                         .memory_store
@@ -766,6 +788,7 @@ pub async fn post_workspace_message_handler(
                     message_type: "system_event".to_string(),
                     metadata: json!({}),
                     created_at: chrono::Utc::now(),
+                    episode_id: None,
                 };
                 let _ = state.memory_store.store_workspace_message(&err_msg).await;
                 broadcast_message(&state, ws_uuid, &message_to_json(&err_msg));
@@ -885,6 +908,7 @@ pub async fn post_workspace_message_handler(
                         "auto": true,
                     }),
                     created_at: chrono::Utc::now(),
+                    episode_id: None,
                 };
                 let _ = store.store_workspace_message(&update_msg).await;
                 let _ = broadcast_tx.send(crate::WorkspaceEvent {
@@ -1239,6 +1263,7 @@ pub async fn post_system_message(state: &AppState, workspace_id: uuid::Uuid, con
         message_type: "system_event".to_string(),
         metadata: json!({}),
         created_at: chrono::Utc::now(),
+        episode_id: None,
     };
     let _ = state.memory_store.store_workspace_message(&msg).await;
     broadcast_message(state, workspace_id, &message_to_json(&msg));

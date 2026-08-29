@@ -1122,4 +1122,16 @@ pub struct WorkspaceMessage {
     pub message_type: String,
     pub metadata: serde_json::Value,
     pub created_at: DateTime<Utc>,
+    /// The artifact this hop carried (migration 222).
+    ///
+    /// Every arrow in a workspace's workflow diagram is an artifact crossing a
+    /// seam, and this is what lets that arrow be joined to the episode the
+    /// gates acted on. Without it the same interaction is recorded twice — as a
+    /// message pair and as an episode — and nothing can speak about both.
+    ///
+    /// `None` is correct and final for `chat`, and for an `agent_invocation`
+    /// sent by a human: the caller has no episode, and the callee's belongs on
+    /// the `execution_result`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub episode_id: Option<Uuid>,
 }

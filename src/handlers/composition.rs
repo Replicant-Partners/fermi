@@ -382,6 +382,7 @@ pub async fn composition_dream_handler(
         message_type: "agent_invocation".to_string(),
         metadata: serde_json::json!({ "source": "composition_dream" }),
         created_at: Utc::now(),
+        episode_id: None,
     };
 
     state

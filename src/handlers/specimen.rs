@@ -167,7 +167,8 @@ pub async fn workspace_flow_handler(
     // The typed hops only. `chat` is the human conversation around the work and
     // is deliberately excluded -- it is not a seam an artifact crosses.
     let rows = sqlx::query(
-        "SELECT message_id, sender_type, sender_name, message_type, content, created_at
+        "SELECT message_id, sender_type, sender_name, message_type, content,
+                created_at, episode_id
            FROM workspace_messages
           WHERE workspace_id = $1
             AND message_type IN ('agent_invocation', 'execution_result')
@@ -238,11 +239,35 @@ pub async fn workspace_flow_handler(
                 }));
             }
         } else if mtype == "execution_result" {
+            // The join, written on the result because that is the message that
+            // has an episode (migration 222). Absent on rows written before the
+            // column existed, which is why its absence is reported with a
+            // reason rather than as a bare `false`.
+            let eid = r
+                .try_get::<Option<uuid::Uuid>, _>("episode_id")
+                .ok()
+                .flatten();
             if let Some(last) = seams.last_mut() {
                 if last["returned"] == json!(false) {
                     last["returned"] = json!(true);
                     last["result_message_id"] = json!(mid);
                     last["result_bytes"] = json!(content.len());
+                    match eid {
+                        Some(e) => {
+                            last["episode_id"] = json!(e);
+                            last["governed"] = json!(true);
+                            last["why_ungoverned"] = Value::Null;
+                        }
+                        None => {
+                            last["why_ungoverned"] = json!(
+                                "This hop predates `workspace_messages.episode_id` \
+                                 (migration 222), so it cannot be joined to the episode the \
+                                 gates acted on. Nothing is backfilled: guessing which \
+                                 episode a historical arrow carried would make the join look \
+                                 answered. Hops from here on carry it."
+                            );
+                        }
+                    }
                 }
             }
             pending = None;
@@ -252,6 +277,10 @@ pub async fn workspace_flow_handler(
     let returned = seams
         .iter()
         .filter(|s| s["returned"] == json!(true))
+        .count();
+    let governed = seams
+        .iter()
+        .filter(|s| s["governed"] == json!(true))
         .count();
     let participants: std::collections::BTreeSet<String> = seams
         .iter()
@@ -283,15 +312,16 @@ pub async fn workspace_flow_handler(
             "seams": seams.len(),
             "returned": returned,
             "unreturned": seams.len().saturating_sub(returned),
-            "governed": 0,
+            "governed": governed,
             "chat_messages": chat,
         },
         "contract": "Every arrow is an artifact crossing a seam, and every seam should pass \
-                     through the gates. `governed` is 0 for every hop on every workspace \
-                     because `workspace_messages` has no `episode_id` - not because the \
-                     artifacts were unchecked. Do not render `governed: 0` as a failure of \
-                     the agents; it is a missing join. `chat_messages` is context: a \
-                     workspace with many chats and few seams is coordinating by prose.",
+                     through the gates. A hop with `governed: false` is NOT a hop whose \
+                     artifact went unchecked - it is a hop that predates \
+                     `workspace_messages.episode_id` and so cannot be joined to the episode \
+                     the gates acted on. Read `why_ungoverned`, and never render it as a \
+                     failure of the agents. `chat_messages` is context: a workspace with many \
+                     chats and few seams is coordinating by prose, and prose is not a seam.",
     })))
 }
 

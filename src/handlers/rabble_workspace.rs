@@ -469,6 +469,7 @@ pub async fn dispatch_rabble_action(
                     "confidence": output_bg.confidence,
                 }),
                 created_at: chrono::Utc::now(),
+                episode_id: None,
             };
             let _ = state_bg.memory_store.store_workspace_message(&msg).await;
 

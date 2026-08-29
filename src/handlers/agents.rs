@@ -2582,6 +2582,7 @@ async fn broadcast_agent_card_updated(
             message_type: "system_event".to_string(),
             metadata: body.clone(),
             created_at: chrono::Utc::now(),
+            episode_id: None,
         };
 
         let _ = state.memory_store.store_workspace_message(&msg).await;

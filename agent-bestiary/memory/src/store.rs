@@ -2777,8 +2777,8 @@ impl MemoryStore {
             r#"
             INSERT INTO workspace_messages
                 (message_id, workspace_id, sender_type, sender_id, sender_name,
-                 content, message_type, metadata)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                 content, message_type, metadata, episode_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING message_id
             "#,
         )
@@ -2790,6 +2790,9 @@ impl MemoryStore {
         .bind(&msg.content)
         .bind(&msg.message_type)
         .bind(&msg.metadata)
+        // The join (migration 222). `None` for chat and for a human-sent
+        // invocation; set on `execution_result`, where an episode exists.
+        .bind(msg.episode_id)
         .fetch_one(&self.pool)
         .await?;
 
@@ -4998,6 +5001,10 @@ fn row_to_workspace_message(row: &sqlx::postgres::PgRow) -> WorkspaceMessage {
             .try_get::<serde_json::Value, _>("metadata")
             .unwrap_or(serde_json::json!({})),
         created_at: row.try_get("created_at").unwrap(),
+        // The join (migration 222). `unwrap_or(None)` rather than `unwrap()`:
+        // this reader runs against rows written before the column existed, and
+        // a decode failure here must not panic a workspace's whole history.
+        episode_id: row.try_get("episode_id").unwrap_or(None),
     }
 }
 

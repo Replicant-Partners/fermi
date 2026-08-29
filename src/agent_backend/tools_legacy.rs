@@ -6811,6 +6811,7 @@ async fn execute_delegate_to_agent(
         message_type: "system_event".to_string(),
         metadata: json!({"delegation": true, "target": agent_name}),
         created_at: chrono::Utc::now(),
+        episode_id: None,
     };
     let _ = ctx
         .memory_store
@@ -6954,6 +6955,7 @@ async fn execute_delegate_to_agent(
             "raw_response": raw_response,
         }),
         created_at: chrono::Utc::now(),
+        episode_id: None,
     };
     let _ = ctx.memory_store.store_workspace_message(&result_msg).await;
 

@@ -878,6 +878,7 @@ pub async fn evaluate_coherence_handler(
             "health_indicators": health_indicators,
         }),
         created_at: chrono::Utc::now(),
+        episode_id: None,
     };
 
     let _ = state

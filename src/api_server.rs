@@ -1316,6 +1316,16 @@ async fn run_migrations(db: &PgPool) {
         // records is a decision and a decision made in a Rust constant is one
         // nobody can find.
         "migrations/221_grounding_recorded.sql",
+        // Join a workspace hop to the artifact it carried. The same interaction
+        // was recorded twice and joined never - as a message pair, which the
+        // workflow diagram reads, and as an episode, which the gates act on -
+        // so the platform could say what happened OR whether it was verified,
+        // never both about one hop. That is why coordination is ungoverned.
+        "migrations/222_seam_join.sql",
+        // Which loop produced a semantic rule. `semantic_rules` holds 263 rows
+        // and every column describes consolidation, so the declared Loop 3 ->
+        // Loop 1 hop is unfalsifiable even when it fires.
+        "migrations/223_semantic_rule_origin.sql",
     ];
 
     // Bootstrap the ledger before anything is recorded into it.
