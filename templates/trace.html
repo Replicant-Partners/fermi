@@ -732,17 +732,24 @@ something specific about each checkpoint.")}</div></div>`;
     // which agent picked this up. An artifact that no one consumes fed nothing,
     // and an artifact consumed by a teammate is the whole point of a
     // composition - so silence here is the most expensive silence on the page.
-    const up = d.parent_episode_id
+    // Three states, and the middle one is a broken chain rather than an absence.
+    const par = LINEAGE && LINEAGE.parent;
+    const up = par && par.state === "resolved"
       ? `<div class="rung"><div class="rung-b">
-           <div class="rung-q">Delegated by another agent</div>
+           <div class="rung-q">Hired by <b>${esc(par.agent || "another agent")}</b></div>
            <div class="rung-pw">This run was called as a sub-task.
-             <a href="/trace/${esc(d.parent_episode_id)}">Trace the caller →</a></div>
+             <a href="/trace/${encodeURIComponent(par.episode_id)}">Trace the caller →</a></div>
          </div><div class="rung-v"><span class="v-ok">upstream</span></div></div>`
-      : `<div class="rung"><div class="rung-b">
-           <div class="rung-q">Delegated by another agent</div>
-           <div class="rung-pw">No. This run was called directly, not as a sub-task of
-             another agent.</div>
-         </div><div class="rung-v"><span class="v-elsewhere">not delegated</span></div></div>`;
+      : par && par.state === "dangling"
+        ? `<div class="rung"><div class="rung-b">
+             <div class="rung-q">Hired by an agent whose run was never recorded</div>
+             <div class="rung-pw">${esc(par.because || "")} <b>The chain is broken here</b> —
+               this pulse was delegated and the caller cannot be identified.</div>
+           </div><div class="rung-v"><span class="v-silent">broken chain</span></div></div>`
+        : `<div class="rung"><div class="rung-b">
+             <div class="rung-q">Hired by another agent</div>
+             <div class="rung-pw">No. This run was called directly, not as a sub-task.</div>
+           </div><div class="rung-v"><span class="v-elsewhere">not delegated</span></div></div>`;
 
     // Read, not asserted. The paragraph that used to live here claimed no
     // episode_id existed anywhere - true when written, false the moment

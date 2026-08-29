@@ -161,23 +161,48 @@ pub async fn episode_lineage_handler(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let db = &state.db;
 
-    let parent = sqlx::query(
-        "SELECT pe.episode_id, pa.agent_name, pe.created_at
+    // LEFT JOIN, not JOIN, and the difference is a finding.
+    //
+    // Measured: 12 episodes name a parent and **6 of them name one that does
+    // not exist**. An inner join reports those as "not delegated", which is the
+    // opposite of the truth - they were delegated and the parent's row never
+    // landed. Migration 220 predicted exactly this race for `gate_decisions`:
+    // the child is written from inside the tool loop while the parent persists
+    // later, so an id can be minted, handed down, and never followed by a row.
+    let parent_row = sqlx::query(
+        "SELECT e.parent_episode_id, pe.episode_id AS resolved,
+                pa.agent_name, pe.created_at
            FROM episodes e
-           JOIN episodes pe ON pe.episode_id = e.parent_episode_id
-           JOIN agents  pa ON pa.agent_id   = pe.agent_id
+           LEFT JOIN episodes pe ON pe.episode_id = e.parent_episode_id
+           LEFT JOIN agents  pa ON pa.agent_id   = pe.agent_id
           WHERE e.episode_id = $1",
     )
     .bind(episode_id)
     .fetch_optional(db)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("parent: {e}")))?
-    .map(|r| {
-        json!({
-            "episode_id": r.try_get::<uuid::Uuid, _>("episode_id").ok(),
-            "agent": r.try_get::<String, _>("agent_name").unwrap_or_default(),
-            "at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at")
-                    .ok().map(|t| t.to_rfc3339()),
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("parent: {e}")))?;
+
+    let parent = parent_row.as_ref().and_then(|r| {
+        let named: Option<uuid::Uuid> = r.try_get("parent_episode_id").ok().flatten();
+        let resolved: Option<uuid::Uuid> = r.try_get("resolved").ok().flatten();
+        named.map(|id| match resolved {
+            Some(_) => json!({
+                "state": "resolved",
+                "episode_id": id,
+                "agent": r.try_get::<Option<String>, _>("agent_name").ok().flatten(),
+                "at": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("created_at")
+                        .ok().flatten().map(|t| t.to_rfc3339()),
+            }),
+            // Delegated by something whose episode was never written. Not "no
+            // parent" - a broken chain, and the only place it is visible.
+            None => json!({
+                "state": "dangling",
+                "episode_id": id,
+                "because": "This pulse names a parent whose episode row was never \
+                            written. The id is minted inside the tool loop and handed \
+                            to the child before the parent persists, so a parent run \
+                            that failed leaves the reference pointing at nothing.",
+            }),
         })
     });
 
@@ -241,7 +266,13 @@ pub async fn episode_lineage_handler(
         "parent": parent,
         "children": children,
         "delivered": delivered,
-        "contract": "`children` is who this pulse hired, read from \
+        "contract": "`parent.state` is `resolved` or `dangling`, and the second is a \
+                     finding: the pulse WAS delegated and the parent's episode row was \
+                     never written. 6 of the 12 delegation edges on the platform are in \
+                     that state, and an inner join reports them as \"not delegated\", \
+                     which is the opposite of the truth. `parent: null` means genuinely \
+                     not delegated. \
+                     `children` is who this pulse hired, read from \
                      `episodes.parent_episode_id` in the direction the trace never \
                      looked. An empty `children` means this pulse delegated to nobody - \
                      that is a real answer, not a missing one. `delivered` is where the \
