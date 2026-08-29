@@ -185,6 +185,17 @@ impl MemoryStore {
     ///
     /// Idempotent: reserving twice is a no-op, because a retry must not fail on
     /// its own earlier reservation.
+    ///
+    /// Every `NOT NULL` column without a default must be supplied, and
+    /// `execution_time_ms` is one of them. The first version of this omitted it
+    /// and failed on every call — silently, because each call site logs a
+    /// warning and continues, so the fix would have shipped doing nothing while
+    /// looking present. `tests/episode_reservation.rs` caught it against a real
+    /// database; no unit test could have, because the constraint is in the
+    /// schema.
+    ///
+    /// `0` rather than `NULL`-shaped: the run has taken no measured time *yet*,
+    /// and the completing write overwrites it with the real figure.
     pub async fn reserve_episode(
         &self,
         episode_id: Uuid,
@@ -194,8 +205,9 @@ impl MemoryStore {
         sqlx::query(
             r#"
             INSERT INTO episodes
-                (episode_id, agent_id, timestamp_ref, query, context, execution_status)
-            VALUES ($1, $2, now(), $3, '{}'::jsonb, 'running')
+                (episode_id, agent_id, timestamp_ref, query, context,
+                 execution_status, execution_time_ms)
+            VALUES ($1, $2, now(), $3, '{}'::jsonb, 'running', 0)
             ON CONFLICT (episode_id) DO NOTHING
             "#,
         )
