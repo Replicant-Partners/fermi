@@ -3,6 +3,7 @@ const Nav = {
   _user: null,
   _bellOpen: false,
   _userMenuOpen: false,
+  _moreOpen: false,
 
   init(opts = {}) {
     const current = opts.current || "";
@@ -22,14 +23,41 @@ const Nav = {
         ${stat ? `<div class="nav-stat"><span class="nav-stat-value" id="${stat.id || ""}">${stat.value || "--"}</span><span class="nav-stat-label">${stat.label}</span></div>` : ""}
       </div>
       <div class="nav-right">
-        <nav class="nav-links">
-          <a href="/rounds" class="${current === "rounds" ? "active" : ""}">Rounds</a>
-          <a href="/bestiary" class="${current === "bestiary" ? "active" : ""}">Bestiary</a>
-          <a href="/observatory" class="${current === "observatory" ? "active" : ""}">Observatory</a>
-          <a href="/loops" class="${current === "loops" ? "active" : ""}">Loops &amp; Gates</a>
-          <a href="/ecology" class="${current === "ecology" ? "active" : ""}">Ecology</a>
-          <a href="/apps" class="${current === "apps" ? "active" : ""}">Apps</a>
-          <a href="/docs" class="${current === "docs" ? "active" : ""}">Docs</a>
+        <!-- Two groups, because the product has two verbs and a flat list of
+             seven links hid both. COMPOSE is what you make: an agent, a
+             composition, an app and its workspaces. CURATE is what you manage:
+             the pulses those things emit, the loops they improve through, the
+             gates that constrain them, and the evaluators that judge them.
+
+             Older surfaces are still reachable under "More" rather than
+             deleted, so the new ones can be compared against them before
+             anything is removed. -->
+        <nav class="nav-links nav-grouped">
+          <span class="nav-group">
+            <span class="nav-group-label">compose</span>
+            <a href="/bestiary" class="${current === "bestiary" ? "active" : ""}">Bestiary</a>
+            <a href="/apps" class="${current === "apps" ? "active" : ""}">Apps</a>
+          </span>
+          <span class="nav-group">
+            <span class="nav-group-label">curate</span>
+            <a href="/stream" class="${current === "stream" ? "active" : ""}">Pulses</a>
+            <a href="/loops" class="${current === "loops" ? "active" : ""}">Loops</a>
+            <a href="/gates" class="${current === "gates" ? "active" : ""}">Gates</a>
+            <a href="/observatory" class="${current === "observatory" ? "active" : ""}">Observatory</a>
+          </span>
+          <span class="nav-group nav-group-quiet">
+            <a href="/docs" class="${current === "docs" ? "active" : ""}">Docs</a>
+            <span class="nav-more">
+              <button class="nav-more-btn" onclick="Nav._toggleMore()">More &#9662;</button>
+              <div class="nav-more-dd" id="nav-more-dd">
+                <div class="nav-dropdown-label">Earlier surfaces</div>
+                <a href="/rounds" class="nav-dropdown-item">Rounds</a>
+                <a href="/ecology" class="nav-dropdown-item">Ecology</a>
+                <a href="/declarations" class="nav-dropdown-item">Declarations</a>
+                <a href="/catalogue" class="nav-dropdown-item">Catalogue</a>
+              </div>
+            </span>
+          </span>
         </nav>
         <div class="nav-bell" id="nav-bell" style="display:none">
           <button class="nav-bell-btn" onclick="Nav._toggleNotifications()" title="Notifications">
@@ -68,6 +96,12 @@ const Nav = {
         Nav._bellOpen = false;
         var dd = document.getElementById("nav-bell-dropdown");
         if (dd) dd.classList.remove("visible");
+      }
+      // Close the "More" list
+      if (Nav._moreOpen && !e.target.closest(".nav-more")) {
+        Nav._moreOpen = false;
+        var mo = document.getElementById("nav-more-dd");
+        if (mo) mo.classList.remove("visible");
       }
       // Close user menu
       if (Nav._userMenuOpen && !e.target.closest(".nav-user-menu")) {
@@ -147,6 +181,13 @@ const Nav = {
         <a href="/auth/github" class="nav-dropdown-item">Sign in with GitHub</a>
       </div>
     `;
+  },
+
+  _toggleMore() {
+    const dd = document.getElementById("nav-more-dd");
+    if (!dd) return;
+    Nav._moreOpen = !Nav._moreOpen;
+    dd.classList.toggle("visible", Nav._moreOpen);
   },
 
   _toggleUserMenu() {

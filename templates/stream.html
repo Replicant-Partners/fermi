@@ -81,6 +81,7 @@
 
   <script src="/static/js/widgets/nav.js"></script>
   <script src="/static/js/theme.js"></script>
+  <script src="/static/js/widgets/xaman-ek.js"></script>
   <script>
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
     ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -174,7 +175,7 @@
   }
 
   async function boot() {
-    if (window.Nav) Nav.init({ current: "rounds" });
+    if (window.Nav) Nav.init({ current: "stream" });
     try {
       const res = await fetch("/api/stream");
       if (res.status === 401) {

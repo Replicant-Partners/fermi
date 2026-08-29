@@ -211,6 +211,77 @@ a:hover {
   color: var(--yellow);
 }
 
+/* ── Grouped nav: the product has two verbs ────────────────────────────────
+   A flat list of seven links hid the spine. COMPOSE is what you make, CURATE
+   is what you manage, and the labels are there so the grouping is a statement
+   rather than a coincidence of order. */
+.nav-links.nav-grouped {
+  gap: 20px;
+  align-items: center;
+}
+.nav-group {
+  display: flex;
+  align-items: baseline;
+  gap: 11px;
+  padding-right: 20px;
+  border-right: 1px solid var(--bg2);
+}
+.nav-group:last-child,
+.nav-group-quiet {
+  border-right: none;
+  padding-right: 0;
+}
+.nav-group-label {
+  font-size: 0.56em;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--fg4);
+  opacity: 0.75;
+}
+.nav-more {
+  position: relative;
+}
+.nav-more-btn {
+  background: none;
+  border: none;
+  color: var(--fg3);
+  font-family: inherit;
+  font-size: 0.85em;
+  cursor: pointer;
+  padding: 0;
+}
+.nav-more-btn:hover {
+  color: var(--yellow);
+}
+.nav-more-dd {
+  display: none;
+  position: absolute;
+  right: 0;
+  top: 22px;
+  min-width: 168px;
+  background: var(--bg1);
+  border: 1px solid var(--bg3);
+  z-index: 60;
+  padding: 4px 0;
+}
+.nav-more-dd.visible {
+  display: block;
+}
+
+@media (max-width: 900px) {
+  .nav-links.nav-grouped {
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .nav-group {
+    border-right: none;
+    padding-right: 0;
+  }
+  .nav-group-label {
+    display: none;
+  }
+}
+
 .theme-op1 .nav-header {
   border-radius: 0;
 }

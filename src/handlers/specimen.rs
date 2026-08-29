@@ -169,6 +169,7 @@ pub async fn stream_handler(
                 e.cost_usd::float8 AS cost_usd, e.user_id, e.parent_episode_id,
                 a.agent_name,
                 pa.agent_name AS parent_agent,
+                u.name AS user_name, u.email AS user_email,
                 ('grounding:enforced'   = ANY(e.tags)) AS clean,
                 ('grounding:violations' = ANY(e.tags)) AS dirty,
                 (SELECT count(*) FROM gate_decisions gd
@@ -177,6 +178,10 @@ pub async fn stream_handler(
            JOIN agents a  ON a.agent_id = e.agent_id
            LEFT JOIN episodes pe ON pe.episode_id = e.parent_episode_id
            LEFT JOIN agents  pa ON pa.agent_id   = pe.agent_id
+           -- A person is a name, not a uuid prefix. The stream showed eight
+           -- characters of a hash, which is unreadable and makes the human
+           -- indistinguishable from any other human.
+           LEFT JOIN users u ON u.id::text = e.user_id
           WHERE a.agent_name NOT LIKE 'test\\_agent\\_%'
           ORDER BY e.created_at DESC
           LIMIT 200",
@@ -193,9 +198,26 @@ pub async fn stream_handler(
             // Ordered: a delegating agent is the addresser even when a human
             // started the chain, because the hop this row records is the
             // agent-to-agent one.
+            let user_name: Option<String> = r.try_get("user_name").ok().flatten();
+            let user_email: Option<String> = r.try_get("user_email").ok().flatten();
             let (kind, who) = match (&parent_agent, &user_id) {
                 (Some(a), _) => ("agent", a.clone()),
-                (None, Some(u)) => ("human", u.chars().take(8).collect()),
+                (None, Some(u)) => (
+                    "human",
+                    // Name, then the local part of the email, and only then a
+                    // short id. An unresolvable id still says something, but it
+                    // is the last resort rather than the default.
+                    user_name
+                        .clone()
+                        .filter(|s| !s.trim().is_empty())
+                        .or_else(|| {
+                            user_email
+                                .as_deref()
+                                .and_then(|e| e.split('@').next())
+                                .map(str::to_string)
+                        })
+                        .unwrap_or_else(|| u.chars().take(8).collect()),
+                ),
                 _ => ("unattributed", String::new()),
             };
             let clean: bool = r.try_get("clean").unwrap_or(false);
