@@ -273,11 +273,49 @@
   // number, opposite meanings, and only the second is acceptable." The
   // opportunity count here is the row count of the stage immediately upstream of
   // the one that stopped - the thing that should have caused the write.
+  // The served `reason` decides this wherever it can. It comes from a closed
+  // ten-value vocabulary that the platform computes with more information than
+  // this page has - `scheduler_off`, for instance, reads the actual env var and
+  // treats "unset with default_on false" and "set to 0" as the same outage.
+  //
+  // An earlier version of this function derived the verdict from row arithmetic
+  // alone, which re-answered a question the API already answers. Row arithmetic
+  // is kept only as the tie-breaker for `unobserved`, where the reason names the
+  // symptom without settling whether there were opportunities.
+  const REASON_LIVENESS = {
+    // Something should have happened and did not.
+    scheduler_off:            ["Silent", "bad"],
+    no_trigger:               ["Silent", "bad"],
+    writes_refused:           ["Silent", "bad"],
+    gate_refuses_everything:  ["Silent", "bad"],
+    // No occasion yet. Not a pass.
+    no_input:                 ["Inert", "indet"],
+    awaiting_upstream:        ["Inert", "indet"],
+    awaiting_agent:           ["Inert", "indet"],
+    // No verdict is supported at all.
+    probe_failed:             ["unreadable", "indet"],
+    upstream_unmeasured:      ["unreadable", "indet"],
+  };
+
   function liveness(l) {
     if (l.status === "turning") return { v: "Ok", cls: "good", why:
       "every stage produced" };
     if (l.status === "unmeasured" || !(l.stages || []).length) return { v: "unreadable",
       cls: "indet", why: "a probe did not run, so the chain supports no verdict" };
+
+    // Branch on the served reason before doing any arithmetic of our own.
+    const mapped = REASON_LIVENESS[l.reason];
+    if (mapped) {
+      return { v: mapped[0], cls: mapped[1], why:
+        `Reason served by the platform: <b>${esc(String(l.reason).replace(/_/g, " "))}</b>. ` +
+        esc(l.detail || "") };
+    }
+    // An unrecognised reason must not read as healthy.
+    if (l.reason && l.reason !== "unobserved") {
+      return { v: "unreadable", cls: "indet", why:
+        `The platform reports <b>${esc(String(l.reason))}</b>, which this page does not ` +
+        `recognise. Treated as indeterminate rather than assumed benign.` };
+    }
 
     const stages = l.stages || [];
     const at = stages.findIndex(s => s.is_first_empty);
@@ -339,7 +377,9 @@
       </tr></thead><tbody>${rows}</tbody></table>
       <div class="contract"><b>Silent</b> is the one to act on: opportunities exist and the
         sink is empty. <b>Inert</b> is not a pass — it means nothing has exercised the path
-        yet. Timescale and nesting are read from <code>FEEDBACK_LOOPS.md</code> §2 and are
+        yet. The verdict is taken from the platform's own <code>reason</code> wherever that
+        settles it, and an unrecognised reason renders as indeterminate rather than benign.
+        Timescale and nesting are read from <code>FEEDBACK_LOOPS.md</code> §2 and are
         <b>not served by the API</b>; a loop this page does not recognise shows
         “not declared” rather than a guess.</div>`;
   }
