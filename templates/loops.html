@@ -43,6 +43,21 @@
      one number — they just are not what the page is about. */
   .census .tb{min-width:100px;padding:7px 11px;}
   .census .tb-v{font-size:0.88rem;}
+
+  /* ── Hierarchy table: two columns that must never be merged ──────────── */
+  .ts{color:var(--fg4);font-size:0.68rem;text-transform:uppercase;letter-spacing:0.05em;
+      white-space:nowrap;}
+  .wire{font-size:0.6rem;text-transform:uppercase;letter-spacing:0.06em;padding:1px 5px;
+        border:1px solid;}
+  .wire.yes{color:var(--fg4);border-color:var(--bg3);}
+  .wire.no{color:var(--red,#fb4934);border-color:var(--red,#fb4934);}
+  /* Ok / Silent / Inert. `Silent` is the actionable one and reads as a finding;
+     `Inert` is indeterminate and explicitly not a pass. */
+  .lv{font-size:0.66rem;text-transform:uppercase;letter-spacing:0.06em;padding:1px 6px;
+      border:1px solid;}
+  .lv.good{color:var(--green);border-color:var(--green);}
+  .lv.bad{color:var(--red,#fb4934);border-color:var(--red,#fb4934);}
+  .lv.indet{color:var(--purple,#d3869b);border-color:var(--purple,#d3869b);border-style:dashed;}
   .contract{font-size:0.71rem;color:var(--fg4);font-style:italic;line-height:1.5;margin:6px 0 16px;}
 
   /* ── Section headers, so the page has an argument and not just blocks ── */
@@ -207,6 +222,128 @@
          <div class="tb-v">${t[k] ?? 0}</div><div class="tb-l">${esc(label)}</div></div>`).join("")}</div>`;
   }
 
+  // ── The hierarchy ──────────────────────────────────────────────────────
+  //
+  // From FEEDBACK_LOOPS.md §2, which is the legible version of this screen and
+  // which this page previously ignored in favour of the endpoint's flat shape.
+  //
+  // TIMESCALE IS NOT SERVED. It is a stable design property of each loop and it
+  // lives in the architecture doc rather than on `LoopSpec`, so this map is a
+  // copy and is labelled as one in the UI. An unrecognised loop gets "not
+  // declared" rather than a guess. Asked for as a field.
+  const TIMESCALE = {
+    loop1:  ["hours",    1],
+    loop2:  ["days",     2],
+    loop3:  ["session",  3],
+    loop4:  ["months",   5],
+    loop5a: ["months+",  6],
+    loop5b: ["offline",  7],
+  };
+  const scaleOf = id => TIMESCALE[id] || ["not declared", 99];
+
+  // The nesting, also from §2. "Measurement is one loop, and the things that
+  // act on it are others" - which is why 5a has three consumers and no
+  // correction of its own, and why six independent cards was the wrong drawing.
+  const FEEDS = {
+    loop2:  ["loop1"],
+    loop3:  ["loop1"],
+    loop5a: ["loop4", "loop5b"],
+    loop1:  ["loop2"],
+  };
+
+  // Two columns, two claims, never merged.
+  //
+  // §2: "Wiring means every hop has an executing call site. Observed turning
+  // means it has moved on production data. Conflating them is how the
+  // 2026-06-03 revision came to report closed loops that had never run."
+  // This page merged them, and then built a five-bucket tally on the merged
+  // value, so the buckets were a mush of two orthogonal facts.
+  function wiring(l) {
+    const dead = (l.stages || []).filter(s => s.trigger_label === "nothing_calls_it");
+    return dead.length
+      ? { ok: false, why: `no code path invokes ${dead.map(s => s.id).join(", ")}` }
+      : { ok: true, why: null };
+  }
+
+  // Ok / Silent / Inert — the liveness verdict, with the opportunity count as
+  // the disambiguator.
+  //
+  // §3.1 of the verification paper: "Zero claims beside twenty-two episodes that
+  // each stated a claim is broken. Zero beside zero is merely unused. Same
+  // number, opposite meanings, and only the second is acceptable." The
+  // opportunity count here is the row count of the stage immediately upstream of
+  // the one that stopped - the thing that should have caused the write.
+  function liveness(l) {
+    if (l.status === "turning") return { v: "Ok", cls: "good", why:
+      "every stage produced" };
+    if (l.status === "unmeasured" || !(l.stages || []).length) return { v: "unreadable",
+      cls: "indet", why: "a probe did not run, so the chain supports no verdict" };
+
+    const stages = l.stages || [];
+    const at = stages.findIndex(s => s.is_first_empty);
+    if (at < 0) return { v: "Ok", cls: "good", why: "no stage reported empty" };
+
+    const upstream = at > 0 ? stages[at - 1] : null;
+    const opportunities = upstream && upstream.measured !== false ? Number(upstream.rows) : null;
+
+    if (opportunities === null) {
+      return { v: "Inert", cls: "indet", why:
+        `<b>${esc(stages[at].id)}</b> is the first stage, so nothing upstream can have ` +
+        `created an occasion for it. Not a pass — nothing has exercised this path.` };
+    }
+    if (opportunities > 0) {
+      return { v: "Silent", cls: "bad", why:
+        `<b>${opportunities.toLocaleString()}</b> upstream row(s) should have caused ` +
+        `<b>${esc(stages[at].id)}</b> to write, and it has none. Not <i>Inert</i>: the ` +
+        `writer may be buggy or merely undeployed — different remedies, identical ` +
+        `consequence, so this does not guess.` };
+    }
+    return { v: "Inert", cls: "indet", why:
+      `Nothing upstream of <b>${esc(stages[at].id)}</b> has produced either, so there has ` +
+      `been no occasion. <b>Not a pass</b> — a contract watching a feature nobody has ` +
+      `exercised, reporting healthy, is the original defect.` };
+  }
+
+  function hierarchy(d) {
+    const loops = (d.loops || []).slice().sort((a, b) =>
+      scaleOf(a.id)[1] - scaleOf(b.id)[1]);
+
+    const rows = loops.map(l => {
+      const w = wiring(l), lv = liveness(l);
+      const feeds = (FEEDS[l.id] || []).filter(t => loops.some(x => x.id === t));
+      return `<tr>
+        <td class="ts">${esc(scaleOf(l.id)[0])}</td>
+        <td><a href="#${esc(l.id)}" style="color:var(--fg2)">${esc(l.id)}</a>
+            <div class="dim" style="font-size:0.68rem">${esc(l.name)}</div></td>
+        <td>${w.ok
+          ? `<span class="wire yes">wired</span>`
+          : `<span class="wire no">not wired</span>
+             <div class="caveat">${esc(w.why)}</div>`}</td>
+        <td><span class="lv ${lv.cls}">${esc(lv.v)}</span>
+            <div class="caveat">${lv.why}</div></td>
+        <td class="dim" style="font-size:0.68rem">${feeds.length
+          ? "feeds " + feeds.map(esc).join(" · ")
+          : "<i>nothing acts on it</i>"}</td>
+      </tr>`;
+    }).join("");
+
+    return `<div class="sec"><h2>The hierarchy</h2>
+        <div class="why"><b>Two columns, two claims, and they must not be merged.</b>
+          <i>Wired</i> means every hop has an executing call site. <i>Ok / Silent / Inert</i>
+          means whether it has moved on production data. Conflating them is how a
+          previous revision came to report closed loops that had never run — and this page
+          did exactly that until now.</div></div>
+      <table><thead><tr>
+        <th>Timescale</th><th>Loop</th><th>Wiring</th>
+        <th>Liveness · with opportunity count</th><th>Nesting</th>
+      </tr></thead><tbody>${rows}</tbody></table>
+      <div class="contract"><b>Silent</b> is the one to act on: opportunities exist and the
+        sink is empty. <b>Inert</b> is not a pass — it means nothing has exercised the path
+        yet. Timescale and nesting are read from <code>FEEDBACK_LOOPS.md</code> §2 and are
+        <b>not served by the API</b>; a loop this page does not recognise shows
+        “not declared” rather than a guess.</div>`;
+  }
+
   // ── Loops ──────────────────────────────────────────────────────────────
   function stageRow(s, isConsequence) {
     // `measured: false` means show nothing, not zero. `rows: -1` is a sentinel
@@ -274,7 +411,7 @@
       return row;
     }).join("");
 
-    return `<div class="loop">
+    return `<div class="loop" id="${esc(l.id)}">
       <div class="loop-h">
         <span class="loop-id">${esc(l.id)}</span>
         <span class="loop-n">${esc(l.name)}</span>
@@ -370,6 +507,7 @@
             </div>`).join("")}</div></div>` : "";
 
     return lead
+      + hierarchy(d)
       + `<div class="sec"><h2>Artifacts to open</h2>
          <div class="why">Most recent runs, contracted agents first. <b>Graded</b> means the
            agent declares a field contract, so its belt has checkpoints that actually fired;
