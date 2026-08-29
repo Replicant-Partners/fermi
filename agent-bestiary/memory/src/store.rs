@@ -165,6 +165,48 @@ impl MemoryStore {
     /// Kept as the back-compat surface so existing call sites continue to
     /// compile while they're migrated one-by-one. The `#[deprecated]` attribute
     /// makes the compiler flag every un-migrated site.
+    /// Reserve an episode id so a task that starts earlier can point at it.
+    ///
+    /// # The defect this closes
+    ///
+    /// Delegation mints an episode id, hands it to the child's `ToolContext` as
+    /// `parent_episode_id`, runs the child, and only then writes the row. The
+    /// comment above `record_delegated_episode` states the invariant exactly —
+    /// *"a row that is written later cannot be pointed at by a task that starts
+    /// earlier"* — and minting early does not satisfy it. Everything the child
+    /// delegates during that window references an id with no row behind it, and
+    /// if the final write never lands, those references are orphaned for good.
+    ///
+    /// Measured on production: **12 episodes name a parent and 6 name one that
+    /// does not exist.** Half the platform's only agent-to-agent trace.
+    ///
+    /// So the row is created before the id leaves this process, with
+    /// `execution_status = 'running'`, and completed by the normal write.
+    ///
+    /// Idempotent: reserving twice is a no-op, because a retry must not fail on
+    /// its own earlier reservation.
+    pub async fn reserve_episode(
+        &self,
+        episode_id: Uuid,
+        agent_id: Uuid,
+        query: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO episodes
+                (episode_id, agent_id, timestamp_ref, query, context, execution_status)
+            VALUES ($1, $2, now(), $3, '{}'::jsonb, 'running')
+            ON CONFLICT (episode_id) DO NOTHING
+            "#,
+        )
+        .bind(episode_id)
+        .bind(agent_id)
+        .bind(query)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     #[deprecated(
         since = "0.2.0",
         note = "use `store_episode_with_provenance` to comply with Spec 22 \
@@ -226,6 +268,13 @@ impl MemoryStore {
             .await
     }
 
+    /// The upsert completes a reservation made by [`Self::reserve_episode`],
+    /// and only that. The `WHERE execution_status = 'running'` predicate on the
+    /// conflict clause is load-bearing: without it a genuine duplicate id would
+    /// silently overwrite a finished episode, turning a loud error into a lost
+    /// record. A reservation is the one row it is correct to write over, because
+    /// it exists in order to be finished.
+    ///
     /// Internal episode INSERT. Used by both the deprecated `store_episode`
     /// and the provenance-aware variant. Always runs in a transaction.
     async fn store_episode_inner(
@@ -245,6 +294,7 @@ impl MemoryStore {
 
         let row = sqlx::query(
             r#"
+            -- see the Rust comment above: this completes a reservation, only
             INSERT INTO episodes (
                 episode_id, agent_id, timestamp_ref, query, context,
                 execution_status, error_details, execution_time_ms,
@@ -259,6 +309,36 @@ impl MemoryStore {
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
                     $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25,
                     $26, $27, $28, $29, $30, $31, $32)
+            ON CONFLICT (episode_id) DO UPDATE SET
+                timestamp_ref = EXCLUDED.timestamp_ref,
+                query = EXCLUDED.query,
+                context = EXCLUDED.context,
+                execution_status = EXCLUDED.execution_status,
+                error_details = EXCLUDED.error_details,
+                execution_time_ms = EXCLUDED.execution_time_ms,
+                tokens_used = EXCLUDED.tokens_used,
+                cost_usd = EXCLUDED.cost_usd,
+                embedding = EXCLUDED.embedding,
+                tags = EXCLUDED.tags,
+                provenance = EXCLUDED.provenance,
+                dyad_id = EXCLUDED.dyad_id,
+                persona_version_at_write = EXCLUDED.persona_version_at_write,
+                provider_used = EXCLUDED.provider_used,
+                model_used = EXCLUDED.model_used,
+                embedding_model_id = EXCLUDED.embedding_model_id,
+                embedding_model_version = EXCLUDED.embedding_model_version,
+                embedding_dim = EXCLUDED.embedding_dim,
+                source_text = EXCLUDED.source_text,
+                source_ref = EXCLUDED.source_ref,
+                provenance_trusted = EXCLUDED.provenance_trusted,
+                input_tokens = EXCLUDED.input_tokens,
+                output_tokens = EXCLUDED.output_tokens,
+                cost_basis = EXCLUDED.cost_basis,
+                cost_rate_key = EXCLUDED.cost_rate_key,
+                parent_episode_id = EXCLUDED.parent_episode_id,
+                response_text = EXCLUDED.response_text,
+                assertions = EXCLUDED.assertions
+            WHERE episodes.execution_status = 'running'
             RETURNING episode_id
             "#,
         )
@@ -301,8 +381,22 @@ impl MemoryStore {
         // a judgement bound to a workspace, so standalone evaluation (how
         // agents are mostly exercised) lost every one of them.
         .bind(&episode.assertions)
-        .fetch_one(&mut *tx)
+        .fetch_optional(&mut *tx)
         .await?;
+
+        // No row means the id already existed and was NOT a reservation, so the
+        // `WHERE execution_status = 'running'` guard declined to overwrite it.
+        // `fetch_one` would surface that as `RowNotFound`, which reads like a
+        // missing record rather than a refused overwrite - and this is exactly
+        // the case where a confusing error becomes a silent data loss.
+        let Some(row) = row else {
+            return Err(crate::error::MemoryError::InvalidData(format!(
+                "episode {} already exists and is not a reservation, so it was not \
+                 overwritten. A finished episode is never rewritten; if this id was \
+                 meant to be new, something minted a duplicate.",
+                episode.episode_id
+            )));
+        };
 
         let episode_id: Uuid = row.try_get("episode_id")?;
 

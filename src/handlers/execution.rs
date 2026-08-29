@@ -256,6 +256,23 @@ pub async fn execute_agent_handler(
     // An id generated at store time could serve neither.
     let episode_id = uuid::Uuid::new_v4();
 
+    // And reserved, not merely minted. Minting early lets a child NAME this
+    // episode; only writing the row early lets the child RESOLVE it. The row is
+    // otherwise stored at the end of this handler, so a run that fails after
+    // spawning children leaves them pointing at nothing - which is the state 6
+    // of the platform's 12 delegation edges are in.
+    if let Err(e) = state
+        .memory_store
+        .reserve_episode(episode_id, db_agent.agent_id, &body.query)
+        .await
+    {
+        tracing::warn!(
+            agent = %agent_id, error = %e,
+            "could not reserve the episode; delegated children will point at a \
+             row that does not exist",
+        );
+    }
+
     let tool_context = Arc::new(ToolContext {
         // Root of this execution's delegation tree (mig-198). Children stamp
         // it as their parent_episode_id so a compound run's true cost is

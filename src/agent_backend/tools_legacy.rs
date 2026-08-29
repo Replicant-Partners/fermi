@@ -6605,6 +6605,39 @@ async fn execute_execute_agent(
                     .ok()
                     .flatten();
 
+            // Resolved here rather than after the run, because the reservation
+            // below needs it and a lookup that only happens on the success path
+            // is how the row came to be missing in the first place.
+            let target_db_id_for_reservation: Option<uuid::Uuid> =
+                sqlx::query_scalar("SELECT agent_id FROM agents WHERE agent_name = $1 LIMIT 1")
+                    .bind(agent_name)
+                    .fetch_optional(db)
+                    .await
+                    .ok()
+                    .flatten();
+
+            // Reserve the child's row BEFORE its id is handed to grandchildren.
+            //
+            // Everything the child delegates during its run points at
+            // `child_episode_id`, and until now the row behind it was only
+            // written after the run finished - so a child that failed to record
+            // orphaned every grandchild permanently. 6 of the platform's 12
+            // delegation edges are in that state.
+            if let Some(tid) = target_db_id_for_reservation {
+                if let Err(e) = ctx
+                    .memory_store
+                    .reserve_episode(child_episode_id, tid, query)
+                    .await
+                {
+                    tracing::warn!(
+                        agent = %agent_name,
+                        error = %e,
+                        "[delegation] could not reserve the child episode; any \
+                         grandchild will point at a row that does not exist",
+                    );
+                }
+            }
+
             let target_tool_context = std::sync::Arc::new(ToolContext {
                 // The child's own episode, so anything IT delegates to links
                 // to the child rather than skipping a level (mig-198).

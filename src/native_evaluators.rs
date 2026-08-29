@@ -131,6 +131,11 @@ pub struct Observation {
     /// `declarations`: no contracts measured and no contracts conformant are
     /// different claims, and the second is the alarming one.
     pub conformance: Option<Vec<ContractConformance>>,
+    /// `(edges_naming_a_parent, edges_whose_parent_does_not_exist)`.
+    ///
+    /// The delegation chain is the platform's only agent-to-agent trace, and
+    /// half of it pointed at nothing. `None` when the scan could not run.
+    pub delegation: Option<(i64, i64)>,
 }
 
 /// One declared field contract, and how far it actually gets.
@@ -201,8 +206,29 @@ impl Observation {
             gate_ledger: Some(gate_trust::ledger_status()),
             declarations: declaration_census(pool).await,
             conformance: contract_conformance(pool).await,
+            delegation: delegation_integrity(pool).await,
         }
     }
+}
+
+/// How much of the delegation chain resolves.
+///
+/// An episode may name a parent whose row was never written: the id is minted
+/// inside the tool loop and handed to the child before the parent persists, so a
+/// parent run that fails leaves the reference dangling for good. Measured at 6
+/// of 12 before `reserve_episode` existed.
+pub async fn delegation_integrity(pool: &sqlx::PgPool) -> Option<(i64, i64)> {
+    let row: (i64, i64) = sqlx::query_as(
+        "SELECT count(*)::bigint,
+                count(*) FILTER (WHERE pe.episode_id IS NULL)::bigint
+           FROM episodes e
+           LEFT JOIN episodes pe ON pe.episode_id = e.parent_episode_id
+          WHERE e.parent_episode_id IS NOT NULL",
+    )
+    .fetch_one(pool)
+    .await
+    .ok()?;
+    Some(row)
 }
 
 /// Measure every declared field contract against what actually happened.
@@ -341,6 +367,52 @@ impl NativeEvaluator for RefusedWrites {
                      `last_error` on the sink — a CHECK violation means a \
                      vocabulary drifted; a foreign-key violation means the row \
                      it points at is written later than this one.",
+        }
+    }
+}
+
+/// Does every delegation edge resolve to an episode that exists?
+///
+/// The chain is the only agent-to-agent trace the platform has. A child that
+/// names a parent with no row is not "not delegated" - it is a broken edge, and
+/// it is invisible everywhere except here.
+pub struct DelegationChainIntact;
+impl NativeEvaluator for DelegationChainIntact {
+    fn id(&self) -> &'static str {
+        "delegation_chain_intact"
+    }
+    fn asks(&self) -> &'static str {
+        "Does every delegated episode resolve to a parent that exists?"
+    }
+    fn evaluate(&self, o: &Observation) -> Verdict {
+        let Some((total, dangling)) = o.delegation else {
+            return Verdict::Inconclusive {
+                why: "the delegation scan did not run".into(),
+            };
+        };
+        if total == 0 {
+            // No delegation is a product fact, not a broken chain.
+            return Verdict::Inconclusive {
+                why: "no episode names a parent, so there is no chain to check".into(),
+            };
+        }
+        if dangling == 0 {
+            return Verdict::Healthy {
+                detail: format!("all {total} delegation edge(s) resolve"),
+            };
+        }
+        Verdict::Finding {
+            severity: Severity::Critical,
+            detail: format!(
+                "{dangling} of {total} delegation edge(s) name a parent that does not exist"
+            ),
+            subjects: vec![format!(
+                "{dangling} child episode(s) were delegated and their caller cannot be identified"
+            )],
+            remedy: "The parent's id is handed to the child before the parent's row is \
+                     written, so a parent run that fails orphans everything it already \
+                     spawned. `MemoryStore::reserve_episode` writes the row first; a \
+                     rising count here means a path mints an id without reserving it.",
         }
     }
 }
@@ -699,6 +771,7 @@ pub fn registry() -> Vec<Box<dyn NativeEvaluator>> {
         Box::new(UndocumentedSilence),
         Box::new(GateAdmittingEverything),
         Box::new(ContractWiredThrough),
+        Box::new(DelegationChainIntact),
     ]
 }
 
@@ -882,6 +955,9 @@ mod tests {
                 graded: 10,
                 recorded: 10,
             }]),
+            // An intact chain, for the same reason: healthy because it was
+            // measured and found whole, not because nothing was looked at.
+            delegation: Some((4, 0)),
         }
     }
 
@@ -1007,6 +1083,8 @@ mod tests {
             graded: 0,
             recorded: 0,
         }]);
+        // Half the chain dangling: the measured state before `reserve_episode`.
+        broken.delegation = Some((12, 6));
 
         let report = run(&broken);
         let silent: Vec<_> = report

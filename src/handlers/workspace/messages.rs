@@ -475,6 +475,21 @@ pub async fn post_workspace_message_handler(
                         // stored further down, but delegated children need the
                         // id from inside the tool loop (mig-198).
                         let episode_id = uuid::Uuid::new_v4();
+                        // Reserve it before it is handed to the tool context.
+                        // Anything this run delegates points here, and the row
+                        // is not written until the run finishes - so a run that
+                        // fails part-way orphans every child it already spawned.
+                        if let Err(e) = state2
+                            .memory_store
+                            .reserve_episode(episode_id, db_agent.agent_id, &query2)
+                            .await
+                        {
+                            tracing::warn!(
+                                agent = %agent_name2, error = %e,
+                                "could not reserve the episode; delegated children \
+                                 will point at a row that does not exist",
+                            );
+                        }
 
                         // Use ToolAwareExecutor with workspace tools
                         let tool_context = Arc::new(ToolContext {

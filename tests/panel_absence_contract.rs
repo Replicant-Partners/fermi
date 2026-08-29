@@ -65,6 +65,7 @@ async fn snapshot(pool: &PgPool) -> Observation {
         // make the conformance evaluator report inconclusive and the suite would
         // pass while proving nothing about whether a declared contract is wired.
         conformance: fermi::native_evaluators::contract_conformance(pool).await,
+        delegation: fermi::native_evaluators::delegation_integrity(pool).await,
     }
 }
 

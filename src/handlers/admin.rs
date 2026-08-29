@@ -1983,6 +1983,9 @@ pub async fn admin_liveness_handler(
         // the platform did, and this measures whether a subject's declaration
         // was ever honoured.
         conformance: fermi::native_evaluators::contract_conformance(&state.db).await,
+        // Whether the delegation chain resolves. The platform's only
+        // agent-to-agent trace, and half of it pointed at nothing.
+        delegation: fermi::native_evaluators::delegation_integrity(&state.db).await,
     };
     let native = fermi::native_evaluators::run(&observation);
 
