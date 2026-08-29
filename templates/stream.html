@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en" class="theme-hasui">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Stream — Agent Bestiary</title>
+  <link rel="stylesheet" href="/static/css/variables.css"/>
+  <link rel="stylesheet" href="/static/css/common.css"/>
+  <link rel="stylesheet" href="/static/css/components.css"/>
+  <style>
+  body{font-family:"Berkeley Mono","JetBrains Mono",monospace;line-height:1.5;
+       background:var(--bg0-hard);font-size:13px;margin:0;}
+  a{color:var(--fg3);text-decoration:none;} a:hover{color:var(--yellow);}
+  .wrap{max-width:1120px;margin:0 auto;padding:0 20px 60px;}
+  .head{padding:18px 0 10px;}
+  .head h1{font-size:1rem;color:var(--yellow);margin:0 0 3px;}
+  .head .sub{font-size:0.72rem;color:var(--fg4);}
+
+  .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px 0 12px;
+       border-bottom:1px solid var(--bg2);margin-bottom:2px;}
+  .f{font-size:0.7rem;color:var(--fg4);background:transparent;border:1px solid var(--bg3);
+     padding:3px 9px;cursor:pointer;font-family:inherit;}
+  .f:hover{color:var(--fg2);}
+  .f.on{color:var(--yellow);border-color:var(--yellow);}
+  .count{margin-left:auto;font-size:0.68rem;color:var(--fg4);}
+  input.q{background:var(--bg1);border:1px solid var(--bg3);color:var(--fg2);
+          font-family:inherit;font-size:0.72rem;padding:4px 8px;min-width:190px;}
+
+  /* ── Entity iconography ────────────────────────────────────────────────
+     A person and an agent looked identical, which made the whole stream
+     unreadable: you could not see at a glance whether the platform was
+     working or a human was doing all the asking. Four kinds, four marks. */
+  .ent{display:inline-flex;align-items:center;gap:5px;min-width:0;}
+  .glyph{width:15px;height:15px;flex-shrink:0;display:inline-flex;align-items:center;
+         justify-content:center;font-size:0.66rem;border:1px solid;line-height:1;}
+  /* human — the only entity that can be asked a question back */
+  .g-human{border-radius:50%;border-color:var(--aqua);color:var(--aqua);}
+  /* agent — a species. square, like a card */
+  .g-agent{border-color:var(--yellow);color:var(--yellow);}
+  /* system — scheduler or sweeper. no intent, so no colour */
+  .g-system{border-color:var(--bg3);color:var(--fg4);}
+  /* unattributed — a gap in the record, not an actor. must not look benign */
+  .g-unattributed{border-color:var(--purple,#d3869b);color:var(--purple,#d3869b);
+                  border-style:dashed;}
+  .ent-n{font-size:0.72rem;color:var(--fg3);overflow:hidden;text-overflow:ellipsis;
+         white-space:nowrap;}
+  .arrow{color:var(--fg4);flex-shrink:0;}
+
+  .ex{display:grid;grid-template-columns:118px 1fr 128px 74px;gap:12px;align-items:start;
+      padding:9px 6px;border-bottom:1px solid var(--bg2);cursor:pointer;}
+  .ex:hover{background:var(--bg1);}
+  .ex .when{font-size:0.66rem;color:var(--fg4);white-space:nowrap;}
+  .ex .body{min-width:0;}
+  .hop{display:flex;align-items:center;gap:7px;min-width:0;}
+  .q{font-size:0.7rem;color:var(--fg4);margin-top:3px;overflow:hidden;
+     text-overflow:ellipsis;white-space:nowrap;}
+  .ex:hover .q{color:var(--fg3);}
+  .marks{display:flex;gap:5px;flex-wrap:wrap;}
+  .m{font-size:0.57rem;text-transform:uppercase;letter-spacing:0.05em;padding:0 5px;
+     border:1px solid;white-space:nowrap;}
+  .m-clean{color:var(--green);border-color:var(--green);}
+  .m-viol{color:var(--red,#fb4934);border-color:var(--red,#fb4934);}
+  /* Ungraded is not a pass and not a failure: nothing checked the contents. */
+  .m-ungraded{color:var(--fg4);border-color:var(--bg3);border-style:dashed;}
+  .m-rec{color:var(--aqua);border-color:var(--aqua);}
+  .cost{font-size:0.66rem;color:var(--fg4);text-align:right;font-variant-numeric:tabular-nums;}
+  .bad{color:var(--red,#fb4934);}
+  .empty{padding:18px 6px;font-size:0.76rem;color:var(--fg4);line-height:1.55;}
+  .note{font-size:0.7rem;color:var(--fg4);font-style:italic;line-height:1.5;margin:10px 0 0;}
+  </style>
+</head>
+<body>
+  <div id="nav-root"></div>
+  <div class="wrap">
+    <div class="head">
+      <h1>Stream</h1>
+      <div class="sub">Every exchange, across every agent. Open one to see what checked it.</div>
+    </div>
+    <div id="content"><div class="empty">Loading…</div></div>
+  </div>
+
+  <script src="/static/js/widgets/nav.js"></script>
+  <script src="/static/js/theme.js"></script>
+  <script>
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
+    ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+  let DATA = null, KIND = "all", TERM = "";
+
+  const GLYPH = { human: "◍", agent: "▣", system: "⚙", unattributed: "?" };
+  const entity = e => {
+    const k = GLYPH[e.kind] ? e.kind : "unattributed";
+    return `<span class="ent"><span class="glyph g-${k}"
+      title="${esc(k)}">${GLYPH[k]}</span><span class="ent-n">${
+      esc(e.name || (k === "unattributed" ? "not recorded" : k))}</span></span>`;
+  };
+
+  const when = iso => {
+    if (!iso) return "";
+    const d = new Date(iso), mins = (Date.now() - d.getTime()) / 60000;
+    if (mins < 60) return `${Math.max(0, Math.round(mins))}m ago`;
+    if (mins < 1440) return `${Math.round(mins / 60)}h ago`;
+    return d.toISOString().slice(0, 16).replace("T", " ");
+  };
+
+  function row(x) {
+    // Three grounding states, never two. `ungraded` is neither a pass nor a
+    // failure — nothing examined the contents — so it reads as neither.
+    const g = x.grounding;
+    const mark = g === "clean" ? `<span class="m m-clean">grounded</span>`
+               : g === "violations" ? `<span class="m m-viol">violations</span>`
+               : `<span class="m m-ungraded" title="No contract applied, or no path enforced one. Not a pass.">ungraded</span>`;
+    const rec = x.recorded ? `<span class="m m-rec">recorded</span>` : "";
+
+    return `<div class="ex" data-href="/trace/${encodeURIComponent(x.episode_id)}">
+      <div class="when">${esc(when(x.at))}</div>
+      <div class="body">
+        <div class="hop">${entity(x.from)}<span class="arrow">→</span>${entity(x.to)}</div>
+        <div class="q">${esc(x.query || "—")}</div>
+      </div>
+      <div class="marks">${mark}${rec}
+        ${x.status && x.status !== "success"
+          ? `<span class="m m-viol">${esc(x.status)}</span>` : ""}</div>
+      <div class="cost">${x.cost_usd != null ? "$" + x.cost_usd.toFixed(4) : "—"}</div>
+    </div>`;
+  }
+
+  function render() {
+    const all = DATA.exchanges || [];
+    const t = TERM.trim().toLowerCase();
+    const rows = all.filter(x =>
+      (KIND === "all" || x.from.kind === KIND) &&
+      (!t || (x.to.name || "").toLowerCase().includes(t)
+          || (x.from.name || "").toLowerCase().includes(t)
+          || (x.query || "").toLowerCase().includes(t)));
+
+    // The proportion is the finding: if every exchange starts with a human,
+    // the agents are not talking to each other.
+    const byKind = {};
+    all.forEach(x => { byKind[x.from.kind] = (byKind[x.from.kind] || 0) + 1; });
+    const agentLed = byKind.agent || 0;
+
+    const filters = ["all", "human", "agent", "unattributed"].map(k =>
+      `<button class="f ${KIND === k ? "on" : ""}" data-kind="${k}">${
+        k === "all" ? "everything" : k}${
+        k !== "all" && byKind[k] ? ` ${byKind[k]}` : ""}</button>`).join("");
+
+    document.getElementById("content").innerHTML = `
+      <div class="bar">
+        ${filters}
+        <input class="q" id="term" placeholder="filter by agent or text" value="${esc(TERM)}"/>
+        <span class="count">${rows.length} of ${all.length}</span>
+      </div>
+      ${rows.length ? rows.map(row).join("")
+        : `<div class="empty">Nothing matches that filter.</div>`}
+      <div class="note">${esc(DATA.contract || "")}</div>
+      ${agentLed === 0 && all.length
+        ? `<div class="empty"><b style="color:var(--purple,#d3869b)">No exchange in this
+           window was started by an agent.</b> Every one was initiated by a person or is
+           unattributed — so the fleet is being driven rather than coordinating.</div>` : ""}`;
+
+    const term = document.getElementById("term");
+    term.addEventListener("input", ev => {
+      TERM = ev.target.value;
+      const pos = ev.target.selectionStart;
+      render();
+      const t2 = document.getElementById("term");
+      t2.focus(); t2.setSelectionRange(pos, pos);
+    });
+    document.querySelectorAll(".f").forEach(b =>
+      b.addEventListener("click", () => { KIND = b.dataset.kind; render(); }));
+    document.querySelectorAll(".ex").forEach(el =>
+      el.addEventListener("click", () => { location.href = el.dataset.href; }));
+  }
+
+  async function boot() {
+    if (window.Nav) Nav.init({ current: "rounds" });
+    try {
+      const res = await fetch("/api/stream");
+      if (res.status === 401) {
+        document.getElementById("content").innerHTML =
+          `<div class="empty">Sign in to see the stream.
+           <a href="/auth/google">Google</a> · <a href="/auth/github">GitHub</a></div>`;
+        return;
+      }
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      DATA = await res.json();
+      render();
+    } catch (e) {
+      // "Nothing happened" and "I could not ask" are different sentences.
+      document.getElementById("content").innerHTML =
+        `<div class="empty">Could not read the stream: ${esc(e.message)}.
+         Nothing is listed rather than an empty list — a quiet fleet and an
+         unreachable one are different claims.</div>`;
+    }
+  }
+  boot();
+  </script>
+</body>
+</html>

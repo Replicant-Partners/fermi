@@ -649,6 +649,15 @@ pub async fn flow_view() -> Response {
     app_shell("templates/flow.html")
 }
 
+/// Every exchange, across every agent — the aggregated stream.
+///
+/// A workspace already shows its own flow. What was missing is the view across
+/// everything: one running log of who asked whom, what came back, and whether
+/// anything checked it, with a trace one click away.
+pub async fn stream_view() -> Response {
+    app_shell("templates/stream.html")
+}
+
 /// Why the belts are quiet, and whose job each one is.
 ///
 /// The destination of the artifact trace's default state. `unknown` on every

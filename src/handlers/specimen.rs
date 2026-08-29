@@ -143,6 +143,93 @@ pub async fn recent_episodes_handler(
     })))
 }
 
+/// `GET /api/stream`
+///
+/// Every exchange, newest first, across every agent.
+///
+/// The object is a **pulse with its addresser made explicit**. That subsumes
+/// workspace hops, direct API calls, delegations and scheduled runs as one list,
+/// and it needs no new data: who invoked a pulse is already derivable.
+///
+/// An earlier version of this was bound to a workspace, because that is where
+/// the typed hops live in `workspace_messages`. That was the wrong scope - the
+/// workspace already shows its own flow, and what is missing is the aggregated
+/// stream across everything. `workspace_messages` becomes an enrichment rather
+/// than the source.
+pub async fn stream_handler(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db = &state.db;
+
+    // `parent_episode_id` names an agent addresser; `user_id` names a human.
+    // Neither means the invoker was not recorded - 514 of 3,651 - and that is
+    // reported as `unattributed` rather than guessed at.
+    let rows = sqlx::query(
+        "SELECT e.episode_id, e.created_at, e.query, e.execution_status,
+                e.cost_usd::float8 AS cost_usd, e.user_id, e.parent_episode_id,
+                a.agent_name,
+                pa.agent_name AS parent_agent,
+                ('grounding:enforced'   = ANY(e.tags)) AS clean,
+                ('grounding:violations' = ANY(e.tags)) AS dirty,
+                (SELECT count(*) FROM gate_decisions gd
+                  WHERE gd.episode_id = e.episode_id)  AS decisions
+           FROM episodes e
+           JOIN agents a  ON a.agent_id = e.agent_id
+           LEFT JOIN episodes pe ON pe.episode_id = e.parent_episode_id
+           LEFT JOIN agents  pa ON pa.agent_id   = pe.agent_id
+          WHERE a.agent_name NOT LIKE 'test\\_agent\\_%'
+          ORDER BY e.created_at DESC
+          LIMIT 200",
+    )
+    .fetch_all(db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("stream: {e}")))?;
+
+    let exchanges: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            let parent_agent: Option<String> = r.try_get("parent_agent").ok().flatten();
+            let user_id: Option<String> = r.try_get("user_id").ok().flatten();
+            // Ordered: a delegating agent is the addresser even when a human
+            // started the chain, because the hop this row records is the
+            // agent-to-agent one.
+            let (kind, who) = match (&parent_agent, &user_id) {
+                (Some(a), _) => ("agent", a.clone()),
+                (None, Some(u)) => ("human", u.chars().take(8).collect()),
+                _ => ("unattributed", String::new()),
+            };
+            let clean: bool = r.try_get("clean").unwrap_or(false);
+            let dirty: bool = r.try_get("dirty").unwrap_or(false);
+            let decisions: i64 = r.try_get("decisions").unwrap_or(0);
+            json!({
+                "episode_id": r.try_get::<uuid::Uuid, _>("episode_id").ok(),
+                "at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at")
+                        .ok().map(|t| t.to_rfc3339()),
+                "from": { "kind": kind, "name": who },
+                "to":   { "kind": "agent", "name": r.get::<String, _>("agent_name") },
+                "query": r.try_get::<Option<String>, _>("query").ok().flatten(),
+                "status": r.try_get::<Option<String>, _>("execution_status").ok().flatten(),
+                "cost_usd": r.try_get::<Option<f64>, _>("cost_usd").ok().flatten(),
+                // Three states, never two: graded clean, graded and violating,
+                // or not graded at all - which is not a pass.
+                "grounding": if clean { "clean" } else if dirty { "violations" } else { "ungraded" },
+                "recorded": decisions > 0,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "exchanges": exchanges,
+        "contract": "One row is one exchange: a pulse with its addresser named. `from.kind` \
+                     is `agent` when the pulse was delegated, `human` when a person or \
+                     script invoked it, and `unattributed` when neither was recorded - which \
+                     is 514 of 3,651 and is a gap, not a system actor. `grounding: ungraded` \
+                     means no contract applied or no path enforced one; it is NOT a pass. \
+                     There is no workspace filter because `episodes` carries no workspace \
+                     column.",
+    })))
+}
+
 /// `GET /api/bestiary/cards`
 ///
 /// The stat line for every specimen, in one read.

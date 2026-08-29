@@ -3069,6 +3069,8 @@ async fn main() {
             "/api/episodes/recent",
             get(handlers::specimen::recent_episodes_handler),
         )
+        // Every exchange, across every agent. The aggregated stream.
+        .route("/api/stream", get(handlers::specimen::stream_handler))
         // The stat line for every specimen: pulse, fidelity, learned, cost.
         .route(
             "/api/bestiary/cards",
@@ -3302,6 +3304,7 @@ async fn main() {
         .route("/specimen/:agent_name", get(handlers::pages::specimen_view))
         .route("/trace/:episode_id", get(handlers::pages::trace_view))
         .route("/flow/:workspace_id", get(handlers::pages::flow_view))
+        .route("/stream", get(handlers::pages::stream_view))
         .route("/declarations", get(handlers::pages::declarations_view))
         .route("/gate/:gate_id", get(handlers::pages::gate_view))
         .route(
