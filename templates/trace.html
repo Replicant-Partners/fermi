@@ -189,6 +189,18 @@
   .caveat .ck{color:var(--green);}
   .caveat .dns{color:var(--fg3);margin-top:4px;}
   .caveat .dns b{color:var(--yellow);}
+  /* ── A call for a person, made actionable where it is read ──────────────
+     These were prose describing work to be done elsewhere, while the endpoint
+     that does it sat live and unused. */
+  .acts{display:flex;gap:6px;align-items:center;margin-top:7px;flex-wrap:wrap;}
+  .cite{flex:1;min-width:150px;background:var(--bg0);border:1px solid var(--bg3);
+        color:var(--fg2);font-family:inherit;font-size:0.68rem;padding:3px 7px;}
+  .act{font-size:0.66rem;font-family:inherit;padding:3px 10px;cursor:pointer;
+       background:transparent;border:1px solid var(--aqua);color:var(--aqua);}
+  .act:hover:not(:disabled){background:var(--aqua);color:var(--bg0-hard);}
+  .act:disabled{opacity:0.4;cursor:default;}
+  .act.act-no{border-color:var(--red,#fb4934);color:var(--red,#fb4934);}
+  .act.act-no:hover:not(:disabled){background:var(--red,#fb4934);color:var(--bg0-hard);}
   .empty{padding:16px 8px;font-size:0.76rem;color:var(--fg4);}
   .absent{color:var(--fg4);font-style:italic;}
   </style>
@@ -204,6 +216,8 @@
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
     ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const EID = decodeURIComponent(location.pathname.split("/").filter(Boolean).pop() || "");
+  // Served, not hardcoded. Copying a declaration is how two lists drift.
+  let SETTLEABLE = null;
   const READINGS = ["idle","fault","unknown"];
   const reading = r => READINGS.includes(r) ? r : "unknown";
 
@@ -591,15 +605,56 @@ something specific about each checkpoint.")}</div></div>`;
       <div class="transient">Nobody's. ${esc(d.detail || "Nothing to do here.")}</div></div>`;
   }
 
+  // A call for a person has to be actionable where it is read. These items were
+  // rendered as prose describing work somebody should do elsewhere, while the
+  // endpoint that does it has been live and unused.
+  //
+  // `settleable_verdicts` is SERVED, never hardcoded here: copying it would be
+  // copying a declaration, and inventing a parallel list is how the two drift.
   function routed(d) {
     const r = d.routed || [];
     if (!r.length) return "";
+    const pending = r.filter(x => String(x.verdict || "").startsWith("pending_"));
+
     return `<div class="block"><h2>Routed for verification</h2>
-      <div class="note">Unverified is a work item, not a discard.</div>
-      ${r.map(x => `<div class="caveat">
-        <div><b>${esc(x.verdict)}</b> · ${esc(x.actor_kind)} · ${esc(x.actor || "")}</div>
-        ${x.evidence ? `<div class="dns">${esc(JSON.stringify(x.evidence).slice(0,240))}</div>` : ""}
-      </div>`).join("")}</div>`;
+      <div class="note">Unverified is a work item, not a discard.
+        ${pending.length ? `<b>${pending.length} of ${r.length}</b> still awaits a verdict
+          — and you can give one here.` : "Every claim here has been settled."}</div>
+      ${r.map(x => {
+        const ev = x.evidence || {};
+        const open = String(x.verdict || "").startsWith("pending_");
+        return `<div class="caveat" data-assertion="${esc(x.assertion_id || "")}">
+          <div><b>${esc(ev.path || "claim")}</b>
+            ${ev.claimed !== undefined
+              ? `<span class="fval" style="display:inline">claimed ${
+                  esc(JSON.stringify(ev.claimed))}</span>` : ""}</div>
+          <div class="dns">${esc(x.verdict)} · ${esc(x.actor_kind || "")} · ${esc(x.actor || "")}
+            ${ev.settleable_by ? `· a tool could settle this: <b>${esc(ev.settleable_by)}</b>` : ""}</div>
+          ${open ? settleForm(x.assertion_id) : ""}
+          <div class="settle-out"></div>
+        </div>`;
+      }).join("")}</div>`;
+  }
+
+  function settleForm(id) {
+    if (!id) return `<div class="dns">No assertion id, so this cannot be settled from here.</div>`;
+    const verdicts = SETTLEABLE || [];
+    if (!verdicts.length) {
+      return `<div class="dns">The settleable verdicts could not be read from
+        <code>/api/verification-queue</code>, so no button is offered rather than a
+        guessed one.</div>`;
+    }
+    // `human_sourced` is the only verdict Postgres requires a citation for, and
+    // the citation is what earns it the same score as a tool check: someone else
+    // can follow it to the same source.
+    const label = { human_sourced: "Sourced", human_endorsed: "Endorse", rejected: "Reject" };
+    const buttons = verdicts.map(v =>
+      `<button class="act ${v === "rejected" ? "act-no" : ""}" data-verdict="${esc(v)}"
+        title="${esc(v)}">${esc(label[v] || v)}</button>`).join("");
+    return `<div class="acts">
+      <input class="cite" placeholder="source (required to mark Sourced)"/>
+      ${buttons}
+    </div>`;
   }
 
   // The join between the two axes. An artifact is a packet (it crosses gates)
@@ -720,13 +775,77 @@ something specific about each checkpoint.")}</div></div>`;
       + feeds(d) + ownerBlock(d) + substrateBlock(d) + chain + caveats(d);
   }
 
+  // The action, posted where it is read.
+  //
+  // Status codes are meaningful and the platform separated them on purpose: a
+  // 400 is the reviewer's and fixable, so its body is shown verbatim; a 500 is
+  // the platform's and must not read as the person's mistake.
+  function wireSettle() {
+    document.querySelectorAll(".caveat[data-assertion]").forEach(box => {
+      const id = box.dataset.assertion;
+      const out = box.querySelector(".settle-out");
+      box.querySelectorAll(".act").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const verdict = btn.dataset.verdict;
+          const cite = (box.querySelector(".cite") || {}).value || "";
+          box.querySelectorAll(".act").forEach(b => (b.disabled = true));
+          out.innerHTML = `<div class="dns">recording…</div>`;
+          try {
+            const r = await fetch(
+              `/api/verification-queue/${encodeURIComponent(id)}/settle`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  verdict,
+                  source_citation: cite.trim() || null,
+                }),
+              });
+            const text = await r.text();
+            if (r.ok) {
+              out.innerHTML = `<div class="dns" style="color:var(--green)">Recorded as
+                <b>${esc(verdict)}</b>. The earlier pending row remains — the log is
+                append-only, so this reads as queued <i>and then</i> settled.</div>`;
+              const acts = box.querySelector(".acts");
+              if (acts) acts.remove();
+            } else if (r.status === 400) {
+              // Their fault and fixable. The body is a specific sentence and is
+              // safe to show as written.
+              out.innerHTML = `<div class="dns" style="color:var(--yellow)">${esc(text)}</div>`;
+              box.querySelectorAll(".act").forEach(b => (b.disabled = false));
+            } else if (r.status === 404) {
+              out.innerHTML = `<div class="dns">No queued claim for this assertion. A verdict
+                can only settle something that was asked.</div>`;
+            } else {
+              out.innerHTML = `<div class="dns" style="color:var(--red,#fb4934)">This one is
+                ours, not yours — the platform refused a verdict it declares as valid
+                (${r.status}). Nothing you can fix from here.</div>`;
+            }
+          } catch (e) {
+            out.innerHTML = `<div class="dns" style="color:var(--red,#fb4934)">Could not
+              reach the platform: ${esc(e.message)}. Nothing was recorded.</div>`;
+            box.querySelectorAll(".act").forEach(b => (b.disabled = false));
+          }
+        });
+      });
+    });
+  }
+
   async function boot() {
     if (window.Nav) Nav.init({ current: "bestiary" });
     try {
       // The `/api/gates` retention heuristic that used to live here is gone:
       // the trace now serves `decided_absent.token` and there is no reason to
       // derive on the client what the platform declares.
-      const res = await fetch(`/api/episodes/${encodeURIComponent(EID)}/trace`);
+      // The verdicts a reviewer may write, read from the platform rather than
+      // held here. If it fails, no button is offered instead of a guessed one.
+      const [res, q] = await Promise.all([
+        fetch(`/api/episodes/${encodeURIComponent(EID)}/trace`),
+        fetch("/api/verification-queue")
+          .then(r => (r.ok ? r.json() : null))
+          .catch(() => null),
+      ]);
+      SETTLEABLE = q && q.settleable_verdicts ? q.settleable_verdicts : null;
       if (res.status === 401) {
         document.getElementById("content").innerHTML =
           `<div class="empty">Sign in to read a trace.
@@ -740,6 +859,7 @@ something specific about each checkpoint.")}</div></div>`;
       }
       if (!res.ok) throw new Error("HTTP " + res.status);
       render(await res.json());
+      wireSettle();
     } catch (e) {
       document.getElementById("content").innerHTML =
         `<div class="empty">Could not read the trace: ${esc(e.message)}.
