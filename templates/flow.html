@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en" class="theme-hasui">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Flow — Agent Bestiary</title>
+  <link rel="stylesheet" href="/static/css/variables.css"/>
+  <link rel="stylesheet" href="/static/css/common.css"/>
+  <link rel="stylesheet" href="/static/css/components.css"/>
+  <style>
+  body{font-family:"Berkeley Mono","JetBrains Mono",monospace;line-height:1.5;
+       background:var(--bg0-hard);font-size:13px;margin:0;}
+  a{color:var(--fg3);text-decoration:none;} a:hover{color:var(--yellow);}
+  .wrap{max-width:1120px;margin:0 auto;padding:0 20px 60px;}
+
+  .head{padding:18px 0 12px;border-bottom:1px solid var(--bg2);margin-bottom:16px;}
+  .head h1{font-size:1rem;color:var(--yellow);margin:0 0 3px;}
+  .head .sub{font-size:0.72rem;color:var(--fg4);}
+
+  /* ── The lead: what the diagram is claiming ─────────────────────────────
+     Every arrow is an artifact crossing a seam, and every seam should pass
+     through the gates. Saying so is the whole point of the screen. ── */
+  .lead{border-left:3px solid var(--yellow);background:var(--bg1);padding:11px 14px;
+        margin-bottom:16px;}
+  .lead .said{font-size:0.84rem;color:var(--fg2);line-height:1.5;}
+  .lead .said b{color:var(--yellow);font-weight:normal;}
+  .lead .gloss{font-size:0.71rem;color:var(--fg4);margin-top:5px;line-height:1.5;max-width:88ch;}
+
+  .tally{display:flex;gap:1px;background:var(--bg2);margin-bottom:6px;flex-wrap:wrap;}
+  .tb{background:var(--bg0);padding:8px 13px;min-width:104px;}
+  .tb-v{font-size:1.02rem;color:var(--fg2);} .tb-l{font-size:0.6rem;color:var(--fg4);
+        text-transform:uppercase;letter-spacing:0.06em;margin-top:1px;}
+  .tb.hot .tb-v{color:var(--red,#fb4934);}
+  .tb.warm .tb-v{color:var(--yellow);}
+  .tb.calm .tb-v{color:var(--fg4);}
+  .note{font-size:0.71rem;color:var(--fg4);font-style:italic;line-height:1.5;margin:6px 0 18px;}
+
+  /* ── The lanes. A column per participant, an arrow per seam. Humans and
+        agents are drawn differently because a human in the loop is a
+        different kind of node, not a differently-named one. ── */
+  .lanes{position:relative;overflow-x:auto;padding-bottom:6px;}
+  .lane-heads{display:flex;gap:0;position:sticky;top:0;background:var(--bg0-hard);
+              z-index:4;padding-bottom:6px;border-bottom:1px solid var(--bg2);}
+  .lane-head{flex:1;min-width:118px;text-align:center;font-size:0.68rem;padding:0 4px;}
+  .lane-head .nm{color:var(--fg2);display:block;overflow:hidden;text-overflow:ellipsis;
+                 white-space:nowrap;}
+  .lane-head.human .nm{color:var(--aqua);}
+  .lane-head .kd{font-size:0.56rem;color:var(--fg4);text-transform:uppercase;
+                 letter-spacing:0.06em;}
+
+  .seam{position:relative;padding:9px 0;border-bottom:1px solid var(--bg2);}
+  .seam:hover{background:var(--bg1);}
+  .seam-row{display:flex;gap:0;align-items:center;position:relative;height:20px;}
+  .cell{flex:1;min-width:118px;position:relative;}
+  /* the vertical lifeline, drawn on every lane at every seam */
+  .cell::before{content:"";position:absolute;left:50%;top:-9px;bottom:-9px;width:1px;
+                background:var(--bg2);}
+  .dot{position:absolute;left:50%;top:50%;width:7px;height:7px;margin:-4px 0 0 -4px;
+       border-radius:50%;background:var(--fg4);z-index:2;}
+  .arrow{position:absolute;top:50%;height:1px;background:var(--fg4);z-index:1;}
+  .arrow::after{content:"";position:absolute;top:-3px;width:0;height:0;
+                border-top:3.5px solid transparent;border-bottom:3.5px solid transparent;}
+  .arrow.fwd::after{right:-1px;border-left:5px solid var(--fg4);}
+  .arrow.back{border-top:1px dashed var(--fg4);background:transparent;}
+  .arrow.back::after{left:-1px;border-right:5px solid var(--fg4);}
+
+  /* Verification state of the hop. Ungoverned is the honest majority and it is
+     drawn as indeterminate — never as healthy, and never as the agents' fault. */
+  .seam.ungoverned .arrow{background:var(--purple,#d3869b);}
+  .seam.ungoverned .arrow.fwd::after{border-left-color:var(--purple,#d3869b);}
+  .seam.ungoverned .dot{background:var(--purple,#d3869b);}
+  .seam.unreturned .arrow{background:var(--red,#fb4934);}
+  .seam.unreturned .arrow.fwd::after{border-left-color:var(--red,#fb4934);}
+
+  .seam-meta{display:flex;gap:10px;align-items:baseline;margin-top:5px;
+             font-size:0.68rem;color:var(--fg4);padding-left:2px;}
+  .seq{color:var(--fg4);font-size:0.62rem;min-width:22px;}
+  .task{color:var(--fg2);font-size:0.73rem;}
+  .task.none{color:var(--fg4);font-style:italic;}
+  .hop{color:var(--fg4);}
+  .hop b{color:var(--fg3);font-weight:normal;}
+  .bytes{color:var(--fg4);font-size:0.62rem;}
+  .gov{margin-left:auto;font-size:0.58rem;text-transform:uppercase;letter-spacing:0.06em;
+       padding:1px 6px;border:1px solid;}
+  .gov.un{color:var(--purple,#d3869b);border-color:var(--purple,#d3869b);border-style:dashed;}
+  .gov.ok{color:var(--green);border-color:var(--green);}
+  .gov.no{color:var(--red,#fb4934);border-color:var(--red,#fb4934);}
+  .why{font-size:0.67rem;color:var(--fg4);line-height:1.45;margin-top:4px;
+       padding-left:9px;border-left:1px solid var(--bg3);max-width:96ch;}
+
+  .gap{border-left:3px solid var(--purple,#d3869b);background:rgba(211,134,155,0.07);
+       padding:11px 14px;margin:18px 0;font-size:0.75rem;color:var(--fg3);line-height:1.55;}
+  .gap b{color:var(--purple,#d3869b);}
+  .empty{padding:18px 8px;font-size:0.76rem;color:var(--fg4);line-height:1.55;}
+  </style>
+</head>
+<body>
+  <div id="nav-root"></div>
+  <div class="wrap"><div id="content"><div class="empty">Loading…</div></div></div>
+
+  <script src="/static/js/widgets/nav.js"></script>
+  <script src="/static/js/theme.js"></script>
+  <script>
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
+    ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const WID = decodeURIComponent(location.pathname.split("/").filter(Boolean).pop() || "");
+
+  const shortTime = t => {
+    if (!t) return "";
+    const d = new Date(t);
+    return isNaN(d) ? "" : d.toISOString().slice(5, 16).replace("T", " ");
+  };
+
+  function render(d) {
+    const seams = d.seams || [];
+    // Lane order is first-appearance order, so the diagram reads in the order
+    // the work actually happened rather than alphabetically.
+    const lanes = [];
+    const kind = {};
+    seams.forEach(s => {
+      [[s.from, s.from_kind], [s.to, s.to_kind]].forEach(([n, k]) => {
+        if (n && !lanes.includes(n)) { lanes.push(n); kind[n] = k; }
+        if (n && k === "human") kind[n] = "human";
+      });
+    });
+
+    const heads = lanes.map(n =>
+      `<div class="lane-head ${kind[n] === "human" ? "human" : ""}">
+         <span class="nm" title="${esc(n)}">${esc(n)}</span>
+         <span class="kd">${esc(kind[n] || "agent")}</span>
+       </div>`).join("");
+
+    const t = d.tally || {};
+    const tally = [
+      ["", t.seams ?? 0, "seams"],
+      [t.unreturned ? "hot" : "", t.unreturned ?? 0, "no reply"],
+      ["warm", t.governed ?? 0, "verified"],
+      ["calm", t.chat_messages ?? 0, "chat messages"],
+    ].map(([cls, v, l]) =>
+      `<div class="tb ${cls}"><div class="tb-v">${v}</div><div class="tb-l">${esc(l)}</div></div>`
+    ).join("");
+
+    // One row per seam: the request, then the reply on the same row as a
+    // dashed return. Drawing the reply keeps an unanswered call visible as a
+    // gap rather than as an absence.
+    const rows = seams.map(s => {
+      const a = lanes.indexOf(s.from), b = lanes.indexOf(s.to);
+      if (a < 0 || b < 0) return "";
+      const lo = Math.min(a, b), hi = Math.max(a, b);
+      const w = 100 / lanes.length;
+      const left = (lo + 0.5) * w, right = (hi + 0.5) * w;
+
+      const cells = lanes.map((_, i) =>
+        `<div class="cell">${i === a || i === b ? `<div class="dot"></div>` : ""}</div>`
+      ).join("");
+
+      const fwd = `<div class="arrow ${a < b ? "fwd" : "back"}"
+        style="left:${left}%;width:${right - left}%"></div>`;
+
+      const cls = !s.returned ? "unreturned" : (s.governed ? "" : "ungoverned");
+      const gov = !s.returned
+        ? `<span class="gov no">no reply</span>`
+        : s.governed
+          ? `<span class="gov ok">verified</span>`
+          : `<span class="gov un">ungoverned</span>`;
+
+      return `<div class="seam ${cls}">
+        <div class="seam-row">${cells}${fwd}</div>
+        <div class="seam-meta">
+          <span class="seq">${s.seq}</span>
+          <span class="task ${s.task ? "" : "none"}">${esc(s.task || "task not named in the payload")}</span>
+          <span class="hop"><b>${esc(s.from)}</b> → <b>${esc(s.to)}</b></span>
+          <span class="bytes">${s.payload_bytes ?? 0} B out${
+            s.result_bytes != null ? ` · ${s.result_bytes} B back` : ""}</span>
+          <span class="bytes">${esc(shortTime(s.at))}</span>
+          ${gov}
+        </div>
+        ${s.governed
+          ? `<div class="why"><a href="/trace/${encodeURIComponent(s.episode_id)}">
+               See what the gates decided about this artifact →</a></div>`
+          : `<div class="why">${esc(s.why_ungoverned || "")}</div>`}
+      </div>`;
+    }).join("");
+
+    const gap = (t.governed ?? 0) === 0 && seams.length
+      ? `<div class="gap"><b>None of these ${seams.length} hops can be joined to a verdict.</b>
+         That is not a statement about the agents \u2014 the artifacts crossing these arrows
+         <i>were</i> graded, refused or queued by the gates. It is that the interaction is
+         written twice, once as a message pair here and once as an episode over there, and
+         nothing connects the two. One nullable column on
+         <code>workspace_messages</code> makes every arrow above clickable through to its
+         belt. Until then this diagram shows what happened and the trace shows whether it
+         was checked, and neither can speak about the same hop.</div>`
+      : "";
+
+    const body = seams.length
+      ? `<div class="lanes">
+           <div class="lane-heads">${heads}</div>
+           ${rows}
+         </div>${gap}`
+      : `<div class="empty">No typed hops in this workspace.
+         ${t.chat_messages > 0
+           ? `There are <b>${t.chat_messages}</b> chat messages, so the work is being
+              coordinated in prose rather than through <code>agent_invocation</code> hops.
+              That is a real finding: prose is not a seam, so nothing here can be checked.`
+           : `Nothing has been recorded at all.`}</div>`;
+
+    document.getElementById("content").innerHTML = `
+      <div class="head">
+        <h1>Flow</h1>
+        <div class="sub">One workspace, drawn as the seams its artifacts cross</div>
+      </div>
+      <div class="lead">
+        <div class="said">Every arrow is <b>an artifact crossing a seam</b>.
+          Every seam should <b>pass through the gates</b>.</div>
+        <div class="gloss">A loop is a path an artifact takes and a gate is a checkpoint on
+          that path \u2014 so this is the artifact trace at composition scale. An arrow between
+          two agents is one artifact taking one hop, and clicking it should show you what
+          each checkpoint decided.</div>
+      </div>
+      <div class="tally">${tally}</div>
+      <div class="note">${esc(d.contract || "")}</div>
+      ${body}`;
+  }
+
+  async function boot() {
+    if (window.Nav) Nav.init({ current: "loops" });
+    try {
+      const res = await fetch(`/api/workspaces/${encodeURIComponent(WID)}/flow`);
+      if (res.status === 401) {
+        document.getElementById("content").innerHTML =
+          `<div class="empty">Sign in to see a workspace's flow.
+           <a href="/auth/google">Google</a> · <a href="/auth/github">GitHub</a></div>`;
+        return;
+      }
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      render(await res.json());
+    } catch (e) {
+      // "No seams" and "could not ask" are different sentences.
+      document.getElementById("content").innerHTML =
+        `<div class="empty">Could not read this workspace's flow: ${esc(e.message)}.
+         Nothing is drawn rather than an empty diagram \u2014 a workspace with no hops and one
+         we cannot read are different claims.</div>`;
+    }
+  }
+  boot();
+  </script>
+</body>
+</html>

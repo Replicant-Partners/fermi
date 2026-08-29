@@ -143,6 +143,158 @@ pub async fn recent_episodes_handler(
     })))
 }
 
+/// `GET /api/workspaces/:workspace_id/flow`
+///
+/// A workspace as its **seams**: who called whom, with what task, and whether
+/// anything verified the artifact that crossed.
+///
+/// Exists because the same interaction is recorded twice and joined never. The
+/// workflow diagram is generated from `workspace_messages`; the gates, grades
+/// and ledger act on `episodes`; and `workspace_messages` carries no
+/// `episode_id`. So the platform can say what happened, or whether it was
+/// verified, but not both about one hop.
+///
+/// Every arrow in a workflow diagram is an artifact crossing a seam, and every
+/// seam should pass through the gates. This endpoint serves the arrows and
+/// reports, per arrow, that nothing joins it to a verdict — which is the honest
+/// state and the reason the column is worth one migration.
+pub async fn workspace_flow_handler(
+    State(state): State<AppState>,
+    Path(workspace_id): Path<uuid::Uuid>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db = &state.db;
+
+    // The typed hops only. `chat` is the human conversation around the work and
+    // is deliberately excluded -- it is not a seam an artifact crosses.
+    let rows = sqlx::query(
+        "SELECT message_id, sender_type, sender_name, message_type, content, created_at
+           FROM workspace_messages
+          WHERE workspace_id = $1
+            AND message_type IN ('agent_invocation', 'execution_result')
+          ORDER BY created_at ASC",
+    )
+    .bind(workspace_id)
+    .fetch_all(db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("flow: {e}")))?;
+
+    // Pair each invocation with the next result after it. Order is the only
+    // available pairing key, because nothing correlates the two rows -- which is
+    // itself part of what this endpoint is reporting.
+    let mut seams: Vec<Value> = Vec::new();
+    let mut pending: Option<(String, String, String, String, String)> = None;
+
+    for r in &rows {
+        let mtype: String = r.try_get("message_type").unwrap_or_default();
+        let content: String = r.try_get("content").unwrap_or_default();
+        let mid = r
+            .try_get::<uuid::Uuid, _>("message_id")
+            .map(|v| v.to_string())
+            .unwrap_or_default();
+        let at = r
+            .try_get::<chrono::DateTime<chrono::Utc>, _>("created_at")
+            .map(|t| t.to_rfc3339())
+            .unwrap_or_default();
+        let sender = r
+            .try_get::<Option<String>, _>("sender_name")
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "unknown".into());
+        let skind: String = r.try_get("sender_type").unwrap_or_default();
+
+        if mtype == "agent_invocation" {
+            // `@target {"task": "..."}` -- the callee and the task are in the text.
+            let target = content
+                .strip_prefix('@')
+                .and_then(|s| s.split_whitespace().next())
+                .unwrap_or("unknown")
+                .to_string();
+            let task = content
+                .find("\"task\"")
+                .and_then(|i| content[i..].split('"').nth(3))
+                .unwrap_or("")
+                .to_string();
+            pending = Some((mid, sender, skind, target, task));
+            if let Some((ref m, ref s, ref sk, ref t, ref task)) = pending {
+                seams.push(json!({
+                    "seq": seams.len() + 1,
+                    "from": s, "from_kind": sk,
+                    "to": t, "to_kind": "agent",
+                    "task": if task.is_empty() { Value::Null } else { json!(task) },
+                    "at": at,
+                    "invocation_message_id": m,
+                    "payload_bytes": content.len(),
+                    "returned": false,
+                    "result_message_id": Value::Null,
+                    "result_bytes": Value::Null,
+                    // The join that does not exist. Named rather than omitted:
+                    // "this hop was not verified" and "this hop's join was never
+                    // written" are different facts and must not collapse.
+                    "episode_id": Value::Null,
+                    "governed": false,
+                    "why_ungoverned": "`workspace_messages` carries no `episode_id`, so this \
+                                       hop cannot be joined to the episode the gates acted on. \
+                                       The artifact was checked; this arrow cannot prove it.",
+                }));
+            }
+        } else if mtype == "execution_result" {
+            if let Some(last) = seams.last_mut() {
+                if last["returned"] == json!(false) {
+                    last["returned"] = json!(true);
+                    last["result_message_id"] = json!(mid);
+                    last["result_bytes"] = json!(content.len());
+                }
+            }
+            pending = None;
+        }
+    }
+
+    let returned = seams
+        .iter()
+        .filter(|s| s["returned"] == json!(true))
+        .count();
+    let participants: std::collections::BTreeSet<String> = seams
+        .iter()
+        .flat_map(|s| {
+            [
+                s["from"].as_str().unwrap_or("").to_string(),
+                s["to"].as_str().unwrap_or("").to_string(),
+            ]
+        })
+        .filter(|p| !p.is_empty())
+        .collect();
+
+    // Chat volume, for scale only. A workspace whose seams are a rounding error
+    // beside its conversation is coordinating by prose, and that is worth seeing.
+    let chat: i64 = sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM workspace_messages
+          WHERE workspace_id = $1 AND message_type = 'chat'",
+    )
+    .bind(workspace_id)
+    .fetch_one(db)
+    .await
+    .unwrap_or(-1);
+
+    Ok(Json(json!({
+        "workspace_id": workspace_id,
+        "participants": participants,
+        "seams": seams,
+        "tally": {
+            "seams": seams.len(),
+            "returned": returned,
+            "unreturned": seams.len().saturating_sub(returned),
+            "governed": 0,
+            "chat_messages": chat,
+        },
+        "contract": "Every arrow is an artifact crossing a seam, and every seam should pass \
+                     through the gates. `governed` is 0 for every hop on every workspace \
+                     because `workspace_messages` has no `episode_id` - not because the \
+                     artifacts were unchecked. Do not render `governed: 0` as a failure of \
+                     the agents; it is a missing join. `chat_messages` is context: a \
+                     workspace with many chats and few seams is coordinating by prose.",
+    })))
+}
+
 /// `GET /api/specimen/:agent_name`
 pub async fn specimen_handler(
     State(state): State<AppState>,

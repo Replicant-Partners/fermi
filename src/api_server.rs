@@ -3059,6 +3059,12 @@ async fn main() {
             "/api/episodes/recent",
             get(handlers::specimen::recent_episodes_handler),
         )
+        // A workspace as its seams. Every arrow is an artifact crossing a
+        // checkpoint, and this is the read that lets a screen say so.
+        .route(
+            "/api/workspaces/:workspace_id/flow",
+            get(handlers::specimen::workspace_flow_handler),
+        )
         .route(
             "/api/me/apps-health",
             get(handlers::apps::apps_health_handler),
@@ -3280,6 +3286,7 @@ async fn main() {
         .route("/gates", get(handlers::pages::loops_view))
         .route("/specimen/:agent_name", get(handlers::pages::specimen_view))
         .route("/trace/:episode_id", get(handlers::pages::trace_view))
+        .route("/flow/:workspace_id", get(handlers::pages::flow_view))
         .route("/declarations", get(handlers::pages::declarations_view))
         .route("/gate/:gate_id", get(handlers::pages::gate_view))
         .route(

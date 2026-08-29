@@ -637,6 +637,18 @@ pub async fn trace_view() -> Response {
     app_shell("templates/trace.html")
 }
 
+/// A workspace as its seams: every arrow an artifact crossing a checkpoint.
+///
+/// The composition-level zoom on the artifact trace. The workflow sequence
+/// diagram and the verification ladder are the same drawing at two scales — an
+/// arrow between two agents *is* an artifact taking a path, and a gate is a
+/// checkpoint on it. They have been two unrelated screens because the same
+/// interaction is written twice, as a message pair and as an episode, and
+/// nothing joins them.
+pub async fn flow_view() -> Response {
+    app_shell("templates/flow.html")
+}
+
 /// Why the belts are quiet, and whose job each one is.
 ///
 /// The destination of the artifact trace's default state. `unknown` on every
