@@ -655,6 +655,43 @@ pub async fn post_workspace_message_handler(
                         );
 
 
+                        // Queue every weak claim for a person or a tool.
+                        //
+                        // The third door again: `verification_queue::enqueue`
+                        // was called from `execution` and `execution_stream`
+                        // and not from here, so nothing a workspace produced
+                        // ever reached the queue. Measured on a weather pulse:
+                        // 12 graded claims, 0 queued - so the curation loop had
+                        // nothing to attach a verdict to, and "a human could
+                        // settle this" was an offer with no object.
+                        //
+                        // After the store, because `assertion_verifications.
+                        // episode_id` is a real foreign key.
+                        if stored.is_some() {
+                            if let Some(ref doc) = claimed_doc {
+                                let graded = fermi::grounding_trust::graded_fields(
+                                    &agent_name2,
+                                    doc,
+                                    &grounding_report,
+                                );
+                                if !graded.is_empty() {
+                                    let e = fermi::verification_queue::enqueue(
+                                        &state2.db,
+                                        episode_id,
+                                        &agent_name2,
+                                        &graded,
+                                    )
+                                    .await;
+                                    tracing::debug!(
+                                        agent = %agent_name2,
+                                        to_tool = e.to_tool,
+                                        to_human = e.to_human,
+                                        "queued claims for verification from the workspace path",
+                                    );
+                                }
+                            }
+                        }
+
                         // Guarded on the episode having landed.
                         //
                         // `agent_timeline_entries.episode_id` is a foreign key

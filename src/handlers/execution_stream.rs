@@ -162,6 +162,21 @@ pub async fn execute_agent_stream_handler(
     // can delegate to nothing; the id is then simply this episode's own id.
     let minted_episode_id = uuid::Uuid::new_v4();
 
+    // Reserved, not merely minted — the row must exist before the id reaches a
+    // child, or a run that fails part-way orphans everything it spawned. Same
+    // reasoning as the non-streaming path.
+    if let Err(e) = state
+        .memory_store
+        .reserve_episode(minted_episode_id, agent_db_id, &body.query)
+        .await
+    {
+        tracing::warn!(
+            agent = %agent_db_id, error = %e,
+            "could not reserve the episode; delegated children will point at a \
+             row that does not exist",
+        );
+    }
+
     let executor: Arc<dyn AgentExecutor> = if prompt_demands_format {
         state.registry.executor_arc()
     } else {
@@ -328,6 +343,30 @@ pub async fn execute_agent_stream_handler(
                         );
                     }
                     crate::stamp_grounding(&mut episode, &report);
+                    // And a ledger row, so the belt on a streamed artifact
+                    // carries what the gate decided rather than only a
+                    // recomputation. Absent here while both other execute paths
+                    // wrote one, which is the asymmetry that keeps recurring.
+                    {
+                        let has_contract =
+                            fermi::grounding_trust::contracts_for(&agent_id_clone)
+                                .next()
+                                .is_some();
+                        fermi::gate_trust::decided_for_episode(
+                            fermi::gate_trust::Gate::Grounding,
+                            if !has_contract {
+                                fermi::gate_trust::Decision::Undetermined
+                            } else if report.is_clean() {
+                                fermi::gate_trust::Decision::Approved
+                            } else {
+                                fermi::gate_trust::Decision::Refused
+                            },
+                            (!report.is_clean())
+                                .then(|| format!("{} violation(s)", report.violations.len()))
+                                .as_deref(),
+                            minted_episode_id,
+                        );
+                    }
 
                     // Tell Loop 2. This path stamped and did not raise, so a
                     // violation on the streaming endpoint was recorded on the
