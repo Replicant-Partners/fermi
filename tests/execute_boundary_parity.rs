@@ -315,6 +315,66 @@ fn every_boundary_caller_can_reach_the_verification_queue() {
     assert!(silent.is_empty(), "{}", silent.join("\n  "));
 }
 
+/// The contract is looked up by name, so the boundary must be handed a name.
+///
+/// `resolve_agent` accepts either an agent name or a UUID in the `:agent_id`
+/// path segment — deliberately, since v0.10.15, so that audit tools addressing
+/// an agent by its real id stop 404ing. Field contracts are declared against
+/// the name. So handing the path segment to the boundary means every
+/// UUID-addressed call is answered "no contract found", for every contracted
+/// agent, and the failure is invisible: `grade` returns an empty report, which
+/// is exactly what a genuinely uncontracted agent returns.
+///
+/// It was live on both general execute routes and was found twice, by having to
+/// name the argument rather than by anything going red. `Absent must look
+/// different from bad` is the rule it breaks — here the two are the same value.
+#[test]
+fn the_boundary_is_never_handed_a_path_parameter_as_an_agent_name() {
+    let mut wrong: Vec<String> = Vec::new();
+
+    for (path, body) in sources() {
+        let rel = path.to_string_lossy().replace('\\', "/");
+        // Only handlers that take the ambiguous segment are in the population.
+        if !body.contains("Path(agent_id)") {
+            continue;
+        }
+        for line in code_lines(&body) {
+            let grades = line.contains(".grade(") || line.contains("agent_slug:");
+            // `&agent_id` and nothing longer: `&agent_id_clone` is the same
+            // value under another name and must trip too, while
+            // `db_agent.agent_id` is a UUID field and would be a type error
+            // rather than this bug.
+            if grades && line.contains("&agent_id") && !line.contains("db_agent") {
+                wrong.push(format!("{rel}: {}", line.trim()));
+            }
+        }
+        // The multi-line call form, where the argument is on its own line.
+        let lines: Vec<&str> = code_lines(&body).collect();
+        for (i, line) in lines.iter().enumerate() {
+            if !line.contains(".grade(") {
+                continue;
+            }
+            for arg in lines.iter().skip(i + 1).take(3) {
+                let a = arg.trim().trim_end_matches(',');
+                if a == "&agent_id" || a == "&agent_id_clone" {
+                    wrong.push(format!("{rel}: grade(.., {a}, ..)"));
+                }
+            }
+        }
+    }
+
+    assert!(
+        wrong.is_empty(),
+        "the boundary is being handed the `:agent_id` path segment as an agent \
+         name:\n\n  {}\n\nThat segment may be a UUID. Pass \
+         `db_agent.agent_name`, which is the name the contract was declared \
+         against. Nothing goes red when this is wrong — the agent is simply \
+         reported as having no contract, which is indistinguishable from an \
+         agent that has none.",
+        wrong.join("\n  ")
+    );
+}
+
 /// The exemption list is only useful if it explains itself.
 #[test]
 fn every_exemption_carries_a_reason() {

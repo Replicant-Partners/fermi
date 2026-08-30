@@ -427,8 +427,16 @@ pub async fn execute_agent_handler(
     // the convention this comment complains about was reproduced by the fix
     // for it. `grade` is a no-op for any agent without a contract, which is
     // most of the catalogue, and cannot fail a run.
+    //
+    // Graded against `db_agent.agent_name`, not the `:agent_id` path segment.
+    // `resolve_agent` accepts either a name or a UUID (v0.10.15, so that audit
+    // tools addressing an agent by its real id stop 404ing), and contracts are
+    // declared against the name — so every UUID-addressed call was answered
+    // "no contract found" for every contracted agent on the platform. The same
+    // defect was live on the streaming sibling and was found the same way, by
+    // having to name what this argument is.
     let graded = pulse.grade(
-        &agent_id,
+        &db_agent.agent_name,
         card.capabilities.output_contract.as_ref(),
         output.raw_response.as_deref(),
     );
@@ -656,7 +664,7 @@ pub async fn execute_agent_handler(
         fermi::episode_boundary::Write {
             store: &state.memory_store,
             db: Some(&state.db),
-            agent_slug: &agent_id,
+            agent_slug: &db_agent.agent_name,
             episode,
             route: fermi::route_trust::RouteSelection::CallerNamed,
             provenance: provenance.as_ref(),
