@@ -722,6 +722,17 @@ pub async fn review_gate_decision_handler(
 /// joined to an artifact. Every rung is still listed, with
 /// `outcome: not_recorded` and the reason — a belt that drops the checkpoints it
 /// cannot report on looks shorter and safer than it is.
+/// How much of the agent's answer the trace carries.
+///
+/// Generous, because the screen exists to let someone decide whether to trust
+/// the document and a reader who has to leave to finish reading it will not
+/// come back. Bounded anyway, because `response_text` is unbounded in the
+/// database and this is the heaviest read on the platform.
+///
+/// Counted in characters and not bytes: the answers contain £, — and accented
+/// club names, and slicing a `String` by byte offset panics mid-codepoint.
+const RESPONSE_CHARS: usize = 20_000;
+
 pub async fn episode_trace_handler(
     State(state): State<AppState>,
     _principal: AuthPrincipal,
@@ -975,6 +986,39 @@ pub async fn episode_trace_handler(
         "at": row.try_get::<chrono::DateTime<chrono::Utc>, _>("timestamp_ref")
             .ok().map(|t| t.to_rfc3339()),
         "input": { "query": row.try_get::<String, _>("query").ok() },
+        // The answer, which this endpoint held and never served.
+        //
+        // `response_text` has been read here since the handler was written, to
+        // compute the hashes and to re-run the contract, and then dropped. So
+        // the one screen whose whole purpose is deciding whether to trust a
+        // document could not show the document: its payload block rendered the
+        // QUERY under the heading "The payload", and a comment beside the claim
+        // values promised the full value was "one click away in the payload",
+        // which was true of nothing on the page.
+        //
+        // Both forms, because the difference between them is what grounding did.
+        // `text` is the bytes as the agent produced them, because retention is a
+        // precondition for every later form of verification and a digest is not
+        // a record. `document` is the JSON pulled out of those bytes, which is
+        // what a reader can scan field by field. `document` is null for most
+        // episodes: one agent on the platform answers in JSON most of the time,
+        // and that absence is a finding rather than a gap here.
+        //
+        // Bounded, and it says so when it bounds. Unbounded would push a
+        // megabyte of prose through the encoder on every read of the heaviest
+        // screen on the platform; truncating silently would be worse than
+        // either, because a reader deciding on a claim would be shown a
+        // shortened document with nothing marking it short.
+        "response": {
+            "text": response_text.as_deref().map(|t| {
+                t.chars().take(RESPONSE_CHARS).collect::<String>()
+            }),
+            "truncated": response_text
+                .as_deref()
+                .is_some_and(|t| t.chars().count() > RESPONSE_CHARS),
+            "chars": response_text.as_deref().map(|t| t.chars().count()),
+            "document": claimed_doc,
+        },
         // Computed from the retained text, not stored. `query` and
         // `response_text` are both kept — the latter since migration 199,
         // deliberately — so a digest of them is a pure function of what the

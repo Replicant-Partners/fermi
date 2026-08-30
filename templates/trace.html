@@ -30,6 +30,20 @@
   .payload-t{font-size:0.6rem;text-transform:uppercase;letter-spacing:0.07em;color:var(--fg4);}
   .payload-ty{font-size:0.72rem;color:var(--aqua);margin-top:2px;}
   .payload-q{font-size:0.78rem;color:var(--fg2);margin-top:6px;line-height:1.5;}
+  /* Question and answer, labelled. The block used to show only the question. */
+  .pl-h{font-size:0.6rem;text-transform:uppercase;letter-spacing:0.07em;color:var(--fg4);
+        margin-top:10px;}
+  .pl-body{font-size:0.76rem;color:var(--fg2);margin-top:4px;line-height:1.55;
+           white-space:pre-wrap;overflow-wrap:anywhere;}
+  /* Clamped, with the clamp released by the disclosure below it. Never a hard
+     cut: a shortened document that does not say it is short is worse than a
+     long one. */
+  .pl-body.clamp{display:-webkit-box;-webkit-line-clamp:6;-webkit-box-orient:vertical;
+                 overflow:hidden;}
+  .pl-more{font-size:0.66rem;color:var(--fg4);cursor:pointer;margin-top:3px;
+           background:none;border:none;padding:0;font-family:inherit;}
+  .pl-more:hover{color:var(--aqua);}
+  .pl-cut{font-size:0.64rem;color:var(--yellow);margin-top:3px;}
 
   /* ── The verdict. Answer first: passed, held, refused — then the reasoning.
      A gate is what stops a bad artifact from becoming training data, so the
@@ -242,6 +256,25 @@
   .offer{grid-column:2 / -1;display:flex;gap:6px;align-items:center;flex-wrap:wrap;
          margin:3px 0 2px;}
   .offer .why{font-size:0.66rem;color:var(--fg4);}
+  /* A structured value, read as data rather than as a string of JSON. */
+  .claim > .doc{grid-column:2 / -1;}
+  .doc{flex-basis:100%;margin:1px 0 3px;}
+  .doc > summary{font-size:0.66rem;color:var(--fg4);cursor:pointer;list-style:none;
+                 display:inline-block;}
+  .doc > summary::-webkit-details-marker{display:none;}
+  .doc > summary::before{content:"▸ ";}
+  .doc[open] > summary::before{content:"▾ ";}
+  .doc > summary:hover{color:var(--aqua);}
+  .kv{display:grid;grid-template-columns:minmax(90px,190px) 1fr;gap:1px 10px;
+      margin:4px 0 2px;padding-left:9px;border-left:1px solid var(--bg3);}
+  .kv-k{font-size:0.68rem;color:var(--fg4);overflow-wrap:anywhere;}
+  .kv-v{font-size:0.7rem;color:var(--fg2);overflow-wrap:anywhere;white-space:pre-wrap;}
+  .kv-v.null{color:var(--fg4);font-style:italic;}
+  .kv-v.nest{color:var(--fg3);}
+  /* A nested block spans both columns and indents, so the leaves line up under
+     the key they belong to rather than restarting the page's left edge. */
+  .kv-sub{grid-column:1 / -1;}
+  .kv-sub > .kv{margin:1px 0 5px;}
   .empty{padding:16px 8px;font-size:0.76rem;color:var(--fg4);}
   .absent{color:var(--fg4);font-style:italic;}
   </style>
@@ -291,19 +324,86 @@
   // the contents of the single most important section on the page - the one that
   // exists precisely because values are never stripped. A structured claim is
   // shown as its JSON, because that IS what was claimed.
-  function showValue(v) {
+  // What the value IS, in a cell. The value itself is one row down, in `kv`.
+  //
+  // This used to put 300 characters of JSON in a `nowrap` cell, so the most
+  // informative claim on the reference trace read
+  // `{"arsenal_total":null,"man_city_total":null,"note":"Market value data
+  // requires Tr…` — the note is the entire finding and it was the part cut off.
+  // A table cell holds a value or a token, never a sentence.
+  //
+  // The null count is the other half, and nothing else on the page says it:
+  // grounding checks provenance, not presence, so a block can grade
+  // `tool_verified` with most of its values missing and read as sourced.
+  function summarise(v) {
     if (v === null || v === undefined) return { cls: "null", text: "null" };
+    if (Array.isArray(v)) return { cls: "json", text: `${v.length} item(s)` };
     if (typeof v === "object") {
-      let j;
-      try { j = JSON.stringify(v); } catch { j = "(unserialisable)"; }
-      // Truncated for the row, never for the record: the full value is one
-      // click away in the payload, and a hover carries it here.
-      const short = j.length > 300 ? j.slice(0, 300) + "\u2026" : j;
-      return { cls: "json", text: `<span title="${esc(j.slice(0, 2000))}">${esc(short)}</span>` };
+      const ks = Object.keys(v);
+      const nulls = ks.filter(k => v[k] === null || v[k] === undefined).length;
+      if (!ks.length) return { cls: "null", text: "empty object" };
+      return {
+        cls: nulls ? "null" : "json",
+        text: `${ks.length} field(s)${nulls ? ` · <b>${nulls}</b> null` : ""}`,
+      };
     }
-    if (typeof v === "string" && v.trim() === "")
-      return { cls: "null", text: "empty string" };
+    if (typeof v === "string") {
+      if (v.trim() === "") return { cls: "null", text: "empty string" };
+      return { cls: "", text: esc(v.length > 90 ? v.slice(0, 90) + "\u2026" : v) };
+    }
     return { cls: "", text: esc(String(v)) };
+  }
+
+  // The value, field by field, down to the leaves.
+  //
+  // One level was not enough and the reference document proves it: every one of
+  // `football_analyst`'s eleven top-level keys is an object, so a depth-1 grid
+  // is eleven rows of JSON preview — the wall again, with gutters. The leaves
+  // are where the contracted fields live (`advanced_metrics.ppda`,
+  // `squad_value.arsenal_total`) and where the nulls are.
+  //
+  // Nulls are styled as absence rather than printed as a word among values. A
+  // column of dim italics is the fastest way to see that a block graded
+  // `tool_verified` is mostly holes — grounding checks provenance, not
+  // presence, so nothing else on the page says it.
+  //
+  // Two levels, then a preview. This is a decision aid, not an inspector; the
+  // bytes as the agent wrote them are one disclosure away and are the record.
+  const KV_DEPTH = 2;
+  function kv(v, depth) {
+    depth = depth || 0;
+    if (v === null || typeof v !== "object") return "";
+    const entries = Array.isArray(v)
+      ? v.map((x, i) => [String(i), x])
+      : Object.entries(v);
+    if (!entries.length) return "";
+    return `<div class="kv">${entries.map(([k, x]) => {
+      const key = `<span class="kv-k">${esc(k)}</span>`;
+      if (x !== null && typeof x === "object" && depth < KV_DEPTH) {
+        const inner = kv(x, depth + 1);
+        if (inner) {
+          return `${key}<span class="kv-v nest">${summarise(x).text}</span>
+                  <div class="kv-sub">${inner}</div>`;
+        }
+      }
+      let cls = "", text;
+      if (x === null || x === undefined) { cls = "null"; text = "null"; }
+      else if (typeof x === "object") {
+        cls = "nest";
+        let j; try { j = JSON.stringify(x); } catch { j = "(unserialisable)"; }
+        const head = Array.isArray(x) ? `[${x.length}] ` : "";
+        text = esc(head + (j.length > 240 ? j.slice(0, 240) + "\u2026" : j));
+      }
+      else if (x === "") { cls = "null"; text = "empty string"; }
+      else text = esc(String(x));
+      return `${key}<span class="kv-v ${cls}">${text}</span>`;
+    }).join("")}</div>`;
+  }
+
+  // Expandable only when there is something to expand into.
+  function docBlock(v, label) {
+    const body = kv(v);
+    return body ? `<details class="doc"><summary>${esc(label)}</summary>${body}</details>` : "";
   }
 
   const STRENGTH_WORD = {
@@ -550,16 +650,79 @@
     </div>`;
   }
 
+  // The question and the answer, both.
+  //
+  // This block was headed "The payload" and rendered only the QUERY, truncated
+  // to 300 characters. The document the whole page exists to help someone judge
+  // was not on the page at all — the handler read `response_text` to compute the
+  // hashes and re-run the contract, then dropped it — and a comment beside the
+  // claim values promised the full value was "one click away in the payload",
+  // which was true of nothing here.
+  //
+  // The answer is clamped rather than cut. A shortened document that does not
+  // say it is short is the worse failure: a reviewer settles a claim believing
+  // they read it. Where the server itself bounded the text, that is stated in
+  // its own colour, because it is a limit of the read and not of the record.
   function payload(d) {
-    const m = d.model || {};
     const ty = (d.output_contract_type || d.payload_type
                 || (d.hashes && d.hashes.output_grounded ? "structured document (JSON)" : null));
+    const r = d.response || {};
+    const q = d.input && d.input.query ? String(d.input.query) : "";
+
+    // A structured answer is read field by field; prose is read as prose. The
+    // agent decides which this is by what it produced, not the page.
+    // The extracted document is the readable form; the bytes are the record.
+    // Both, because rendering only the extraction is a digest, and the reason
+    // `response_text` is retained at all is that a digest is not a record. The
+    // reference answer opens with two sentences of prose before its fenced JSON
+    // — extraction drops them, and they are part of what the agent said.
+    const raw = r.text
+      ? `<details class="doc"><summary>the answer as the agent wrote it${
+           r.chars ? `, ${r.chars.toLocaleString()} characters` : ""}</summary>
+           <div class="pl-body">${esc(r.text)}</div></details>`
+      : "";
+    const answer = r.document
+      ? `<div class="pl-body">${kv(r.document)}</div>${raw}`
+      : r.text
+        ? `<div class="pl-body clamp" data-clamp>${esc(r.text)}</div>
+           <button class="pl-more" data-more>show all${
+             r.chars ? ` ${r.chars.toLocaleString()} characters` : ""}</button>`
+        : `<div class="pl-body absent">This episode retained no answer. Nothing on this
+             page can be checked against what the agent said, because it was not kept.</div>`;
+
     return `<div class="payload">
       <div class="payload-t">The payload</div>
       <div class="payload-ty">${esc(ty || "type not declared — treated as opaque text")}</div>
-      ${d.input && d.input.query
-        ? `<div class="payload-q">${esc(String(d.input.query).slice(0, 300))}</div>` : ""}
+      ${q ? `<div class="pl-h">Asked</div>
+             <div class="pl-body clamp" data-clamp>${esc(q)}</div>
+             ${q.length > 400 ? `<button class="pl-more" data-more>show the whole question</button>` : ""}` : ""}
+      <div class="pl-h">Answered</div>
+      ${answer}
+      ${r.truncated
+        ? `<div class="pl-cut">The platform is showing the first ${
+             (r.text || "").length.toLocaleString()} of ${
+             (r.chars || 0).toLocaleString()} characters. The rest is retained and is not
+             here — read the full record before settling a claim that depends on it.</div>`
+        : ""}
     </div>`;
+  }
+
+  // Releasing a clamp is the whole interaction, so it is one listener on the
+  // container rather than a handler per block: `render` replaces the container's
+  // contents, and per-element handlers wired at render time are how a second
+  // render leaves half the page dead.
+  function wireClamps() {
+    const root = document.getElementById("content");
+    if (!root) return;
+    root.addEventListener("click", e => {
+      const btn = e.target.closest("[data-more]");
+      if (!btn) return;
+      let body = btn.previousElementSibling;
+      while (body && !body.hasAttribute("data-clamp")) body = body.previousElementSibling;
+      if (!body) return;
+      const open = body.classList.toggle("clamp");
+      btn.textContent = open ? "show all" : "show less";
+    });
   }
 
   function ladder(d) {
@@ -668,7 +831,7 @@
         <div class="fgroup-h">${pips(s)} <b>${g.length}</b> ${esc(STRENGTH_WORD[s])}</div>
         ${legend}
         ${g.map(f => {
-          const v = showValue(f.value);
+          const v = summarise(f.value);
           // One claim, one row, one place to act.
           //
           // This page offered the same verdict twice: `Cite it`/`Wrong` here,
@@ -711,6 +874,7 @@
             <span class="c-name">${esc(f.name)}</span>
             <span class="c-val ${v.cls}">${v.text}</span>
             <span class="c-dest">${dest}</span>
+            ${docBlock(f.value, "the value, field by field")}
             ${offer}
           </div>`;
         }).join("")}
@@ -1178,6 +1342,7 @@ something specific about each checkpoint.")}</div></div>`;
       });
       render(trace);
       wireSettle();
+      wireClamps();
     } catch (e) {
       document.getElementById("content").innerHTML =
         `<div class="empty">Could not read the trace: ${esc(e.message)}.
