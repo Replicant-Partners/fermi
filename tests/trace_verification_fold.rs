@@ -371,6 +371,77 @@ fn the_document_keeps_the_order_the_agent_wrote_it_in() {
     );
 }
 
+/// Every block the page assembles must exist.
+///
+/// A commit replaced a source range identified by its two comment anchors and
+/// took `ladder()` with it, because `ladder()` happened to sit between them.
+/// `render` then threw `ladder is not defined` and the trace rendered nothing but
+/// its own error handler.
+///
+/// Nothing caught it. `node --check` is a **syntax** check and a call to an
+/// undefined function is well-formed JavaScript; the harness that verified the
+/// new code called the new function directly and never called `render`, so it
+/// exercised the part and not the whole.
+///
+/// This is the cheap half of the remedy and needs no JavaScript engine: read the
+/// expression `render` assembles the page from, and require every block it names
+/// to be defined in the same file. Anchors describe the boundary of a range and
+/// not its contents, and a range big enough to be worth scripting is big enough
+/// to contain something nobody was thinking about.
+#[test]
+fn every_block_the_page_is_assembled_from_is_defined() {
+    let src = trace();
+
+    // The chain is the argument to `innerHTML =` inside `render`.
+    let at = src
+        .find("function render(d) {")
+        .expect("`render` is gone, which is a larger problem than this test");
+    let body = &src[at..];
+    let chain_at = body
+        .find("innerHTML =")
+        .expect("`render` no longer assigns the page; nothing draws the trace");
+    // Up to the statement's end.
+    let chain: String = body[chain_at..].chars().take_while(|c| *c != ';').collect();
+
+    // Every `name(d)` in the chain names a block builder.
+    let mut called: Vec<String> = Vec::new();
+    for part in chain.split('+') {
+        let p = part.trim();
+        if let Some(open) = p.find('(') {
+            let name = &p[..open];
+            if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                called.push(name.to_string());
+            }
+        }
+    }
+    assert!(
+        called.len() >= 6,
+        "the render chain parsed to only {called:?}, so this test is reading the \
+         wrong thing and would pass whatever the page did"
+    );
+
+    let missing: Vec<&String> = called
+        .iter()
+        .filter(|n| !src.contains(&format!("function {n}(")))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "`render` assembles the page from blocks that do not exist: {missing:?}. \
+         The page will throw and show nothing at all. This is exactly what \
+         deleting a source range by its anchors did to `ladder`."
+    );
+
+    // The two wiring passes run after every render and are just as fatal.
+    for f in ["wireSettle", "wireClamps", "render"] {
+        assert!(
+            src.contains(&format!("function {f}(")),
+            "`{f}` is called after the page is drawn and is not defined. Every \
+             control on the trace stops working, silently, with the page still \
+             rendering."
+        );
+    }
+}
+
 /// The scan must be able to fail.
 #[test]
 fn the_scan_can_actually_fail() {
