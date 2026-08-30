@@ -1051,6 +1051,80 @@
     });
   }
 
+  function ladder(d) {
+    const a = readArtifact(d);
+    const typed = (d.substrate || {}).disposition === "legible";
+
+    let ceilingShown = false;
+    const rows = LADDER.map(r => {
+      let verdictCell, note = "", isCeiling = false;
+
+      if (r.scope === "platform") {
+        // Standing clock: presence, liveness and truth are not artifact-scoped.
+        // Shown rather than hidden - a ladder missing its cheap rungs looks
+        // shorter and safer than it is - and pointed at where they are answered.
+        verdictCell = `<span class="v-elsewhere">standing clock</span>`;
+        note = `Answered platform-wide, not for this artifact. <a href="/loops">See Ok / Silent / Inert →</a>`;
+      } else {
+        const gateId = Object.keys(LADDER_GATE).find(k => LADDER_GATE[k] === r.n);
+        const b = a.by[gateId];
+        if (!b) {
+          verdictCell = `<span class="v-inert">not on this route</span>`;
+          note = `<code>${esc(gateId)}</code> is not declared on the route this artifact travelled.`;
+        } else if (b.enforcement !== "control") {
+          verdictCell = `<span class="v-silent">records only</span>`;
+          isCeiling = !ceilingShown;
+          note = `<b>Cannot refuse on this route.</b> ${esc(b.why_not_control || "")}`;
+        } else if (b.decided) {
+          verdictCell = `<span class="v-ok">${esc(b.decided.decision)}</span>`;
+        } else {
+          verdictCell = `<span class="v-inert">no verdict</span>`;
+          note = esc((b.decided_absent || {}).because || "");
+        }
+        if (r.n === 4 && b && b.recomputed) {
+          note += ` <br/>Graded <b>${b.recomputed.fields}</b> claim(s), <b>${b.recomputed.violations}</b> unsourced.`;
+        }
+      }
+      if (isCeiling) ceilingShown = true;
+
+      return `<div class="rung ${isCeiling ? "is-ceiling" : ""}">
+        <div class="rung-n">${r.n}</div>
+        <div class="rung-b">
+          <div class="rung-q"><b style="color:var(--fg3);font-weight:normal">${RUNG_NAME[r.n]}</b>
+            — ${esc(r.q)}</div>
+          ${note ? `<div class="rung-pw">${note}</div>` : ""}
+          ${r.pw ? `<div class="rung-pw">Passes while: <b>${esc(r.pw)}</b></div>` : ""}
+          ${isCeiling ? `<div class="ceilmark">← ceiling · nothing above this was enforced on this artifact</div>` : ""}
+        </div>
+        <div class="rung-v">${verdictCell}</div>
+      </div>`;
+    }).join("");
+
+    const pre = (d.belt || []).filter(b => PRECONDITION[b.rung]).map(b =>
+      `<span><b>${esc(b.rung)}</b> — ${esc(PRECONDITION[b.rung])}</span>`).join("");
+
+    const route = d.belt_route && d.belt_route.recoverable === false
+      ? `<div class="rung-pw" style="margin-top:8px;color:var(--yellow)">
+           Route unverified: <code>episodes</code> records no route discriminator, so the wider
+           of the two declared belts is shown. This may list checkpoints the artifact never passed.</div>`
+      : "";
+
+    return `<div class="block">
+      <h2>The verification ladder</h2>
+      <div class="note">Five questions, ordered by difficulty. A check answering an easier
+        one will pass while a harder one fails, and each rung is invisible to the one below —
+        so the ceiling, not the count, is what the platform actually knows.</div>
+      ${rows}
+      ${route}
+      ${typed ? "" : `<div class="rung-pw" style="margin-top:8px">This agent is not fully
+        typed, so rungs 4 and 5 have less to check against than they would otherwise.</div>`}
+      <h2 style="margin-top:20px">Preconditions — not verification</h2>
+      <div class="note">These check the caller and the envelope. None of them ever opens the
+        payload, so none can say anything about what it claims.</div>
+      <div class="pre">${pre || "<span>None declared on this route.</span>"}</div>
+    </div>`;
+  }
+
   // Branch on this before drawing anything. `substrate` is about the AGENT —
   // is it declared onto the platform at all — and the belt is about this
   // artifact. Mixing them put an agent-level backlog inside a per-artifact
