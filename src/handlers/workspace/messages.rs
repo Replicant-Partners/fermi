@@ -471,25 +471,22 @@ pub async fn post_workspace_message_handler(
                             }
                         }
 
-                        // Minted ahead of the tool context: the episode is
+                        // Opened ahead of the tool context: the episode is
                         // stored further down, but delegated children need the
-                        // id from inside the tool loop (mig-198).
-                        let episode_id = uuid::Uuid::new_v4();
-                        // Reserve it before it is handed to the tool context.
-                        // Anything this run delegates points here, and the row
-                        // is not written until the run finishes - so a run that
-                        // fails part-way orphans every child it already spawned.
-                        if let Err(e) = state2
-                            .memory_store
-                            .reserve_episode(episode_id, db_agent.agent_id, &query2)
-                            .await
-                        {
-                            tracing::warn!(
-                                agent = %agent_name2, error = %e,
-                                "could not reserve the episode; delegated children \
-                                 will point at a row that does not exist",
-                            );
-                        }
+                        // id from inside the tool loop (mig-198), and they need
+                        // the row and not only the id - a run that fails
+                        // part-way otherwise orphans every child it already
+                        // spawned. Reserving is what makes the id resolvable
+                        // rather than merely nameable, and both acts live in
+                        // `episode_boundary::Pulse` so this path cannot come to
+                        // do only one of them.
+                        let pulse = fermi::episode_boundary::Pulse::open(
+                            &state2.memory_store,
+                            db_agent.agent_id,
+                            &query2,
+                        )
+                        .await;
+                        let episode_id = pulse.episode_id;
 
                         // Use ToolAwareExecutor with workspace tools
                         let tool_context = Arc::new(ToolContext {
@@ -553,45 +550,20 @@ pub async fn post_workspace_message_handler(
                         // declare a field contract, `context ? 'invocation'` was
                         // true on 0 of their 531 pulses, and nine had never
                         // produced a single graded field.
-                        let claimed_doc = output
-                            .raw_response
-                            .as_deref()
-                            .and_then(fermi::agent_backend::envelope::extract_json);
-                        let mut enforced_doc = claimed_doc.clone();
-                        let grounding_report = match enforced_doc.as_mut() {
-                            Some(doc) => fermi::grounding_trust::enforce(&agent_name2, doc),
-                            None => fermi::grounding_trust::Report::default(),
-                        };
-                        crate::stamp_grounding(&mut episode, &grounding_report);
-                        // And a ledger row, so the belt on this artifact carries
-                        // a decision the gate actually made rather than only a
-                        // recomputation. `Undetermined` when there is no
-                        // contract: the gate ran and formed no opinion, which is
-                        // not an approval.
-                        let has_contract = fermi::grounding_trust::contracts_for(&agent_name2)
-                            .next()
-                            .is_some();
-                        fermi::gate_trust::decided_for_episode(
-                            fermi::gate_trust::Gate::Grounding,
-                            if !has_contract {
-                                fermi::gate_trust::Decision::Undetermined
-                            } else if grounding_report.is_clean() {
-                                fermi::gate_trust::Decision::Approved
-                            } else {
-                                fermi::gate_trust::Decision::Refused
-                            },
-                            (!grounding_report.is_clean())
-                                .then(|| {
-                                    format!("{} violation(s)", grounding_report.violations.len())
-                                })
-                                .as_deref(),
-                            episode_id,
-                        );
-                        // Why this agent was reached: a person named it in the
-                        // workspace. Server-side, per `route_trust`.
-                        fermi::route_trust::stamp(
-                            &mut episode,
-                            fermi::route_trust::RouteSelection::CallerNamed,
+                        //
+                        // Which is why the six steps are no longer copied out
+                        // here. Wiring them in a second time is what produced a
+                        // third variant of the same block, differing from the
+                        // other two in which steps it happened to include.
+                        // Enforcement, the grading and the gate's ledger row are
+                        // this one call; the route stamp and the grounding stamp
+                        // ride with the write in `close` below.
+                        // No card loaded on this path — falls back to
+                        // FIELD_CONTRACTS via enforce_from_output_contract.
+                        let graded = pulse.grade(
+                            &agent_name2,
+                            None,
+                            output.raw_response.as_deref(),
                         );
 
                         // Stamp the (agent, human) dyad from the message sender so
@@ -634,63 +606,41 @@ pub async fn post_workspace_message_handler(
                             "agent_id": db_agent.agent_id,
                             "workspace_id": ws_uuid2,
                         });
-                        // Counted. Note what happens next if this fails: the
-                        // timeline write below references this episode's id, and
-                        // `agent_timeline_entries.episode_id` is a foreign key,
-                        // so one lost episode silently costs two loop sinks.
-                        // `execution_stream` guards its equivalent spawn on the
-                        // episode having landed; this site and
-                        // `rabble_workspace` do not. Instrumented first so the
-                        // guard can be shown to have changed something.
+                        // Stamp, store, raise, enqueue - the end of the
+                        // boundary, in one call because the order between those
+                        // four is a set of foreign keys and not a preference.
+                        // The queue is the part this path never had:
+                        // `verification_queue::enqueue` was called from
+                        // `execution` and `execution_stream` and not from here,
+                        // so nothing a workspace produced ever reached it.
+                        // Measured on a weather pulse: 12 graded claims, 0
+                        // queued - the curation loop had nothing to attach a
+                        // verdict to, and "a human could settle this" was an
+                        // offer with no object.
+                        //
+                        // Counted, and still swallowed. Note what happens next
+                        // if it fails: the timeline write below references this
+                        // episode's id, and `agent_timeline_entries.episode_id`
+                        // is a foreign key, so one lost episode silently costs
+                        // two loop sinks. Instrumented so the guard beneath it
+                        // can be shown to have changed something.
                         let stored = fermi::write_accounting::observe(
                             fermi::write_accounting::Sink::Episodes,
-                            state2
-                                .memory_store
-                                .store_episode_with_provenance(
-                                    episode.clone(),
-                                    provenance.as_ref(),
-                                    Some(source_ref),
-                                )
-                                .await,
+                            fermi::episode_boundary::close(
+                                pulse,
+                                &graded,
+                                fermi::episode_boundary::Write {
+                                    store: &state2.memory_store,
+                                    db: Some(&state2.db),
+                                    agent_slug: &agent_name2,
+                                    episode: episode.clone(),
+                                    route: fermi::route_trust::RouteSelection::CallerNamed,
+                                    provenance: provenance.as_ref(),
+                                    source_ref: Some(source_ref),
+                                },
+                            )
+                            .await,
                         );
-
-
-                        // Queue every weak claim for a person or a tool.
-                        //
-                        // The third door again: `verification_queue::enqueue`
-                        // was called from `execution` and `execution_stream`
-                        // and not from here, so nothing a workspace produced
-                        // ever reached the queue. Measured on a weather pulse:
-                        // 12 graded claims, 0 queued - so the curation loop had
-                        // nothing to attach a verdict to, and "a human could
-                        // settle this" was an offer with no object.
-                        //
-                        // After the store, because `assertion_verifications.
-                        // episode_id` is a real foreign key.
-                        if stored.is_some() {
-                            if let Some(ref doc) = claimed_doc {
-                                let graded = fermi::grounding_trust::graded_fields(
-                                    &agent_name2,
-                                    doc,
-                                    &grounding_report,
-                                );
-                                if !graded.is_empty() {
-                                    let e = fermi::verification_queue::enqueue(
-                                        &state2.db,
-                                        episode_id,
-                                        &agent_name2,
-                                        &graded,
-                                    )
-                                    .await;
-                                    tracing::debug!(
-                                        agent = %agent_name2,
-                                        to_tool = e.to_tool,
-                                        to_human = e.to_human,
-                                        "queued claims for verification from the workspace path",
-                                    );
-                                }
-                            }
-                        }
 
                         // Guarded on the episode having landed.
                         //

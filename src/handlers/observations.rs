@@ -751,14 +751,32 @@ pub async fn ingest_observations_handler(
                             "agent_id": agent_uuid,
                             "session_id": session_id,
                         });
-                        let _ = spawn_state
-                            .memory_store
-                            .store_episode_with_provenance(
-                                episode,
-                                provenance.as_ref(),
-                                Some(source_ref),
+                        // Through the boundary, not around it. The analyst runs on
+                        // every ingested batch and none of the six checks ran here:
+                        // its contracted fields were never enforced or queued, no
+                        // grade and no `route:` reached the row, and the `let _`
+                        // meant a dropped write left the batch looking analysed with
+                        // nothing in the database to show for it.
+                        fermi::write_accounting::observe(
+                            fermi::write_accounting::Sink::Episodes,
+                            fermi::episode_boundary::persist(
+                                "the batch is ingested, the analyst invoked and its answer \
+                                 stored in one fire-and-forget task, with nothing in between \
+                                 that could name this id; the task runs through the shared \
+                                 registry executor, which is handed no ToolContext, so the \
+                                 analyst has no tools and cannot delegate",
+                                fermi::episode_boundary::Write {
+                                    store: &spawn_state.memory_store,
+                                    db: Some(&spawn_state.db),
+                                    agent_slug: analyst_id,
+                                    episode,
+                                    route: fermi::route_trust::RouteSelection::CallerNamed,
+                                    provenance: provenance.as_ref(),
+                                    source_ref: Some(source_ref),
+                                },
                             )
-                            .await;
+                            .await,
+                        );
                     }
                     eprintln!(
                         "Observation analyst: analyzed {} observations for session {}",

@@ -597,11 +597,33 @@ pub async fn evaluate_coherence_handler(
                     .await
                     .unwrap_or_else(|_| ws_uuid.to_string());
 
-                // Minted before the run, so children stamp it while the parent
-                // row is still being produced — the same contract
-                // `execute_agent` uses (mig-198). `episodes.parent_episode_id`
-                // carries no foreign key, so the order is safe.
-                let strategist_episode_id = uuid::Uuid::new_v4();
+                // Reserved before the run, not merely minted. The strategist
+                // fans out under this id — `solicit_agent_plan` asking each
+                // member, `execute_agent` — and each child stamps it as its
+                // parent long before the write below. Six of twelve delegation
+                // edges on the platform point at parents that were never
+                // written, and a coordination session that dies mid-fan-out is
+                // how an edge gets there.
+                let pulse = match strategist.as_ref() {
+                    Ok(db_agent) => {
+                        fermi::episode_boundary::Pulse::open(
+                            &state.memory_store,
+                            db_agent.agent_id,
+                            &query_text,
+                        )
+                        .await
+                    }
+                    // Unregistered: there is no agent uuid to reserve against,
+                    // and the run is not persisted at all (see the warning
+                    // below). The id exists only so the tool context has a root.
+                    Err(_) => fermi::episode_boundary::Pulse::after_the_fact(
+                        uuid::Uuid::new_v4(),
+                        "the strategist has no agents row, so there is nothing to \
+                         reserve against and nothing is written for this run at \
+                         all; the id is here only so the tool context has a \
+                         non-null root",
+                    ),
+                };
 
                 let tool_context = Arc::new(ToolContext {
                     // The strategist's run is now an episode of its own (see
@@ -613,7 +635,7 @@ pub async fn evaluate_coherence_handler(
                     // Distinct from the notes `coordination_note::deliver`
                     // writes further down: those belong to the MEMBER, as its
                     // own dreaming material, and are deliberately unparented.
-                    parent_episode_id: Some(strategist_episode_id),
+                    parent_episode_id: Some(pulse.episode_id),
                     memory_store: state.memory_store.clone(),
                     embedder: state.embedder.clone(),
                     registry: state.registry.clone(),
@@ -657,7 +679,7 @@ pub async fn evaluate_coherence_handler(
                         if let Ok(db_agent) = strategist.as_ref() {
                             let mut episode =
                                 agent_output_to_episode(db_agent.agent_id, &query_text, &output);
-                            episode.episode_id = strategist_episode_id;
+                            episode.episode_id = pulse.episode_id;
                             episode.persona_version_at_write = Some(db_agent.persona_version);
                             // Findable as coordination work. Stage 4's
                             // "which principles are chronically weak" is a
@@ -678,16 +700,29 @@ pub async fn evaluate_coherence_handler(
                                 "workspace_id": ws_uuid,
                                 "depth": depth,
                             });
+                            // Through the boundary, not around it. This is the
+                            // workspace path the module docs name as running none
+                            // of the six: a strategist with a field contract had
+                            // it unenforced, the coordination brief was stored
+                            // with no grade and no `route:` — so the one route
+                            // that is caller-named by construction contributed
+                            // nothing to `route_outcomes` — and no claim in the
+                            // brief was ever queued for anyone to settle.
                             fermi::write_accounting::observe(
                                 fermi::write_accounting::Sink::Episodes,
-                                state
-                                    .memory_store
-                                    .store_episode_with_provenance(
+                                fermi::episode_boundary::persist_opened(
+                                    pulse,
+                                    fermi::episode_boundary::Write {
+                                        store: &state.memory_store,
+                                        db: Some(&state.db),
+                                        agent_slug: &strategist_name,
                                         episode,
-                                        provenance.as_ref(),
-                                        Some(source_ref),
-                                    )
-                                    .await,
+                                        route: fermi::route_trust::RouteSelection::CallerNamed,
+                                        provenance: provenance.as_ref(),
+                                        source_ref: Some(source_ref),
+                                    },
+                                )
+                                .await,
                             );
                         } else {
                             tracing::warn!(

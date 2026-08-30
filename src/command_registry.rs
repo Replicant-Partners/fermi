@@ -168,12 +168,12 @@ pub const COMMANDS: &[Command] = &[
             control(Gate::Attachment, "attachments::ensure_deliverable"),
             metric(
                 Gate::Grounding,
-                "handlers::execution \u{2014} grounding_trust::enforce",
-                "`enforce` mutates a local doc that is dropped; the persisted \
-                 response_text and the rendered body are both un-stripped. \
-                 Documented as intentional at api_server.rs, and it means the \
-                 endpoint a third party calls reports fabrication rather than \
-                 preventing it.",
+                "episode_boundary::Pulse::grade, from handlers::execution",
+                "`enforce` mutates a document the handler keeps only to check a \
+                 schema against; the persisted response_text and the rendered \
+                 body are both un-stripped. Retention is deliberate — a digest \
+                 is not a record — and it means the endpoint a third party \
+                 calls reports fabrication rather than preventing it.",
             ),
             metric(
                 Gate::InputBinding,
@@ -196,9 +196,12 @@ pub const COMMANDS: &[Command] = &[
             control(Gate::Credit, "handlers::execution_stream"),
             metric(
                 Gate::Grounding,
-                "handlers::execution_stream \u{2014} grounding_trust::enforce",
-                "The same discarded-verdict shape as agent.execute, and here no \
-                 anomaly is raised either, so the metric is not even recorded.",
+                "episode_boundary::Pulse::grade, from handlers::execution_stream",
+                "The same un-stripped-body shape as agent.execute. It also \
+                 raised no anomaly, so the metric was not even recorded — that \
+                 half is fixed: both routes reach the grade and the raise \
+                 through the one boundary, and neither can drift from the other \
+                 again without the other going with it.",
             ),
         ],
         ungated_because: None,

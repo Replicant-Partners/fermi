@@ -503,14 +503,33 @@ pub async fn ingest_telemetry_handler(
                             "agent_id": agent_uuid,
                             "session_id": session_id,
                         });
-                        let _ = spawn_state
-                            .memory_store
-                            .store_episode_with_provenance(
-                                episode,
-                                provenance.as_ref(),
-                                Some(source_ref),
+                        // Through the boundary, not around it. The coordinator flags
+                        // anomalies — energy below 0.2, high separation — and until
+                        // now those flags entered memory with nothing enforcing the
+                        // field contract behind them, no grade, no `route:`, and no
+                        // row in the verification queue for anyone to settle. The
+                        // `let _` made a dropped write look like an unanalysed batch.
+                        fermi::write_accounting::observe(
+                            fermi::write_accounting::Sink::Episodes,
+                            fermi::episode_boundary::persist(
+                                "telemetry is ingested, the coordinator invoked and its \
+                                 answer stored in one fire-and-forget task, with nothing in \
+                                 between that could name this id; the prompt asks it to query \
+                                 the session summary, but the shared registry executor hands \
+                                 it no tools, so it cannot delegate and nothing downstream \
+                                 can inherit this id",
+                                fermi::episode_boundary::Write {
+                                    store: &spawn_state.memory_store,
+                                    db: Some(&spawn_state.db),
+                                    agent_slug: coordinator_id,
+                                    episode,
+                                    route: fermi::route_trust::RouteSelection::CallerNamed,
+                                    provenance: provenance.as_ref(),
+                                    source_ref: Some(source_ref),
+                                },
                             )
-                            .await;
+                            .await,
+                        );
                     }
 
                     eprintln!(

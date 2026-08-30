@@ -1373,25 +1373,42 @@ pub async fn consolidate_agent_handler(
                                 .ok();
                             ep.embedding = prov.as_ref().map(|p| p.vector.clone());
 
-                            if let Err(e) = narrator_state
-                                .memory_store
-                                .store_episode_with_provenance(
-                                    ep,
-                                    prov.as_ref(),
-                                    Some(json!({
-                                        "kind": "dream_pipeline",
-                                        "role": "narrate",
-                                        "job_id": job_id,
-                                        "subject_agent_id": spawn_agent_id,
-                                    })),
+                            // Through the boundary, not around it. This row is
+                            // the dream pipeline's only record of a real
+                            // invocation and it ran none of the six checks:
+                            // nothing enforced the narrator's field contract,
+                            // no grade and no `route:` reached the episode, the
+                            // grounding gate counted no decision for the cycle,
+                            // and a failed write was warned about here and
+                            // counted nowhere.
+                            fermi::write_accounting::observe(
+                                fermi::write_accounting::Sink::Episodes,
+                                fermi::episode_boundary::persist(
+                                    "the narrator runs on the bare registry \
+                                     executor — no ToolContext, no tool list — so \
+                                     it cannot delegate and nothing downstream \
+                                     can name this id; the episode is built from \
+                                     the returned AgentOutput inside a detached \
+                                     task, so a row reserved earlier would only \
+                                     have been a placeholder no child could \
+                                     inherit",
+                                    fermi::episode_boundary::Write {
+                                        store: &narrator_state.memory_store,
+                                        db: Some(&narrator_state.db),
+                                        agent_slug: &narrator_db.agent_name,
+                                        episode: ep,
+                                        route: fermi::route_trust::RouteSelection::CallerNamed,
+                                        provenance: prov.as_ref(),
+                                        source_ref: Some(json!({
+                                            "kind": "dream_pipeline",
+                                            "role": "narrate",
+                                            "job_id": job_id,
+                                            "subject_agent_id": spawn_agent_id,
+                                        })),
+                                    },
                                 )
-                                .await
-                            {
-                                tracing::warn!(
-                                    error = %e,
-                                    "[dream-ledger] failed to record narrator episode"
-                                );
-                            }
+                                .await,
+                            );
                         }
 
                         let narrative = output.metadata.reasoning.clone().unwrap_or_default();

@@ -401,7 +401,15 @@ pub async fn solicit(
     // member. Its cost belongs in that agent's totals and not in the
     // strategist's, and without this the floor would spend N calls that appear
     // in no ledger.
-    record_ask_episode(asker, target, parent_episode_id, &query, &output).await;
+    record_ask_episode(
+        asker,
+        target,
+        &agent_name,
+        parent_episode_id,
+        &query,
+        &output,
+    )
+    .await;
 
     let raw = output.metadata.reasoning.clone().unwrap_or_default();
     let Some(plan) = extract_json_object(&raw) else {
@@ -555,6 +563,7 @@ async fn elicitation_prompt(
 async fn record_ask_episode(
     asker: &Asker,
     target: Uuid,
+    agent_slug: &str,
     parent_episode_id: Option<Uuid>,
     query: &str,
     output: &crate::agent_backend::executor::AgentOutput,
@@ -582,12 +591,29 @@ async fn record_ask_episode(
         "agent_id": target,
     });
 
+    // Through the boundary, not around it. This path invoked an agent and
+    // persisted its answer, and until now it ran none of the six checks: a
+    // member with a field contract stated a plan and nothing enforced the
+    // contract, nothing stamped the grade, no gate row was written and no
+    // contracted field was queued. Loop 3's own mechanism was the ungoverned
+    // one.
     crate::write_accounting::observe(
         crate::write_accounting::Sink::Episodes,
-        asker
-            .memory_store
-            .store_episode_with_provenance(episode, provenance.as_ref(), Some(source_ref))
-            .await,
+        crate::episode_boundary::persist(
+            "the member is asked and its answer stored in one call, with nothing \
+             in between that could name this id; Stage 0 hands the member no \
+             tools, so it cannot delegate",
+            crate::episode_boundary::Write {
+                store: &asker.memory_store,
+                db: Some(&asker.db),
+                agent_slug,
+                episode,
+                route: crate::route_trust::RouteSelection::CallerNamed,
+                provenance: provenance.as_ref(),
+                source_ref: Some(source_ref),
+            },
+        )
+        .await,
     );
 }
 

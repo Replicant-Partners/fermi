@@ -370,6 +370,18 @@ pub mod artifact_trace;
 // which is why the tool-versus-person routing costs nothing to wire.
 pub mod verification_queue;
 
+// The one place an agent's pulse becomes a row.
+//
+// The six checks above — reserve, enforce, stamp, stamp, decide, enqueue — were
+// calls at call sites, and the call sites diverged three times running. The
+// parity test written to catch the fourth divergence was a list of three files,
+// and the list was wrong: twelve more writers persist an episode, seven from a
+// genuine agent invocation. A scan is only as good as its list, so the remedy is
+// not a longer list but a single entry point and a ratchet that bans the raw
+// write. A new handler cannot forget the boundary because there is nothing else
+// to call.
+pub mod episode_boundary;
+
 // What must an agent declare before this substrate can say anything about it?
 //
 // Every trust surface reports `unknown` more often than anything else, and the

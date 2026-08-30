@@ -30,6 +30,29 @@
 //! deleted (§5.2). File granularity catches the failure that actually happened
 //! — an entire path with no raise anywhere in it — and the exemption list
 //! carries the cases where that is the wrong reading, with reasons.
+//!
+//! The coarseness is now load-bearing rather than merely tolerable.
+//! `episode_boundary` enforces in [`Pulse::grade`] and raises in [`close`],
+//! because the raise has to sit below the write — `anomaly_events.episode_id`
+//! is a foreign key. A statement-level or same-function rule would report the
+//! one path that gets this exactly right as the only one that gets it wrong.
+//!
+//! # The literal is part of the check
+//!
+//! Three of the nine call sites collapsed into `episode_boundary`, and while
+//! that was happening `envelope.rs` migrated from `enforce` to
+//! `enforce_from_output_contract` — the general path, driven by the compiled
+//! `grounding` map instead of by `FIELD_CONTRACTS`. It is the same control
+//! doing the same stripping, and a scan matching only `enforce(` stopped seeing
+//! it. That is the failure mode of every source scan and it is invisible from
+//! the outside: the population shrinks, nothing goes red except the count, and
+//! a file drops out of the set that has to justify not raising. Both entry
+//! points are named in [`ENFORCE_CALLS`], and the falsifier below exercises
+//! each of them, so the next spelling has to be added deliberately rather than
+//! discovered by a file quietly leaving the scan.
+//!
+//! [`Pulse::grade`]: fermi::episode_boundary::Pulse::grade
+//! [`close`]: fermi::episode_boundary::close
 
 use std::path::{Path, PathBuf};
 
@@ -47,8 +70,11 @@ const NO_RAISE: &[(&str, &str)] = &[
         "the delegation hop. It strips the payload handed to the CALLING agent \
          and returns the violations inside the envelope, where the caller sees \
          them. Raising here would double-count: the child agent's own execute \
-         path already raised for the same output. Tracked as finding 8 — the \
-         gap is `delegate_to_agent`, which has no gate at all.",
+         path reaches `episode_boundary::close` and raises for the same output. \
+         Tracked as finding 8 — the gap is `delegate_to_agent`, which has no \
+         gate at all. Enforces through `enforce_from_output_contract` rather \
+         than `enforce`; the exemption is about the raise, not about which \
+         entry point supplies the contract.",
     ),
     (
         "src/agent_backend/tool_executor.rs",
@@ -99,9 +125,22 @@ fn code_lines(body: &str) -> impl Iterator<Item = &str> {
     })
 }
 
+/// Every way into the contract. A file reaching any of them is running the
+/// control and owes Loop 2 a report.
+///
+/// Two entries, not one, because `enforce_from_output_contract` is the general
+/// path and delegates to `enforce` only as a fallback: an agent whose contract
+/// is compiled into its card never touches the legacy function. Matching one
+/// spelling meant a call site could migrate to the other and leave the scan
+/// without going red — which is what `envelope.rs` did.
+const ENFORCE_CALLS: &[&str] = &[
+    "grounding_trust::enforce(",
+    "grounding_trust::enforce_from_output_contract(",
+];
+
 /// Does this file run the grounding contract as a control?
 fn enforces(body: &str) -> bool {
-    code_lines(body).any(|l| l.contains("grounding_trust::enforce("))
+    code_lines(body).any(|l| ENFORCE_CALLS.iter().any(|c| l.contains(c)))
 }
 
 /// Does it tell Loop 2 about what it found?
@@ -136,11 +175,59 @@ fn the_scan_sees_an_enforcing_path_that_does_not_raise() {
          — which is the exact shape of every defect the audit found"
     );
 
+    // The general path, silent in the same way. Exercised separately because a
+    // scan that recognises only the legacy spelling loses a call site the day
+    // it compiles its contract — an edit that is a pure improvement to the
+    // contract and a pure loss to this check, so nothing about it looks wrong.
+    let silent_general = "\
+    let report = crate::grounding_trust::enforce_from_output_contract(name, oc, doc);
+    envelope[\"violations\"] = json!(report.violations.len());
+";
+    assert!(
+        enforces(silent_general),
+        "the scan does not recognise `enforce_from_output_contract`, so an agent \
+         whose contract is compiled into its card runs the control unwatched"
+    );
+    assert!(!raises(silent_general));
+
+    // Both spellings must be reachable from the constant rather than only from
+    // this test's literals, or the falsifier proves a detector the scan does
+    // not use.
+    assert_eq!(
+        ENFORCE_CALLS.len(),
+        2,
+        "a way into the contract was added or removed without updating the \
+         falsifier, so one entry point is now scanned and untested"
+    );
+
     // The repair must clear it, or the check fires on correct code.
     let repaired = format!(
         "{silent}    fermi::grounding_anomaly::spawn_raise(store, agent_id, None, report);\n"
     );
     assert!(raises(&repaired));
+
+    // And the raise must count from a different function in the same file than
+    // the enforcement, because that is the shape `episode_boundary` has: the
+    // raise sits below the write, in `close`, and the enforcement is in
+    // `grade`. A same-function rule would fail the one path that orders these
+    // correctly.
+    let split = "\
+    pub fn grade(&self, slug: &str, doc: &mut Value) -> Report {
+        grounding_trust::enforce(slug, doc)
+    }
+
+    pub async fn close(&self, report: Report) -> anyhow::Result<Uuid> {
+        let stored = self.store.store_episode(ep).await?;
+        crate::grounding_anomaly::spawn_raise(store, slug, Some(stored), report);
+        Ok(stored)
+    }
+";
+    assert!(
+        enforces(split) && raises(split),
+        "the scan is not file-granular after all: a module that enforces in one \
+         function and raises below the write in another is the correct \
+         arrangement and would be reported as the defect"
+    );
 
     // And prose must not satisfy it. The whole `NO_RAISE` exemption discipline
     // rests on `raises` reading code and not comments: a file whose only
@@ -152,6 +239,9 @@ fn the_scan_sees_an_enforcing_path_that_does_not_raise() {
     ));
     assert!(!enforces(
         "    // grounding_trust::enforce( is discussed here and not called"
+    ));
+    assert!(!enforces(
+        "    // enforcement is applied via `grounding_trust::enforce_from_output_contract(` upstream"
     ));
 }
 
@@ -193,11 +283,21 @@ fn every_path_that_enforces_grounding_also_raises() {
         }
     }
 
+    // The floor is what caught `envelope.rs` dropping out of the scan when it
+    // migrated spelling, so it is the one assertion here that has ever fired
+    // for a reason nobody predicted. It survives the boundary consolidation
+    // unchanged and that is not a coincidence: three handler call sites became
+    // one in `episode_boundary`, and `envelope.rs` came back once both entry
+    // points were named, so the count is seven on either side of the edit. If
+    // it falls, either a control was deleted or a spelling escaped
+    // `ENFORCE_CALLS`, and the second is the one that looks like nothing.
     assert!(
         enforcing.len() >= 7,
         "only {} file(s) appear to enforce grounding, which is fewer than the \
          audit counted (7). Either the scan stopped matching, or call sites were \
-         removed — both need a look before this passes.",
+         removed — both need a look before this passes. A call site that changed \
+         which `grounding_trust` entry point it uses reads as the second and is \
+         the first: see `ENFORCE_CALLS`.",
         enforcing.len()
     );
     println!(
@@ -232,9 +332,15 @@ fn every_no_raise_exemption_is_real_and_reasoned() {
             .unwrap_or_else(|e| panic!("{path} is exempted and unreadable: {e}"));
         // A file that has stopped enforcing does not need an exemption, and a
         // stale one hides the next file that takes its place.
+        //
+        // Through the same predicate the walk uses, so an entry point the walk
+        // recognises and this check does not cannot report a live exemption as
+        // dead. That mismatch is not hypothetical: this assertion was the only
+        // thing that went red when `envelope.rs` migrated to
+        // `enforce_from_output_contract`, and it went red saying the file had
+        // stopped enforcing, which was false.
         assert!(
-            code_lines(&body).any(|l| l.contains("grounding_trust::enforce("))
-                || body.contains("Gate::Grounding"),
+            enforces(&body) || body.contains("Gate::Grounding"),
             "{path} is exempted from raising and no longer enforces grounding. \
              Remove the entry."
         );

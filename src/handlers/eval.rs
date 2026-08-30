@@ -542,10 +542,19 @@ pub async fn run_eval_cases(
         };
         // Per-case id: each test case is its own execution, so each gets its
         // own root episode for delegated children to hang off (mig-198).
-        let case_episode_id = uuid::Uuid::new_v4();
+        //
+        // Reserved, not merely minted. The id goes onto the tool context on the
+        // next line, so every agent this case delegates to writes it as its
+        // parent — and until the case finished and the write below succeeded,
+        // there was no row for those children to resolve. A case whose executor
+        // errored produced no row at all, and its children's edges dangled
+        // permanently.
+        let pulse =
+            fermi::episode_boundary::Pulse::open(&state.memory_store, db_agent.agent_id, &tc.query)
+                .await;
         let tool_context = Arc::new(ToolContext {
             // Root of this case's delegation tree (mig-198).
-            parent_episode_id: Some(case_episode_id),
+            parent_episode_id: Some(pulse.episode_id),
             credentials,
             memory_store: state.memory_store.clone(),
             embedder: state.embedder.clone(),
@@ -576,7 +585,7 @@ pub async fn run_eval_cases(
             Ok(output) => {
                 let mut ep = agent_output_to_episode(db_agent.agent_id, &tc.query, output);
                 // Use the id advertised to this case's tool context.
-                ep.episode_id = case_episode_id;
+                ep.episode_id = pulse.episode_id;
                 // Stamp persona_version_at_write so drift monitoring (Phase 3)
                 // can compare embeddings across persona versions.
                 ep.persona_version_at_write = Some(db_agent.persona_version);
@@ -616,11 +625,47 @@ pub async fn run_eval_cases(
                     "test_case_query_len": tc.query.len(),
                 });
                 let stored = ep.clone();
-                let eid = state
-                    .memory_store
-                    .store_episode_with_provenance(ep, provenance.as_ref(), Some(source_ref))
-                    .await
-                    .ok();
+                // Through the boundary, not around it. A contracted agent under
+                // eval was graded by the evaluator registry and by nothing that
+                // knew about its field contract: no enforcement, no grade on the
+                // episode, no gate decision, and `route:` absent from every
+                // fixture episode the suite has ever written.
+                //
+                // `db: None` is the one deliberate omission, and the boundary
+                // logs the loss by name. Five of the six checks belong here —
+                // a fixture answer that claims an unsourceable field is exactly
+                // what a regression suite should catch, and the grade, the gate
+                // row and the anomaly all land without a pool. The sixth does
+                // not: the verification queue exists to have someone settle a
+                // claim about the world, and these are answers to frozen fixture
+                // queries. `assertion_id` is minted per enqueue, so every re-run
+                // of the suite — and `batch_eval_run_handler` re-runs it across
+                // every owned agent — queues the same fixture sentence again as
+                // a new claim. That is an undrainable duplicate stream in the
+                // one queue whose whole value is that it is short, and a human
+                // ruling "false" on a stale test case would be recorded as the
+                // agent having fabricated.
+                let eid = fermi::write_accounting::observe(
+                    fermi::write_accounting::Sink::Episodes,
+                    fermi::episode_boundary::persist_opened(
+                        pulse,
+                        fermi::episode_boundary::Write {
+                            store: &state.memory_store,
+                            db: None,
+                            // The DB record's own name, not the `agent_name`
+                            // parameter: `trigger_eval_run_handler` fills that
+                            // from the URL segment, which `resolve_agent`
+                            // accepts as a UUID. A stringified UUID reads as
+                            // "no contract declared" for every agent alive.
+                            agent_slug: &db_agent.agent_name,
+                            episode: ep,
+                            route: fermi::route_trust::RouteSelection::CallerNamed,
+                            provenance: provenance.as_ref(),
+                            source_ref: Some(source_ref),
+                        },
+                    )
+                    .await,
+                );
                 let ok = matches!(output.status, AgentStatus::Success);
                 (
                     ok,

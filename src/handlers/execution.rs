@@ -254,24 +254,21 @@ pub async fn execute_agent_handler(
     //   * any delegated child episode, written from inside the tool loop
     //     (mig-198) — which is why it goes on the ToolContext below
     // An id generated at store time could serve neither.
-    let episode_id = uuid::Uuid::new_v4();
-
     // And reserved, not merely minted. Minting early lets a child NAME this
     // episode; only writing the row early lets the child RESOLVE it. The row is
     // otherwise stored at the end of this handler, so a run that fails after
     // spawning children leaves them pointing at nothing - which is the state 6
     // of the platform's 12 delegation edges are in.
-    if let Err(e) = state
-        .memory_store
-        .reserve_episode(episode_id, db_agent.agent_id, &body.query)
-        .await
-    {
-        tracing::warn!(
-            agent = %agent_id, error = %e,
-            "could not reserve the episode; delegated children will point at a \
-             row that does not exist",
-        );
-    }
+    //
+    // Both acts now belong to `episode_boundary::Pulse`, which this handler was
+    // the reference implementation for. It is the reference no longer: the six
+    // checks live in one module because keeping them as six calls at a call site
+    // is what let three sibling handlers diverge, and a reference implementation
+    // that anyone has to read in order to copy is the same shape of defect.
+    let pulse =
+        fermi::episode_boundary::Pulse::open(&state.memory_store, db_agent.agent_id, &body.query)
+            .await;
+    let episode_id = pulse.episode_id;
 
     let tool_context = Arc::new(ToolContext {
         // Root of this execution's delegation tree (mig-198). Children stamp
@@ -424,88 +421,17 @@ pub async fn execute_agent_handler(
     // did. A contract that applies on one route and not another is not a
     // contract, it is a convention.
     //
-    // `enforce` is a pure function over the document and returns an empty
-    // report for any agent without a contract, so this is a no-op for most of
-    // the catalogue and cannot fail a run.
-    // The document **as the agent produced it**, kept before enforcement.
-    //
-    // `enforce` mutates: it nulls ungrounded fields. So the claimed values — the
-    // evidence for every later verification, and the only thing that could ever
-    // answer which model fabricates what — exist only in this copy. Reading them
-    // off the enforced document would find the nulls the platform just wrote and
-    // record the agent as having claimed nothing.
-    let claimed_doc = output
-        .raw_response
-        .as_deref()
-        .and_then(fermi::agent_backend::envelope::extract_json);
-    // The document AFTER enforcement, kept rather than dropped.
-    //
-    // This was `match claimed_doc.clone()`, which enforced into a binding
-    // local to the match arm and threw it away, keeping only the report. That
-    // was enough while nothing downstream needed the cleaned document; schema
-    // validation does, and it has to see the cleaned one. Order is
-    // load-bearing and `envelope::build` states the rule: enforce first, then
-    // verify what remains. A schema pinning an unsourceable field to `null`
-    // would otherwise reject a document grounding was about to clean, and the
-    // agent would be blamed for something the platform then fixed.
-    let mut enforced_doc = claimed_doc.clone();
-    let grounding_report = match enforced_doc.as_mut() {
-        Some(doc) => fermi::grounding_trust::enforce(&agent_id, doc),
-        None => fermi::grounding_trust::Report::default(),
-    };
-    // Every contracted field, with its grade and the claim behind it. Computed
-    // from the report rather than by a second pass, so the two cannot describe
-    // different instants.
-    let graded = match claimed_doc.as_ref() {
-        Some(doc) => fermi::grounding_trust::graded_fields(&agent_id, doc, &grounding_report),
-        None => Vec::new(),
-    };
-    // The invocation gate's own verdict, counted — in three states, not two.
-    //
-    // `enforce` returns an empty report for an agent with no declared contract,
-    // and from here that is indistinguishable from a clean pass. The first
-    // version of this block said exactly that in a comment and then recorded it
-    // as `Approved` anyway.
-    //
-    // It matters at the scale this actually runs. Measured: **5 of 3,558
-    // episodes** carry a grounding tag at all. Counting the other 3,553 as
-    // approvals would have the gate reporting `3558 asked, 0 refused` — which
-    // reads as "a control that has never needed to fire" when the truth is "a
-    // control that almost never engages". Different findings, different
-    // remedies, and the row count cannot tell them apart.
-    //
-    // `Undetermined` is what that state is: the gate was reached and formed no
-    // opinion, because there was no contract to form one against.
-    let has_contract = fermi::grounding_trust::contracts_for(&agent_id)
-        .next()
-        .is_some();
-    // `decided_for_episode`, so the ledger row can be joined to the artifact.
-    // `episode_id` is minted above and is the id the episode will be stored
-    // under, so the reference resolves once the write lands. It is not a foreign
-    // key -- see migration 220 on why the batched recorder cannot have one -- and
-    // `tests/gate_decision_lineage.rs` checks it instead.
-    fermi::gate_trust::decided_for_episode(
-        fermi::gate_trust::Gate::Grounding,
-        if !has_contract {
-            fermi::gate_trust::Decision::Undetermined
-        } else if grounding_report.is_clean() {
-            fermi::gate_trust::Decision::Approved
-        } else {
-            fermi::gate_trust::Decision::Refused
-        },
-        (!grounding_report.is_clean())
-            .then(|| format!("{} violation(s)", grounding_report.violations.len()))
-            .as_deref(),
-        episode_id,
+    // Which is why the enforcement, the grading and the gate's verdict are one
+    // call now rather than sixty lines here. They were sixty lines here, and
+    // the two sibling handlers that were supposed to match them did not — so
+    // the convention this comment complains about was reproduced by the fix
+    // for it. `grade` is a no-op for any agent without a contract, which is
+    // most of the catalogue, and cannot fail a run.
+    let graded = pulse.grade(
+        &agent_id,
+        card.capabilities.output_contract.as_ref(),
+        output.raw_response.as_deref(),
     );
-    if !grounding_report.is_clean() {
-        tracing::warn!(
-            agent = %agent_id,
-            episode = %episode_id,
-            violations = grounding_report.violations.len(),
-            "grounding contract violated on the execute path — fields with no possible source"
-        );
-    }
 
     // 3.7 Does the document match the type the agent declared?
     //
@@ -536,7 +462,7 @@ pub async fn execute_agent_handler(
         .and_then(|oc| oc.get("produces_schema"))
         .and_then(|v| v.as_str());
 
-    let (validation_status, schema_violations) = match (declared_schema, enforced_doc.as_ref()) {
+    let (validation_status, schema_violations) = match (declared_schema, graded.enforced.as_ref()) {
         (Some(schema), Some(doc)) => {
             let r = fermi::schema_validate::validate(schema, doc);
             let status = if r.is_valid() {
@@ -619,32 +545,14 @@ pub async fn execute_agent_handler(
     if let Some(ref inv) = body.invocation {
         crate::stamp_invocation(&mut episode, inv);
     }
-    // And why it was CHOSEN -- unconditionally, because the block above is
-    // behind `if let Some(invocation)` and most production requests send none.
-    // That is why `route:` appeared on 0 of 3,581 episodes while its
-    // server-computed sibling `ibind:` appeared on 90: the only producer of a
-    // caller-supplied `route_reason` is the desktop console, which the
-    // Dockerfile strips from the workspace. Three views -- `route_outcomes`,
-    // `domain_agent_ranking`, `declaration_quality_outcomes` -- were empty for
-    // this one reason, and Loop 4 could not turn without them.
+    // `route:` and the grounding grade are stamped by `close` below.
     //
-    // Same defect and same remedy as `bind_input` below: compute it here from
-    // what the server knows, rather than believing the caller's account.
-    if body
-        .invocation
-        .as_ref()
-        .and_then(|i| i.get("route_reason"))
-        .and_then(|v| v.as_str())
-        .is_none()
-    {
-        fermi::route_trust::stamp(
-            &mut episode,
-            fermi::route_trust::RouteSelection::CallerNamed,
-        );
-    }
-    // And what the grounding contract made of the answer, so a consumer of
-    // this episode can tell a checked document from an unchecked one.
-    crate::stamp_grounding(&mut episode, &grounding_report);
+    // The guard that used to stand here — stamp the server's own route reason
+    // only when the caller supplied none — is gone because `route_trust::stamp`
+    // already refuses to overwrite a `route:` tag that `stamp_invocation` wrote
+    // two lines up. The server fills silence; it does not overwrite testimony,
+    // and that rule belongs in the one function rather than in a condition each
+    // handler has to remember to restate.
     // And check the asking against what the agent advertises — server-side,
     // from the resolved card, rather than believing the caller's account of
     // it. `bind_input` shipped in v0.16.0 and was wired only into the
@@ -734,88 +642,32 @@ pub async fn execute_agent_handler(
     // storage.
     let episode_for_observation = episode.clone();
 
-    let stored_episode_id = state
-        .memory_store
-        .store_episode_with_provenance(episode, provenance.as_ref(), Some(source_ref))
-        .await
-        .map_err(|e| {
-            eprintln!("Warning: failed to store episode: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
-        })?;
-
-    // ── Loop 2's seed ─────────────────────────────────────────────────────
+    // The end of the boundary: stamp, store, raise, enqueue.
     //
-    // Below the episode write, and that placement is load-bearing.
-    // `anomaly_events.episode_id` is a real foreign key; the original raise sat
-    // ~200 lines above referencing an id whose row did not exist yet, and lost
-    // the race whenever anything between them took time. The ordering is
-    // enforced by the binding rather than by this comment: `stored_episode_id`
-    // is produced by `store_episode_with_provenance` above and does not exist
-    // before it, so moving this block up is a compile error.
-    //
-    // The event itself is built by `grounding_anomaly`, which is the only
-    // place in the system that turns a violation into a Loop 2 input. This was
-    // an inline copy — the ninth call site of `enforce` and the only one that
-    // raised — and eight other paths had no equivalent at all.
-    fermi::grounding_anomaly::spawn_raise(
-        std::sync::Arc::clone(&state.memory_store),
-        agent_id.clone(),
-        Some(stored_episode_id),
-        grounding_report.clone(),
-    );
-
-    // ── Loop 2's other half: what needs checking ──────────────────────────
-    //
-    // `spawn_raise` above handles the EXCEPTION — a field the contract says
-    // could have no source. This handles the ROUTINE: every contracted field the
-    // agent did claim, queued for whoever can settle it. The two are deliberately
-    // different channels and must stay so. `anomaly_events` is rare by design and
-    // a row per marked field would flood the HITL queue and destroy the semantics
-    // that keep Loop 2 informative; `assertion_verifications` is the queue that
-    // is *supposed* to have volume, and it has held 0 rows since migration 205
-    // for want of a writer.
-    //
-    // Below the episode write for `spawn_raise`'s reason, and enforced the same
-    // way: `assertion_verifications.episode_id` is a real foreign key and
-    // `stored_episode_id` does not exist before the line above, so moving this
-    // up is a compile error rather than a race.
-    //
-    // Spawned and non-fatal. An agent must not fail to answer because the queue
-    // of things to check about its answer could not be written; the cost is paid
-    // explicitly through `write_accounting::Sink::AssertionVerifications`.
-    if !graded.is_empty() {
-        let db = state.db.clone();
-        let agent = agent_id.clone();
-        tokio::spawn(async move {
-            let e =
-                fermi::verification_queue::enqueue(&db, stored_episode_id, &agent, &graded).await;
-            if e.queued > 0 {
-                tracing::info!(
-                    agent = %agent,
-                    episode = %stored_episode_id,
-                    queued = e.queued,
-                    to_tool = e.to_tool,
-                    to_human = e.to_human,
-                    already_settled = e.already_settled,
-                    "contracted fields queued for verification"
-                );
-            }
-            // `is_problem` is false for an empty queue that is empty because
-            // everything was already reproducible, or because nothing was a
-            // checkable proposition. Warning on those would fill the log on the
-            // runs that went best, which is how a warning stops being read.
-            if e.is_problem() {
-                tracing::warn!(
-                    agent = %agent,
-                    episode = %stored_episode_id,
-                    failed = e.failed,
-                    not_representable = ?e.not_representable,
-                    "some contracted claims could not be queued for verification; \
-                     each is a claim nobody will ever check"
-                );
-            }
-        });
-    }
+    // Each of those was a separate block here, and the ordering between them is
+    // load-bearing in ways a comment could not enforce — `anomaly_events.episode_id`
+    // and `assertion_verifications.episode_id` are real foreign keys, and the
+    // original raise sat two hundred lines above an id whose row did not exist
+    // yet. `close` keeps the ordering by construction, and keeps it identically
+    // on the eleven other paths that now share it.
+    let stored_episode_id = fermi::episode_boundary::close(
+        pulse,
+        &graded,
+        fermi::episode_boundary::Write {
+            store: &state.memory_store,
+            db: Some(&state.db),
+            agent_slug: &agent_id,
+            episode,
+            route: fermi::route_trust::RouteSelection::CallerNamed,
+            provenance: provenance.as_ref(),
+            source_ref: Some(source_ref),
+        },
+    )
+    .await
+    .map_err(|e| {
+        eprintln!("Warning: failed to store episode: {}", e);
+        (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+    })?;
 
     // Make this turn visible to drift + anomaly detection. Without a timeline
     // entry the observability worker never sees live traffic, so the HITL

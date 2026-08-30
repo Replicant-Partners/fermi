@@ -82,7 +82,7 @@ use fermi::grounding_trust as gt;
 use fermi::liveness_trust::{self as lt, Expectation, LivenessContract, LivenessReport, Status};
 use fermi::loop_api;
 use fermi::loop_model::{self as lm, LoopState, Stage, StageState, Trigger, Upstream};
-use fermi::native_evaluators::{Observation, Severity, Verdict};
+use fermi::native_evaluators::{ContractConformance, Observation, Severity, Verdict};
 use fermi::outcome_trust::{
     classify_discrimination as disc, classify_producers, classify_reach, known_gap, reach_pct,
     Discrimination, EventSpread, Producers, Reach,
@@ -209,6 +209,22 @@ fn sink_account(attempts: u64, failures: u64) -> SinkAccount {
         attempts,
         failures,
         last_error: None,
+    }
+}
+
+/// One agent's contract census, positionally in the rung order `first_gap`
+/// walks: pulses, then documents, then graded fields, then ledger rows.
+///
+/// Positional because the ordering is the thing under test — a fixture that
+/// named each field would let a pair vary a rung without the reader seeing
+/// which rung, and which rung is answered is the whole judgement.
+fn conformance(pulses: i64, with_document: i64, graded: i64, recorded: i64) -> ContractConformance {
+    ContractConformance {
+        agent: "football_analyst",
+        pulses,
+        with_document,
+        graded,
+        recorded,
     }
 }
 
@@ -676,6 +692,33 @@ const FALSIFICATIONS: &[Falsification] = &[
                  must exist. A predicate tuned to let `Notice` through and \
                  accidentally letting `Critical` through with it would make the \
                  whole native tier decorative, and every report would be green.",
+    },
+    Falsification {
+        check: "native_evaluators::ContractConformance::first_gap",
+        owner: "src/native_evaluators.rs",
+        // Permissive reading: "this contract has no gap to report." `None` is
+        // what the evaluator filters on, so `None` is the optimistic answer and
+        // the one a wrong ordering reaches by the wrong route.
+        passes: || conformance(0, 0, 0, 0).first_gap().is_none(),
+        fires: || conformance(94, 9, 0, 0).first_gap().is_none(),
+        models: "Nine of the ten agents holding a declared field contract had \
+                 never graded a single field, because enforcement ran on one \
+                 route and not the other. The two worlds here are the two \
+                 readings of one zero. An agent nobody has invoked must stay \
+                 quiet: absence is not a fault, and reporting an untested \
+                 contract as a broken one puts work on an author who has none to \
+                 do and buries the nine who are owed some. An agent with 94 \
+                 pulses, 9 of them carrying a document and none of them graded, \
+                 is the measured state and must speak — and note that the quiet \
+                 world reaches `None` only through the `pulses == 0` guard: \
+                 delete that guard and it answers `emits_no_document`, which is \
+                 the same accusation aimed at the same innocent author. Which of \
+                 the three tokens the loud world returns is a separate claim \
+                 about who acts, and it is asserted one tier down by \
+                 `the_gap_distinguishes_whose_problem_it_is` rather than twice \
+                 here; the cost of getting it wrong is on the record, because \
+                 the bestiary card that collapsed `declared_ungraded` into \
+                 `not_declared` billed nine authors for a platform gap.",
     },
     // ── panel_absence ───────────────────────────────────────────────────
     Falsification {
@@ -2000,6 +2043,56 @@ const EXEMPT: &[(&str, &str)] = &[
          available reading and must not be inferred from a query that did not \
          run — is asserted by `panel_absence`'s \
          `a_missing_census_is_not_reported_as_zero_coverage`.",
+    ),
+    (
+        "native_evaluators::delegation_integrity",
+        "The `run` exemption above does **not** reach this one, and the seam is \
+         worth naming rather than borrowing. \
+         `every_evaluator_can_produce_a_finding` hands `DelegationChainIntact` \
+         the pair `(12, 6)` as a struct literal, so what it falsifies is the \
+         verdict drawn from two numbers — never the query that produces them. \
+         The judgement here is the `LEFT JOIN`, and it is the entire finding: \
+         over the same rows an inner join returns `(6, 0)`, and the evaluator \
+         then reads `all 6 delegation edge(s) resolve` and goes green on the \
+         exact state it exists to catch. That is not hypothetical — an earlier \
+         surface joined it that way and reported six children whose caller \
+         cannot be identified as simply `not delegated`, which is the \
+         reassuring reading of the same data. It cannot be registered because \
+         its world is a live database rather than a `fn() -> bool`, so it is \
+         run against production by \
+         `native_evaluator_contract::the_machinery_scores_itself`, which \
+         collects a real `Observation` and fails on the `Critical` this makes \
+         reachable; the mechanism whose absence minted the six dangling ids is \
+         separately pinned by \
+         `episode_reservation::the_normal_write_completes_a_reservation_and_refuses_anything_else`.",
+    ),
+    (
+        "native_evaluators::contract_conformance",
+        "The same seam as `delegation_integrity`, and the same reason the `run` \
+         exemption does not stretch over it: \
+         `every_evaluator_can_produce_a_finding` builds `ContractWiredThrough`'s \
+         world by assigning a `ContractConformance` literal, so the four \
+         counters arrive already correct and the only things falsified are the \
+         readings of them — `first_gap`, registered above, and the \
+         Critical-when-nothing-conforms split. What this function contributes is \
+         the *definition* of each counter, and the definitions are the \
+         measurement: `graded` means a `grounding:enforced` or \
+         `grounding:violations` tag on the episode, and it was precisely that \
+         route-dependent tag that showed nine of ten declared contracts had \
+         never graded a field. A counter defined wrongly here calls a wired \
+         contract broken or a broken one wired, with the evaluator agreeing \
+         either way, and no struct literal can catch it because the definition \
+         is SQL against real episode rows. Its one judgement that is not SQL is \
+         the `??`: a query that fails aborts the whole scan instead of returning \
+         the prefix it managed to measure, because a prefix would let the \
+         evaluator pronounce the contracts it did see healthy and never mention \
+         the rest — the same rule `declaration_census` is exempted under above, \
+         and `inconclusive_is_not_healthy` is what stops the resulting `None` \
+         being read as a pass. The counters themselves are read against \
+         production by `native_evaluator_contract::the_machinery_scores_itself`, \
+         where a partial gap prints as a `Warning` and a total one fails as \
+         `Critical`, and by `panel_absence_contract`, which calls this rather \
+         than passing `None` for exactly this reason.",
     ),
     ("native_evaluators::registry", ENUMERATOR),
     // outcome_trust

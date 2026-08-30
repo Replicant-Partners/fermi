@@ -141,8 +141,20 @@ fn every_agent_execution_path_persists_an_episode() {
              to dream on, and no amount of retrieval will help. (An import does \
              not count — this exact file once imported it and never called it.)"
         );
+        // The write itself moved into `fermi::episode_boundary`, which is now
+        // the only module allowed to call `store_episode*` at all
+        // (`tests/execute_boundary_parity.rs` bans the rest). So the question
+        // this asserts is unchanged — does this path actually write the run? —
+        // and only its spelling moved. Any of the three entry points counts:
+        // `persist` for a path that invoked and answered in one breath,
+        // `persist_opened` / `close` for one that reserved the row first.
+        const WRITES: [&str; 3] = [
+            "episode_boundary::persist(",
+            "episode_boundary::persist_opened(",
+            "episode_boundary::close(",
+        ];
         assert!(
-            src.contains("store_episode"),
+            WRITES.iter().any(|w| src.contains(w)),
             "{what} ({file}) builds an episode and never stores it. Constructing \
              the struct is not the write."
         );
@@ -159,14 +171,26 @@ fn every_agent_execution_path_persists_an_episode() {
 fn delegations_from_the_strategist_hang_off_its_own_episode() {
     let src = code_of("src/handlers/workspace/coherence.rs");
     assert!(
-        src.contains("parent_episode_id: Some(strategist_episode_id)"),
+        src.contains("parent_episode_id: Some(pulse.episode_id)"),
         "the strategist's ToolContext must carry its own pre-minted episode id, \
          or everything it delegates is recorded as a root with no caller"
     );
+    // The second half of this test used to assert that the stored episode used
+    // the same id. It no longer can be got wrong: `episode_boundary::close`
+    // assigns `episode.episode_id` from the pulse itself, so there is no
+    // second id to disagree with the one the tool context was handed.
+    //
+    // What is still worth asserting is the stronger property the pulse added —
+    // that the id was **reserved** and not merely minted. Minting lets a child
+    // NAME this episode; only writing the row early lets it RESOLVE one, and a
+    // strategist that dies mid-fan-out is exactly how six of the platform's
+    // twelve delegation edges came to point at parents that were never written.
     assert!(
-        src.contains("episode.episode_id = strategist_episode_id"),
-        "the stored episode must use the id already advertised to the tool \
-         context, or children stamped it with an id that resolves to nothing"
+        src.contains("episode_boundary::Pulse::open("),
+        "the strategist's episode must be reserved before it delegates, not \
+         merely minted. A member it asks stamps this id as its parent long \
+         before the write lands, and an id with no row behind it resolves to \
+         nothing if the session fails part-way."
     );
 }
 

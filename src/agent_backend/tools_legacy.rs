@@ -6462,12 +6462,12 @@ async fn execute_query_ontology(
 async fn record_delegated_episode(
     ctx: &ToolContext,
     target_agent_id: Uuid,
-    episode_id: Uuid,
+    agent_slug: &str,
+    pulse: crate::episode_boundary::Pulse,
     task: &str,
     output: &crate::agent_backend::executor::AgentOutput,
 ) -> Option<Uuid> {
     let mut episode = crate::episodes::agent_output_to_episode(target_agent_id, task, output);
-    episode.episode_id = episode_id;
     episode.parent_episode_id = ctx.parent_episode_id;
     // Findable as delegated work without having to join on the parent.
     episode.tags.push("delegated".to_string());
@@ -6475,7 +6475,40 @@ async fn record_delegated_episode(
         episode.tags.push(format!("delegated_by:{caller}"));
     }
 
-    match ctx.memory_store.store_episode(episode).await {
+    // Through the boundary, and by the bare `store_episode` before it.
+    //
+    // This is the route the paper's sentence was written about, and it was the
+    // least governed of the three: the child's field contract was never
+    // enforced here, so an agent that grades its own output when a person calls
+    // it graded nothing when a peer did. `store_episode` is also deprecated for
+    // a reason that lands on this path specifically — it writes NULL provenance,
+    // so every delegated child episode on the platform has no embedding and is
+    // invisible to retrieval. That is not fixed here: `provenance: None`
+    // preserves it deliberately, because embedding on the delegation hop is a
+    // per-fan-out cost decision and not a bug to slip into a refactor.
+    match crate::episode_boundary::persist_opened(
+        pulse,
+        crate::episode_boundary::Write {
+            store: &ctx.memory_store,
+            db: ctx.db.as_ref(),
+            agent_slug,
+            episode,
+            // The parent named the peer, by name, in the tool call. That is the
+            // same category as a person naming an agent in the path — no router
+            // was consulted — and it is the reading Loop 4 needs, because an
+            // outcome under a deliberate selection says something about the
+            // agent rather than about a fallback.
+            route: crate::route_trust::RouteSelection::CallerNamed,
+            provenance: None,
+            source_ref: Some(serde_json::json!({
+                "kind": "delegated_execution",
+                "delegated_by": ctx.current_agent_id,
+                "agent_id": target_agent_id,
+            })),
+        },
+    )
+    .await
+    {
         Ok(id) => Some(id),
         Err(e) => {
             tracing::warn!(
@@ -6509,7 +6542,34 @@ async fn execute_execute_agent(
     // child's own ToolContext and used as the id of the episode recorded for
     // this delegated execution. An id generated after the fact could not be
     // handed to a task that has already started.
-    let child_episode_id = Uuid::new_v4();
+    //
+    // Reserved here rather than inside the cross-workspace branch below, which
+    // is where the reservation used to live. That branch was not the only one
+    // that hands the id out, and the branch that reserved was chosen by where
+    // the target's uuid happened to already be resolved — which is why the
+    // target is now resolved once, here, for the reservation's sake.
+    let target_db_id: Option<Uuid> = match ctx.db.as_ref() {
+        Some(db) => sqlx::query_scalar("SELECT agent_id FROM agents WHERE agent_name = $1 LIMIT 1")
+            .bind(agent_name)
+            .fetch_optional(db)
+            .await
+            .ok()
+            .flatten(),
+        None => None,
+    };
+    let child_pulse = match target_db_id {
+        Some(tid) => crate::episode_boundary::Pulse::open(&ctx.memory_store, tid, query).await,
+        // No `agents` row for the target, so there is nothing to reserve
+        // against — and nothing is recorded for this run either, which the
+        // warning below the execution says out loud. The id still exists
+        // because the child's tool context needs a non-null root.
+        None => crate::episode_boundary::Pulse::after_the_fact(
+            Uuid::new_v4(),
+            "the target has no agents row, so there is nothing to reserve \
+             against and no child episode is written for this run at all",
+        ),
+    };
+    let child_episode_id = child_pulse.episode_id;
 
     // Optional cross-workspace delegation: when workspace_id is provided,
     // the target agent runs inside that workspace's full context (tools,
@@ -6605,38 +6665,12 @@ async fn execute_execute_agent(
                     .ok()
                     .flatten();
 
-            // Resolved here rather than after the run, because the reservation
-            // below needs it and a lookup that only happens on the success path
-            // is how the row came to be missing in the first place.
-            let target_db_id_for_reservation: Option<uuid::Uuid> =
-                sqlx::query_scalar("SELECT agent_id FROM agents WHERE agent_name = $1 LIMIT 1")
-                    .bind(agent_name)
-                    .fetch_optional(db)
-                    .await
-                    .ok()
-                    .flatten();
-
-            // Reserve the child's row BEFORE its id is handed to grandchildren.
-            //
-            // Everything the child delegates during its run points at
-            // `child_episode_id`, and until now the row behind it was only
-            // written after the run finished - so a child that failed to record
-            // orphaned every grandchild permanently. 6 of the platform's 12
-            // delegation edges are in that state.
-            if let Some(tid) = target_db_id_for_reservation {
-                if let Err(e) = ctx
-                    .memory_store
-                    .reserve_episode(child_episode_id, tid, query)
-                    .await
-                {
-                    tracing::warn!(
-                        agent = %agent_name,
-                        error = %e,
-                        "[delegation] could not reserve the child episode; any \
-                         grandchild will point at a row that does not exist",
-                    );
-                }
-            }
+            // The child's row is reserved above, before either branch of this
+            // `if` — not here. Everything the child delegates during its run
+            // points at `child_episode_id`, and while the row was written only
+            // after the run finished, a child that failed to record orphaned
+            // every grandchild permanently. 6 of the platform's 12 delegation
+            // edges are in that state.
 
             let target_tool_context = std::sync::Arc::new(ToolContext {
                 // The child's own episode, so anything IT delegates to links
@@ -6690,18 +6724,26 @@ async fn execute_execute_agent(
     // When there is no DB handle we cannot write an episode at all, so the
     // spend stays unrecorded — logged rather than passed over in silence,
     // because that is a hole in the cost ledger and should be visible as one.
-    if let Some(ref db) = ctx.db {
-        match sqlx::query_scalar::<_, Uuid>(
-            "SELECT agent_id FROM agents WHERE agent_name = $1 LIMIT 1",
-        )
-        .bind(agent_name)
-        .fetch_optional(db)
-        .await
-        {
-            Ok(Some(target_db_id)) => {
-                record_delegated_episode(ctx, target_db_id, child_episode_id, query, &output).await;
+    //
+    // Reuses the uuid resolved for the reservation. It was looked up three
+    // times in this function against the same name, and the copy here ran only
+    // on the path that reaches the end — so the id the tool context advertised
+    // and the id this row was written under were resolved by separate queries
+    // that could disagree.
+    if ctx.db.is_some() {
+        match target_db_id {
+            Some(target_db_id) => {
+                record_delegated_episode(
+                    ctx,
+                    target_db_id,
+                    agent_name,
+                    child_pulse,
+                    query,
+                    &output,
+                )
+                .await;
             }
-            _ => tracing::warn!(
+            None => tracing::warn!(
                 agent = %agent_name,
                 "[delegation] target agent not found in DB; child episode not \
                  recorded and its cost will be missing from totals",
@@ -6902,7 +6944,16 @@ async fn execute_delegate_to_agent(
 
     // mig-198: minted before the child runs so it can be handed to the child's
     // own ToolContext below, letting a grandchild link to it.
-    let child_episode_id = Uuid::new_v4();
+    //
+    // And reserved, which it was not. Minting early lets a grandchild NAME this
+    // episode; only writing the row early lets it RESOLVE one. This site put
+    // the id straight onto the tool context two lines down and wrote the row
+    // only after the child returned, so a child that died mid-fan-out orphaned
+    // everything it had already spawned. The sibling delegation tool reserved
+    // and this one did not — the same asymmetry, one function apart.
+    let child_pulse =
+        crate::episode_boundary::Pulse::open(&ctx.memory_store, target_agent_id, task).await;
+    let child_episode_id = child_pulse.episode_id;
 
     // Build a ToolAwareExecutor with workspace tools but NO delegation
     let tool_context = Arc::new(ToolContext {
@@ -6939,7 +6990,7 @@ async fn execute_delegate_to_agent(
 
     // mig-198: record the child's own cost before its output is reduced to
     // prose. Everything below this line throws the token accounting away.
-    record_delegated_episode(ctx, target_agent_id, child_episode_id, task, &output).await;
+    record_delegated_episode(ctx, target_agent_id, agent_name, child_pulse, task, &output).await;
 
     let raw_response = output.metadata.reasoning.clone().unwrap_or_default();
     // Post the result as a workspace message from the delegated agent.

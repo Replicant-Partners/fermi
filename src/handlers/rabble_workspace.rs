@@ -291,15 +291,19 @@ pub async fn dispatch_rabble_action(
         attachments: Vec::new(),
     };
 
-    // Minted ahead of the tool context because the episode for this
-    // execution is written later, from the background task below — while
-    // delegated children need the id from inside the tool loop (mig-198).
-    let episode_id = Uuid::new_v4();
+    // Reserved before the run, not merely minted. This execution's episode is
+    // written from the background task at the very end, so the id is live on
+    // the tool context for the whole tool loop — and a child that stamps it
+    // resolves against a row that already exists, including in the case that
+    // put this here: a dispatch that fails part-way, whose background task
+    // therefore never writes the parent at all.
+    let pulse =
+        fermi::episode_boundary::Pulse::open(&state.memory_store, db_agent.agent_id, query).await;
 
     // Build ToolContext
     let tool_context = Arc::new(ToolContext {
         // Root of this execution's delegation tree (mig-198).
-        parent_episode_id: Some(episode_id),
+        parent_episode_id: Some(pulse.episode_id),
         credentials,
         memory_store: state.memory_store.clone(),
         embedder: state.embedder.clone(),
@@ -389,13 +393,14 @@ pub async fn dispatch_rabble_action(
         let action_bg = action_type.to_string();
         let agent_name_bg = agent_name.to_string();
         let user_id_bg = user_id.to_string();
+        let pulse_bg = pulse;
 
         tokio::spawn(async move {
             // 1. Episode with embedding + Spec 22 provenance
             let mut episode = agent_output_to_episode(agent_id_bg, &query_bg, &output_bg);
             // Use the id advertised to the tool context, so children that
             // already stamped it as their parent resolve to this row.
-            episode.episode_id = episode_id;
+            episode.episode_id = pulse_bg.episode_id;
             // Stamp the (agent, human) dyad — see execution.rs.
             let dyad_id = agent_bestiary_memory::dyad_id(agent_id_bg, &user_id_bg);
             episode.dyad_id = Some(dyad_id.clone());
@@ -428,16 +433,28 @@ pub async fn dispatch_rabble_action(
             // `let _ =` this replaces — the timeline write below was attempted
             // anyway, violated the key, and was swallowed in turn. One failure,
             // two loop sinks lost, and no signal anywhere.
+            //
+            // Through the boundary, not around it. Every Rabble @mention that
+            // reaches an agent lands here, and none of the six checks ran: the
+            // answer was posted to the workspace below with its field contract
+            // unenforced, the episode carried no grade and no `route:`, no gate
+            // verdict was written, and nothing the contract marks as checkable
+            // was queued.
             let stored = fermi::write_accounting::observe(
                 fermi::write_accounting::Sink::Episodes,
-                state_bg
-                    .memory_store
-                    .store_episode_with_provenance(
-                        episode.clone(),
-                        provenance.as_ref(),
-                        Some(source_ref),
-                    )
-                    .await,
+                fermi::episode_boundary::persist_opened(
+                    pulse_bg,
+                    fermi::episode_boundary::Write {
+                        store: &state_bg.memory_store,
+                        db: Some(&state_bg.db),
+                        agent_slug: &agent_name_bg,
+                        episode: episode.clone(),
+                        route: fermi::route_trust::RouteSelection::CallerNamed,
+                        provenance: provenance.as_ref(),
+                        source_ref: Some(source_ref),
+                    },
+                )
+                .await,
             );
 
             // Make this turn visible to drift + anomaly detection.

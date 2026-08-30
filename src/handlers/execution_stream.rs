@@ -156,26 +156,19 @@ pub async fn execute_agent_stream_handler(
             .map(|p| p.contains("ONLY") || p.contains("raw JSON"))
             .unwrap_or(false);
 
-    // Minted before the executor because the episode is only written later,
+    // Opened before the executor because the episode is only written later,
     // inside the SSE stream, while delegated children need the id from inside
     // the tool loop (mig-198). The bypass branch builds no tool context and so
     // can delegate to nothing; the id is then simply this episode's own id.
-    let minted_episode_id = uuid::Uuid::new_v4();
-
+    //
     // Reserved, not merely minted — the row must exist before the id reaches a
-    // child, or a run that fails part-way orphans everything it spawned. Same
-    // reasoning as the non-streaming path.
-    if let Err(e) = state
-        .memory_store
-        .reserve_episode(minted_episode_id, agent_db_id, &body.query)
-        .await
-    {
-        tracing::warn!(
-            agent = %agent_db_id, error = %e,
-            "could not reserve the episode; delegated children will point at a \
-             row that does not exist",
-        );
-    }
+    // child, or a run that fails part-way orphans everything it spawned. Both
+    // acts belong to `episode_boundary::Pulse` now, which is what stops this
+    // handler from drifting away from the non-streaming one again: it already
+    // did, and for a while this path minted an id it never reserved.
+    let pulse =
+        fermi::episode_boundary::Pulse::open(&state.memory_store, agent_db_id, &body.query).await;
+    let minted_episode_id = pulse.episode_id;
 
     let executor: Arc<dyn AgentExecutor> = if prompt_demands_format {
         state.registry.executor_arc()
@@ -282,123 +275,56 @@ pub async fn execute_agent_stream_handler(
                 if let Some(ref inv) = invocation {
                     crate::stamp_invocation(&mut episode, inv);
                 }
-                // And why it was chosen. Unconditional, for the same reason as
-                // on the non-streaming path: the block above only runs when the
-                // caller sends an invocation block, and both endpoints must
-                // stamp or the unstamped one becomes the one callers use.
-                if invocation
-                    .as_ref()
-                    .and_then(|i| i.get("route_reason"))
-                    .and_then(|v| v.as_str())
-                    .is_none()
-                {
-                    fermi::route_trust::stamp(
-                        &mut episode,
-                        fermi::route_trust::RouteSelection::CallerNamed,
-                    );
-                }
-                // Grounding, for the same reason the bind check is here: both
-                // execute endpoints must check, or the unchecked one becomes
-                // the one callers use. `enforce` is a no-op for agents with no
-                // field contract.
-                // The document as the agent produced it, and the same
-                // document after enforcement. Both are needed and they are
-                // different: `enforce` NULLS ungrounded fields, so the claimed
-                // values -- the evidence for every later verification -- exist
-                // only in the first.
+                // `route:` and the grounding grade are stamped by `close`
+                // below.
                 //
-                // Hoisted out of the block below, which used to scope `report`
-                // and mutate a local. The schema check further down then
-                // re-extracted and re-enforced, with a comment admitting the
-                // compromise, so `enforce` ran twice per streamed response and
-                // nothing could reach the claimed values. One pass now serves
-                // all three readers.
-                let claimed_doc = output
-                    .raw_response
-                    .as_deref()
-                    .and_then(fermi::agent_backend::envelope::extract_json);
-                let mut enforced_doc = claimed_doc.clone();
-                let grounding_report = match enforced_doc.as_mut() {
-                    Some(doc) => fermi::grounding_trust::enforce(&agent_id_clone, doc),
-                    None => fermi::grounding_trust::Report::default(),
-                };
-                // Every contracted field, with its grade and the claim behind
-                // it, from the report just computed rather than a second pass.
-                let graded = match claimed_doc.as_ref() {
-                    Some(doc) => fermi::grounding_trust::graded_fields(
-                        &agent_id_clone,
-                        doc,
-                        &grounding_report,
-                    ),
-                    None => Vec::new(),
-                };
-                {
-                    let report = grounding_report;
-                    if !report.is_clean() {
-                        tracing::warn!(
-                            agent = %agent_id_clone,
-                            episode = %minted_episode_id,
-                            violations = report.violations.len(),
-                            "grounding contract violated on the streaming execute path"
-                        );
-                    }
-                    crate::stamp_grounding(&mut episode, &report);
-                    // And a ledger row, so the belt on a streamed artifact
-                    // carries what the gate decided rather than only a
-                    // recomputation. Absent here while both other execute paths
-                    // wrote one, which is the asymmetry that keeps recurring.
-                    {
-                        let has_contract =
-                            fermi::grounding_trust::contracts_for(&agent_id_clone)
-                                .next()
-                                .is_some();
-                        fermi::gate_trust::decided_for_episode(
-                            fermi::gate_trust::Gate::Grounding,
-                            if !has_contract {
-                                fermi::gate_trust::Decision::Undetermined
-                            } else if report.is_clean() {
-                                fermi::gate_trust::Decision::Approved
-                            } else {
-                                fermi::gate_trust::Decision::Refused
-                            },
-                            (!report.is_clean())
-                                .then(|| format!("{} violation(s)", report.violations.len()))
-                                .as_deref(),
-                            minted_episode_id,
-                        );
-                    }
+                // The guard that used to stand here — stamp the server's own
+                // route reason only when the caller supplied none — is gone
+                // because `route_trust::stamp` already refuses to overwrite a
+                // `route:` tag that `stamp_invocation` wrote two lines up. The
+                // server fills silence; it does not overwrite testimony, and
+                // that rule belongs in the one function rather than in a
+                // condition each handler has to remember to restate.
+                //
+                // Grounding, for the same reason the bind check below is here:
+                // both execute endpoints must check, or the unchecked one
+                // becomes the one callers use. Enforcement, the grading and the
+                // gate's ledger row are one call now rather than sixty lines
+                // here — sixty lines that this handler and the workspace one
+                // were each supposed to keep in step with `execution.rs`, and
+                // did not. `grade` is a no-op for an agent with no field
+                // contract and cannot fail a run.
+                //
+                // The ledger row in particular was absent here while both other
+                // execute paths wrote one, which is the asymmetry that keeps
+                // recurring. So was the anomaly raise: a violation on this
+                // endpoint was stamped on the episode and never reached a
+                // reviewer. The raise now happens inside `close`, below the
+                // write, so it no longer has to pass `None` for an id whose row
+                // does not exist yet — `anomaly_events.episode_id` is a foreign
+                // key, and that `None` was the workaround for it.
+                //
+                // Graded against the agent's NAME, not the path parameter this
+                // route was reached by. `/execute/stream/:agent_id` accepts a
+                // UUID, and `contracts_for` matches on the name, so a caller
+                // who addressed an agent by id got "no contract" for every
+                // agent that has one.
+                let graded = pulse.grade(
+                    &agent_name,
+                    declared_output_contract.as_ref(),
+                    output.raw_response.as_deref(),
+                );
 
-                    // Tell Loop 2. This path stamped and did not raise, so a
-                    // violation on the streaming endpoint was recorded on the
-                    // episode and never reached a reviewer.
-                    //
-                    // `None` for the episode id: on this path the episode row
-                    // is written later, and `anomaly_events.episode_id` is a
-                    // foreign key. Passing an unwritten id is the race that
-                    // made the original raise fail silently on the other
-                    // endpoint for the life of the feature.
-                    fermi::grounding_anomaly::spawn_raise(
-                        std::sync::Arc::clone(&state_clone.memory_store),
-                        agent_id_clone.clone(),
-                        None,
-                        report.clone(),
-                    );
-                }
                 // Does the document match the type the agent declared?
                 //
-                // Enforce first, then verify what remains — the block above
-                // has already run, so the document re-extracted here is
-                // checked in the right order. Re-extracted rather than
-                // threaded out of that block because it is scoped and the
-                // grounding pass there mutates a local; the alternative is
-                // widening a scope for a second consumer, which is a larger
-                // change to a closure than this earns.
+                // Enforce first, then verify what remains. The ordering is held
+                // by the type now rather than by two comments agreeing: the
+                // only document in scope is the enforced one, so a schema that
+                // pins an unsourceable field cannot reject a document grounding
+                // was about to clean, and the agent cannot be blamed for
+                // something the platform fixed.
                 {
-                    // The enforced document from the single pass above.
-                    // "Enforce first, then verify what remains" still holds --
-                    // it is the same ordering, with one enforcement instead of
-                    // two.
-                    let doc = enforced_doc.as_ref();
+                    let doc = graded.enforced.as_ref();
                     let schema = declared_output_contract
                         .as_ref()
                         .and_then(|oc| oc.get("schema"))
@@ -509,81 +435,53 @@ pub async fn execute_agent_stream_handler(
 
                 let episode_for_observation = episode.clone();
 
-                // Store episode
-                let episode_id = match state_clone
-                    .memory_store
-                    .store_episode_with_provenance(episode, provenance.as_ref(), Some(source_ref))
-                    .await
+                // The end of the boundary: stamp, store, raise, enqueue.
+                //
+                // Each of those was a separate block on this path, and the
+                // ordering between them is load-bearing in a way no comment
+                // could enforce: `anomaly_events.episode_id` and
+                // `assertion_verifications.episode_id` are both real foreign
+                // keys, which is why the raise used to be given `None` and the
+                // enqueue had to sit here rather than beside the grading.
+                // `close` keeps the ordering by construction.
+                //
+                // Still an `Option`, and still logged rather than propagated:
+                // this stream has already yielded `started` and is about to
+                // yield `complete`, so a lost episode must not turn a delivered
+                // answer into an SSE error.
+                let episode_id = match fermi::episode_boundary::close(
+                    pulse,
+                    &graded,
+                    fermi::episode_boundary::Write {
+                        store: &state_clone.memory_store,
+                        db: Some(&state_clone.db),
+                        agent_slug: &agent_name,
+                        episode,
+                        route: fermi::route_trust::RouteSelection::CallerNamed,
+                        provenance: provenance.as_ref(),
+                        source_ref: Some(source_ref),
+                    },
+                )
+                .await
                 {
                     Ok(id) => Some(id),
                     Err(e) => {
                         eprintln!("Warning: episode storage failed: {}", e);
+                        // What the lost write costs downstream, named here
+                        // because nothing else will name it: no row means no
+                        // enqueue, and each contracted claim on this response is
+                        // then one nobody will ever check.
+                        if !graded.fields.is_empty() {
+                            tracing::warn!(
+                                agent = %agent_name,
+                                fields = graded.fields.len(),
+                                "the episode write failed, so its contracted \
+                                 claim(s) could not be queued for verification",
+                            );
+                        }
                         None
                     }
                 };
-
-                // ── Loop 2's routine half, mirroring `execution.rs` ──────
-                //
-                // `spawn_raise` above passes `None` for the episode id because
-                // on this path the row is written HERE, below it. The enqueue
-                // cannot do that: `assertion_verifications.episode_id` is a
-                // real foreign key, so it has to wait for the write and take
-                // the id the write returned. That is why this block is here and
-                // not beside the grounding pass.
-                //
-                // `episode_id` is an `Option` because storage on this path
-                // logs and continues. No episode means no enqueue — and that
-                // is a loss worth seeing rather than papering over, so it is
-                // counted as a failed write rather than skipped silently.
-                if !graded.is_empty() {
-                    let db = state_clone.db.clone();
-                    let agent = agent_id_clone.clone();
-                    let graded_for_queue = graded.clone();
-                    match episode_id {
-                        Some(eid) => {
-                            tokio::spawn(async move {
-                                let e = fermi::verification_queue::enqueue(
-                                    &db,
-                                    eid,
-                                    &agent,
-                                    &graded_for_queue,
-                                )
-                                .await;
-                                if e.queued > 0 {
-                                    tracing::info!(
-                                        agent = %agent,
-                                        episode = %eid,
-                                        queued = e.queued,
-                                        to_tool = e.to_tool,
-                                        to_human = e.to_human,
-                                        already_settled = e.already_settled,
-                                        "contracted fields queued for verification (stream)"
-                                    );
-                                }
-                                if e.is_problem() {
-                                    tracing::warn!(
-                                        agent = %agent,
-                                        episode = %eid,
-                                        failed = e.failed,
-                                        not_representable = ?e.not_representable,
-                                        "some contracted claims could not be queued \
-                                         for verification; each is a claim nobody \
-                                         will ever check"
-                                    );
-                                }
-                            });
-                        }
-                        None => {
-                            tracing::warn!(
-                                agent = %agent_id_clone,
-                                fields = graded.len(),
-                                "the episode write failed, so {} contracted \
-                                 claim(s) could not be queued for verification",
-                                graded.len()
-                            );
-                        }
-                    }
-                }
 
                 // Retain the agent's quantified judgement as a claim.
                 //

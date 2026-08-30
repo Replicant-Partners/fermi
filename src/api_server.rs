@@ -6567,49 +6567,6 @@ pub(crate) fn stamp_input_binding(
     }
 }
 
-/// Record what the grounding contract found, on the episode itself.
-///
-/// The generic execute path never ran grounding. Enforcement lived in six
-/// bespoke creature handlers and in the agent-to-agent delegation hop, which
-/// covered four of the nine agents that have a written field contract — the
-/// other five (`football_analyst`, `weather_oracle`, `hud_field_scout`,
-/// `harvest_advisor`, `forage_scout`) were checked only when another agent
-/// called them, never when a person did.
-///
-/// This is deliberately a stamp rather than a rewrite. The raw response stays
-/// verbatim, because retention is a precondition for every later form of
-/// verification and a digest is not a record. What changes is that the episode
-/// now carries the verdict, so the consolidation worker and anything else
-/// reading it downstream can tell a checked document from an unchecked one —
-/// which, before this, they could not.
-pub(crate) fn stamp_grounding(episode: &mut Episode, report: &fermi::grounding_trust::Report) {
-    if report.is_clean() && report.provenance.is_empty() {
-        // No contract for this agent, or nothing to say. Deliberately not
-        // tagged as clean: an agent with no contract has not been found
-        // compliant, and marking it so would be the original defect.
-        return;
-    }
-
-    episode.tags.push(if report.is_clean() {
-        "grounding:enforced".to_string()
-    } else {
-        "grounding:violations".to_string()
-    });
-
-    for (block, provenance) in &report.provenance {
-        episode
-            .tags
-            .push(format!("prov:{}-{}", block.replace(':', "-"), provenance));
-    }
-
-    if !report.is_clean() {
-        episode.tags.push(format!(
-            "grounding:count-{}",
-            report.violations.len().min(99)
-        ));
-    }
-}
-
 pub(crate) fn stamp_invocation(episode: &mut Episode, invocation: &serde_json::Value) {
     let Some(obj) = invocation.as_object() else {
         return;
