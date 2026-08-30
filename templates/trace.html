@@ -262,8 +262,21 @@
   // Who called this, who it called, where it landed. Read rather than asserted.
   let LINEAGE = null;
   // `fields[]` carries no assertion id, so the settle action is joined to a
-  // claim by its path through `routed[]`.
+  // claim by its path through the verification log.
   let ASSERTION_BY_PATH = {};
+  // The verification log, folded to one entry per assertion: its state now,
+  // how many verdicts came before, and the field it settles. Built in `boot`,
+  // where the reason it is a fold rather than a list is written down.
+  let CLAIMS = {};
+  // Verdict names shortened for the `what happens next` column, which is 130px
+  // wide. The full verdict is never hidden - it is on the row underneath, and
+  // `settleForm` puts the raw value on each button's `title`.
+  const SHORT_VERDICT = {
+    human_sourced: "sourced",
+    human_endorsed: "endorsed",
+    rejected: "rejected",
+    tool_verified: "tool-checked",
+  };
   const READINGS = ["idle","fault","unknown"];
   const reading = r => READINGS.includes(r) ? r : "unknown";
 
@@ -366,8 +379,23 @@
 
     const refused = belt.filter(b => b.decided && b.decided.decision === "refused");
     const approved = belt.filter(b => b.decided && b.decided.decision === "approved");
-    const held = (d.routed || []).filter(r =>
-      String(r.verdict || "").startsWith("pending_"));
+    // Assertions still awaiting a verdict — one entry per claim, from the fold,
+    // not one per row of the log.
+    //
+    // This filtered `routed[]` directly, which is the whole append-only history:
+    // a claim queued at 23:21 and endorsed twice at 23:32 and 23:33 kept its
+    // `pending_human_check` row forever, so the artifact reported claims
+    // "awaiting a verdict" that a person had already settled — and the number
+    // could never go down, because settling ADDS a row. Two surfaces read this:
+    // the reading's `held for review` count and the loops block.
+    const held = Object.keys(CLAIMS).filter(id =>
+      String(CLAIMS[id].verdict || "").startsWith("pending_"));
+    // Kept as its own count, because zero held has two causes and they are
+    // opposites: nothing was ever queued, or everything queued was settled. The
+    // loops block showed neither, so the run where curation actually closed
+    // looked identical to one where it never started.
+    const settled = Object.keys(CLAIMS).filter(id =>
+      CLAIMS[id].verdict && !String(CLAIMS[id].verdict).startsWith("pending_"));
 
     const g = by.grounding;
     const rc = g && g.recomputed;
@@ -381,7 +409,7 @@
     const inspectedContents = g ? !!rc : false;
     const contentsGuarded = !!(g && g.enforcement === "control");
 
-    return { by, refused, approved, held, graded, violations,
+    return { by, refused, approved, held, settled, graded, violations,
              couldRefuse, inspectedContents, contentsGuarded, grounding: g };
   }
 
@@ -617,9 +645,19 @@
       // One explanation per group, not per row. The old version repeated the
       // same sentence on seven consecutive claims, which is the rule this page
       // is supposed to hold: explain once, then show data.
-      const tools = [...new Set(g.map(f => f.settleable_by).filter(Boolean))];
-      const needPerson = g.filter(f => !f.settleable_by).length;
-      const legend = s >= 2 ? "" : `<div class="fgroup-legend">${
+      // What is LEFT, not what the group is made of. The legend read as a
+      // to-do count and was computed from capability alone, so a claim a person
+      // had already endorsed still appeared in "N can only be settled by a
+      // person" — the number never went down as the work got done.
+      const stillOpen = f => {
+        const a = ASSERTION_BY_PATH[f.name];
+        const c = a ? CLAIMS[a] : null;
+        return !c || String(c.verdict || "").startsWith("pending_");
+      };
+      const left = g.filter(stillOpen);
+      const tools = [...new Set(left.map(f => f.settleable_by).filter(Boolean))];
+      const needPerson = left.filter(f => !f.settleable_by).length;
+      const legend = s >= 2 || !left.length ? "" : `<div class="fgroup-legend">${
           needPerson ? `<b>${needPerson}</b> of these can only be settled by a person —
             no data source could produce them, and each gap is itself a request for the
             integration that would close it. ` : ""}${
@@ -631,32 +669,42 @@
         ${legend}
         ${g.map(f => {
           const v = showValue(f.value);
-          const dest = (f.strength ?? 2) >= 2
-            ? `<span class="t-done">settled</span>`
-            : f.settleable_by
-              ? `<span class="t-tool">${esc(f.settleable_by)}</span>`
-              : `<span class="t-person">needs a person</span>`;
-
-          // A weak claim is a call for a specific kind of work, and the offer
-          // is stated as the gain rather than as the platform's verb. Citing a
-          // source is not paperwork: `human_sourced` scores as high as
-          // `tool_verified` BECAUSE someone else can follow the citation.
+          // One claim, one row, one place to act.
           //
-          // Settling needs an `assertion_id`, which `fields[]` does not carry -
-          // it is joined by path from `routed[]`. Where no queue item exists
-          // there is nothing to settle, and that is said rather than offered as
-          // a button that cannot work.
+          // This page offered the same verdict twice: `Cite it`/`Wrong` here,
+          // hardcoded, and `Sourced`/`Endorse`/`Reject` in a second block
+          // below, served from `/api/verification-queue`. Two names for one
+          // act, and `human_endorsed` reachable from only one of them — which
+          // is exactly the drift `settleForm`'s own comment warns about,
+          // written 120 lines from where it happened. The hardcoded pair is
+          // gone; the served list is the only list.
+          //
+          // Settling needs an `assertion_id`, which `fields[]` does not carry —
+          // it is joined by path through the verification log. Where no queue
+          // item exists there is nothing to settle, and that is said rather
+          // than offered as a button that cannot work.
           const aid = ASSERTION_BY_PATH[f.name];
-          const offer = (f.strength ?? 2) >= 2 ? "" : aid
-            ? `<div class="offer" data-assertion="${esc(aid)}">
-                 <input class="cite" placeholder="cite a source — a reference anyone can follow"/>
-                 <button class="act" data-verdict="human_sourced">Cite it</button>
-                 <button class="act act-no" data-verdict="rejected">Wrong</button>
-                 <span class="why">a citation makes this as strong as a tool result</span>
-                 <span class="settle-out"></span>
-               </div>`
-            : `<div class="offer"><span class="why">Nothing queued this claim, so there is
-                 nothing to settle yet — the queue is what a verdict attaches to.</span></div>`;
+          const st = aid ? CLAIMS[aid] : null;
+          const open = !!st && String(st.verdict || "").startsWith("pending_");
+
+          // What happens next, read off the log rather than off the grade.
+          // `dest` used to be derived from grounding strength alone, so a claim
+          // a person had already endorsed still read "needs a person".
+          const dest = st && !open
+            ? `<span class="t-done">${esc(SHORT_VERDICT[st.verdict] || "settled")}</span>`
+            : (f.strength ?? 2) >= 2
+              ? `<span class="t-done">settled</span>`
+              : f.settleable_by
+                ? `<span class="t-tool">${esc(f.settleable_by)}</span>`
+                : `<span class="t-person">needs a person</span>`;
+
+          const body = st
+            ? `${claimState(st)}${open ? settleForm(aid) : ""}
+               <span class="settle-out"></span>`
+            : `<span class="why">Nothing queued this claim, so there is nothing to
+                 settle yet — the queue is what a verdict attaches to.</span>`;
+          const offer = (f.strength ?? 2) >= 2 && !st ? "" :
+            `<div class="offer"${aid ? ` data-assertion="${esc(aid)}"` : ""}>${body}</div>`;
 
           return `<div class="claim" title="grade: ${esc(f.grade || "")}">
             ${pips(f.strength)}
@@ -672,9 +720,9 @@
     return `<div class="block">
       <h2>What it claimed</h2>
       <div class="note">
-        Every claim below was checked by <b>grounding</b> and by nothing else. Values are
-        what the agent actually said, never stripped. Read the pips — two different grade
-        names can mean the same amount of nothing. Hover a row for its grade.
+        Values are verbatim, never stripped. Pips are <b>grounding</b>'s grade — two grade
+        names can mean the same amount of nothing — and a verdict under a row is a separate
+        answer that does not move them: endorsing a claim does not make it a retrieval.
       </div>
       ${groups}
       <div class="floor">
@@ -762,35 +810,56 @@ something specific about each checkpoint.")}</div></div>`;
       <div class="transient">Nobody's. ${esc(d.detail || "Nothing to do here.")}</div></div>`;
   }
 
-  // A call for a person has to be actionable where it is read. These items were
-  // rendered as prose describing work somebody should do elsewhere, while the
-  // endpoint that does it has been live and unused.
+  // A verdict whose claim could not be placed.
   //
-  // `settleable_verdicts` is SERVED, never hardcoded here: copying it would be
-  // copying a declaration, and inventing a parallel list is how the two drift.
-  function routed(d) {
-    const r = d.routed || [];
-    if (!r.length) return "";
-    const pending = r.filter(x => String(x.verdict || "").startsWith("pending_"));
-
-    return `<div class="block"><h2>Routed for verification</h2>
-      <div class="note">Unverified is a work item, not a discard.
-        ${pending.length ? `<b>${pending.length} of ${r.length}</b> still awaits a verdict
-          — and you can give one here.` : "Every claim here has been settled."}</div>
-      ${r.map(x => {
-        const ev = x.evidence || {};
-        const open = String(x.verdict || "").startsWith("pending_");
-        return `<div class="caveat" data-assertion="${esc(x.assertion_id || "")}">
-          <div><b>${esc(ev.path || "claim")}</b>
-            ${ev.claimed !== undefined
-              ? `<span class="fval" style="display:inline">claimed ${
-                  esc(JSON.stringify(ev.claimed))}</span>` : ""}</div>
-          <div class="dns">${esc(x.verdict)} · ${esc(x.actor_kind || "")} · ${esc(x.actor || "")}
-            ${ev.settleable_by ? `· a tool could settle this: <b>${esc(ev.settleable_by)}</b>` : ""}</div>
-          ${open ? settleForm(x.assertion_id) : ""}
-          <div class="settle-out"></div>
-        </div>`;
+  // "Routed for verification" used to be a second list of these, rendered
+  // alongside the claim grid that already holds the same rows — the same object
+  // in two renderings, on one screen, with two vocabularies for one act. It is
+  // folded into the grid now, and what is left over is this: a verdict naming an
+  // assertion whose field path the log does not carry.
+  //
+  // Named rather than dropped. A verdict that cannot be attached is not nothing,
+  // and inner-joining it away would leave the reassuring reading as the only
+  // available one. The reason is stated as the platform's, because it is: the
+  // settle endpoint writes an `evidence` blob without the `path` the queue row
+  // had.
+  function unattached(d) {
+    const orphans = Object.keys(CLAIMS).filter(id => !CLAIMS[id].path);
+    if (!orphans.length) return "";
+    return `<div class="block"><h2>Verdicts with no claim to attach to</h2>
+      <div class="note"><b>${orphans.length}</b> verdict(s) name an assertion whose field
+        path this log does not record, so they cannot be shown against the claim they
+        settled. That is a gap in what <code>assertion_verifications.evidence</code>
+        carries at settle time, not a gap in the verdict.</div>
+      ${orphans.map(id => {
+        const c = CLAIMS[id];
+        return `<div class="caveat"><div class="dns"><b>${esc(c.verdict || "—")}</b>
+          · ${esc(c.actor_kind || "unattributed")} · assertion <code>${esc(id)}</code>${
+          c.earlier ? ` · ${c.earlier} earlier verdict(s)` : ""}</div></div>`;
       }).join("")}</div>`;
+  }
+
+  // What the log says about this claim right now.
+  //
+  // `earlier` is a count, not a list. The earlier rows matter — a
+  // rejected-then-reverified claim must not read as `verified`, which is why
+  // the table is append-only — but they are the expert's question, and putting
+  // every row inline is what made the old block 60% rows that named nothing.
+  //
+  // The actor is described by KIND and not by id. Three rows on this page read
+  // `human_endorsed · human · 2e644008-f5c7-…`, which is a UUID where a reader
+  // needed a person, and told them nothing they could act on.
+  function claimState(st) {
+    if (!st || !st.verdict) return "";
+    const who = st.actor_kind === "human" ? "a person"
+      : st.actor_kind === "tool" ? "a tool"
+      : st.actor_kind === "platform" ? "the platform"
+      : "unattributed";
+    const cite = st.citation
+      ? ` · cited <b>${esc(st.citation)}</b>` : "";
+    const earlier = st.earlier
+      ? ` · ${st.earlier} earlier verdict(s)` : "";
+    return `<span class="why"><b>${esc(st.verdict)}</b> · ${who}${cite}${earlier}</span>`;
   }
 
   function settleForm(id) {
@@ -832,10 +901,14 @@ something specific about each checkpoint.")}</div></div>`;
        semantic rule the agent retrieves later.`,
       a.violations > 0 && !a.contentsGuarded ? "bad" : "ok"]);
 
-    if (a.held.length) {
+    if (a.held.length || a.settled.length) {
       items.push(["Verification queue", "days",
-        `${a.held.length} claim(s) from this artifact are awaiting a verdict. Until one is
-         recorded, “nobody checked” and “checked and fine” are the same state.`, "warm"]);
+        a.held.length
+          ? `${a.held.length} claim(s) from this artifact are awaiting a verdict. Until one
+             is recorded, “nobody checked” and “checked and fine” are the same state.`
+          : `${a.settled.length} claim(s) were queued and settled. This is the loop having
+             turned — not the loop having nothing to do.`,
+        a.held.length ? "warm" : "ok"]);
     }
     if ((d.fields || []).some(f => (f.strength ?? 0) === 2)) {
       items.push(["Loop 5 · Calibration", "months+",
@@ -971,7 +1044,7 @@ something specific about each checkpoint.")}</div></div>`;
       // intent being executed - and it was buried under the envelope checks.
       // The five questions lead. The ladder is the expert view and sits under
       // them, per the prototyping call.
-      head + payload(d) + questions(d) + fields(d) + routed(d)
+      head + payload(d) + questions(d) + fields(d) + unattached(d)
       + feeds(d) + ownerBlock(d) + ladder(d) + substrateBlock(d) + chain + caveats(d);
   }
 
@@ -1063,10 +1136,45 @@ something specific about each checkpoint.")}</div></div>`;
       }
       if (!res.ok) throw new Error("HTTP " + res.status);
       const trace = await res.json();
-      ASSERTION_BY_PATH = {};
+      // Current state is the LATEST row per assertion, DERIVED and not stored.
+      // Migration 205 says so in the table comment — "so a
+      // rejected-then-reverified assertion reads as exactly that instead of as
+      // 'verified'" — and this client was ignoring it. `routed[]` is the whole
+      // append-only log, `created_at DESC`, and the page rendered it flat: three
+      // endorsements of one claim arrived as three rows, and a settle form was
+      // still offered on the pending row underneath them. The header read "2 of
+      // 5 still awaits a verdict" while one of the two had been settled three
+      // times.
+      //
+      // The field path lives on the QUEUE-written row and not on the
+      // settlement, so it is taken from whichever row in the assertion's
+      // history carries one. That is why three rows read `claim ·
+      // human_endorsed · <a uuid>` and named nothing: they were settlements
+      // read in isolation from the row that knew what they settled.
+      CLAIMS = {};
       (trace.routed || []).forEach(x => {
-        const p = (x.evidence || {}).path;
-        if (p && x.assertion_id) ASSERTION_BY_PATH[p] = x.assertion_id;
+        const id = x.assertion_id;
+        if (!id) return;
+        const ev = x.evidence || {};
+        const c = CLAIMS[id] || (CLAIMS[id] = { earlier: 0 });
+        if (!c.verdict) {
+          // DESC order, so the first row seen for an assertion is its state now.
+          c.verdict = x.verdict;
+          c.actor = x.actor;
+          c.actor_kind = x.actor_kind;
+          c.citation = x.citation;
+          c.at = x.at;
+        } else {
+          c.earlier += 1;
+        }
+        if (ev.path && !c.path) c.path = ev.path;
+        if (ev.claimed !== undefined && c.claimed === undefined) c.claimed = ev.claimed;
+        if (ev.settleable_by && !c.settleable_by) c.settleable_by = ev.settleable_by;
+      });
+      ASSERTION_BY_PATH = {};
+      Object.keys(CLAIMS).forEach(id => {
+        const p = CLAIMS[id].path;
+        if (p) ASSERTION_BY_PATH[p] = id;
       });
       render(trace);
       wireSettle();
