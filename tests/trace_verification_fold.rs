@@ -273,11 +273,7 @@ fn the_document_is_rendered_once_with_its_checks_on_it() {
         );
     }
 
-    for needed in [
-        "function annotate(",
-        "function annotatedRows(",
-        "const LENSES",
-    ] {
+    for needed in ["function annotate(", "function flattenDoc(", "const LENSES"] {
         assert!(
             src.contains(needed),
             "`{needed}` is gone, so the merged view has been dismantled without \
@@ -296,15 +292,22 @@ fn the_document_is_rendered_once_with_its_checks_on_it() {
     );
 }
 
-/// A value nothing examined must not wear a grade.
+/// A value nothing examined must not wear a grade, and must not wear a label.
+///
+/// Two halves, and the second one reversed once it was on a screen.
 ///
 /// `pips` floors a missing strength to `0`, which draws ▱▱ — the same glyphs as
 /// `tool_no_match`. So an uncontracted value would claim to have been graded and
-/// found worthless when nothing looked at it. On the reference document that is
-/// **106 of 116 values**, so getting it wrong would mislabel almost the whole
-/// answer.
+/// found worthless when nothing looked at it, and that is **125 of 135 rows** on
+/// the reference document: almost the whole answer mislabelled.
+///
+/// The first attempt then labelled each of those rows `not under contract`, which
+/// is a true sentence printed a hundred and twenty-five times — and unreadable
+/// for exactly that reason. The rule it breaks is the page's own: explain once,
+/// then show data. So an unexamined row now says **nothing**, and the count is
+/// stated once in the lens strip, where it is also the control that shows them.
 #[test]
-fn a_value_under_no_contract_shows_no_grade() {
+fn a_value_under_no_contract_shows_no_grade_and_no_label() {
     let src = trace();
     assert!(
         src.contains("const gradePips"),
@@ -313,10 +316,51 @@ fn a_value_under_no_contract_shows_no_grade() {
          different from bad."
     );
     assert!(
-        src.contains("not under contract"),
-        "a value nothing examined no longer says so. `unexamined` is the largest \
-         population in the document and silence about it reads as approval."
+        !src.contains("not under contract"),
+        "unexamined rows are labelled again. That is one true sentence repeated \
+         125 times on the reference artifact, which is how the wall of noise came \
+         back. The count belongs in the lens strip — once — where it is also the \
+         control that shows them."
     );
+    assert!(
+        src.contains("\"unexamined\", \"nothing examined\""),
+        "the `unexamined` lens is gone, so the population that is silent on the \
+         rows is now silent everywhere — and silence about 125 of 135 values \
+         reads as approval."
+    );
+}
+
+/// Every row emits every cell.
+///
+/// The grid is four columns and a row that renders three gets its key
+/// auto-placed into the 26px pips track. Every uncontracted key then wrapped one
+/// character per line — `man`/`_ci`/`ty_`/`tot`/`al` down the page — which is
+/// what shipped, because the pips cell was emitted as `""` rather than as an
+/// empty element.
+///
+/// Checked structurally rather than by counting, because the counting version
+/// lives in a node harness and this file may not assume node exists.
+#[test]
+fn every_row_emits_every_cell() {
+    let src = trace();
+    let at = src
+        .find("function arow(")
+        .expect("`arow` is gone; the answer's rows are built somewhere unknown");
+    let body: String = src[at..].chars().take(1200).collect();
+    for cell in [
+        "class=\"a-p\"",
+        "class=\"a-k",
+        "class=\"a-v ",
+        "class=\"a-d\"",
+    ] {
+        assert!(
+            body.contains(cell),
+            "`arow` no longer emits `{cell}`. A four-column grid given three \
+             children auto-places the key into the 26px pips track, and every \
+             key wraps one character per line. An empty cell must still be an \
+             element."
+        );
+    }
 }
 
 /// A citation has to be followable, because that is what it is scored for.

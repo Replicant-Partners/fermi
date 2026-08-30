@@ -290,32 +290,48 @@
   .kv-sub{grid-column:1 / -1;}
   .kv-sub > .kv{margin:1px 0 5px;}
   /* ── The answer, annotated ───────────────────────────────────────────
-     One row per value: what it is, what grade it carries, and what a person
-     can do about it. Colour is reserved for meaning — dim is absent, yellow is
-     unsourced, red is refused — because a block rendered in one warm tone
-     carries no information at all, which is what the payload used to be. */
+     ONE grid, always four cells, indentation instead of nesting.
+
+     It was a tree of grids, each `.a-sub` spanning columns 2..4 of its parent
+     and starting a new grid inside that. Two things went wrong and the second
+     is the one that mattered. Every level lost the width of a column, so by the
+     third the key column had nothing left. And a row with no grade emitted no
+     pips element at all — three children in a four-column grid — so
+     auto-placement dropped the key into the 26px pips track and every
+     uncontracted key wrapped one character per line.
+
+     A missing cell is the bug that keeps coming back in grid layout, so the
+     pips cell is now always emitted and the flattening removes the nesting that
+     made the narrowing possible. */
   .lens{display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 10px;}
   .lens button{font-size:0.64rem;font-family:inherit;background:none;cursor:pointer;
                border:1px solid var(--bg3);color:var(--fg4);padding:2px 9px;}
   .lens button:hover{color:var(--fg2);}
   .lens button.on{border-color:var(--aqua);color:var(--aqua);}
-  .lens button:disabled{opacity:0.35;cursor:default;}
-  .arow{display:grid;grid-template-columns:26px minmax(140px,300px) 1fr 150px;gap:10px;
+  .lens button:disabled{opacity:0.3;cursor:default;}
+  .arow{display:grid;grid-template-columns:26px minmax(180px,34%) 1fr 140px;gap:10px;
         align-items:baseline;padding:3px 0;border-top:1px solid var(--bg2);}
+  .a-p{font-size:0.7rem;}
   .a-k{font-size:0.72rem;color:var(--fg2);overflow-wrap:anywhere;}
-  .a-v{font-size:0.71rem;color:var(--fg3);overflow-wrap:anywhere;white-space:pre-wrap;}
+  /* Depth by indent, since the path is flat now. The dotted path is in the
+     title, so a reader who loses their place can hover rather than count. */
+  .a-k.d1{padding-left:12px;}
+  .a-k.d2{padding-left:24px;}
+  .a-k.d3{padding-left:36px;}
+  .a-k .dim{color:var(--fg4);}
+  .a-v{font-size:0.71rem;color:var(--fg3);overflow-wrap:anywhere;}
   .a-v.null{color:var(--fg4);font-style:italic;}
   .a-v.nest{color:var(--fg4);}
   .a-d{font-size:0.62rem;text-align:right;}
   .a-body{grid-column:2 / -1;display:flex;gap:6px;align-items:center;flex-wrap:wrap;
           margin:2px 0 4px;}
   .a-body .why{font-size:0.66rem;color:var(--fg4);}
-  .a-sub{grid-column:2 / -1;}
+  /* A block header, not a value. Its own row so the eye can skip a subtree. */
+  .arow.r-block{border-top-color:var(--bg3);}
+  .arow.r-block .a-k{color:var(--fg3);font-weight:600;}
   .arow.r-empty > .a-d{color:var(--yellow);}
-  .arow.r-plain > .a-d{color:var(--bg3);}
-  .a-owner{font-size:0.64rem;color:var(--fg4);border-left:2px solid var(--bg3);
-           padding-left:7px;}
-  .a-owner.blocked{border-left-color:var(--yellow);}
+  .a-owner{grid-column:2 / -1;font-size:0.64rem;color:var(--fg4);
+           border-left:2px solid var(--yellow);padding-left:7px;margin:2px 0 4px;}
   .cite-link{font-size:0.66rem;color:var(--aqua);}
   .empty{padding:16px 8px;font-size:0.76rem;color:var(--fg4);}
   .absent{color:var(--fg4);font-style:italic;}
@@ -775,49 +791,46 @@
 
   // Contracted fields by dotted path, and the lens.
   let FIELD_BY_PATH = {};
-  let LENS = "all";
+  let LENS = "checked";
   // The last trace drawn, so switching a lens redraws from data rather than
   // re-fetching. A lens is a view, and re-reading the platform to change a view
   // would make the platform's load a function of how the reader browses.
   let LAST_TRACE = null;
 
-  // Pips only where a grade exists.
+  // Pips only where a grade exists — but the CELL always exists.
   //
-  // `pips` floors a missing strength to 0, which renders ▱▱ — the same glyphs as
+  // `pips` floors a missing strength to 0, which draws ▱▱: the same glyphs as
   // `tool_no_match`. So an uncontracted value would claim to have been graded and
-  // found worthless, when nothing examined it. Absent must look different from
-  // bad, and 34 of the 47 values in the reference document are in exactly that
-  // state.
+  // found worthless when nothing examined it, and that is 106 of the 116 values
+  // in the reference document — almost the whole answer mislabelled.
+  //
+  // Returns the empty string and not an empty element, because the element is
+  // the caller's job: a row that drops a cell has its key auto-placed into the
+  // 26px pips track, and every key then wraps one character per line. That
+  // happened, on exactly the rows this function returns "" for.
   const gradePips = dotted =>
     FIELD_BY_PATH[dotted] ? pips(FIELD_BY_PATH[dotted].strength) : "";
 
   // Every state a value can be in, and who owns it.
   //
-  // The states are separated by the ACTION they imply, not by how they arise:
+  // Separated by the ACTION each implies, not by how it arises:
   //
   //   settled        nothing to do
   //   actionable     you can settle it here, now
-  //   recorded       somebody already did; follow the citation
-  //   not produced   the agent returned nothing — fix the agent
-  //   blocked        checkable in principle, and nothing has queued it
-  //   uncontracted   under no contract, so nothing examined it
+  //   recorded       somebody already did — follow the citation
+  //   not produced   the agent returned nothing; fix the agent or its integration
+  //   blocked        checkable in principle, nothing has queued it
+  //   (uncontracted) nothing examined it — and it says NOTHING, see below
   //
-  // `not produced` is the one the platform had no word for. Grounding asks
-  // whether a tool COULD have supplied a value, never whether the agent DID
-  // produce one, so an empty field inherits its block's grade and reads as
-  // sourced. `squad_value` is two of four values absent under blocks graded
-  // `tool_verified`, and the page used to report that as "Nothing queued this
-  // claim, so there is nothing to settle yet" — which sends the reader to look
-  // at the queue when the fault is the agent's.
+  // The uncontracted case is silent on purpose. It was labelled `not under
+  // contract` on every row, and that is 106 of the 116 values in the reference
+  // document — a sentence repeated a hundred times, which is the rule this page
+  // exists to hold: explain once, then show data. The count is stated once, in
+  // the lens strip, where it is also the control that shows them.
   function annotate(dotted) {
     const f = FIELD_BY_PATH[dotted];
-    if (!f) {
-      return {
-        cls: "r-plain",
-        dest: `<span class="a-none">not under contract</span>`,
-        body: "",
-      };
-    }
+    if (!f) return { cls: "", dest: "", body: "" };
+
     const aid = ASSERTION_BY_PATH[dotted];
     const st = aid ? CLAIMS[aid] : null;
     const open = !!st && String(st.verdict || "").startsWith("pending_");
@@ -828,10 +841,10 @@
       return {
         cls: "r-empty",
         dest: `<span class="t-person">not produced</span>`,
-        body: `<div class="a-owner blocked">${esc(f.not_checkable
+        body: `<div class="a-owner">${esc(f.not_checkable
           || "the agent returned no value here")} <b>Nobody can verify an absence</b> —
-          the work is on the agent or on the integration it needed${
-          f.settleable_by ? `, <b>${esc(f.settleable_by)}</b>` : ""}, not on a reviewer.</div>`,
+          the work is on the agent, or on the integration it needed${
+          f.settleable_by ? ` (<b>${esc(f.settleable_by)}</b>)` : ""}, not on a reviewer.</div>`,
       };
     }
     if (st && !open) {
@@ -860,21 +873,24 @@
       dest: f.settleable_by
         ? `<span class="t-tool">${esc(f.settleable_by)}</span>`
         : `<span class="t-person">needs a person</span>`,
-      body: `<div class="a-owner blocked">${esc(f.not_checkable
+      body: `<div class="a-owner">${esc(f.not_checkable
         || "no verdict has been queued against this claim")}</div>`,
     };
   }
 
-  // Walk the document, annotating in place, and put the contract's holes where
-  // they belong.
+  // The document as a flat list of rows, in the agent's order, deepest last.
+  //
+  // Flat rather than a tree of grids. Depth is an indent and the full dotted
+  // path is on the row's `title`, which is also what a reader needs to reconcile
+  // a row against the raw answer below — `advanced_metrics.xg` locates itself,
+  // `xg` does not.
   //
   // A contracted path the document does not contain is the most actionable row
-  // on the page and would be invisible to a walk of the document alone — five of
-  // them here (`fixtures`, `head_to_head`, `injuries`, `match_statistics`,
-  // `summary`). They are injected at the level they should have occupied rather
-  // than listed separately, because a hole is only legible in the shape it is
-  // missing from.
-  function annotatedRows(doc, prefix, depth, flat) {
+  // on the page and is invisible to a walk of the document alone — five of them
+  // here (`fixtures`, `head_to_head`, `injuries`, `match_statistics`,
+  // `summary`). They are emitted at the level they should have occupied, because
+  // a hole is only legible in the shape it is missing from.
+  function flattenDoc(doc, prefix, depth, out) {
     const entries = doc === null || typeof doc !== "object"
       ? []
       : Array.isArray(doc)
@@ -882,7 +898,6 @@
         : Object.entries(doc);
     const present = new Set(entries.map(([k]) => k));
 
-    // Contracted direct children of this node that the document does not carry.
     const missing = Object.keys(FIELD_BY_PATH)
       .filter(p => {
         const at = prefix ? (p.startsWith(prefix + ".") ? p.slice(prefix.length + 1) : null) : p;
@@ -890,65 +905,62 @@
       })
       .map(p => [prefix ? p.slice(prefix.length + 1) : p, undefined]);
 
-    return [...entries, ...missing].map(([k, x]) => {
+    for (const [k, x] of [...entries, ...missing]) {
       const dotted = prefix ? `${prefix}.${k}` : k;
       const a = annotate(dotted);
-      const nested = x !== null && typeof x === "object" && depth < KV_DEPTH;
-      const v = x === undefined
-        ? { cls: "null", text: "absent from the document" }
-        : summarise(x);
-      flat.push({ dotted, v, a });
-
-      // Nested blocks collapse, and open themselves when there is something
-      // under them worth seeing.
-      //
-      // The reference document is 116 values across eleven blocks. Rendered flat
-      // that is a wall nobody scrolls, which is what the payload block was; all
-      // collapsed, a reader has to open eleven things to find the two that
-      // matter. So the decision is made from the contents: a block holding an
-      // absent field or a claim awaiting a verdict opens, and the rest stay shut.
-      //
-      // `mark` is taken before recursing and compared after, because the only
-      // way to know what is inside a subtree is to have walked it — and walking
-      // it twice would let the two walks disagree.
-      let sub = "";
-      if (nested) {
-        const mark = flat.length;
-        const inner = annotatedRows(x, dotted, depth + 1, flat);
-        const worthOpening = flat
-          .slice(mark)
-          .some(r => r.a.cls === "r-empty" || r.a.cls === "r-actionable");
-        const n = flat.length - mark;
-        sub = `<details class="doc a-sub"${worthOpening ? " open" : ""}>
-                 <summary>${n} inside${worthOpening ? " · needs a look" : ""}</summary>
-                 ${inner}
-               </details>`;
-      }
-
-      return `<div class="arow ${a.cls}">
-        ${gradePips(dotted)}
-        <span class="a-k">${esc(k)}</span>
-        <span class="a-v ${v.cls}">${v.text}</span>
-        <span class="a-d">${a.dest}</span>
-        ${a.body}
-        ${sub}
-      </div>`;
-    }).join("");
+      const isBlock = x !== null && typeof x === "object";
+      out.push({
+        dotted, key: k, depth, a, isBlock,
+        contracted: !!FIELD_BY_PATH[dotted],
+        v: x === undefined
+          ? { cls: "null", text: "absent from the document" }
+          : summarise(x),
+      });
+      if (isBlock && depth < 3) flattenDoc(x, dotted, depth + 1, out);
+    }
   }
 
-  // The lens. `all` is the document; anything else is a flat list of the rows
-  // that match, with full paths.
+  // Four cells, always. A row that omits one gets its key auto-placed into the
+  // 26px pips track, and every key wraps one character per line.
   //
-  // Flat on purpose. "Show me the twelve empty values" wants a list, not a tree
-  // with eleven parents held open around it — and a tree filter that hid a
-  // parent would hide the matching child inside it.
+  // `whole` says whether the reader can see the tree. In `everything` a row sits
+  // under its parent, so the leaf's own name and an indent locate it. In any
+  // filtered lens the parent is usually absent — `advanced_metrics.xg` appears
+  // and `advanced_metrics` does not, because nothing examined the block — and an
+  // indented `xg` under nothing at all is unreadable. So a filtered row carries
+  // its full path and no indent.
+  function arow(r, whole) {
+    const label = whole
+      ? esc(r.key)
+      : r.dotted.includes(".")
+        ? `<span class="dim">${esc(r.dotted.slice(0, r.dotted.lastIndexOf(".") + 1))}</span>${
+            esc(r.dotted.slice(r.dotted.lastIndexOf(".") + 1))}`
+        : esc(r.key);
+    return `<div class="arow ${r.a.cls}${r.isBlock ? " r-block" : ""}"
+                 title="${esc(r.dotted)}">
+      <span class="a-p">${gradePips(r.dotted)}</span>
+      <span class="a-k${whole ? ` d${Math.min(3, r.depth)}` : ""}">${label}</span>
+      <span class="a-v ${r.v.cls}">${r.v.text}</span>
+      <span class="a-d">${r.a.dest}</span>
+      ${r.a.body}
+    </div>`;
+  }
+
+  // The lens, and the default is the point.
+  //
+  // `everything` is 116 rows of which 106 are unexamined, and that was the
+  // default — a wall in which the ten rows that carry a grade are invisible. The
+  // default is now the contracted set: exactly the fields something checked,
+  // in the document's own order, with their verdicts and actions. Everything
+  // else is one click away and says how much of it there is.
   const LENSES = [
-    ["all", "the document", () => true],
+    ["checked", "checked", r => r.contracted],
     ["actionable", "you can act", r => r.a.cls === "r-actionable"],
     ["empty", "returned nothing", r => r.a.cls === "r-empty"],
-    ["unsourced", "not reproducible", r => FIELD_BY_PATH[r.dotted]
+    ["unsourced", "not reproducible", r => r.contracted
       && (FIELD_BY_PATH[r.dotted].strength ?? 0) < 2],
-    ["unexamined", "under no contract", r => r.a.cls === "r-plain"],
+    ["unexamined", "nothing examined", r => !r.contracted],
+    ["all", "everything", () => true],
   ];
 
   function answer(d) {
@@ -967,28 +979,22 @@
            <div class="pl-body">${esc(r.text)}</div></details>`
       : "";
 
-    let body, lens = "", counts = {};
+    let body = "", lens = "";
     if (r.document) {
-      const flat = [];
-      const tree = annotatedRows(r.document, "", 0, flat);
-      LENSES.forEach(([id, , match]) => { counts[id] = flat.filter(match).length; });
+      const rows = [];
+      flattenDoc(r.document, "", 0, rows);
+      const counts = {};
+      LENSES.forEach(([id, , m]) => { counts[id] = rows.filter(m).length; });
+      if (!LENSES.some(([id]) => id === LENS)) LENS = "checked";
       lens = `<div class="lens">${LENSES.map(([id, label]) =>
         `<button data-lens="${id}"${LENS === id ? ' class="on"' : ""}${
           counts[id] ? "" : " disabled"}>${esc(label)} · ${counts[id]}</button>`).join("")}</div>`;
-      body = LENS === "all"
-        ? tree
-        : (() => {
-            const match = LENSES.find(([id]) => id === LENS)[2];
-            const rows = flat.filter(match);
-            if (!rows.length) return `<div class="empty">Nothing in this lens.</div>`;
-            return rows.map(x => `<div class="arow ${x.a.cls}">
-              ${gradePips(x.dotted)}
-              <span class="a-k">${esc(x.dotted)}</span>
-              <span class="a-v ${x.v.cls}">${x.v.text}</span>
-              <span class="a-d">${x.a.dest}</span>
-              ${x.a.body}
-            </div>`).join("");
-          })();
+      const match = LENSES.find(([id]) => id === LENS)[2];
+      const shown = rows.filter(match);
+      const whole = LENS === "all";
+      body = shown.length
+        ? shown.map(x => arow(x, whole)).join("")
+        : `<div class="empty">Nothing in this lens.</div>`;
     } else if (r.text) {
       body = `<div class="pl-body clamp" data-clamp>${esc(r.text)}</div>
               <button class="pl-more" data-more>show all${
@@ -1001,8 +1007,9 @@
     return `<div class="block">
       <h2>The answer</h2>
       <div class="note">Values verbatim, in the order the agent wrote them. Pips are
-        <b>grounding</b>'s grade; a verdict below a row is a separate answer and does not
-        move them. ${esc(ty || "Type not declared — treated as opaque text.")}</div>
+        <b>grounding</b>'s grade; a verdict under a row is a separate answer and does not
+        move them. A row with no pips is one nothing examined. Hover any row for its full
+        path. ${esc(ty || "Type not declared — treated as opaque text.")}</div>
       ${q ? `<div class="pl-h">Asked</div>
              <div class="pl-body clamp" data-clamp>${esc(q)}</div>
              ${q.length > 400
