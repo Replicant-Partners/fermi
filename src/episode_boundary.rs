@@ -197,10 +197,24 @@ impl Pulse {
         // nothing.
         let claimed = raw.and_then(crate::agent_backend::envelope::extract_json);
         let mut enforced = claimed.clone();
+        // `grounding_trust::enforce_from_output_contract` — enforcement from the
+        // agent's own compiled `output_contract.grounding` rather than from the
+        // hand-written `FIELD_CONTRACTS` table — is in flight on another working
+        // tree and is not on `main`. This call site is the seam it lands on, and
+        // `output_contract` is threaded through the fourteen callers now so they
+        // do not churn twice. Until it lands, enforcement runs from the
+        // registered contract, which is what every path did before this module
+        // existed.
+        //
+        // Committed once already, in the same commit that consolidated this
+        // module, and it broke the release build: `main` called a function that
+        // exists only in an uncommitted file. A local `cargo check` passed
+        // because the working tree held that file — which is the whole hazard of
+        // a tree with two authors, and is why `main` gets verified against what
+        // is committed rather than against what is on disk.
+        let _ = output_contract;
         let report = match enforced.as_mut() {
-            Some(doc) => {
-                grounding_trust::enforce_from_output_contract(agent_slug, output_contract, doc)
-            }
+            Some(doc) => grounding_trust::enforce(agent_slug, doc),
             None => Report::default(),
         };
         // Every contracted field with its grade and the claim behind it,
@@ -221,14 +235,20 @@ impl Pulse {
         // control that almost never engages". Different findings, different
         // remedies.
         //
-        // `has_contract` is true when EITHER path has a contract: the compiled
-        // output_contract.grounding (new, general) OR a FIELD_CONTRACTS entry
-        // (legacy). Both make enforcement real.
-        let has_contract = output_contract
-            .and_then(|oc| oc.get("grounding"))
-            .and_then(|g| g.as_object())
-            .map(|g| !g.is_empty())
-            .unwrap_or_else(|| grounding_trust::contracts_for(agent_slug).next().is_some());
+        // `has_contract` asks what was ACTUALLY APPLIED, not what was declared.
+        //
+        // It briefly read `output_contract.grounding` first, falling back to the
+        // registered contract. That is right once the compiled path enforces,
+        // and wrong until then: an agent declaring a compiled contract that the
+        // legacy `enforce` above cannot see would produce an empty report, and
+        // this would call it a contract, and the gate would record `approved` —
+        // a false approval on a check that never ran. That is worse than the
+        // three-state problem the block exists to solve, because a false
+        // approval is indistinguishable from a real one.
+        //
+        // So it tracks `enforce`. When the compiled path lands here, this reads
+        // both, and the two lines move together.
+        let has_contract = grounding_trust::contracts_for(agent_slug).next().is_some();
         gate_trust::decided_for_episode(
             Gate::Grounding,
             if !has_contract {
@@ -450,8 +470,9 @@ pub async fn close(pulse: Pulse, graded: &Graded, mut w: Write<'_>) -> anyhow::R
 /// document off the episode it is about to write, and there is no second copy
 /// to disagree with.
 pub async fn persist_opened(pulse: Pulse, w: Write<'_>) -> anyhow::Result<Uuid> {
-    // No output_contract available on the after-the-fact path — falls back to
-    // FIELD_CONTRACTS via enforce_from_output_contract.
+    // No card here, so no `output_contract` to pass: these call sites have the
+    // agent's slug and its answer, and nothing else. Enforcement therefore runs
+    // from the registered contract, which is the only path on `main` anyway.
     let graded = pulse.grade(w.agent_slug, None, w.episode.response_text.as_deref());
     close(pulse, &graded, w).await
 }
