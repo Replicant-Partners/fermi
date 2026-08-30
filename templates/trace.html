@@ -289,6 +289,34 @@
      the key they belong to rather than restarting the page's left edge. */
   .kv-sub{grid-column:1 / -1;}
   .kv-sub > .kv{margin:1px 0 5px;}
+  /* ── The answer, annotated ───────────────────────────────────────────
+     One row per value: what it is, what grade it carries, and what a person
+     can do about it. Colour is reserved for meaning — dim is absent, yellow is
+     unsourced, red is refused — because a block rendered in one warm tone
+     carries no information at all, which is what the payload used to be. */
+  .lens{display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 10px;}
+  .lens button{font-size:0.64rem;font-family:inherit;background:none;cursor:pointer;
+               border:1px solid var(--bg3);color:var(--fg4);padding:2px 9px;}
+  .lens button:hover{color:var(--fg2);}
+  .lens button.on{border-color:var(--aqua);color:var(--aqua);}
+  .lens button:disabled{opacity:0.35;cursor:default;}
+  .arow{display:grid;grid-template-columns:26px minmax(140px,300px) 1fr 150px;gap:10px;
+        align-items:baseline;padding:3px 0;border-top:1px solid var(--bg2);}
+  .a-k{font-size:0.72rem;color:var(--fg2);overflow-wrap:anywhere;}
+  .a-v{font-size:0.71rem;color:var(--fg3);overflow-wrap:anywhere;white-space:pre-wrap;}
+  .a-v.null{color:var(--fg4);font-style:italic;}
+  .a-v.nest{color:var(--fg4);}
+  .a-d{font-size:0.62rem;text-align:right;}
+  .a-body{grid-column:2 / -1;display:flex;gap:6px;align-items:center;flex-wrap:wrap;
+          margin:2px 0 4px;}
+  .a-body .why{font-size:0.66rem;color:var(--fg4);}
+  .a-sub{grid-column:2 / -1;}
+  .arow.r-empty > .a-d{color:var(--yellow);}
+  .arow.r-plain > .a-d{color:var(--bg3);}
+  .a-owner{font-size:0.64rem;color:var(--fg4);border-left:2px solid var(--bg3);
+           padding-left:7px;}
+  .a-owner.blocked{border-left-color:var(--yellow);}
+  .cite-link{font-size:0.66rem;color:var(--aqua);}
   .empty{padding:16px 8px;font-size:0.76rem;color:var(--fg4);}
   .absent{color:var(--fg4);font-style:italic;}
   </style>
@@ -720,71 +748,299 @@
     </div>`;
   }
 
-  // The question and the answer, both.
+  // ── The answer, annotated ────────────────────────────────────────────
   //
-  // This block was headed "The payload" and rendered only the QUERY, truncated
-  // to 300 characters. The document the whole page exists to help someone judge
-  // was not on the page at all — the handler read `response_text` to compute the
-  // hashes and re-run the contract, then dropped it — and a comment beside the
-  // claim values promised the full value was "one click away in the payload",
-  // which was true of nothing here.
+  // One document, one place. This was two blocks — "The payload", which held the
+  // whole answer with no checks and no actions, and "What it claimed", which
+  // held the checks and the actions for 13 of 47 values, regrouped by strength
+  // so the document's own shape was destroyed. Each was half a screen, and a
+  // reader had to do the join: find a field in one, find it again in the other,
+  // and reconstruct which of the two views was talking about what.
   //
-  // The answer is clamped rather than cut. A shortened document that does not
-  // say it is short is the worse failure: a reviewer settles a claim believing
-  // they read it. Where the server itself bounded the text, that is stated in
-  // its own colour, because it is a limit of the read and not of the record.
-  function payload(d) {
-    const ty = (d.output_contract_type || d.payload_type
-                || (d.hashes && d.hashes.output_grounded ? "structured document (JSON)" : null));
+  // That is the third instance of one-object-two-renderings on this page, after
+  // the two settle UIs and the flat verification log. The rule that fixes it is
+  // already written down in `handlers/pages.rs`, about the bestiary: **a lens
+  // changes columns and sort, not the page.**
+  //
+  // So: the document, in the agent's own order, every value annotated in place,
+  // and strength is a filter rather than a grouping.
+  //
+  // The order matters and was being lost. `serde_json` without `preserve_order`
+  // is a BTreeMap, so the answer was alphabetised the moment it crossed the API:
+  // the agent wrote `league_context, squad_value, …, assessment` — context, then
+  // evidence, then conclusion — and the page showed `advanced_metrics,
+  // assessment, …`. The raw text at the bottom was in the agent's order and the
+  // rendered document was not, so the two literally could not be read against
+  // each other.
+
+  // Contracted fields by dotted path, and the lens.
+  let FIELD_BY_PATH = {};
+  let LENS = "all";
+  // The last trace drawn, so switching a lens redraws from data rather than
+  // re-fetching. A lens is a view, and re-reading the platform to change a view
+  // would make the platform's load a function of how the reader browses.
+  let LAST_TRACE = null;
+
+  // Pips only where a grade exists.
+  //
+  // `pips` floors a missing strength to 0, which renders ▱▱ — the same glyphs as
+  // `tool_no_match`. So an uncontracted value would claim to have been graded and
+  // found worthless, when nothing examined it. Absent must look different from
+  // bad, and 34 of the 47 values in the reference document are in exactly that
+  // state.
+  const gradePips = dotted =>
+    FIELD_BY_PATH[dotted] ? pips(FIELD_BY_PATH[dotted].strength) : "";
+
+  // Every state a value can be in, and who owns it.
+  //
+  // The states are separated by the ACTION they imply, not by how they arise:
+  //
+  //   settled        nothing to do
+  //   actionable     you can settle it here, now
+  //   recorded       somebody already did; follow the citation
+  //   not produced   the agent returned nothing — fix the agent
+  //   blocked        checkable in principle, and nothing has queued it
+  //   uncontracted   under no contract, so nothing examined it
+  //
+  // `not produced` is the one the platform had no word for. Grounding asks
+  // whether a tool COULD have supplied a value, never whether the agent DID
+  // produce one, so an empty field inherits its block's grade and reads as
+  // sourced. `squad_value` is two of four values absent under blocks graded
+  // `tool_verified`, and the page used to report that as "Nothing queued this
+  // claim, so there is nothing to settle yet" — which sends the reader to look
+  // at the queue when the fault is the agent's.
+  function annotate(dotted) {
+    const f = FIELD_BY_PATH[dotted];
+    if (!f) {
+      return {
+        cls: "r-plain",
+        dest: `<span class="a-none">not under contract</span>`,
+        body: "",
+      };
+    }
+    const aid = ASSERTION_BY_PATH[dotted];
+    const st = aid ? CLAIMS[aid] : null;
+    const open = !!st && String(st.verdict || "").startsWith("pending_");
+
+    if (f.produced === false) {
+      // The reason travels from `assertions::from_graded_field`, which computes
+      // it and which the platform used to discard.
+      return {
+        cls: "r-empty",
+        dest: `<span class="t-person">not produced</span>`,
+        body: `<div class="a-owner blocked">${esc(f.not_checkable
+          || "the agent returned no value here")} <b>Nobody can verify an absence</b> —
+          the work is on the agent or on the integration it needed${
+          f.settleable_by ? `, <b>${esc(f.settleable_by)}</b>` : ""}, not on a reviewer.</div>`,
+      };
+    }
+    if (st && !open) {
+      return {
+        cls: "r-done",
+        dest: `<span class="t-done">${esc(SHORT_VERDICT[st.verdict] || "settled")}</span>`,
+        body: `<div class="a-body">${claimState(st)}</div>`,
+      };
+    }
+    if (open) {
+      return {
+        cls: "r-actionable",
+        dest: f.settleable_by
+          ? `<span class="t-tool">${esc(f.settleable_by)}</span>`
+          : `<span class="t-person">needs a person</span>`,
+        body: `<div class="a-body" data-assertion="${esc(aid)}">
+                 ${claimState(st)}${settleForm(aid)}<span class="settle-out"></span>
+               </div>`,
+      };
+    }
+    if ((f.strength ?? 0) >= 2) {
+      return { cls: "r-done", dest: `<span class="t-done">settled</span>`, body: "" };
+    }
+    return {
+      cls: "r-blocked",
+      dest: f.settleable_by
+        ? `<span class="t-tool">${esc(f.settleable_by)}</span>`
+        : `<span class="t-person">needs a person</span>`,
+      body: `<div class="a-owner blocked">${esc(f.not_checkable
+        || "no verdict has been queued against this claim")}</div>`,
+    };
+  }
+
+  // Walk the document, annotating in place, and put the contract's holes where
+  // they belong.
+  //
+  // A contracted path the document does not contain is the most actionable row
+  // on the page and would be invisible to a walk of the document alone — five of
+  // them here (`fixtures`, `head_to_head`, `injuries`, `match_statistics`,
+  // `summary`). They are injected at the level they should have occupied rather
+  // than listed separately, because a hole is only legible in the shape it is
+  // missing from.
+  function annotatedRows(doc, prefix, depth, flat) {
+    const entries = doc === null || typeof doc !== "object"
+      ? []
+      : Array.isArray(doc)
+        ? doc.map((x, i) => [String(i), x])
+        : Object.entries(doc);
+    const present = new Set(entries.map(([k]) => k));
+
+    // Contracted direct children of this node that the document does not carry.
+    const missing = Object.keys(FIELD_BY_PATH)
+      .filter(p => {
+        const at = prefix ? (p.startsWith(prefix + ".") ? p.slice(prefix.length + 1) : null) : p;
+        return at && !at.includes(".") && !present.has(at);
+      })
+      .map(p => [prefix ? p.slice(prefix.length + 1) : p, undefined]);
+
+    return [...entries, ...missing].map(([k, x]) => {
+      const dotted = prefix ? `${prefix}.${k}` : k;
+      const a = annotate(dotted);
+      const nested = x !== null && typeof x === "object" && depth < KV_DEPTH;
+      const v = x === undefined
+        ? { cls: "null", text: "absent from the document" }
+        : summarise(x);
+      flat.push({ dotted, v, a });
+
+      // Nested blocks collapse, and open themselves when there is something
+      // under them worth seeing.
+      //
+      // The reference document is 116 values across eleven blocks. Rendered flat
+      // that is a wall nobody scrolls, which is what the payload block was; all
+      // collapsed, a reader has to open eleven things to find the two that
+      // matter. So the decision is made from the contents: a block holding an
+      // absent field or a claim awaiting a verdict opens, and the rest stay shut.
+      //
+      // `mark` is taken before recursing and compared after, because the only
+      // way to know what is inside a subtree is to have walked it — and walking
+      // it twice would let the two walks disagree.
+      let sub = "";
+      if (nested) {
+        const mark = flat.length;
+        const inner = annotatedRows(x, dotted, depth + 1, flat);
+        const worthOpening = flat
+          .slice(mark)
+          .some(r => r.a.cls === "r-empty" || r.a.cls === "r-actionable");
+        const n = flat.length - mark;
+        sub = `<details class="doc a-sub"${worthOpening ? " open" : ""}>
+                 <summary>${n} inside${worthOpening ? " · needs a look" : ""}</summary>
+                 ${inner}
+               </details>`;
+      }
+
+      return `<div class="arow ${a.cls}">
+        ${gradePips(dotted)}
+        <span class="a-k">${esc(k)}</span>
+        <span class="a-v ${v.cls}">${v.text}</span>
+        <span class="a-d">${a.dest}</span>
+        ${a.body}
+        ${sub}
+      </div>`;
+    }).join("");
+  }
+
+  // The lens. `all` is the document; anything else is a flat list of the rows
+  // that match, with full paths.
+  //
+  // Flat on purpose. "Show me the twelve empty values" wants a list, not a tree
+  // with eleven parents held open around it — and a tree filter that hid a
+  // parent would hide the matching child inside it.
+  const LENSES = [
+    ["all", "the document", () => true],
+    ["actionable", "you can act", r => r.a.cls === "r-actionable"],
+    ["empty", "returned nothing", r => r.a.cls === "r-empty"],
+    ["unsourced", "not reproducible", r => FIELD_BY_PATH[r.dotted]
+      && (FIELD_BY_PATH[r.dotted].strength ?? 0) < 2],
+    ["unexamined", "under no contract", r => r.a.cls === "r-plain"],
+  ];
+
+  function answer(d) {
     const r = d.response || {};
     const q = d.input && d.input.query ? String(d.input.query) : "";
+    const ty = (d.output_contract_type || d.payload_type
+                || (d.hashes && d.hashes.output_grounded ? "structured document (JSON)" : null));
 
-    // A structured answer is read field by field; prose is read as prose. The
-    // agent decides which this is by what it produced, not the page.
-    // The extracted document is the readable form; the bytes are the record.
-    // Both, because rendering only the extraction is a digest, and the reason
-    // `response_text` is retained at all is that a digest is not a record. The
-    // reference answer opens with two sentences of prose before its fenced JSON
-    // — extraction drops them, and they are part of what the agent said.
+    // The bytes stay reachable. Rendering only the extraction is a digest, and
+    // the reason `response_text` is retained at all is that a digest is not a
+    // record — the reference answer opens with two sentences of prose before its
+    // fenced JSON, and extraction drops them.
     const raw = r.text
       ? `<details class="doc"><summary>the answer as the agent wrote it${
            r.chars ? `, ${r.chars.toLocaleString()} characters` : ""}</summary>
            <div class="pl-body">${esc(r.text)}</div></details>`
       : "";
-    const answer = r.document
-      ? `<div class="pl-body">${kv(r.document)}</div>${raw}`
-      : r.text
-        ? `<div class="pl-body clamp" data-clamp>${esc(r.text)}</div>
-           <button class="pl-more" data-more>show all${
-             r.chars ? ` ${r.chars.toLocaleString()} characters` : ""}</button>`
-        : `<div class="pl-body absent">This episode retained no answer. Nothing on this
-             page can be checked against what the agent said, because it was not kept.</div>`;
 
-    return `<div class="payload">
-      <div class="payload-t">The payload</div>
-      <div class="payload-ty">${esc(ty || "type not declared — treated as opaque text")}</div>
+    let body, lens = "", counts = {};
+    if (r.document) {
+      const flat = [];
+      const tree = annotatedRows(r.document, "", 0, flat);
+      LENSES.forEach(([id, , match]) => { counts[id] = flat.filter(match).length; });
+      lens = `<div class="lens">${LENSES.map(([id, label]) =>
+        `<button data-lens="${id}"${LENS === id ? ' class="on"' : ""}${
+          counts[id] ? "" : " disabled"}>${esc(label)} · ${counts[id]}</button>`).join("")}</div>`;
+      body = LENS === "all"
+        ? tree
+        : (() => {
+            const match = LENSES.find(([id]) => id === LENS)[2];
+            const rows = flat.filter(match);
+            if (!rows.length) return `<div class="empty">Nothing in this lens.</div>`;
+            return rows.map(x => `<div class="arow ${x.a.cls}">
+              ${gradePips(x.dotted)}
+              <span class="a-k">${esc(x.dotted)}</span>
+              <span class="a-v ${x.v.cls}">${x.v.text}</span>
+              <span class="a-d">${x.a.dest}</span>
+              ${x.a.body}
+            </div>`).join("");
+          })();
+    } else if (r.text) {
+      body = `<div class="pl-body clamp" data-clamp>${esc(r.text)}</div>
+              <button class="pl-more" data-more>show all${
+                r.chars ? ` ${r.chars.toLocaleString()} characters` : ""}</button>`;
+    } else {
+      body = `<div class="pl-body absent">This episode retained no answer. Nothing on this
+                page can be checked against what the agent said, because it was not kept.</div>`;
+    }
+
+    return `<div class="block">
+      <h2>The answer</h2>
+      <div class="note">Values verbatim, in the order the agent wrote them. Pips are
+        <b>grounding</b>'s grade; a verdict below a row is a separate answer and does not
+        move them. ${esc(ty || "Type not declared — treated as opaque text.")}</div>
       ${q ? `<div class="pl-h">Asked</div>
              <div class="pl-body clamp" data-clamp>${esc(q)}</div>
-             ${q.length > 400 ? `<button class="pl-more" data-more>show the whole question</button>` : ""}` : ""}
+             ${q.length > 400
+               ? `<button class="pl-more" data-more>show the whole question</button>` : ""}`
+          : ""}
       <div class="pl-h">Answered</div>
-      ${answer}
+      ${lens}
+      ${body}
       ${r.truncated
         ? `<div class="pl-cut">The platform is showing the first ${
              (r.text || "").length.toLocaleString()} of ${
              (r.chars || 0).toLocaleString()} characters. The rest is retained and is not
              here — read the full record before settling a claim that depends on it.</div>`
         : ""}
+      ${raw}
+      <div class="floor">
+        <b>Weakest link:</b> ${esc(d.floor || "—")} ${pips(d.floor_strength)}.
+        A conclusion is only as good as the weakest thing it rests on, so this
+        document as a whole relies on no more than that.
+      </div>
     </div>`;
   }
 
-  // Releasing a clamp is the whole interaction, so it is one listener on the
-  // container rather than a handler per block: `render` replaces the container's
-  // contents, and per-element handlers wired at render time are how a second
-  // render leaves half the page dead.
+  // Releasing a clamp and switching a lens are the only two interactions here,
+  // so both are one listener on the container rather than a handler per element:
+  // `render` replaces the container's contents, and per-element handlers wired at
+  // render time are how a second render leaves half the page dead.
   function wireClamps() {
     const root = document.getElementById("content");
     if (!root) return;
     root.addEventListener("click", e => {
+      const lensBtn = e.target.closest("[data-lens]");
+      if (lensBtn) {
+        LENS = lensBtn.dataset.lens;
+        render(LAST_TRACE);
+        wireSettle();
+        return;
+      }
       const btn = e.target.closest("[data-more]");
       if (!btn) return;
       let body = btn.previousElementSibling;
@@ -793,178 +1049,6 @@
       const open = body.classList.toggle("clamp");
       btn.textContent = open ? "show all" : "show less";
     });
-  }
-
-  function ladder(d) {
-    const a = readArtifact(d);
-    const typed = (d.substrate || {}).disposition === "legible";
-
-    let ceilingShown = false;
-    const rows = LADDER.map(r => {
-      let verdictCell, note = "", isCeiling = false;
-
-      if (r.scope === "platform") {
-        // Standing clock: presence, liveness and truth are not artifact-scoped.
-        // Shown rather than hidden - a ladder missing its cheap rungs looks
-        // shorter and safer than it is - and pointed at where they are answered.
-        verdictCell = `<span class="v-elsewhere">standing clock</span>`;
-        note = `Answered platform-wide, not for this artifact. <a href="/loops">See Ok / Silent / Inert →</a>`;
-      } else {
-        const gateId = Object.keys(LADDER_GATE).find(k => LADDER_GATE[k] === r.n);
-        const b = a.by[gateId];
-        if (!b) {
-          verdictCell = `<span class="v-inert">not on this route</span>`;
-          note = `<code>${esc(gateId)}</code> is not declared on the route this artifact travelled.`;
-        } else if (b.enforcement !== "control") {
-          verdictCell = `<span class="v-silent">records only</span>`;
-          isCeiling = !ceilingShown;
-          note = `<b>Cannot refuse on this route.</b> ${esc(b.why_not_control || "")}`;
-        } else if (b.decided) {
-          verdictCell = `<span class="v-ok">${esc(b.decided.decision)}</span>`;
-        } else {
-          verdictCell = `<span class="v-inert">no verdict</span>`;
-          note = esc((b.decided_absent || {}).because || "");
-        }
-        if (r.n === 4 && b && b.recomputed) {
-          note += ` <br/>Graded <b>${b.recomputed.fields}</b> claim(s), <b>${b.recomputed.violations}</b> unsourced.`;
-        }
-      }
-      if (isCeiling) ceilingShown = true;
-
-      return `<div class="rung ${isCeiling ? "is-ceiling" : ""}">
-        <div class="rung-n">${r.n}</div>
-        <div class="rung-b">
-          <div class="rung-q"><b style="color:var(--fg3);font-weight:normal">${RUNG_NAME[r.n]}</b>
-            — ${esc(r.q)}</div>
-          ${note ? `<div class="rung-pw">${note}</div>` : ""}
-          ${r.pw ? `<div class="rung-pw">Passes while: <b>${esc(r.pw)}</b></div>` : ""}
-          ${isCeiling ? `<div class="ceilmark">← ceiling · nothing above this was enforced on this artifact</div>` : ""}
-        </div>
-        <div class="rung-v">${verdictCell}</div>
-      </div>`;
-    }).join("");
-
-    const pre = (d.belt || []).filter(b => PRECONDITION[b.rung]).map(b =>
-      `<span><b>${esc(b.rung)}</b> — ${esc(PRECONDITION[b.rung])}</span>`).join("");
-
-    const route = d.belt_route && d.belt_route.recoverable === false
-      ? `<div class="rung-pw" style="margin-top:8px;color:var(--yellow)">
-           Route unverified: <code>episodes</code> records no route discriminator, so the wider
-           of the two declared belts is shown. This may list checkpoints the artifact never passed.</div>`
-      : "";
-
-    return `<div class="block">
-      <h2>The verification ladder</h2>
-      <div class="note">Five questions, ordered by difficulty. A check answering an easier
-        one will pass while a harder one fails, and each rung is invisible to the one below —
-        so the ceiling, not the count, is what the platform actually knows.</div>
-      ${rows}
-      ${route}
-      ${typed ? "" : `<div class="rung-pw" style="margin-top:8px">This agent is not fully
-        typed, so rungs 4 and 5 have less to check against than they would otherwise.</div>`}
-      <h2 style="margin-top:20px">Preconditions — not verification</h2>
-      <div class="note">These check the caller and the envelope. None of them ever opens the
-        payload, so none can say anything about what it claims.</div>
-      <div class="pre">${pre || "<span>None declared on this route.</span>"}</div>
-    </div>`;
-  }
-
-  function fields(d) {
-    const fs = d.fields || [];
-    if (!fs.length) return "";
-    const groups = [2, 1, 0].map(s => {
-      const g = fs.filter(f => (f.strength ?? 0) === s);
-      if (!g.length) return "";
-      // One explanation per group, not per row. The old version repeated the
-      // same sentence on seven consecutive claims, which is the rule this page
-      // is supposed to hold: explain once, then show data.
-      // What is LEFT, not what the group is made of. The legend read as a
-      // to-do count and was computed from capability alone, so a claim a person
-      // had already endorsed still appeared in "N can only be settled by a
-      // person" — the number never went down as the work got done.
-      const stillOpen = f => {
-        const a = ASSERTION_BY_PATH[f.name];
-        const c = a ? CLAIMS[a] : null;
-        return !c || String(c.verdict || "").startsWith("pending_");
-      };
-      const left = g.filter(stillOpen);
-      const tools = [...new Set(left.map(f => f.settleable_by).filter(Boolean))];
-      const needPerson = left.filter(f => !f.settleable_by).length;
-      const legend = s >= 2 || !left.length ? "" : `<div class="fgroup-legend">${
-          needPerson ? `<b>${needPerson}</b> of these can only be settled by a person —
-            no data source could produce them, and each gap is itself a request for the
-            integration that would close it. ` : ""}${
-          tools.length ? `A tool could settle the rest: <b>${tools.map(esc).join(", ")}</b>.` : ""
-        }</div>`;
-
-      return `<div class="fgroup">
-        <div class="fgroup-h">${pips(s)} <b>${g.length}</b> ${esc(STRENGTH_WORD[s])}</div>
-        ${legend}
-        ${g.map(f => {
-          const v = summarise(f.value);
-          // One claim, one row, one place to act.
-          //
-          // This page offered the same verdict twice: `Cite it`/`Wrong` here,
-          // hardcoded, and `Sourced`/`Endorse`/`Reject` in a second block
-          // below, served from `/api/verification-queue`. Two names for one
-          // act, and `human_endorsed` reachable from only one of them — which
-          // is exactly the drift `settleForm`'s own comment warns about,
-          // written 120 lines from where it happened. The hardcoded pair is
-          // gone; the served list is the only list.
-          //
-          // Settling needs an `assertion_id`, which `fields[]` does not carry —
-          // it is joined by path through the verification log. Where no queue
-          // item exists there is nothing to settle, and that is said rather
-          // than offered as a button that cannot work.
-          const aid = ASSERTION_BY_PATH[f.name];
-          const st = aid ? CLAIMS[aid] : null;
-          const open = !!st && String(st.verdict || "").startsWith("pending_");
-
-          // What happens next, read off the log rather than off the grade.
-          // `dest` used to be derived from grounding strength alone, so a claim
-          // a person had already endorsed still read "needs a person".
-          const dest = st && !open
-            ? `<span class="t-done">${esc(SHORT_VERDICT[st.verdict] || "settled")}</span>`
-            : (f.strength ?? 2) >= 2
-              ? `<span class="t-done">settled</span>`
-              : f.settleable_by
-                ? `<span class="t-tool">${esc(f.settleable_by)}</span>`
-                : `<span class="t-person">needs a person</span>`;
-
-          const body = st
-            ? `${claimState(st)}${open ? settleForm(aid) : ""}
-               <span class="settle-out"></span>`
-            : `<span class="why">Nothing queued this claim, so there is nothing to
-                 settle yet — the queue is what a verdict attaches to.</span>`;
-          const offer = (f.strength ?? 2) >= 2 && !st ? "" :
-            `<div class="offer"${aid ? ` data-assertion="${esc(aid)}"` : ""}>${body}</div>`;
-
-          return `<div class="claim" title="grade: ${esc(f.grade || "")}">
-            ${pips(f.strength)}
-            <span class="c-name">${esc(f.name)}</span>
-            <span class="c-val ${v.cls}">${v.text}</span>
-            <span class="c-dest">${dest}</span>
-            ${docBlock(f.value, "the value, field by field")}
-            ${offer}
-          </div>`;
-        }).join("")}
-      </div>`;
-    }).join("");
-
-    return `<div class="block">
-      <h2>What it claimed</h2>
-      <div class="note">
-        Values are verbatim, never stripped. Pips are <b>grounding</b>'s grade — two grade
-        names can mean the same amount of nothing — and a verdict under a row is a separate
-        answer that does not move them: endorsing a claim does not make it a retrieval.
-      </div>
-      ${groups}
-      <div class="floor">
-        <b>Weakest link:</b> ${esc(d.floor || "—")} ${pips(d.floor_strength)}.
-        A conclusion is only as good as the weakest thing it rests on, so this
-        document as a whole relies on no more than that.
-      </div>
-    </div>`;
   }
 
   // Branch on this before drawing anything. `substrate` is about the AGENT —
@@ -1089,8 +1173,20 @@ something specific about each checkpoint.")}</div></div>`;
       : st.actor_kind === "tool" ? "a tool"
       : st.actor_kind === "platform" ? "the platform"
       : "unattributed";
+    // Followable, not printed.
+    //
+    // `human_sourced` scores as high as a tool check for one stated reason —
+    // *because someone else can follow the citation to the same source*. It was
+    // rendered as plain text, so the surface displaying the score did not
+    // fulfil the score's own justification. `rel=noopener` and `noreferrer`
+    // because the target is a URL a stranger typed into a form.
+    const url = /^https?:\/\//i.test(String(st.citation || ""));
     const cite = st.citation
-      ? ` · cited <b>${esc(st.citation)}</b>` : "";
+      ? url
+        ? ` · <a class="cite-link" href="${esc(st.citation)}" target="_blank"
+             rel="noopener noreferrer">follow the citation ↗</a>`
+        : ` · cited <b>${esc(st.citation)}</b>`
+      : "";
     const earlier = st.earlier
       ? ` · ${st.earlier} earlier verdict(s)` : "";
     return `<span class="why"><b>${esc(st.verdict)}</b> · ${who}${cite}${earlier}</span>`;
@@ -1248,6 +1344,7 @@ something specific about each checkpoint.")}</div></div>`;
   }
 
   function render(d) {
+    LAST_TRACE = d;
     const rd = reading(d.reading);
     const m = d.model || {};
     const head = `<div class="head">
@@ -1278,7 +1375,7 @@ something specific about each checkpoint.")}</div></div>`;
       // intent being executed - and it was buried under the envelope checks.
       // The five questions lead. The ladder is the expert view and sits under
       // them, per the prototyping call.
-      head + payload(d) + questions(d) + fields(d) + unattached(d)
+      head + questions(d) + answer(d) + unattached(d)
       + feeds(d) + ownerBlock(d) + ladder(d) + substrateBlock(d) + chain + caveats(d);
   }
 
@@ -1370,6 +1467,12 @@ something specific about each checkpoint.")}</div></div>`;
       }
       if (!res.ok) throw new Error("HTTP " + res.status);
       const trace = await res.json();
+      // Contracted fields by their dotted path, so the document can be annotated
+      // where it is read. `fields[]` is the contract's view and the document is
+      // the agent's; this index is the join, and it is the join the reader used
+      // to have to do by eye across two blocks.
+      FIELD_BY_PATH = {};
+      (trace.fields || []).forEach(f => { if (f.name) FIELD_BY_PATH[f.name] = f; });
       // Current state is the LATEST row per assertion, DERIVED and not stored.
       // Migration 205 says so in the table comment — "so a
       // rejected-then-reverified assertion reads as exactly that instead of as

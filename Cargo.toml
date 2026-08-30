@@ -48,7 +48,17 @@ colored = "2.0"
 
 # For serialization (when we need to save/load forecasts)
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+# `preserve_order` because a JSON object's key order is part of the retained
+# bytes, and this platform's whole premise is that retention is a precondition
+# for verification. Without it `serde_json::Map` is a BTreeMap, so every document
+# is alphabetised the moment it crosses an API: `football_analyst` writes
+# `league_context, squad_value, …, assessment` — context, then evidence, then
+# conclusion — and the trace rendered it `advanced_metrics, assessment, …`. The
+# raw text and the parsed document then cannot be read against each other, which
+# is the concrete reason reconciling the two halves of that screen was
+# impossible. Order is information; stripping it silently is the same class of
+# loss as stripping a value.
+serde_json = { version = "1.0", features = ["preserve_order"] }
 
 # For REST API
 axum = { version = "0.7", features = ["multipart"] }

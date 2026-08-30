@@ -247,6 +247,130 @@ fn a_gate_says_whether_it_could_refuse() {
     }
 }
 
+/// The document is rendered once, annotated, not twice.
+///
+/// It was two blocks. "The payload" held the whole answer with no checks and no
+/// actions; "What it claimed" held the checks and the actions for 13 of 47
+/// values, regrouped by strength so the document's own shape was gone. Each was
+/// half a screen and the reader did the join by eye.
+///
+/// That was the third instance of one-object-two-renderings on this page, after
+/// the two settle UIs and the flat verification log — which is why it is worth an
+/// assertion rather than a note. The rule it violates is already written down in
+/// `handlers/pages.rs`, about the bestiary: **a lens changes columns and sort,
+/// not the page.**
+#[test]
+fn the_document_is_rendered_once_with_its_checks_on_it() {
+    let src = trace();
+
+    for gone in ["function payload(", "function fields("] {
+        assert!(
+            !src.contains(gone),
+            "`{gone}` is back. The answer and its checks were two blocks and the \
+             reader had to reconcile them; they are one annotated document now. \
+             If a second view is genuinely wanted, make it a lens over the same \
+             rows rather than a second rendering of the same object."
+        );
+    }
+
+    for needed in [
+        "function annotate(",
+        "function annotatedRows(",
+        "const LENSES",
+    ] {
+        assert!(
+            src.contains(needed),
+            "`{needed}` is gone, so the merged view has been dismantled without \
+             the two old blocks coming back — which leaves the page with neither."
+        );
+    }
+
+    // A hole is only legible in the shape it is missing from.
+    assert!(
+        src.contains("not present.has(at)") || src.contains("!present.has(at)"),
+        "contracted fields the document does not contain are no longer injected \
+         into the tree. Five of them on the reference artifact — `fixtures`, \
+         `head_to_head`, `injuries`, `match_statistics`, `summary` — are the most \
+         actionable rows on the page and are invisible to a walk of the document \
+         alone."
+    );
+}
+
+/// A value nothing examined must not wear a grade.
+///
+/// `pips` floors a missing strength to `0`, which draws ▱▱ — the same glyphs as
+/// `tool_no_match`. So an uncontracted value would claim to have been graded and
+/// found worthless when nothing looked at it. On the reference document that is
+/// **106 of 116 values**, so getting it wrong would mislabel almost the whole
+/// answer.
+#[test]
+fn a_value_under_no_contract_shows_no_grade() {
+    let src = trace();
+    assert!(
+        src.contains("const gradePips"),
+        "`gradePips` is gone. Calling `pips` directly on a value with no \
+         contracted field renders ▱▱, which is a grade, and absent must look \
+         different from bad."
+    );
+    assert!(
+        src.contains("not under contract"),
+        "a value nothing examined no longer says so. `unexamined` is the largest \
+         population in the document and silence about it reads as approval."
+    );
+}
+
+/// A citation has to be followable, because that is what it is scored for.
+///
+/// `human_sourced` scores as high as a tool check for exactly one reason, stated
+/// in migration 205: *someone else can follow the citation to the same source.*
+/// It was rendered as plain text, so the surface that displayed the score did not
+/// satisfy the score's own justification.
+#[test]
+fn a_cited_source_can_be_followed() {
+    let src = trace();
+    assert!(
+        src.contains("follow the citation") && src.contains("rel=\"noopener noreferrer\""),
+        "a citation is printed rather than linked. `human_sourced` is worth two \
+         pips because a third party can check it; a surface that shows the score \
+         and not the path to the source is asserting the one thing it withholds."
+    );
+}
+
+/// The document's key order survives the API.
+///
+/// `serde_json` without `preserve_order` is a `BTreeMap`, so every document is
+/// alphabetised the moment it is parsed. `football_analyst` writes
+/// `league_context, squad_value, …, assessment` — context, then evidence, then
+/// conclusion — and the trace rendered `advanced_metrics, assessment, …`. The raw
+/// text and the parsed document were then in different orders and could not be
+/// read against each other, which was the concrete reason reconciling the two
+/// halves of that screen was impossible.
+///
+/// Order is information. Stripping it silently is the same class of loss as
+/// stripping a value, and this platform's premise is that neither is acceptable.
+///
+/// The other half of the trade is guarded in `artifact_hash`:
+/// `the_document_hash_ignores_key_order` requires identity to stay
+/// order-independent, which `of_document` now implements rather than inheriting
+/// from a default. **Display preserves order, identity ignores it** — and neither
+/// property may be decided by which features a dependency happens to enable.
+#[test]
+fn the_document_keeps_the_order_the_agent_wrote_it_in() {
+    let toml = fs::read_to_string("Cargo.toml").expect("Cargo.toml");
+    let line = toml
+        .lines()
+        .find(|l| l.trim_start().starts_with("serde_json"))
+        .expect("serde_json is a direct dependency and its line is gone");
+    assert!(
+        line.contains("preserve_order"),
+        "`preserve_order` has been dropped from serde_json. Every JSON document \
+         the platform parses is now alphabetised, the trace shows the agent's \
+         answer in an order the agent did not write, and the raw text below it \
+         cannot be read against it. Nothing fails; the screen just becomes \
+         unreconcilable again."
+    );
+}
+
 /// The scan must be able to fail.
 #[test]
 fn the_scan_can_actually_fail() {

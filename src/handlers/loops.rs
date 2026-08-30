@@ -775,7 +775,7 @@ pub async fn episode_trace_handler(
         Some(doc) => fermi::grounding_trust::graded_fields(&agent_name, doc, &report),
         None => Vec::new(),
     };
-    let (fields, floor) = fermi::artifact_trace::fields(&graded);
+    let (fields, floor) = fermi::artifact_trace::fields(&agent_name, &graded);
 
     // What this agent has declared, so the empty case has a sourced cause rather
     // than this handler's guess.

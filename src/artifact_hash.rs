@@ -58,11 +58,19 @@
 //!
 //! Hashing a JSON document is meaningless unless serialisation is canonical: with
 //! insertion-ordered maps, `{"a":1,"b":2}` and `{"b":2,"a":1}` are the same
-//! document and different bytes. `serde_json`'s default `Map` is a `BTreeMap`, so
-//! keys are sorted — but that is a **feature flag away** from being false, and any
-//! dependency in the tree could turn `preserve_order` on without this crate
-//! noticing. So `the_document_hash_ignores_key_order` asserts the property
-//! directly rather than trusting the absence of a flag.
+//! document and different bytes.
+//!
+//! This used to lean on `serde_json`'s default `Map` being a `BTreeMap`, with the
+//! note that it was "a feature flag away from being false" and that
+//! `the_document_hash_ignores_key_order` existed to catch the day the flag was
+//! turned on. It was turned on — deliberately, because a document's key order is
+//! part of the retained bytes and the trace was alphabetising every answer it
+//! displayed — and the test fired on the same commit that did it.
+//!
+//! So [`of_document`] sorts keys itself now. The two requirements are not in
+//! conflict once they are named separately: **display preserves order, identity
+//! ignores it.** The test stays, and it now guards an implementation rather than
+//! an absence.
 
 use sha2::{Digest, Sha256};
 
@@ -82,10 +90,46 @@ pub fn of_text(s: &str) -> String {
 
 /// Digest of a JSON document, over its canonical serialisation.
 ///
-/// See the module docs on why canonicality is asserted by a test rather than
-/// assumed from `serde_json`'s defaults.
+/// Canonical means **keys sorted, at every depth**, and that is now done here
+/// rather than inherited from `serde_json`'s default `Map`.
+///
+/// The module docs predicted this exactly: the property was "a feature flag away
+/// from being false", and `the_document_hash_ignores_key_order` existed to catch
+/// the day someone turned the flag on. Someone did — deliberately, because a
+/// document's key order is part of the retained bytes and the trace was
+/// alphabetising every answer it displayed — and the test fired on the same
+/// commit.
+///
+/// Both properties are wanted and they are not in conflict once they are
+/// separated: **display preserves order, identity ignores it.** A hash is a claim
+/// about which document this is, and `{"a":1,"b":2}` and `{"b":2,"a":1}` are the
+/// same document — so an order-sensitive digest would report drift between two
+/// renderings of one answer. Implemented rather than assumed, so no dependency's
+/// feature flags can decide it again.
 pub fn of_document(v: &serde_json::Value) -> String {
-    of_text(&v.to_string())
+    of_text(&canonical(v).to_string())
+}
+
+/// The same document with every object's keys sorted, recursively.
+///
+/// Arrays are left alone: their order is content, not presentation. Sorting them
+/// would make `[1,2]` and `[2,1]` the same artifact, which for a ranked list or
+/// a sequence of steps is false.
+fn canonical(v: &serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    match v {
+        Value::Object(m) => {
+            let mut keys: Vec<&String> = m.keys().collect();
+            keys.sort();
+            Value::Object(
+                keys.into_iter()
+                    .map(|k| (k.clone(), canonical(&m[k])))
+                    .collect(),
+            )
+        }
+        Value::Array(a) => Value::Array(a.iter().map(canonical).collect()),
+        other => other.clone(),
+    }
 }
 
 /// The digests of one episode's artifacts.

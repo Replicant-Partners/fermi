@@ -386,13 +386,49 @@ pub struct Field {
     /// to a person — and per the paper that is also a prioritised request for the
     /// data integration that would close it.
     pub settleable_by: Option<&'static str>,
+    /// **Did the agent put a value here at all?**
+    ///
+    /// The state the surfaces had no word for. A contracted field left null is
+    /// not a violation — nothing was fabricated — and it is not a pass either.
+    /// It earns its own reading because it implies a different action from every
+    /// neighbouring state: **fix the agent**, not the evidence and not the
+    /// platform. `squad_value` on the reference episode is two of four values
+    /// absent under blocks graded `tool_verified`.
+    ///
+    /// Grounding cannot see it. It asks whether a tool *could* have supplied a
+    /// value, never whether the agent *did* produce one, so an empty field
+    /// inherits its block's grade and reads as sourced. That is the one question
+    /// on the trace with no gate behind it.
+    ///
+    /// Deliberately a fact about the document and **not** a verdict in
+    /// `assertion_verifications`. Nobody decided it; it is observable from the
+    /// retained bytes, which is also why it needs no migration and cannot drift
+    /// from its subject.
+    pub produced: bool,
+    /// Why no verdict can be attached to this field, when none can.
+    ///
+    /// `None` means the field is representable as an assertion and the queue can
+    /// hold it. `Some(why)` is the sentence [`crate::assertions::from_graded_field`]
+    /// already computes and the platform already throws away.
+    ///
+    /// It was thrown away, and the trace then said "Nothing queued this claim, so
+    /// there is nothing to settle yet" — eleven times on one artifact, which
+    /// reads as the queue being broken when the truth was that the agent returned
+    /// nothing. Two different remedies wearing one sentence.
+    pub not_checkable: Option<&'static str>,
 }
 
 /// Dress the graded fields, and compute the document's weakest link.
 ///
 /// The floor comes from [`grounding_trust::floor`] rather than from a `min` here:
 /// it is a trust calculation and it has exactly one implementation.
-pub fn fields(graded: &[GradedField]) -> (Vec<Field>, &'static str) {
+pub fn fields(agent_id: &str, graded: &[GradedField]) -> (Vec<Field>, &'static str) {
+    // Why each field can or cannot carry a verdict, from the one function that
+    // decides it. Re-derived rather than remembered: `from_graded_fields` is pure
+    // over the graded fields, so asking it here cannot disagree with what the
+    // queue did at write time — which a stored copy could, and a second
+    // implementation certainly would.
+    let (_, skipped) = crate::assertions::from_graded_fields(agent_id, graded);
     let out: Vec<Field> = graded
         .iter()
         .map(|f| Field {
@@ -401,6 +437,8 @@ pub fn fields(graded: &[GradedField]) -> (Vec<Field>, &'static str) {
             grade: f.provenance,
             strength: grounding_trust::strength(f.provenance),
             settleable_by: f.settleable_by,
+            produced: !f.value.is_null(),
+            not_checkable: skipped.iter().find(|s| s.path == f.path).map(|s| s.why),
         })
         .collect();
     let floor = grounding_trust::floor(graded.iter().map(|f| f.provenance));
@@ -599,7 +637,7 @@ mod tests {
             graded("b.y", PROV_NO_MATCH),
             graded("c.z", PROV_TOOL),
         ];
-        let (dressed, floor) = fields(&g);
+        let (dressed, floor) = fields("no_such_agent", &g);
         assert_eq!(dressed.len(), 3);
         assert_eq!(
             floor,
@@ -626,8 +664,48 @@ mod tests {
     fn the_belt_carries_what_the_model_actually_claimed() {
         let mut g = graded("genome.estimated_size_mb", PROV_UNAVAILABLE);
         g.value = serde_json::json!("2.4 Gb");
-        let (dressed, _) = fields(&[g]);
+        let (dressed, _) = fields("no_such_agent", &[g]);
         assert_eq!(dressed[0].value, serde_json::json!("2.4 Gb"));
+    }
+
+    /// A field the agent left null says so, and says a verdict cannot attach.
+    ///
+    /// The two halves are separate on purpose. `produced: false` is the state the
+    /// surfaces had no word for — nothing fabricated, nothing supplied, and the
+    /// remedy is the agent rather than the evidence. `not_checkable` is why the
+    /// queue holds nothing for it, which the platform computed and discarded, and
+    /// which the trace then reported as its own queue being empty.
+    #[test]
+    fn an_absent_value_is_reported_as_absent_rather_than_as_unqueued() {
+        let mut g = graded("squad_value.arsenal_total", PROV_UNAVAILABLE);
+        g.value = serde_json::Value::Null;
+        let (dressed, _) = fields("no_such_agent", &[g]);
+
+        assert!(
+            !dressed[0].produced,
+            "a null contracted field must read as not produced; grounding cannot \
+             see this, so nothing else on the platform reports it"
+        );
+        let why = dressed[0]
+            .not_checkable
+            .expect("a null field cannot be queued, and the reason must travel with it");
+        assert!(
+            why.len() > 20,
+            "the reason is the whole point: `nothing queued this claim` sent the \
+             reader to look at the queue, when the fault was the agent's"
+        );
+    }
+
+    /// A value that IS there carries no obstruction.
+    ///
+    /// The mirror, because a field that reports a reason it does not have would
+    /// make every row look blocked and the distinction worthless.
+    #[test]
+    fn a_present_value_reports_no_obstruction() {
+        let mut g = graded("league_context.season", PROV_TOOL);
+        g.value = serde_json::json!("2024-25");
+        let (dressed, _) = fields("no_such_agent", &[g]);
+        assert!(dressed[0].produced);
     }
 
     /// Both execute routes declare a belt, and every rung says whether it can
