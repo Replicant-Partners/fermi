@@ -241,6 +241,20 @@
   .q5.t-bad .q5-a b{color:var(--red,#fb4934);}
   .q5.t-na{border-left-color:var(--bg3);}
   .q5.t-na .q5-a{color:var(--fg4);}
+  /* Which checkpoint answers this question, and whether it had teeth. Tokens,
+     never a sentence — the sentence is the answer beside it. */
+  .q5-g{grid-column:2;display:flex;gap:5px;flex-wrap:wrap;margin-top:5px;}
+  .gate{font-size:0.62rem;border:1px solid var(--bg3);padding:1px 6px;color:var(--fg4);
+        white-space:nowrap;}
+  .gate b{color:var(--fg3);font-weight:600;}
+  .gate.g-refuse b{color:var(--aqua);}
+  .gate.g-refused{border-color:var(--red,#fb4934);color:var(--red,#fb4934);}
+  .gate.g-refused b{color:var(--red,#fb4934);}
+  /* Absent must look different from bad: a dashed edge is nothing-here, a red
+     edge is something-here-and-wrong. The one question with no gate at all is
+     the finding, so it gets the shape that reads as a hole. */
+  .gate.g-none{border-style:dashed;border-color:var(--yellow);color:var(--yellow);}
+  .gate.g-off{border-style:dashed;}
 
   /* ── A claim, and what a person can do about it ─────────────────────── */
   .claim{display:grid;grid-template-columns:26px 210px 1fr 130px;gap:10px;
@@ -593,6 +607,37 @@
     return { total, empty };
   }
 
+  // Which checkpoint answers a question, and whether it could act on the answer.
+  //
+  // The ladder below carries the gate names, and it was the only place they
+  // appeared — so a reader who understood the five questions had to re-derive,
+  // from a second table, which checkpoint was responsible for each. Folded up
+  // here as tokens: the name, what it decided, and whether it can refuse or only
+  // records. `records only` is the one that changes what an answer means, and it
+  // was two scrolls away from the question it qualifies.
+  //
+  // Three kinds of nothing, and they are not the same:
+  //   * `no gate`   — nothing in the system asks this. Question three.
+  //   * `not on this route` — the gate exists and this route does not declare it.
+  //   * `not recorded` — it is declared, it ran, and no ledger row survives.
+  function gates(a, ids) {
+    if (ids === null) {
+      return `<span class="gate">answered by the belt as a whole</span>`;
+    }
+    if (!ids.length) {
+      return `<span class="gate g-none">no gate</span>`;
+    }
+    return ids.map(id => {
+      const b = a.by[id];
+      if (!b) return `<span class="gate g-off"><b>${esc(id)}</b> · not on this route</span>`;
+      const refuses = b.enforcement === "control";
+      const verdict = b.decided ? b.decided.decision : "not recorded";
+      const cls = verdict === "refused" ? "g-refused" : refuses ? "g-refuse" : "";
+      return `<span class="gate ${cls}"><b>${esc(id)}</b> · ${esc(verdict)} · ${
+        refuses ? "can refuse" : "records only"}</span>`;
+    }).join("");
+  }
+
   function questions(d) {
     const a = readArtifact(d);
     const fs = d.fields || [];
@@ -602,16 +647,20 @@
     const ran = a.by.credit || a.by.rate_limit;
     const got = a.by.attachment || a.by.input_binding;
 
+    // The fourth element is the checkpoint(s) that answer the question. Question
+    // three's empty list is not an omission — see `noGate` below.
     const rows = [
       ["Was it allowed to run?",
        ran ? "Yes — it had the budget and was inside its limits."
            : "No check on this route.",
-       ran ? "ok" : "na"],
+       ran ? "ok" : "na",
+       ["credit", "rate_limit"]],
 
       ["Did it get what it needed?",
        got ? "Yes — the request carried what the agent expects."
            : "No check on this route.",
-       got ? "ok" : "na"],
+       got ? "ok" : "na",
+       ["attachment", "input_binding"]],
 
       ["Did it actually do the work?",
        e.total === 0
@@ -620,14 +669,16 @@
            ? `Yes — all ${e.total} values came back filled in.`
            : `<b>No — ${e.empty} of ${e.total} values came back empty.</b> The agent \
               produced the shape of an answer without the content.`,
-       e.total === 0 ? "na" : e.empty === 0 ? "ok" : "bad"],
+       e.total === 0 ? "na" : e.empty === 0 ? "ok" : "bad",
+       []],
 
       ["Where did the numbers come from?",
        fs.length === 0
          ? "Nothing was checked, so there is nothing to say."
          : `${byStrength(2)} from a tool or citation, ${byStrength(1)} from the model's \
             own judgement, ${byStrength(0)} from nothing that could be checked.`,
-       fs.length === 0 ? "na" : byStrength(0) > 0 ? "bad" : byStrength(1) > 0 ? "warn" : "ok"],
+       fs.length === 0 ? "na" : byStrength(0) > 0 ? "bad" : byStrength(1) > 0 ? "warn" : "ok",
+       ["grounding"]],
 
       ["Could anything have stopped it?",
        a.contentsGuarded
@@ -636,17 +687,36 @@
            ? "<b>No.</b> A checkpoint read the contents and only records — whatever it \
               found, the answer was returned anyway."
            : "<b>No.</b> Nothing opened the answer to look inside it.",
-       a.contentsGuarded ? "ok" : "bad"],
+       a.contentsGuarded ? "ok" : "bad",
+       null],
     ];
+
+    // Said once, under the table, and only when it is true.
+    //
+    // The absence is the finding and it is easy to read as an oversight in the
+    // page rather than in the platform, so it is named as the platform's. This
+    // is also why question three is asked at all: it is computed here, from the
+    // values, precisely because no checkpoint computes it.
+    const noGate = rows.some(([, , , g]) => Array.isArray(g) && !g.length)
+      ? `<div class="note" style="margin-top:9px">One question has <b>no gate</b>. Nothing
+           in the system checks whether a contracted field was actually filled in —
+           <code>grounding</code> asks whether a tool <i>could</i> have supplied a value,
+           never whether the agent <i>did</i> produce one, so an empty field inherits its
+           block's grade and reads as sourced. That answer is computed on this page from
+           the values themselves, and it is the only one here that no checkpoint stands
+           behind.</div>`
+      : "";
 
     return `<div class="block">
       <h2>Can you trust this?</h2>
-      <div class="note">Five questions, in the order they matter. The technical version is
-        further down.</div>
-      ${rows.map(([q, ans, tone]) => `<div class="q5 t-${tone}">
+      <div class="note">Five questions, in the order they matter, each with the checkpoint
+        that answers it. <b>records only</b> means it looked and could not refuse.</div>
+      ${rows.map(([q, ans, tone, g]) => `<div class="q5 t-${tone}">
         <div class="q5-q">${esc(q)}</div>
         <div class="q5-a">${ans}</div>
+        <div class="q5-g">${gates(a, g)}</div>
       </div>`).join("")}
+      ${noGate}
     </div>`;
   }
 

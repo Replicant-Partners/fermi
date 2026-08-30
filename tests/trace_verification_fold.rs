@@ -175,6 +175,78 @@ fn there_is_exactly_one_settle_ui_and_it_reads_its_verdicts_from_the_platform() 
     );
 }
 
+/// The question no checkpoint answers must keep reading as a hole.
+///
+/// The five questions each name the gate that answers them. Question three —
+/// *did it actually do the work?* — names none, and that is the finding rather
+/// than a gap in the page: `grounding` asks whether a tool **could** have
+/// supplied a value, never whether the agent **did** produce one, so an empty
+/// field inherits its block's grade and reads as sourced. On the reference
+/// episode, `squad_value` grades against blocks marked `tool_verified` with two
+/// of four values null.
+///
+/// The failure mode is somebody tidying it: assigning `grounding` to question
+/// three because every other row has a gate and the blank looks unfinished.
+/// That would delete the only place the platform admits the check does not
+/// exist, and nothing would go red.
+#[test]
+fn the_question_with_no_gate_still_has_no_gate() {
+    let src = trace();
+
+    assert!(
+        src.contains("g-none"),
+        "the trace no longer renders a `no gate` token. One of the five questions \
+         is answered by nothing in the system, and that absence is the finding \
+         — it must be visible as a hole rather than as a blank cell."
+    );
+
+    // The empty gate list belongs to the work question and to no other.
+    let q3 = src
+        .find("Did it actually do the work?")
+        .expect("the work question is gone; it is the only one computed from the values");
+    let next = src[q3..]
+        .find("Where did the numbers come from?")
+        .map(|i| q3 + i)
+        .expect("the provenance question must follow the work question");
+    assert!(
+        src[q3..next].contains("[]"),
+        "`Did it actually do the work?` has been given a gate. Nothing in the \
+         system checks whether a contracted field was filled in, so naming a \
+         checkpoint here claims a check that does not run. If one is built, \
+         delete this assertion in the same commit that builds it."
+    );
+
+    // Absent, declared-elsewhere and unrecorded are three different findings.
+    for token in ["g-none", "g-off", "not recorded", "not on this route"] {
+        assert!(
+            src.contains(token),
+            "`{token}` is gone. A question with no gate, a gate not declared on \
+             this route, and a declared gate whose ledger row did not survive are \
+             three different situations with three different remedies, and \
+             collapsing any two of them blames the wrong party."
+        );
+    }
+}
+
+/// A gate that looked and could not act says so beside the question.
+///
+/// `records only` is the token that changes what an answer means, and it lived
+/// two scrolls down in the ladder — so the five questions could report that a
+/// checkpoint had read the contents while omitting that whatever it found could
+/// not have stopped the response. On the reference episode `grounding` is
+/// exactly that: it **refused**, and it refuses nothing.
+#[test]
+fn a_gate_says_whether_it_could_refuse() {
+    let src = trace();
+    for token in ["can refuse", "records only"] {
+        assert!(
+            src.contains(token),
+            "`{token}` is gone from the five questions. A gate that inspects and \
+             cannot refuse reads as protection it does not provide."
+        );
+    }
+}
+
 /// The scan must be able to fail.
 #[test]
 fn the_scan_can_actually_fail() {
