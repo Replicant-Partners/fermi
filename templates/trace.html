@@ -836,16 +836,12 @@
     const open = !!st && String(st.verdict || "").startsWith("pending_");
 
     if (f.produced === false) {
-      // The reason travels from `assertions::from_graded_field`, which computes
-      // it and which the platform used to discard.
-      return {
-        cls: "r-empty",
-        dest: `<span class="t-person">not produced</span>`,
-        body: `<div class="a-owner">${esc(f.not_checkable
-          || "the agent returned no value here")} <b>Nobody can verify an absence</b> —
-          the work is on the agent, or on the integration it needed${
-          f.settleable_by ? ` (<b>${esc(f.settleable_by)}</b>)` : ""}, not on a reviewer.</div>`,
-      };
+      // No prose on the row. `not produced` IS the statement, and the reason it
+      // carries is the same reason on every one of them — eleven identical
+      // two-line paragraphs shipped down the page, which is the wall this whole
+      // pass was supposed to remove. It is said once, in `legend`, with the
+      // count and the tool that would close them.
+      return { cls: "r-empty", dest: `<span class="t-person">not produced</span>`, body: "" };
     }
     if (st && !open) {
       return {
@@ -868,13 +864,14 @@
     if ((f.strength ?? 0) >= 2) {
       return { cls: "r-done", dest: `<span class="t-done">settled</span>`, body: "" };
     }
+    // Same rule: the destination names who could settle it, and the reason is
+    // shared across the group rather than repeated on each row.
     return {
       cls: "r-blocked",
       dest: f.settleable_by
         ? `<span class="t-tool">${esc(f.settleable_by)}</span>`
         : `<span class="t-person">needs a person</span>`,
-      body: `<div class="a-owner">${esc(f.not_checkable
-        || "no verdict has been queued against this claim")}</div>`,
+      body: "",
     };
   }
 
@@ -963,6 +960,65 @@
     ["all", "everything", () => true],
   ];
 
+  // Said once for the group, not once per row.
+  //
+  // Every state on this surface carries a reason, and the reason is a property of
+  // the STATE rather than of the row: eleven `not produced` rows have eleven
+  // identical explanations. Printed per row that is a wall — it shipped as one,
+  // twice, first as `not under contract` on 125 rows and then as a two-line
+  // paragraph on 11.
+  //
+  // The aggregate is also more use than the repetition. "5 of these would be
+  // closed by `call_football_api`" is a decision; the same sentence eleven times
+  // is a paragraph to skip.
+  function legend(shown) {
+    const bits = [];
+    const empty = shown.filter(r => r.a.cls === "r-empty");
+    if (empty.length) {
+      const tools = [...new Set(empty
+        .map(r => FIELD_BY_PATH[r.dotted] && FIELD_BY_PATH[r.dotted].settleable_by)
+        .filter(Boolean))];
+      const byTool = empty.filter(r =>
+        FIELD_BY_PATH[r.dotted] && FIELD_BY_PATH[r.dotted].settleable_by).length;
+      bits.push(`<b>${empty.length}</b> returned nothing — the agent produced no value, so
+        there is no claim to verify and <b>nobody can verify an absence</b>. The work is on
+        the agent or on an integration it does not have${
+        tools.length
+          ? `: <b>${byTool}</b> of them would be closed by <b>${tools.map(esc).join(", ")}</b>`
+          : ""}. Not on a reviewer.`);
+    }
+    const blocked = shown.filter(r => r.a.cls === "r-blocked");
+    if (blocked.length) {
+      bits.push(`<b>${blocked.length}</b> could carry a verdict and nothing has queued one.`);
+    }
+    return bits.length
+      ? `<div class="fgroup-legend">${bits.join(" ")}</div>`
+      : "";
+  }
+
+  // Nothing to do is a finding, and it has to be said.
+  //
+  // Both claims on the reference artifact are settled — one endorsed, one cited —
+  // so there are no controls on the page, correctly. But a screen with no
+  // controls and no sentence reads as a screen whose controls are missing, which
+  // is what it was reported as. An empty worklist and a broken one look
+  // identical unless one of them says so.
+  function worklist(rows) {
+    const open = rows.filter(r => r.a.cls === "r-actionable");
+    if (open.length) {
+      return `<div class="vfeed ok"><b>${open.length}</b> claim(s) here are waiting for a
+        verdict, and the controls are on those rows.</div>`;
+    }
+    const done = rows.filter(r => r.a.cls === "r-done").length;
+    // "and the reason is beside each one" is what this said until the per-row
+    // reasons were removed, one commit ago, to stop the wall. A sentence that
+    // outlived its fact by a single commit — which is the recurring bug on this
+    // page and the reason the line below points at the legend instead.
+    return `<div class="vfeed ok"><b>Nothing here is waiting for you.</b>${
+      done ? ` ${done} claim(s) have been settled` : " No claim was ever queued"} — the
+      remaining rows are nobody's review work, for the reason below.</div>`;
+  }
+
   function answer(d) {
     const r = d.response || {};
     const q = d.input && d.input.query ? String(d.input.query) : "";
@@ -993,7 +1049,7 @@
       const shown = rows.filter(match);
       const whole = LENS === "all";
       body = shown.length
-        ? shown.map(x => arow(x, whole)).join("")
+        ? worklist(rows) + legend(shown) + shown.map(x => arow(x, whole)).join("")
         : `<div class="empty">Nothing in this lens.</div>`;
     } else if (r.text) {
       body = `<div class="pl-body clamp" data-clamp>${esc(r.text)}</div>

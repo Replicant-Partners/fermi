@@ -315,8 +315,11 @@ fn a_value_under_no_contract_shows_no_grade_and_no_label() {
          contracted field renders ▱▱, which is a grade, and absent must look \
          different from bad."
     );
+    // `code_lines`, because the comments explain the label and why it went —
+    // they have to name it to do that, and a scan that could not tell prose from
+    // markup would force the explanation out of the file.
     assert!(
-        !src.contains("not under contract"),
+        !code_lines(&src).any(|l| l.contains("not under contract")),
         "unexamined rows are labelled again. That is one true sentence repeated \
          125 times on the reference artifact, which is how the wall of noise came \
          back. The count belongs in the lens strip — once — where it is also the \
