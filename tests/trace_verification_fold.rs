@@ -757,6 +757,73 @@ fn contradicting_an_agent_files_an_anomaly_and_stops_there() {
     }
 }
 
+/// Each field proposes its own call, and the answer says whether it is in there.
+///
+/// Two faults, reported together and with one cause: the contract's
+/// `response_field` was treated as an opaque string.
+///
+/// It is not. It has a grammar, consistent across every contract:
+///
+/// ```text
+/// standings (rank, points, form, home/away splits)   endpoint + key names
+/// fixtures/headtohead                                endpoint only
+/// fixtures/statistics.expected_goals                 endpoint + one leaf
+/// ```
+///
+/// The old test for "is this a path" rejected anything with a space or a
+/// bracket — which is most of them — so the query loaded empty, a reader reached
+/// for whichever replay chip was nearest, and `teams/statistics` got run to
+/// answer a question about `fixtures`. **Two different fields, the same call, the
+/// same 16KB response**, and nothing on the page saying so.
+///
+/// And then a 16,036-byte blob does not answer "is my field in there". The
+/// contract lists the key names; searching for them turns the blob into a
+/// finding. Reported as a key-name search, because that is what it is: *the
+/// response contains a key called `expected_goals`* is a fact, and *the tool can
+/// supply this field* is the inference a person draws from it.
+#[test]
+fn a_probe_asks_this_fields_question_and_says_if_the_answer_is_there() {
+    let src = trace();
+
+    assert!(
+        src.contains("function parseHint("),
+        "`response_field` is opaque again, so the endpoint for a field is \
+         unknown and the query loads empty — which is what sent a reader to run \
+         an unrelated call and get an unrelated answer."
+    );
+    assert!(
+        src.contains("function sharedParams("),
+        "the run's subject is no longer recovered from the record. `league: 39` \
+         and `season: 2024` are on every call the agent made and `team` varies, \
+         so the intersection is what the run was ABOUT — the half the contract \
+         cannot carry."
+    );
+
+    // The prefill must be the field's own call, never a replayed one.
+    assert!(
+        src.contains("endpoint: h.endpoint"),
+        "the loaded query no longer comes from this field's contract. A replay \
+         chip is a call the agent happened to make; it answers its own question, \
+         not this row's."
+    );
+    assert!(
+        code_lines(&src).any(|l| l.contains("other calls this run made")),
+        "the replay chips are unlabelled again. Unlabelled, they read as answers \
+         to this row's question, and running the wrong one produces a confident \
+         irrelevant response."
+    );
+
+    // And the response has to be read for us.
+    for token in ["FOUND in this response", "NOT FOUND"] {
+        assert!(
+            src.contains(token),
+            "`{token}` is gone, so a 16,000-byte response is handed over with no \
+             statement about whether the field is in it — which is the complaint \
+             this answers."
+        );
+    }
+}
+
 /// The scan must be able to fail.
 #[test]
 fn the_scan_can_actually_fail() {

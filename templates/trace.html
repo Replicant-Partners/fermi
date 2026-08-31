@@ -867,15 +867,7 @@
   // document — a sentence repeated a hundred times, which is the rule this page
   // exists to hold: explain once, then show data. The count is stated once, in
   // the lens strip, where it is also the control that shows them.
-  function annotate(dotted) {
-    const f = FIELD_BY_PATH[dotted];
-    if (!f) return { cls: "", dest: "", body: "" };
-
-    const aid = ASSERTION_BY_PATH[dotted];
-    const st = aid ? CLAIMS[aid] : null;
-    const open = !!st && String(st.verdict || "").startsWith("pending_");
-
-    // Was the tool ever actually asked for this field?
+  // Was the tool ever actually asked for this field?
   //
   // The question the grade cannot answer. `tool_no_match` reads as "the tool
   // answered and had nothing", and `grounding_trust` is explicit that it is a
@@ -909,7 +901,15 @@
       : "unasked";
   }
 
-  // An absence the contract REQUIRES is not a fault.
+  function annotate(dotted) {
+    const f = FIELD_BY_PATH[dotted];
+    if (!f) return { cls: "", dest: "", body: "" };
+
+    const aid = ASSERTION_BY_PATH[dotted];
+    const st = aid ? CLAIMS[aid] : null;
+    const open = !!st && String(st.verdict || "").startsWith("pending_");
+
+    // An absence the contract REQUIRES is not a fault.
     //
     // `squad_value` is `unsourced`: the contract says no tool returns market
     // values, so the field must be null, and the agent nulled it and wrote a
@@ -1106,6 +1106,58 @@
       esc(f.settleable_by)} and read what it returns">${esc(f.settleable_by)} \u25b8</button>`;
   }
 
+  // The contract's `response_field`, parsed.
+  //
+  // It has a consistent grammar across every contract, and it was being used as
+  // an opaque string:
+  //
+  //   standings (rank, points, form, home/away splits)   endpoint + key names
+  //   fixtures (date, competition, venue, status)        endpoint + key names
+  //   fixtures/headtohead                                endpoint only
+  //   fixtures/statistics.expected_goals                 endpoint + one leaf
+  //
+  // So the endpoint IS knowable per field, and the previous version threw it
+  // away: `looksLikePath` rejected anything containing a space or a bracket,
+  // which is most of them, and the prefill fell back to an empty query. A reader
+  // then reached for a replay chip — any chip — and ran `teams/statistics` to
+  // answer a question about `fixtures`. Two different fields, the same call, the
+  // same 16KB response, and nothing on the page pointing that out.
+  function parseHint(hint) {
+    const s = String(hint || "");
+    const head = s.split(" (")[0].trim();
+    const listed = (s.match(/\(([^)]*)\)/) || [, ""])[1]
+      .split(",").map(k => k.trim()).filter(Boolean);
+    let endpoint = head, leaf = null;
+    if (head.includes(".")) {
+      const i = head.lastIndexOf(".");
+      endpoint = head.slice(0, i);
+      leaf = head.slice(i + 1);
+    }
+    return { endpoint, leaf, keys: leaf ? [leaf, ...listed] : listed };
+  }
+
+  // The parameters every call with this tool shared — this run's subject.
+  //
+  // Not a guess. `league: 39` and `season: 2024` appear on all seven of
+  // `football_analyst`'s calls, and `team` varies between them; the intersection
+  // is therefore what the run was ABOUT, and what varies is what each call was
+  // for. That is the half the contract cannot carry and the record can.
+  //
+  // Anything endpoint-specific — a `fixture` id for statistics, an `h2h` pair —
+  // is still the caller's, and the tool's own error says which when it is
+  // missing, which is a better teacher than a guess.
+  function sharedParams(tool) {
+    const calls = TOOL_CALLS.filter(c => c.tool === tool && (c.input || {}).params);
+    if (!calls.length) return {};
+    const first = calls[0].input.params;
+    const out = {};
+    for (const k of Object.keys(first)) {
+      const v = JSON.stringify(first[k]);
+      if (calls.every(c => JSON.stringify((c.input.params || {})[k]) === v)) out[k] = first[k];
+    }
+    return out;
+  }
+
   // The query the platform cannot supply.
   //
   // The contract names the tool and, in `response_field`, sometimes an endpoint
@@ -1116,7 +1168,6 @@
   // form says that is why rather than presenting an empty box.
   function probeForm(dotted, f) {
     const hint = f.response_hint || "";
-    const looksLikePath = /^[a-z0-9/_-]+$/i.test(hint) && !hint.includes(" ");
     // The calls this agent actually made with this tool, offered for replay.
     //
     // Writing `{"endpoint":"","params":{}}` by hand asks a reader to know
@@ -1129,10 +1180,13 @@
     // the one worth pressing — and when it exists it is also the finding: the
     // tool WAS asked, and the field is still empty.
     const mine = TOOL_CALLS.filter(c => c.tool === f.settleable_by && c.replayable);
-    const head = hint.split(" ")[0].replace(/[(),]/g, "");
-    const isHit = c => head && String((c.input || {}).endpoint || "") === head;
+    const h = parseHint(hint);
+    const isHit = c => h.endpoint && String((c.input || {}).endpoint || "") === h.endpoint;
+    // Labelled as OTHER calls, because they are. Running `teams/statistics` to
+    // answer a question about `fixtures` is what the unlabelled version invited,
+    // and it produced two identical answers for two different fields.
     const replay = mine.length
-      ? `<div class="replay">${mine.map((c, i) =>
+      ? `<div class="replay"><span class="why">other calls this run made:</span>${mine.map((c, i) =>
           `<button data-replay="${i}" class="${isHit(c) ? "hit" : ""}"
              title="${esc(JSON.stringify(c.input))}">${
              esc(String((c.input || {}).endpoint || c.tool))}${
@@ -1140,21 +1194,30 @@
            }</button>`).join("")}</div>`
       : "";
     const hit = mine.find(isHit);
-    const prefill = JSON.stringify(
-      hit ? hit.input : looksLikePath ? { endpoint: hint, params: {} } : { endpoint: "", params: {} });
+    // The call for THIS field: the endpoint from the contract, the subject from
+    // the record. Never an arbitrary call the agent happened to make, which is
+    // what a replay chip is and what the empty fallback pushed a reader toward.
+    const proposed = h.endpoint
+      ? { endpoint: h.endpoint, params: sharedParams(f.settleable_by) }
+      : { endpoint: "", params: {} };
+    const prefill = JSON.stringify(hit ? hit.input : proposed);
 
     return `<div class="probe" data-probe-form="${esc(dotted)}"
                  data-settleable="${ASSERTION_BY_PATH[dotted] ? "1" : "0"}">
       <span class="why">${
         hit
-          ? `<b>The agent already called this.</b> It asked <b>${esc(head)}</b> and got ${
+          ? `<b>The agent already called this.</b> It asked <b>${esc(h.endpoint)}</b> and got ${
               hit.output_chars ? `${hit.output_chars.toLocaleString()} bytes` : "nothing"
             } back, and this field is still empty — so the gap is not a missing
              integration. The call is loaded below; press again to repeat it.`
-          : mine.length
-            ? `The agent made <b>${mine.length}</b> call(s) with this tool during the run.
-               Pick one to load it, or edit the query. The contract names the tool and not
-               the arguments.`
+          : h.endpoint
+            ? `Loaded: <b>${esc(h.endpoint)}</b>, which is the endpoint this field's
+               contract names${
+               Object.keys(sharedParams(f.settleable_by)).length
+                 ? `, with the ${esc(Object.keys(sharedParams(f.settleable_by)).join(" and "))}
+                    this run used`
+                 : ""}. Anything else the endpoint needs is yours to add \u2014 the tool's own
+               error will say which.`
             : `The contract names <b>${esc(f.settleable_by)}</b>${
                 hint ? ` and says the answer is in <b>${esc(hint)}</b>` : ""}, and the agent
                 made no call with it during this run. The query is yours to write \u2014 the
@@ -1488,9 +1551,33 @@
               it does not change the agent</span>
             <span class="wrong-out"></span>`;
         }
+        // Does the response contain the field, or not?
+        //
+        // The complaint this answers: "I get a large payload that may or may not
+        // have this field". 16,036 bytes is not an answer, and the contract
+        // already names the keys to look for.
+        //
+        // A key-name search, and labelled as one. "the response contains a key
+        // called expected_goals" is a fact; "the tool can supply this field" is
+        // the inference a person draws from it. Some listed names are prose
+        // rather than keys \u2014 `home/away splits` \u2014 so a miss is weaker evidence
+        // than a hit, and saying which were looked for is what makes that legible.
+        let verdictLine = "";
+        if (p.ok && h.keys.length) {
+          const found = h.keys.filter(k => p.response.includes('"' + k + '"'));
+          verdictLine = found.length
+            ? `\n\nFOUND in this response: ${found.join(", ")}. `
+              + `The contract says this field comes from ${h.endpoint}`
+              + (h.leaf ? `.${h.leaf}` : "") + `, and those key(s) are there.`
+            : `\n\nNOT FOUND: none of ${h.keys.join(", ")} appear as keys in this `
+              + `response. Either this is the wrong query, or the source does not `
+              + `carry it \u2014 and some contracts list prose rather than key names, so `
+              + `check before concluding.`;
+        }
         out.textContent =
           (p.ok ? "" : "the tool refused: ") + p.response
           + (p.truncated ? `\n\u2026 ${p.chars.toLocaleString()} characters in total` : "")
+          + verdictLine
           + "\n\nThis decides nothing."
           + (form.dataset.settleable === "1"
               ? " If it answers the claim, settle it above and cite this call."
