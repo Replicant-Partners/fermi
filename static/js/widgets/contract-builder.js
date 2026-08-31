@@ -297,6 +297,7 @@ const ContractBuilder = (() => {
   let cbCompiled = null;
   let cbTimer = null;
   let cbAvailableTools = [];
+  let cbShapes = {};   // tool -> declared response shape
   let cbProposals = [];
   let cbTypes = [];
   let cbOpen = new Set();
@@ -681,6 +682,97 @@ const ContractBuilder = (() => {
   // What each status implies for the derived `_provenance` stamp. Mirrors
   // Source::provenance_schema in src/contract_sketch.rs, shown so the
   // author sees the consequence of the choice while making it.
+  // ── the tool decides which fields are available ──────────────────
+  //
+  // Asked in review: "wouldn't the tool determine which fields are available
+  // on a sourced thing?" It does now. For a tool whose response has been read,
+  // this offers its real keys with their real types, so an author picks rather
+  // than types — and cannot invent a key that does not exist, which is the
+  // same failure as the agent inventing a value.
+  function cbFieldPicker(i, b) {
+    const sh = cbShapes[(b.tool || "").trim()];
+    if (!sh) {
+      return b.status === "sourced" && (b.tool || "").trim()
+        ? `<div class="cb-hintlet" style="display:block;margin:6px 0">
+             No declared response shape for <code>${esc(b.tool)}</code> — nobody
+             has read it. Field names here are unchecked, and the
+             <code>response_field</code> claim cannot be verified against the
+             tool's actual output.
+           </div>`
+        : "";
+    }
+    const have = new Set(b.fields.map((f) => (f.name || "").trim()));
+    const vendor = sh.evidence === "vendor";
+    return `
+      <div class="cb-shape">
+        <div class="cb-shape-head">
+          ${sh.fields.length} field(s) <code>${esc(sh.tool)}</code> returns
+          <span class="cb-ev ${vendor ? "vendor" : "built"}">${sh.evidence}</span>
+          <span class="cb-hintlet">${esc(sh.evidence_from)}</span>
+        </div>
+        <div class="cb-shape-grid">
+          ${sh.fields
+            .map(
+              (f, j) => `
+            <button class="cb-shape-f ${have.has(f.field) ? "on" : ""}"
+                    onclick="cbToggleShapeField(${i}, ${j})"
+                    title="${esc(f.path)}${f.note ? " — " + esc(f.note) : ""}">
+              ${have.has(f.field) ? "&#10003; " : "+ "}${esc(f.field)}
+              <span class="t">${esc(f.type)}</span>
+            </button>`,
+            )
+            .join("")}
+        </div>
+        ${
+          vendor
+            ? `<div class="cb-hintlet" style="display:block;margin-top:4px">
+                 A passthrough: this shape is the vendor's and can change
+                 without this repo noticing.
+               </div>`
+            : ""
+        }
+      </div>`;
+  }
+
+  function cbToggleShapeField(i, j) {
+    const b = cbBlocks[i];
+    const sh = cbShapes[(b.tool || "").trim()];
+    if (!sh) return;
+    const f = sh.fields[j];
+    const at = b.fields.findIndex((x) => (x.name || "").trim() === f.field);
+    if (at >= 0) {
+      b.fields.splice(at, 1);
+    } else {
+      // Drop the blank starter row rather than leaving it above the fields
+      // the author just picked.
+      const blank = b.fields.findIndex((x) => !(x.name || "").trim());
+      if (blank >= 0) b.fields.splice(blank, 1);
+      b.fields.push({ name: f.field, type: f.type });
+    }
+    // Keep `response_field` honest: it should name the paths actually used,
+    // not every path the tool returns.
+    const used = new Set(b.fields.map((x) => (x.name || "").trim()));
+    const paths = sh.fields.filter((x) => used.has(x.field)).map((x) => x.path);
+    if (paths.length) b.response_field = paths.join(", ");
+    cbRenderAll();
+    cbTouch();
+  }
+
+  // Which of a block's fields the tool cannot supply. The original bug, shown
+  // next to the block rather than discovered by reading the tool.
+  function cbUncovered(b) {
+    const sh = cbShapes[(b.tool || "").trim()];
+    if (!sh || b.status !== "sourced") return [];
+    const known = new Set();
+    sh.fields.forEach((f) => {
+      known.add(f.field);
+      known.add(f.path.split(".").pop().replace(/\[\]$/, ""));
+    });
+    return b.fields
+      .map((f) => (f.name || "").trim())
+      .filter((n) => n && !known.has(n));
+  }
+
   function cbDerivedHint(b) {
     if (b.status === "narrative")
       return "No provenance stamp. A retrieval verdict about a paragraph is a category error.";
@@ -755,6 +847,20 @@ const ContractBuilder = (() => {
                           placeholder="priceToEarningsRatio, priceToBookRatio" />
                  </div>
                </div>
+               ${cbFieldPicker(i, b)}
+               ${(() => {
+                 const u = cbUncovered(b);
+                 return u.length
+                   ? `<div class="cb-uncovered">
+                        <strong>${u.length} field(s) this tool does not return:</strong>
+                        ${u.map((n) => `<code>${esc(n)}</code>`).join(" ")}
+                        <div>A field in a retrieved block with no possible
+                        source is the shape that shipped fabricated genome data
+                        for 56 episodes. Move it to a reasoned block, declare it
+                        unavailable, or widen coverage and say why.</div>
+                      </div>`
+                   : "";
+               })()}
                <div class="form-group">
                  <label>Coverage</label>
                  <select onchange="cbSet(${i},'coverage',this.value); cbRenderAll()">
@@ -1321,6 +1427,12 @@ Rules, each enforced by the platform:
       if (!res.ok) return;
       const data = await res.json();
       cbAvailableTools = data.tools || [];
+      // The declared response shapes. This is what makes the field picker a
+      // choice among fields that exist rather than a text box.
+      cbShapes = {};
+      (data.response_shapes || []).forEach((sh) => {
+        cbShapes[sh.tool] = sh;
+      });
       const dl = document.getElementById("cb-tool-list");
       if (dl)
         dl.innerHTML = cbAvailableTools
@@ -1469,6 +1581,7 @@ Rules, each enforced by the platform:
     cbSet, cbSetField, cbSetStatus, cbSetShape, cbRenameBlock,
     cbToggle, cbAddFromProposal, cbAddJudgement, cbAddProse, cbAddGap,
     cbBorrow, cbTab, cbToolsChanged, cbTouch, cbLoadExample, cbClear,
+    cbToggleShapeField,
     cbCopySnippet, cbRenderAll, cbRenderNav, cbRenderConsumers,
   });
 
@@ -1486,6 +1599,20 @@ Rules, each enforced by the platform:
 
   const api = {
     mount,
+    /// Inject declared response shapes without a server.
+    ///
+    /// The widget is exercised headlessly (see the DOM-stub harness used while
+    /// building it), and the tool-driven field picker is the part most worth
+    /// exercising: it is what stops an author naming a response key that does
+    /// not exist. A seam on the api object rather than a bare global, so it is
+    /// part of the widget's surface rather than a hook someone finds later and
+    /// has to guess about.
+    setShapes(arr) {
+      cbShapes = {};
+      (arr || []).forEach((x) => {
+        cbShapes[x.tool] = x;
+      });
+    },
     loadAgent,
     saveTo,
     requestTool,

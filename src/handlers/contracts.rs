@@ -94,7 +94,41 @@ pub async fn compile_handler(
 pub async fn tool_names_handler(_principal: AuthPrincipal) -> Json<Value> {
     let mut names = fermi::agent_backend::tools::platform_tool_names();
     names.sort_unstable();
-    Json(serde_json::json!({ "tools": names }))
+
+    // Each tool's declared response shape, where anyone has read it. This is
+    // what turns the field picker from a text box into a choice among fields
+    // that exist: pick one and you get its name AND its type, having guessed
+    // neither.
+    //
+    // `evidence` travels with it because a `vendor` shape is a weaker claim
+    // than a `constructed` one, and the UI should not present them
+    // identically. A tool absent from the table has simply not been read, and
+    // the builder falls back to extracting candidates from its description
+    // and marking them unconfirmed.
+    let shapes: Vec<Value> = fermi::tool_response_shapes::TOOL_RESPONSES
+        .iter()
+        .map(|t| {
+            json!({
+                "tool": t.tool,
+                "evidence": t.evidence.kind(),
+                "evidence_from": t.evidence.where_from(),
+                "fields": t.fields.iter().map(|f| json!({
+                    "path": f.path,
+                    "field": f.field,
+                    "type": f.ty,
+                    "note": f.note,
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+
+    Json(json!({
+        "tools": names,
+        "response_shapes": shapes,
+        "note": "`response_shapes` covers the tools someone has read. A tool \
+                 absent from it has an unknown response, which is not the same \
+                 as an empty one.",
+    }))
 }
 
 #[cfg(test)]
@@ -453,7 +487,16 @@ pub async fn suggest_handler(
         .filter_map(|want| {
             defs.iter()
                 .find(|(name, _)| name == want)
-                .map(|(name, desc)| tool_block_proposal(name, desc))
+                .map(|(name, desc)| {
+                    // Prefer the declared response shape. Prose extraction is
+                    // the fallback for a tool nobody has read, and its output
+                    // is marked `unconfirmed` because it is nouns from a
+                    // sentence rather than response keys.
+                    match fermi::tool_response_shapes::response_for(name) {
+                        Some(decl) => tool_block_proposal_from_shape(name, decl),
+                        None => tool_block_proposal(name, desc),
+                    }
+                })
         })
         .collect();
 
@@ -465,6 +508,56 @@ pub async fn suggest_handler(
                  catch. `candidate_fields` are nouns lifted from the tool's own \
                  description — a starting point, not the response keys. Rename them.",
     }))
+}
+
+/// A candidate block for a tool whose response shape has been read.
+///
+/// The difference from [`tool_block_proposal`] is the whole point of the
+/// response-shape table: these fields are not `unconfirmed`, because they are
+/// not nouns lifted from a sentence. They are the keys the tool emits, with
+/// the types they emit them as, and `response_field` is a real path rather
+/// than the tool author's prose.
+///
+/// `why` is still empty. Nothing about knowing a tool's response tells anyone
+/// why this agent's block has the status it has.
+fn tool_block_proposal_from_shape(
+    name: &str,
+    decl: &fermi::tool_response_shapes::ToolResponse,
+) -> Value {
+    let block = name
+        .split_once('_')
+        .map(|(_, rest)| rest)
+        .unwrap_or(name)
+        .to_string();
+
+    json!({
+        "name": block,
+        "source": {
+            "status": "sourced",
+            "tool": name,
+            // Real paths, comma-joined, so the contract's `response_field`
+            // claim is checkable against the tool's actual output instead of
+            // being the tool author's sentence about it.
+            "response_field": decl
+                .fields
+                .iter()
+                .map(|f| f.path)
+                .collect::<Vec<_>>()
+                .join(", "),
+            "coverage": "complete",
+        },
+        "why": "",
+        "candidate_fields": decl.fields.iter().map(|f| json!({
+            "name": f.field,
+            "type": f.ty,
+            "path": f.path,
+            "note": f.note,
+            // Not a guess: this came from reading the tool.
+            "unconfirmed": false,
+        })).collect::<Vec<_>>(),
+        "evidence": decl.evidence.kind(),
+        "evidence_from": decl.evidence.where_from(),
+    })
 }
 
 /// A candidate block for one tool.
@@ -640,10 +733,47 @@ pub async fn decompile_handler(
         .map(|f| json!({ "check": f.check, "fix": f.message }))
         .collect::<Vec<_>>();
 
+    // Which of each sourced block's fields the tool can actually supply.
+    //
+    // This is the original bug, stated mechanically and while the author is
+    // looking at the block: `genome_profiler.genome` declares `notable_genes`
+    // and `ncbi_genome_search` returns no such field. A field in a retrieved
+    // block with no possible source is indistinguishable from its neighbours
+    // until something says so.
+    let mut field_coverage: Vec<Value> = Vec::new();
+    for b in &sketch.blocks {
+        let fermi::contract_sketch::Source::Sourced { tool, .. } = &b.source else {
+            continue;
+        };
+        let names: Vec<&str> = b.fields.keys().map(|s| s.as_str()).collect();
+        if names.is_empty() {
+            continue;
+        }
+        match fermi::tool_response_shapes::coverage(tool, &names) {
+            Some((covered, uncovered)) => field_coverage.push(json!({
+                "block": b.name,
+                "tool": tool,
+                "known": true,
+                "covered": covered,
+                "uncovered": uncovered,
+            })),
+            // Absence of a declaration is absence of information, and must
+            // not render the same as "all covered".
+            None => field_coverage.push(json!({
+                "block": b.name,
+                "tool": tool,
+                "known": false,
+                "covered": [],
+                "uncovered": [],
+            })),
+        }
+    }
+
     Ok(Json(json!({
         "agent_id": agent_id,
         "has_contract": true,
         "readable": true,
+        "field_coverage": field_coverage,
         "sketch": serde_json::to_value(&sketch).unwrap_or(Value::Null),
         "tool_names": tool_names,
         "produces": produces,

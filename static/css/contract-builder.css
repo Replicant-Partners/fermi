@@ -488,3 +488,52 @@
 }
 .cb-standalone .collapsible-body { display: none; }
 .cb-standalone .collapsible-body.open { display: block; }
+
+/* ── Tool-driven field picker ───────────────────────────────────────
+   The tool decides which fields are available on a sourced block. A field
+   here came from reading the tool, not from its description prose. */
+.cb-shape {
+  border: 1px dashed var(--bg3);
+  padding: 8px;
+  margin: 8px 0;
+  background: var(--bg0-hard);
+}
+.cb-shape-head {
+  font-size: 0.68rem;
+  color: var(--fg3);
+  margin-bottom: 6px;
+}
+.cb-ev {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 1px 5px;
+  border: 1px solid var(--bg3);
+  margin: 0 4px;
+}
+.cb-ev.built { color: var(--green); border-color: var(--green); }
+.cb-ev.vendor { color: var(--yellow); border-color: var(--yellow); }
+.cb-shape-grid { display: flex; flex-wrap: wrap; gap: 4px; }
+.cb-shape-f {
+  background: var(--bg1);
+  border: 1px solid var(--bg2);
+  color: var(--fg3);
+  font-family: inherit;
+  font-size: 0.68rem;
+  padding: 3px 7px;
+  cursor: pointer;
+}
+.cb-shape-f:hover { border-color: var(--yellow); color: var(--fg1); }
+.cb-shape-f.on { color: var(--green); border-color: var(--green); }
+.cb-shape-f .t { color: var(--gray); margin-left: 5px; }
+.cb-uncovered {
+  border-left: 3px solid var(--orange);
+  background: var(--bg1);
+  padding: 8px 10px;
+  margin: 8px 0;
+  font-size: 0.7rem;
+  line-height: 1.6;
+  color: var(--fg2);
+}
+.cb-uncovered code { color: var(--orange); margin-right: 4px; }
+.cb-uncovered div { color: var(--fg3); margin-top: 4px; }

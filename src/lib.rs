@@ -473,6 +473,13 @@ pub mod contract_sketch;
 // when nothing was checked, because there is no honest score for that.
 pub mod schema_conformance;
 
+// What each tool actually returns, so an author sourcing a block picks from
+// fields that exist rather than typing a plausible key from memory — the same
+// failure as the agent typing a plausible value, one level up. Declarations
+// record whether the shape is constructed in this repo (verifiable) or a
+// vendor passthrough (theirs, and it can change).
+pub mod tool_response_shapes;
+
 // A minimal JSON Schema validator. Seven keywords, no new dependency, and
 // an unsupported keyword is NOT a pass — a validator that silently ignores
 // what it cannot interpret returns `valid` for a document it never checked.
