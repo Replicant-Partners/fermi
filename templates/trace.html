@@ -334,6 +334,10 @@
      agent look like a failing one on 31 of the platform's contracted fields. */
   .arow.r-empty > .a-d{color:var(--yellow);}
   .arow.r-asdeclared > .a-d{color:var(--fg4);}
+  /* Dim where nobody is at fault, yellow only where somebody is. */
+  .arow.r-nodata > .a-d{color:var(--fg4);}
+  .arow.r-unasked > .a-d{color:var(--yellow);}
+
   .a-owner{grid-column:2 / -1;font-size:0.64rem;color:var(--fg4);
            border-left:2px solid var(--yellow);padding-left:7px;margin:2px 0 4px;}
   /* The tool a contract names, as a control rather than a label. */
@@ -688,7 +692,7 @@
   //   * `not recorded` — it is declared, it ran, and no ledger row survives.
   function gates(a, ids) {
     if (ids === null) {
-      return `<span class="gate">answered by the belt as a whole</span>`;
+      return `<span class="gate">every checkpoint together</span>`;
     }
     if (!ids.length) {
       return `<span class="gate g-none">no gate</span>`;
@@ -862,7 +866,41 @@
     const st = aid ? CLAIMS[aid] : null;
     const open = !!st && String(st.verdict || "").startsWith("pending_");
 
-    // An absence the contract REQUIRES is not a fault.
+    // Was the tool ever actually asked for this field?
+  //
+  // The question the grade cannot answer. `tool_no_match` reads as "the tool
+  // answered and had nothing", and `grounding_trust` is explicit that it is a
+  // PROXY — line 3172: "Content present ~ tool returned data". It is inferred
+  // from the field being empty, so it cannot distinguish a tool that had nothing
+  // from a tool nobody called.
+  //
+  // `tool_calls` can. Measured on the two reference runs:
+  //
+  //   genome_profiler   called `ncbi_genome_search`, got nothing for a beetle
+  //                     with no sequenced genome, nulled the fields. Correct.
+  //   football_analyst  graded `advanced_metrics` `tool_no_match`, and xG lives
+  //                     in `fixtures/statistics.expected_goals`, and it called
+  //                     standings, teams/statistics, players, injuries and
+  //                     players/topscorers. It never asked.
+  //
+  // Same grade, opposite findings. The contract file predicted exactly this and
+  // could not test it: "trusting an agent's self-report about its own tool's
+  // capabilities is the identical error to trusting its self-report about a
+  // genome size."
+  function askedFor(f) {
+    const mine = TOOL_CALLS.filter(c => c.tool === f.settleable_by);
+    if (!mine.length) return "unused";
+    // Only some tools take an `endpoint`; where none do, the tool name is the
+    // finest signal the record carries and claiming more would be invention.
+    if (!mine.some(c => (c.input || {}).endpoint !== undefined)) return "asked";
+    const want = String(f.response_hint || "").split(" ")[0].split(".")[0];
+    if (!want) return "asked";
+    return mine.some(c => String((c.input || {}).endpoint || "") === want)
+      ? "asked"
+      : "unasked";
+  }
+
+  // An absence the contract REQUIRES is not a fault.
     //
     // `squad_value` is `unsourced`: the contract says no tool returns market
     // values, so the field must be null, and the agent nulled it and wrote a
@@ -875,9 +913,11 @@
     // and not a reviewer's. It is a request for the integration that does not
     // exist, which is what the paper says an unsourceable field IS.
     if (f.produced === false && f.absence_expected) {
+      // `no tool exists` rather than `as declared`, which was jargon of mine and
+      // told a reader nothing they could act on.
       return {
         cls: "r-asdeclared",
-        dest: `<span class="t-done">as declared</span>`,
+        dest: `<span class="t-done">no tool exists</span>`,
         body: "",
       };
     }
@@ -961,13 +1001,49 @@
       // two with different owners: the tool returns data, so the agent had the
       // means and did not use it; or the tool has nothing, so the gap is the
       // integration's and not the agent's.
+      // Three absences, three owners. They were one yellow badge.
+      //
+      // `not produced` accused `genome_profiler` of failing when it had called
+      // its tool, found no sequenced genome for Lucanus cervus, and correctly
+      // declined to invent one. That is the canonical corrected agent working,
+      // reported as broken.
+      const asked = askedFor(f);
+      // How much came back, when the tool was asked.
+      //
+      // Deliberately reported rather than thresholded. `genome_profiler`'s NCBI
+      // call returned 210 bytes for a beetle with no sequenced genome;
+      // `football_analyst`'s `injuries` call returned 16,036. Both are "the tool
+      // was asked and the field is empty", and one is a capability gap while the
+      // other is a discarded result — but the line between them is a judgement
+      // about whether the answer was IN that response, which only running it
+      // settles. So the number is stated and both readings are named.
+      const got = TOOL_CALLS
+        .filter(c => c.tool === f.settleable_by)
+        .reduce((m, c) => Math.max(m, c.output_chars || 0), 0);
+      const state = asked === "asked"
+        ? { cls: "r-nodata", token: got > 2000 ? "asked, empty" : "no data there",
+            why: got
+              ? `The tool was asked and returned <b>${got.toLocaleString()}</b> bytes, and
+                 this field is still empty. Either the answer was not in that response — a
+                 capability gap, nobody's fault — or it was, and the agent did not use it.
+                 Run it to see which.`
+              : `The tool was asked and returned nothing. That is a <b>capability gap</b>,
+                 not a fault: closing it needs a source that does not exist here yet —
+                 another tool, another agent, or work in the world nobody has done.` }
+        : asked === "unasked"
+          ? { cls: "r-unasked", token: "never asked",
+              why: `The agent used <b>${esc(f.settleable_by)}</b> during this run and never
+                    asked it for this. The grade says the tool had nothing, and the record
+                    says it was not consulted \u2014 those are different claims. Run it and
+                    see.` }
+          : { cls: "r-unasked", token: "tool unused",
+              why: `The contract names <b>${esc(f.settleable_by)}</b> and the agent did not
+                    call it at all during this run.` };
       return {
-        cls: "r-empty",
-        dest: `<span class="t-person">not produced</span>`,
-        body: f.tool_runnable
-          ? `<div class="a-body">${toolControl(dotted, f)}<span class="why">could it have
-               been? the tool the contract names can be asked</span></div>`
-          : "",
+        cls: state.cls,
+        dest: `<span class="${asked === "asked" ? "t-done" : "t-person"}">${state.token}</span>`,
+        body: `<div class="a-body">${f.tool_runnable ? toolControl(dotted, f) : ""}
+                 <span class="why">${state.why}</span></div>`,
       };
     }
     if (st && !open) {
@@ -1058,7 +1134,8 @@
     const prefill = JSON.stringify(
       hit ? hit.input : looksLikePath ? { endpoint: hint, params: {} } : { endpoint: "", params: {} });
 
-    return `<div class="probe" data-probe-form="${esc(dotted)}">
+    return `<div class="probe" data-probe-form="${esc(dotted)}"
+                 data-settleable="${ASSERTION_BY_PATH[dotted] ? "1" : "0"}">
       <span class="why">${
         hit
           ? `<b>The agent already called this.</b> It asked <b>${esc(head)}</b> and got ${
@@ -1068,11 +1145,11 @@
           : mine.length
             ? `The agent made <b>${mine.length}</b> call(s) with this tool during the run.
                Pick one to load it, or edit the query. The contract names the tool and not
-               the query — league, season and team come from what this run was about.`
+               the arguments.`
             : `The contract names <b>${esc(f.settleable_by)}</b>${
                 hint ? ` and says the answer is in <b>${esc(hint)}</b>` : ""}, and the agent
-                made no call with it during this run. The query is yours to write: league,
-                season and team come from what this run was about.`
+                made no call with it during this run. The query is yours to write \u2014 the
+                contract names the tool and not the arguments.`
       } Nothing is recorded \u2014 read the answer, then settle the claim above.</span>
       ${replay}
       <input class="probe-in" value="${esc(prefill)}"/>
@@ -1207,6 +1284,20 @@
         commissioned to make. Nothing settles them, so an endorsement is the strongest
         verdict available rather than a weaker one than a citation.`);
     }
+    const nodata = shown.filter(r => r.a.cls === "r-nodata");
+    if (nodata.length) {
+      bits.push(`${n(nodata.length, "was", "were")} asked for and came back empty anyway.
+        Where the tool returned nothing that is a <b>capability gap</b> and nobody's fault —
+        closing it needs a source that does not exist here yet, another tool, another agent,
+        or work in the world nobody has done. Where it returned plenty, the answer may have
+        been in there. The byte count is on each row and running it settles which.`);
+    }
+    const unasked = shown.filter(r => r.a.cls === "r-unasked");
+    if (unasked.length) {
+      bits.push(`${n(unasked.length, "was", "were")} <b>never asked for</b>. The tool is
+        declared and the record shows it was not consulted for these, so the grade's "the
+        tool had nothing" is not what happened. Run one and find out.`);
+    }
     const empty = shown.filter(r => r.a.cls === "r-empty");
     if (empty.length) {
       const tools = [...new Set(empty
@@ -1252,7 +1343,7 @@
     // page and the reason the line below points at the legend instead.
     return `<div class="vfeed ok"><b>Nothing here is waiting for you.</b>${
       done ? ` ${done} claim(s) have been settled` : " No claim was ever queued"} — the
-      remaining rows are nobody's review work, for the reason below.</div>`;
+      remaining rows are nobody's review work.</div>`;
   }
 
   function answer(d) {
@@ -1373,8 +1464,11 @@
         out.textContent =
           (p.ok ? "" : "the tool refused: ") + p.response
           + (p.truncated ? `\n\u2026 ${p.chars.toLocaleString()} characters in total` : "")
-          + "\n\nThis decides nothing. If it answers the claim, settle it above and cite "
-          + "this call.";
+          + "\n\nThis decides nothing."
+          + (form.dataset.settleable === "1"
+              ? " If it answers the claim, settle it above and cite this call."
+              : " There is no claim on this row to settle \u2014 the field is empty, so what "
+                + "this tells you is whether the agent COULD have filled it.");
       }
     } catch (err) {
       out.className = "probe-out bad";

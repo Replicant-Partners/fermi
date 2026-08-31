@@ -533,7 +533,11 @@ fn a_runnable_tool_is_a_control_and_an_unrunnable_one_is_not() {
     let at = src
         .find("if (f.produced === false)")
         .expect("the not-produced branch is gone");
-    let branch: String = src[at..].chars().take(1400).collect();
+    // Generous, because this branch grew when one absence became three, and the
+    // control it must offer now sits after all three states are decided. A window
+    // tight enough to feel precise is a window that fails on unrelated edits —
+    // this one already did, at 1400 and again at 3200.
+    let branch: String = src[at..].chars().take(5000).collect();
     assert!(
         branch.contains("toolControl("),
         "a field the agent never produced offers no way to ask whether the tool \
@@ -633,6 +637,58 @@ fn the_three_unsettleable_kinds_are_not_one_state() {
         "the legend counts judgements by `!settleable`, which also catches \
          `derived` and `narrative` — so the count reintroduces, in prose, the \
          collapse the rows just stopped making."
+    );
+}
+
+/// One grade, three findings, three owners.
+///
+/// `tool_no_match` reads as "the tool answered and had nothing", and
+/// `grounding_trust` is explicit that it is a **proxy** — *"Content present ~ tool
+/// returned data"*. It is inferred from the field being empty, so it cannot tell
+/// a tool that had nothing from a tool nobody called.
+///
+/// Measured on the two reference runs, which carry the same grade and opposite
+/// findings:
+///
+/// | agent | grade | record | finding |
+/// |---|---|---|---|
+/// | `genome_profiler` | `tool_no_match` | called `ncbi_genome_search`, 210 bytes back | no sequenced genome exists. Correct behaviour. |
+/// | `football_analyst` | `tool_no_match` | never called `fixtures/statistics`, where xG lives | it never asked. |
+///
+/// The contract file predicted this and could not test it: *"trusting an agent's
+/// self-report about its own tool's capabilities is the identical error to
+/// trusting its self-report about a genome size."* `tool_calls` is what makes it
+/// testable, and collapsing the two back into one badge is how the screen came
+/// to accuse the corrected canonical agent of failing.
+#[test]
+fn an_absence_says_whether_the_tool_was_ever_asked() {
+    let src = trace();
+
+    assert!(
+        src.contains("function askedFor("),
+        "the trace no longer asks whether the tool was consulted, so it is back to \
+         trusting the grade — which is a proxy computed from the field being \
+         empty, and therefore cannot distinguish a source with no data from an \
+         agent that never looked."
+    );
+
+    for token in ["never asked", "tool unused"] {
+        assert!(
+            src.contains(token),
+            "`{token}` is gone. An agent that declared a tool, used it, and never \
+             asked it for a contracted field is the one genuinely accusatory case \
+             here, and it reads identically to a beetle with no sequenced genome \
+             without it."
+        );
+    }
+
+    // The number, not a threshold. 210 bytes and 16,036 bytes are both "asked and
+    // empty", and which of them is a discarded result is a judgement running the
+    // tool settles — so the count is reported and both readings are named.
+    assert!(
+        src.contains("got.toLocaleString()"),
+        "the size of what the tool returned is no longer shown. Without it, a \
+         capability gap and a discarded 16KB response are the same row."
     );
 }
 
