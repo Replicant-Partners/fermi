@@ -740,7 +740,7 @@ pub async fn episode_trace_handler(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let row = sqlx::query(
         "SELECT e.episode_id, e.parent_episode_id, e.agent_id, e.query, \
-                e.response_text, e.provenance, e.model_used, e.provider_used, \
+                e.response_text, e.context, e.provenance, e.model_used, e.provider_used, \
                 e.persona_version_at_write, e.timestamp_ref, e.assertions, \
                 a.agent_name, a.accepts, a.produces, a.output_contract \
            FROM episodes e \
@@ -962,6 +962,44 @@ pub async fn episode_trace_handler(
         })
         .collect();
 
+    // The calls the agent actually made, projected for replay.
+    //
+    // Only tools a surface can re-run: a call to a workspace-scoped tool cannot
+    // be replayed from a read-only page, and offering it would be a button that
+    // is refused after the click.
+    //
+    // `output` is deliberately dropped and its SIZE kept. Eight API-Football
+    // responses is most of a megabyte, and a reader who wants one can re-run it —
+    // but "the tool answered with nothing" and "the tool answered at length and
+    // the agent dropped the result" are different findings, and the length is
+    // what tells them apart.
+    let tool_calls: Vec<Value> = row
+        .try_get::<Option<Value>, _>("context")
+        .ok()
+        .flatten()
+        .and_then(|c| c.get("tool_invocations").cloned())
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .take(40)
+        .filter_map(|t| {
+            let tool = t.get("tool_name")?.as_str()?.to_string();
+            let out_chars = t
+                .get("output")
+                .and_then(|o| o.as_str().map(|s| s.chars().count()))
+                .unwrap_or(0);
+            Some(json!({
+                "tool": tool,
+                "input": t.get("input").cloned().unwrap_or(json!({})),
+                "output_chars": out_chars,
+                "replayable": fermi::field_probe::is_runnable(
+                    t.get("tool_name").and_then(|n| n.as_str()).unwrap_or_default()
+                ),
+                "iteration": t.get("iteration").cloned().unwrap_or(Value::Null),
+            }))
+        })
+        .collect();
+
     let model_used: Option<String> = row.try_get("model_used").ok().flatten();
     Ok(Json(json!({
         "episode_id": episode_id,
@@ -1009,6 +1047,32 @@ pub async fn episode_trace_handler(
         // screen on the platform; truncating silently would be worse than
         // either, because a reader deciding on a claim would be shown a
         // shortened document with nothing marking it short.
+        // The calls the agent actually made, so nobody has to guess one.
+        //
+        // The probe endpoint can run the tool a contract names, and the contract
+        // does not carry the query: `call_football_api` wants a league id, a
+        // season and a team id, and those come from what the run was ABOUT. The
+        // first version therefore handed the reader an empty
+        // `{"endpoint":"","params":{}}` and asked them to know API-Football's
+        // schema, which is not a usable affordance.
+        //
+        // It was never necessary. `context.tool_invocations` retains every call
+        // the agent made, verbatim — for the reference episode, eight of them,
+        // including `{"endpoint":"injuries","params":{"league":39,"season":2024}}`.
+        // Replaying a call that happened is retrieval from the record, not a
+        // guess about what to ask.
+        //
+        // It is also a finding on its own. `injuries` is a contracted field, it
+        // is null in the document, and the agent CALLED the tool for it — so that
+        // absence is not a missing integration, it is a tool result discarded.
+        // The surface could not tell those apart before and neither could anyone
+        // reading it.
+        //
+        // `output` is deliberately not carried: eight API-Football responses is
+        // most of a megabyte, and a reader who wants one can re-run it. Its SIZE
+        // is carried, because "the tool answered with nothing" and "the tool
+        // answered at length and the agent dropped it" are different findings.
+        "tool_calls": tool_calls,
         "response": {
             "text": response_text.as_deref().map(|t| {
                 t.chars().take(RESPONSE_CHARS).collect::<String>()

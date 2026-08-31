@@ -282,13 +282,19 @@ fn the_document_is_rendered_once_with_its_checks_on_it() {
     }
 
     // A hole is only legible in the shape it is missing from.
+    //
+    // Asserted on the split form specifically, which is the stronger one. The
+    // first version compared the whole remaining path, so a contract on
+    // `phylogeny.superorder` was emitted only when `phylogeny` itself existed —
+    // and a field whose PARENT the agent omitted disappeared entirely, which is
+    // the most actionable row vanishing because more of it is missing.
     assert!(
-        src.contains("not present.has(at)") || src.contains("!present.has(at)"),
+        src.contains("!present.has(at.split(\".\")[0])"),
         "contracted fields the document does not contain are no longer injected \
-         into the tree. Five of them on the reference artifact — `fixtures`, \
-         `head_to_head`, `injuries`, `match_statistics`, `summary` — are the most \
-         actionable rows on the page and are invisible to a walk of the document \
-         alone."
+         into the tree, or are injected only at the top level. Five on the \
+         reference artifact — `fixtures`, `head_to_head`, `injuries`, \
+         `match_statistics`, `summary` — are the most actionable rows on the page \
+         and are invisible to a walk of the document alone."
     );
 }
 

@@ -345,6 +345,11 @@
   .probe input{font-family:inherit;font-size:0.66rem;background:var(--bg0-hard);
                border:1px solid var(--bg3);color:var(--fg2);padding:3px 6px;width:100%;}
   .probe .why{font-size:0.64rem;color:var(--fg4);display:block;margin-bottom:3px;}
+  .replay{display:flex;gap:5px;flex-wrap:wrap;margin:4px 0 5px;}
+  .replay button{font-size:0.62rem;font-family:inherit;background:none;cursor:pointer;
+                 border:1px solid var(--bg3);color:var(--fg3);padding:1px 7px;}
+  .replay button:hover{border-color:var(--aqua);color:var(--aqua);}
+  .replay button.hit{border-color:var(--yellow);color:var(--yellow);}
   .probe-out{font-size:0.66rem;color:var(--fg3);white-space:pre-wrap;
              overflow-wrap:anywhere;max-height:16em;overflow:auto;
              border-left:2px solid var(--bg3);padding-left:7px;margin-top:4px;}
@@ -813,6 +818,11 @@
   // re-fetching. A lens is a view, and re-reading the platform to change a view
   // would make the platform's load a function of how the reader browses.
   let LAST_TRACE = null;
+  // Every tool call the agent made during this run, retained on the episode.
+  //
+  // The reason the probe form no longer asks anyone to invent a query: the
+  // record already holds the ones that happened.
+  let TOOL_CALLS = [];
 
   // Pips only where a grade exists — but the CELL always exists.
   //
@@ -868,6 +878,38 @@
       return {
         cls: "r-asdeclared",
         dest: `<span class="t-done">as declared</span>`,
+        body: "",
+      };
+    }
+    // An `unsourced` field that HAS a value is the violation.
+    //
+    // The contract says no tool returns this, so the model could only have
+    // produced it from parametric knowledge — which is why `enforce` nulls it,
+    // and why the value shown here is the claimed one, kept because a nulled
+    // field has no evidence in it.
+    //
+    // This fell through to the judgement branch and read "a judgement", which is
+    // the opposite: a judgement is output the agent was commissioned to make,
+    // and this is a retrieval it was forbidden to invent. Same two states the
+    // whole change is about, inverted.
+    if (f.kind === "unsourced" && f.produced !== false) {
+      // Deliberately NOT called "invented", which the first version said.
+      //
+      // A value at an `unsourced` path can be a fabricated number, and it can
+      // also be a block of nulls with a note explaining why — which is what the
+      // real `squad_value` is: two null totals, `provenance:
+      // unavailable_no_tool_source`, and a sentence about Transfermarkt not
+      // being integrated. Calling that invented accuses an agent that complied,
+      // which is the same error as the badge this whole change removed, pointed
+      // the other way.
+      //
+      // Telling them apart is grounding's job and grounding does it: the
+      // violation count and the `grounding` gate's verdict are already on this
+      // page. This row states the standing fact and leaves the verdict to the
+      // thing that computes it.
+      return {
+        cls: "r-done",
+        dest: `<span class="t-done">no tool for this</span>`,
         body: "",
       };
     }
@@ -990,14 +1032,49 @@
   function probeForm(dotted, f) {
     const hint = f.response_hint || "";
     const looksLikePath = /^[a-z0-9/_-]+$/i.test(hint) && !hint.includes(" ");
+    // The calls this agent actually made with this tool, offered for replay.
+    //
+    // Writing `{"endpoint":"","params":{}}` by hand asks a reader to know
+    // API-Football's schema AND the league, season and team ids for this run.
+    // They are in the record: the agent made eight calls on the reference
+    // episode and one of them is `injuries`, which is a contracted field that
+    // came back null. Replaying a call that happened is retrieval, not a guess.
+    //
+    // A call whose endpoint matches this field's hint is marked, because that is
+    // the one worth pressing — and when it exists it is also the finding: the
+    // tool WAS asked, and the field is still empty.
+    const mine = TOOL_CALLS.filter(c => c.tool === f.settleable_by && c.replayable);
+    const head = hint.split(" ")[0].replace(/[(),]/g, "");
+    const isHit = c => head && String((c.input || {}).endpoint || "") === head;
+    const replay = mine.length
+      ? `<div class="replay">${mine.map((c, i) =>
+          `<button data-replay="${i}" class="${isHit(c) ? "hit" : ""}"
+             title="${esc(JSON.stringify(c.input))}">${
+             esc(String((c.input || {}).endpoint || c.tool))}${
+             c.output_chars ? ` \u00b7 ${c.output_chars.toLocaleString()} B back` : " \u00b7 nothing back"
+           }</button>`).join("")}</div>`
+      : "";
+    const hit = mine.find(isHit);
     const prefill = JSON.stringify(
-      looksLikePath ? { endpoint: hint, params: {} } : { endpoint: "", params: {} });
+      hit ? hit.input : looksLikePath ? { endpoint: hint, params: {} } : { endpoint: "", params: {} });
+
     return `<div class="probe" data-probe-form="${esc(dotted)}">
-      <span class="why">The contract names <b>${esc(f.settleable_by)}</b>${
-        hint ? ` and says the answer is in <b>${esc(hint)}</b>` : ""}. It does not carry
-        the query — league, season and team come from what this run was about — so fill
-        that in, then press again. Nothing is recorded: read the answer, then settle the
-        claim above.</span>
+      <span class="why">${
+        hit
+          ? `<b>The agent already called this.</b> It asked <b>${esc(head)}</b> and got ${
+              hit.output_chars ? `${hit.output_chars.toLocaleString()} bytes` : "nothing"
+            } back, and this field is still empty — so the gap is not a missing
+             integration. The call is loaded below; press again to repeat it.`
+          : mine.length
+            ? `The agent made <b>${mine.length}</b> call(s) with this tool during the run.
+               Pick one to load it, or edit the query. The contract names the tool and not
+               the query — league, season and team come from what this run was about.`
+            : `The contract names <b>${esc(f.settleable_by)}</b>${
+                hint ? ` and says the answer is in <b>${esc(hint)}</b>` : ""}, and the agent
+                made no call with it during this run. The query is yours to write: league,
+                season and team come from what this run was about.`
+      } Nothing is recorded \u2014 read the answer, then settle the claim above.</span>
+      ${replay}
       <input class="probe-in" value="${esc(prefill)}"/>
       <div class="probe-out"></div>
     </div>`;
@@ -1023,10 +1100,19 @@
         : Object.entries(doc);
     const present = new Set(entries.map(([k]) => k));
 
+    // A contracted path whose FIRST missing segment is at this level.
+    //
+    // The first version required the whole remainder to be a direct child, so a
+    // contract on `phylogeny.superorder` was emitted only if `phylogeny` itself
+    // existed in the document. When the agent omits the parent, the child is
+    // contracted, absent, and invisible — which is the most actionable row on
+    // the page disappearing precisely because more of it is missing.
+    //
+    // Emitted under its remaining path, so the row still says where it belongs.
     const missing = Object.keys(FIELD_BY_PATH)
       .filter(p => {
         const at = prefix ? (p.startsWith(prefix + ".") ? p.slice(prefix.length + 1) : null) : p;
-        return at && !at.includes(".") && !present.has(at);
+        return at && !present.has(at.split(".")[0]);
       })
       .map(p => [prefix ? p.slice(prefix.length + 1) : p, undefined]);
 
@@ -1301,6 +1387,15 @@
     const root = document.getElementById("content");
     if (!root) return;
     root.addEventListener("click", e => {
+      const replayBtn = e.target.closest("[data-replay]");
+      if (replayBtn) {
+        const form = replayBtn.closest("[data-probe-form]");
+        const f = FIELD_BY_PATH[form.dataset.probeForm];
+        const mine = TOOL_CALLS.filter(c => c.tool === f.settleable_by && c.replayable);
+        const c = mine[Number(replayBtn.dataset.replay)];
+        if (c) form.querySelector(".probe-in").value = JSON.stringify(c.input);
+        return;
+      }
       const probeBtn = e.target.closest("[data-probe]");
       if (probeBtn) { runProbe(probeBtn); return; }
       const lensBtn = e.target.closest("[data-lens]");
@@ -1814,6 +1909,7 @@ something specific about each checkpoint.")}</div></div>`;
       // where it is read. `fields[]` is the contract's view and the document is
       // the agent's; this index is the join, and it is the join the reader used
       // to have to do by eye across two blocks.
+      TOOL_CALLS = trace.tool_calls || [];
       FIELD_BY_PATH = {};
       (trace.fields || []).forEach(f => { if (f.name) FIELD_BY_PATH[f.name] = f; });
       // Current state is the LATEST row per assertion, DERIVED and not stored.

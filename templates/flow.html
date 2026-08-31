@@ -135,7 +135,7 @@
     const tally = [
       ["", t.seams ?? 0, "seams"],
       [t.unreturned ? "hot" : "", t.unreturned ?? 0, "no reply"],
-      ["warm", t.governed ?? 0, "verified"],
+      ["warm", t.governed ?? 0, "traceable"],
       ["calm", t.chat_messages ?? 0, "chat messages"],
     ].map(([cls, v, l]) =>
       `<div class="tb ${cls}"><div class="tb-v">${v}</div><div class="tb-l">${esc(l)}</div></div>`
@@ -159,11 +159,22 @@
         style="left:${left}%;width:${right - left}%"></div>`;
 
       const cls = !s.returned ? "unreturned" : (s.governed ? "" : "ungoverned");
+      // `traceable`, not `verified`. They are different claims and this said
+      // the stronger one while measuring the weaker.
+      //
+      // `governed` means `workspace_messages.episode_id` is present, so the hop
+      // can be JOINED to the episode the gates acted on. It says nothing about
+      // what any gate decided. A seam here read `VERIFIED` and its trace read
+      // `NOTHING CHECKED`, which is not a contradiction in the data — both are
+      // true of an episode from an agent with no field contract — but it is a
+      // false safety claim, and it was the strongest word on the page attached
+      // to the weakest evidence on it.
       const gov = !s.returned
         ? `<span class="gov no">no reply</span>`
         : s.governed
-          ? `<span class="gov ok">verified</span>`
-          : `<span class="gov un">ungoverned</span>`;
+          ? `<span class="gov ok" title="this hop can be joined to the episode the gates
+               acted on — open the trace to see what they decided">traceable</span>`
+          : `<span class="gov un">no join</span>`;
 
       return `<div class="seam ${cls}">
         <div class="seam-row">${cells}${fwd}</div>
