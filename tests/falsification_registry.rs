@@ -1020,6 +1020,7 @@ const FALSIFICATIONS: &[Falsification] = &[
                 value: serde_json::json!(1.83),
                 provenance: gt::PROV_TOOL,
                 settleable_by: Some("call_football_api"),
+                kind: gt::GroundingKind::Sourced,
             };
             fermi::assertions::from_graded_field("football_analyst", &f)
                 .map(|a| a.route(true) == fermi::assertions::Route::None)
@@ -1033,6 +1034,7 @@ const FALSIFICATIONS: &[Falsification] = &[
                 value: serde_json::json!(1.83),
                 provenance: gt::PROV_NO_MATCH,
                 settleable_by: Some("call_football_api"),
+                kind: gt::GroundingKind::Sourced,
             };
             fermi::assertions::from_graded_field("football_analyst", &f)
                 .map(|a| a.route(true) == fermi::assertions::Route::None)
@@ -1250,6 +1252,7 @@ const FALSIFICATIONS: &[Falsification] = &[
                 value: serde_json::json!(1.83),
                 provenance: gt::PROV_TOOL,
                 settleable_by: Some("call_football_api"),
+                kind: gt::GroundingKind::Sourced,
             }];
             fermi::artifact_trace::reading(0, &g, &Legibility::Declared).0 == Reading::Idle
         },

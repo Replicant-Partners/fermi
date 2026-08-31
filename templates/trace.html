@@ -329,7 +329,11 @@
   /* A block header, not a value. Its own row so the eye can skip a subtree. */
   .arow.r-block{border-top-color:var(--bg3);}
   .arow.r-block .a-k{color:var(--fg3);font-weight:600;}
+  /* Yellow only where something is wrong. `r-asdeclared` is an absence the
+     contract requires, and colouring it like a fault is what made a compliant
+     agent look like a failing one on 31 of the platform's contracted fields. */
   .arow.r-empty > .a-d{color:var(--yellow);}
+  .arow.r-asdeclared > .a-d{color:var(--fg4);}
   .a-owner{grid-column:2 / -1;font-size:0.64rem;color:var(--fg4);
            border-left:2px solid var(--yellow);padding-left:7px;margin:2px 0 4px;}
   /* The tool a contract names, as a control rather than a label. */
@@ -848,6 +852,59 @@
     const st = aid ? CLAIMS[aid] : null;
     const open = !!st && String(st.verdict || "").startsWith("pending_");
 
+    // An absence the contract REQUIRES is not a fault.
+    //
+    // `squad_value` is `unsourced`: the contract says no tool returns market
+    // values, so the field must be null, and the agent nulled it and wrote a
+    // note saying Transfermarkt is not integrated. That is compliance, and it
+    // was rendered `not produced` in the same yellow as `advanced_metrics.xg` —
+    // which is `sourced`, also null, and a real finding. Thirty-one of the
+    // platform's contracted fields are `unsourced`.
+    //
+    // The gap is still real and still worth closing; it is just not the agent's
+    // and not a reviewer's. It is a request for the integration that does not
+    // exist, which is what the paper says an unsourceable field IS.
+    if (f.produced === false && f.absence_expected) {
+      return {
+        cls: "r-asdeclared",
+        dest: `<span class="t-done">as declared</span>`,
+        body: "",
+      };
+    }
+    // A judgement nothing can settle.
+    //
+    // `assessment` is `inferred` and its contract says so outright: "no database
+    // holds them — which is why they cannot be verified directly". An
+    // endorsement here is the TERMINAL verdict, not a weak substitute for a
+    // citation, and asking for a source is asking for something that cannot
+    // exist. The row said `needs a person` and offered a citation box.
+    // Branch on the KIND, not on `!settleable`.
+    //
+    // Three kinds are unsettleable and they are not the same thing. `inferred`
+    // is a judgement the agent was commissioned to make; `derived` is platform
+    // code applying a transform, which is reproducible by construction and whose
+    // disagreements are OUR bug; `narrative` is prose. Collapsing them on the
+    // strength of one boolean labelled a platform-computed field "a judgement",
+    // which is the same shape of error as the collapse this whole change undoes.
+    if (!f.settleable && f.produced !== false) {
+      const aid0 = ASSERTION_BY_PATH[dotted];
+      const st0 = aid0 ? CLAIMS[aid0] : null;
+      const open0 = !!st0 && String(st0.verdict || "").startsWith("pending_");
+      const unsettled = f.kind === "derived"
+        ? `<span class="t-done">platform-computed</span>`
+        : f.kind === "narrative"
+          ? `<span class="t-person">prose</span>`
+          : `<span class="t-person">a judgement</span>`;
+      return {
+        cls: open0 ? "r-actionable" : "r-done",
+        dest: st0 && !open0
+          ? `<span class="t-done">${esc(SHORT_VERDICT[st0.verdict] || "settled")}</span>`
+          : unsettled,
+        body: `<div class="a-body"${open0 ? ` data-assertion="${esc(aid0)}"` : ""}>
+                 ${st0 ? claimState(st0) : ""}${open0 ? settleForm(aid0) : ""}
+                 <span class="settle-out"></span></div>`,
+      };
+    }
     if (f.produced === false) {
       // No prose on the row. `not produced` IS the statement, and the reason it
       // carries is the same reason on every one of them — eleven identical
@@ -1044,6 +1101,26 @@
   // is a paragraph to skip.
   function legend(shown) {
     const bits = [];
+    // Agreement, because "1 are empty" is the kind of sloppiness that makes a
+    // reader stop trusting the sentences that carry the findings.
+    const n = (k, one, many) => `<b>${k}</b> ${k === 1 ? one : many}`;
+    const declared = shown.filter(r => r.a.cls === "r-asdeclared");
+    if (declared.length) {
+      bits.push(`${n(declared.length, "is", "are")} empty <b>because the contract requires
+        it</b> — no tool returns these, so a value would be the violation and the absence
+        is the agent complying. Each is still a standing request for the integration that
+        would close it.`);
+    }
+    // `inferred` only. `derived` is also unsettleable and is not a judgement —
+    // it is platform code applying a transform — so counting the two together
+    // reintroduces, in the legend, the collapse the rows just stopped making.
+    const judgements = shown.filter(r =>
+      FIELD_BY_PATH[r.dotted] && FIELD_BY_PATH[r.dotted].kind === "inferred");
+    if (judgements.length) {
+      bits.push(`${n(judgements.length, "is a judgement", "are judgements")} the agent was
+        commissioned to make. Nothing settles them, so an endorsement is the strongest
+        verdict available rather than a weaker one than a citation.`);
+    }
     const empty = shown.filter(r => r.a.cls === "r-empty");
     if (empty.length) {
       const tools = [...new Set(empty
@@ -1051,8 +1128,9 @@
         .filter(Boolean))];
       const byTool = empty.filter(r =>
         FIELD_BY_PATH[r.dotted] && FIELD_BY_PATH[r.dotted].settleable_by).length;
-      bits.push(`<b>${empty.length}</b> returned nothing — the agent produced no value, so
-        there is no claim to verify and <b>nobody can verify an absence</b>. The work is on
+      bits.push(`${n(empty.length, "returned", "returned")} nothing <b>and should not
+        have</b> — a tool is declared and the agent produced no value, so there is no claim
+        to verify and nobody can verify an absence. The work is on
         the agent or on an integration it does not have${
         tools.length
           ? `: <b>${byTool}</b> of them would be closed by <b>${tools.map(esc).join(", ")}</b>`
@@ -1060,7 +1138,8 @@
     }
     const blocked = shown.filter(r => r.a.cls === "r-blocked");
     if (blocked.length) {
-      bits.push(`<b>${blocked.length}</b> could carry a verdict and nothing has queued one.`);
+      bits.push(`${n(blocked.length, "could", "could")} carry a verdict and nothing has
+        queued one.`);
     }
     return bits.length
       ? `<div class="fgroup-legend">${bits.join(" ")}</div>`

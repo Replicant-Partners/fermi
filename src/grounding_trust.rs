@@ -720,6 +720,14 @@ pub struct GradedField {
     /// the tool-versus-person routing the verification queue needs — so the route
     /// is *derived* from the contract rather than declared a second time.
     pub settleable_by: Option<&'static str>,
+    /// Which of the four kinds of claim this is.
+    ///
+    /// Carried beside `settleable_by` rather than instead of it, because they
+    /// answer different questions: the tool's NAME, and whether anything can
+    /// settle the field at all. `settleable_by: None` had been standing in for
+    /// both and could only ever mean "not a tool", which three different
+    /// situations satisfy.
+    pub kind: GroundingKind,
 }
 
 /// Every contracted field of one document, graded.
@@ -754,12 +762,100 @@ pub fn graded_fields(agent_id: &str, doc: &Value, report: &Report) -> Vec<Graded
                     Grounding::Sourced { tool, .. } => Some(tool),
                     _ => None,
                 },
+                kind: c.grounding.kind(),
             }
         })
         .collect()
 }
 
 // ─── contract ──────────────────────────────────────────────────────────
+
+/// Which of the four kinds of claim a contracted field is, as a stable token.
+///
+/// The variant answers the question every surface actually asks — **who, if
+/// anyone, can settle this** — and until now it was thrown away one line into
+/// [`graded_fields`]:
+///
+/// ```ignore
+/// settleable_by: match c.grounding {
+///     Grounding::Sourced { tool, .. } => Some(tool),
+///     _ => None,
+/// },
+/// ```
+///
+/// Four variants collapsed into `Option<&str>`, so `Unsourced`, `Inferred` and
+/// `Derived` all arrived at the client as `None` and rendered as *needs a
+/// person*. They are not the same, and two of them are not a person's work at
+/// all.
+///
+/// The cost was a surface that framed compliance as failure. `squad_value` is
+/// `Unsourced` — the contract says no tool exists, **so the field must be null**
+/// — and its two absent totals were badged `not produced` beside
+/// `advanced_metrics.xg`, which is `Sourced` and null and is a real finding.
+/// Opposite situations, one badge.
+///
+/// Third instance of this pattern on this path, after `route:` reasons and
+/// `not_checkable`: the platform computes a distinction and discards it at the
+/// boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GroundingKind {
+    /// A named tool returns this. A tool call or a citation settles it, and an
+    /// absent value means the agent had the means and produced nothing.
+    Sourced,
+    /// No tool exists, so the field **must** be null. An absence here is the
+    /// contract being obeyed; a value here is the violation.
+    Unsourced,
+    /// A judgement the agent is commissioned to make. Nothing settles it, so an
+    /// endorsement is the terminal verdict rather than a weak substitute for a
+    /// citation.
+    Inferred,
+    /// Platform code computes it from a sourced field. Reproducible by
+    /// construction, and a disagreement is a platform bug rather than the
+    /// agent's.
+    Derived,
+    /// Free prose. Permitted, and checked — it must not assert anything the
+    /// sourced blocks cannot support, because `parse_evidence_text` lifts the
+    /// summary out as the episode's evidence and a fabrication survives there
+    /// after every structured field has been cleared.
+    ///
+    /// Not settleable and its absence is not expected: prose is the one kind
+    /// where both a value and its lack are ordinary.
+    Narrative,
+}
+
+impl GroundingKind {
+    /// Can any verdict ever settle a field of this kind?
+    ///
+    /// The question `settleable_by: None` could not answer, and the one both
+    /// `docs/DESIGN_endorsement_scoring.md` and
+    /// `docs/DESIGN_adversarial_checker.md` are blocked on: a claim that can
+    /// never resolve must not be queued as though it were waiting, or the
+    /// scoreboard reads empty forever while appearing to work.
+    pub fn is_settleable(self) -> bool {
+        matches!(self, GroundingKind::Sourced)
+    }
+
+    /// Is an absent value correct for a field of this kind?
+    ///
+    /// True for `Unsourced`, where the contract requires null. Getting this
+    /// backwards is what made a compliant agent look like a failing one.
+    pub fn absence_is_expected(self) -> bool {
+        matches!(self, GroundingKind::Unsourced)
+    }
+}
+
+impl Grounding {
+    pub fn kind(&self) -> GroundingKind {
+        match self {
+            Grounding::Sourced { .. } => GroundingKind::Sourced,
+            Grounding::Unsourced => GroundingKind::Unsourced,
+            Grounding::Inferred { .. } => GroundingKind::Inferred,
+            Grounding::Derived { .. } => GroundingKind::Derived,
+            Grounding::Narrative => GroundingKind::Narrative,
+        }
+    }
+}
 
 /// Where a field's value can legitimately come from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

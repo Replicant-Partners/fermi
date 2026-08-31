@@ -1358,6 +1358,14 @@ mod tests {
             value,
             provenance,
             settleable_by: tool,
+            // Derived from the tool, because that is what this helper varies.
+            // A fixture that hardcoded one kind would make every case in this
+            // module a `sourced` case regardless of what it was written to test.
+            kind: if tool.is_some() {
+                crate::grounding_trust::GroundingKind::Sourced
+            } else {
+                crate::grounding_trust::GroundingKind::Unsourced
+            },
         }
     }
 

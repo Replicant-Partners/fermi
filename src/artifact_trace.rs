@@ -404,6 +404,12 @@ pub struct Field {
     /// `assertion_verifications`. Nobody decided it; it is observable from the
     /// retained bytes, which is also why it needs no migration and cannot drift
     /// from its subject.
+    ///
+    /// **Read it with `absence_expected`.** On its own it says only that the
+    /// value is missing, and missing is the *required* answer for an `unsourced`
+    /// field. A surface that treats `produced: false` as a fault will report 31
+    /// of the platform's 108 contracted fields as failing when they are
+    /// complying.
     pub produced: bool,
     /// Why no verdict can be attached to this field, when none can.
     ///
@@ -423,6 +429,28 @@ pub struct Field {
     /// workspace, a memory store or credentials of their own and are not
     /// reachable from a read-only page — and a button the endpoint then refuses
     /// is worse than no button, because the refusal arrives after the click.
+    /// Which of the five kinds of claim this is: `sourced`, `unsourced`,
+    /// `inferred`, `derived`, `narrative`.
+    ///
+    /// The question `settleable_by: None` could not answer. It meant "no tool",
+    /// which three different situations satisfy, and every surface rendered all
+    /// three as *needs a person* — including the two that are nobody's work.
+    pub kind: crate::grounding_trust::GroundingKind,
+    /// Is the absence of a value **correct** for this field?
+    ///
+    /// True for `unsourced`, where the contract says no tool exists and the
+    /// field must therefore be null. `squad_value` is that case, and its two
+    /// absent totals were rendered `not produced` in the colour of a fault,
+    /// beside `advanced_metrics.xg` — which is `sourced`, also null, and a real
+    /// finding. Opposite situations, one badge.
+    pub absence_expected: bool,
+    /// Can any verdict ever settle this field?
+    ///
+    /// False for `inferred`: `assessment`'s own contract says "no database holds
+    /// them — which is why they cannot be verified directly". Queuing such a
+    /// claim as though it were waiting is how a scoreboard reads empty forever
+    /// while appearing to work.
+    pub settleable: bool,
     pub tool_runnable: bool,
     /// What the contract says the answer lives in.
     ///
@@ -454,6 +482,9 @@ pub fn fields(agent_id: &str, graded: &[GradedField]) -> (Vec<Field>, &'static s
             settleable_by: f.settleable_by,
             produced: !f.value.is_null(),
             not_checkable: skipped.iter().find(|s| s.path == f.path).map(|s| s.why),
+            kind: f.kind,
+            absence_expected: f.kind.absence_is_expected(),
+            settleable: f.kind.is_settleable(),
             tool_runnable: f.settleable_by.is_some_and(crate::field_probe::is_runnable),
             response_hint: crate::field_probe::response_hint(agent_id, f.path),
         })
@@ -582,6 +613,10 @@ mod tests {
             value: serde_json::json!(1.0),
             provenance,
             settleable_by: None,
+            // `Sourced` despite carrying no tool name: these fixtures exercise
+            // the strength ladder, and `Unsourced` would make every one of them
+            // a field whose absence is expected, which is a different subject.
+            kind: grounding_trust::GroundingKind::Sourced,
         }
     }
 

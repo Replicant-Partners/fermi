@@ -557,6 +557,79 @@ fn a_tool_run_is_not_rendered_as_a_verdict() {
     );
 }
 
+/// An absence the contract requires must not read as a fault.
+///
+/// `Grounding` has five variants and they answer the question every surface
+/// asks — who, if anyone, can settle this. They were collapsed one line into
+/// `graded_fields`:
+///
+/// ```ignore
+/// settleable_by: match c.grounding {
+///     Grounding::Sourced { tool, .. } => Some(tool),
+///     _ => None,
+/// },
+/// ```
+///
+/// so `Unsourced`, `Inferred`, `Derived` and `Narrative` all arrived as `None`
+/// and rendered as *needs a person* — including the three that are nobody's
+/// work.
+///
+/// The visible cost: `squad_value` is `Unsourced`, meaning the contract says no
+/// tool returns market values **so the field must be null**. Its two absent
+/// totals were badged `not produced`, in the same yellow as
+/// `advanced_metrics.xg`, which is `Sourced`, also null, and a real finding.
+/// Compliance and failure wearing one badge, across 31 of the platform's 108
+/// contracted fields.
+#[test]
+fn a_required_absence_is_not_rendered_as_a_failure() {
+    let src = trace();
+    assert!(
+        src.contains("absence_expected"),
+        "the trace no longer distinguishes an absence the contract REQUIRES from \
+         one the agent owes. `unsourced` fields must be null, and reporting that \
+         as `not produced` tells a reader to go and fix an agent that did exactly \
+         what it was told."
+    );
+    assert!(
+        src.contains("as declared"),
+        "a required absence has lost its own reading. It is not a fault and it is \
+         not a pass — it is a standing request for an integration that does not \
+         exist."
+    );
+}
+
+/// Unsettleable is three different things, and they imply different acts.
+///
+/// `inferred` is a judgement the agent was commissioned to make — an endorsement
+/// is the TERMINAL verdict there, not a weak substitute for a citation, and
+/// `assessment`'s own contract says "no database holds them". `derived` is
+/// platform code applying a transform, reproducible by construction, whose
+/// disagreements are our bug. `narrative` is prose.
+///
+/// Branching on a single `!settleable` boolean labelled a platform-computed
+/// field "a judgement", which is the same collapse one level down — which is
+/// why this is asserted rather than left to review.
+#[test]
+fn the_three_unsettleable_kinds_are_not_one_state() {
+    let src = trace();
+    for token in ["a judgement", "platform-computed", "prose"] {
+        assert!(
+            src.contains(token),
+            "`{token}` is gone. `inferred`, `derived` and `narrative` are all \
+             unsettleable and are not the same finding: one is the agent's \
+             product, one is our arithmetic, one is prose. A reader told only \
+             that nothing can settle a field cannot tell which of the three \
+             they are looking at."
+        );
+    }
+    assert!(
+        code_lines(&src).any(|l| l.contains("kind === \"inferred\"")),
+        "the legend counts judgements by `!settleable`, which also catches \
+         `derived` and `narrative` — so the count reintroduces, in prose, the \
+         collapse the rows just stopped making."
+    );
+}
+
 /// The scan must be able to fail.
 #[test]
 fn the_scan_can_actually_fail() {
