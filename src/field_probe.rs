@@ -185,6 +185,27 @@ pub fn endpoint_of(input: &Value) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// The endpoint this field's contract names — when the tool has endpoints.
+///
+/// One implementation, because two callers need the same answer and a
+/// disagreement between them is an accusation: the trace composes the probe
+/// query from this, and the probe endpoint checks the query it receives against
+/// it. If the two parsed the hint differently, the platform would report the
+/// reader's own prefill as the wrong endpoint.
+///
+/// `None` where the tool takes no endpoint at all. `estimated_size_mb (assembly
+/// total_length)` parses to the same shape as `standings (rank, points)` and
+/// `ncbi_genome_search` has no endpoints, so calling that head one produced a
+/// query the tool could only refuse — under a sentence calling it "the endpoint
+/// this field's contract names".
+pub fn probe_endpoint(agent_id: &str, path: &str) -> Option<String> {
+    let tool = declared_tool(agent_id, path)?;
+    if !crate::agent_backend::tools::tool_takes_endpoint(tool) {
+        return None;
+    }
+    parse_hint(response_hint(agent_id, path)?).endpoint
+}
+
 /// Can this field's tool actually be run from a surface?
 pub fn is_runnable(tool: &str) -> bool {
     crate::agent_backend::tools::is_context_free(tool)
@@ -648,6 +669,37 @@ mod tests {
         let xg = parse_hint(response_hint("football_analyst", "advanced_metrics.xg").unwrap());
         assert_eq!(stats.endpoint, xg.endpoint);
         assert_ne!(stats.keys, xg.keys);
+    }
+
+    /// An endpoint is claimed only where the tool has endpoints.
+    ///
+    /// Both hints below parse to a head and a parenthesised list. One head is an
+    /// API path and the other is a field name, and the only thing that knows the
+    /// difference is the tool's own input schema.
+    #[test]
+    fn a_tool_with_no_endpoints_is_given_none() {
+        assert_eq!(
+            probe_endpoint("football_analyst", "advanced_metrics.xg").as_deref(),
+            Some("fixtures/statistics"),
+        );
+        assert_eq!(
+            probe_endpoint("football_analyst", "league_context").as_deref(),
+            Some("standings"),
+        );
+        // `ncbi_genome_search` takes `{scientific_name}`. Its hint
+        // `estimated_size_mb (assembly total_length)` has the shape of an
+        // endpoint and is a field name, and the prefill built from it was a
+        // query the tool could only refuse.
+        assert_eq!(
+            probe_endpoint("genome_profiler", "genome.estimated_size_mb"),
+            None,
+            "a tool whose schema declares no `endpoint` was given one anyway"
+        );
+        assert!(
+            crate::agent_backend::tools::tool_takes_endpoint("call_football_api"),
+            "the schema read is not finding `call_football_api`'s endpoint, so \
+             every field would now say the tool takes none"
+        );
     }
 
     /// The tool is read from the contract, never from the request.

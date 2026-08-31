@@ -37,7 +37,15 @@ if (blocks.length !== 1) {
 const SCRIPT = blocks[0];
 
 // ── the DOM, only as much as the page touches ─────────────────────────────
-const THROWN = [];
+// Where markup was inserted, and into what.
+//
+// The stub used to swallow this: `insertAdjacentHTML` appended to a string and
+// nobody asked which element it appended to. So when the probe form began being
+// inserted after the button — which lives in a 132px grid cell, and `.probe` is
+// `grid-column: 2 / -1`, which does nothing for a node that is not a grid child
+// — the form, the replay chips, the query box and a 16KB response rendered one
+// word wide down the right-hand edge, and every check here passed.
+const INSERTS = [];
 function makeEl(id) {
   const el = {
     id,
@@ -52,7 +60,10 @@ function makeEl(id) {
     get textContent() { return this.text; },
     addEventListener() {},
     appendChild(c) { this.children.push(c); return c; },
-    insertAdjacentHTML(_, v) { this.html += String(v); },
+    insertAdjacentHTML(pos, v) {
+      INSERTS.push({ into: this, pos, html: String(v) });
+      this.html += String(v);
+    },
     closest() { return null; },
     querySelector() { return null; },
     querySelectorAll() { return []; },
@@ -413,6 +424,34 @@ const P = mod.exports;
     "advanced_metrics.xg", true);
   ok(/Byte-identical/.test(second) && /match_statistics/.test(second),
     "the second field got the same payload and the page did not say so: " + second.slice(0, 300));
+
+  // 5b. The form must open as a child of the ROW.
+  //
+  // `.probe` is `grid-column: 2 / -1`. That applies to a grid child and to
+  // nothing else, so a form inserted after the button — inside the 132px act
+  // cell — renders one word wide down the edge of an empty row. Checked by where
+  // the markup went, not by what it says, because what it says was always right.
+  {
+    const actCell = makeEl("span");
+    actCell.className = "a-a";
+    const row = makeEl("div");
+    row.className = "arow";
+    // No form yet: this is the first press, the one that opens it.
+    row.querySelector = () => null;
+    const openBtn = makeEl("button");
+    openBtn.dataset = { probe: "advanced_metrics.xg" };
+    openBtn.closest = (sel) => (sel === ".arow" ? row : null);
+    INSERTS.length = 0;
+    await P.runProbe(openBtn);
+    ok(INSERTS.length === 1, `opening the form inserted ${INSERTS.length} times`);
+    const ins = INSERTS[0] || {};
+    ok(ins.into === row,
+      "the probe form is not inserted into the row. `grid-column: 2 / -1` only " +
+      "applies to a grid child — anywhere else the form renders inside whatever " +
+      "cell it landed in, which is 132px wide.");
+    ok(/class="probe"/.test(ins.html || ""), "what was inserted is not the probe form");
+    ok(ins.into !== actCell, "the form opened inside the act cell");
+  }
 
   // 6. `runProbe` end to end, which is where `h is not defined` lived: a
   //    ReferenceError inside the try reported itself as an outage.

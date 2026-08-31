@@ -1826,7 +1826,16 @@ tells you is whether the agent COULD have filled it."}</span>`);
     const row = btn.closest(".arow");
     const form = row && row.querySelector("[data-probe-form]");
     if (!form) {
-      btn.insertAdjacentHTML("afterend", probeForm(dotted, FIELD_BY_PATH[dotted]));
+      // Into the ROW, not after the button.
+      //
+      // `.probe` is `grid-column: 2 / -1`, and that only applies to a direct
+      // child of the grid. Inserted after the button it becomes a child of the
+      // act cell instead — 132px wide — and the whole form, the replay chips, the
+      // query box and a 16KB response render in a column one word wide, down the
+      // right-hand edge of an otherwise empty row. That is what moving the button
+      // out of the body and into its own cell did, and the button is in the right
+      // place: the insertion was in the wrong one.
+      row.insertAdjacentHTML("beforeend", probeForm(dotted, FIELD_BY_PATH[dotted]));
       return;
     }
     const out = form.querySelector(".probe-out");

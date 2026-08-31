@@ -102,6 +102,11 @@ pub use legacy::{
     is_context_free,
     platform_tool_names,
     platform_tools,
+    // Whether a tool's input takes an `endpoint`. A field contract's hint reads
+    // like a path whether or not the tool has paths, so a surface composing a
+    // probe query has to ask the schema rather than the prose — or it prefills
+    // an endpoint into a tool that has none and calls it the contract's.
+    tool_takes_endpoint,
     BuiltinToolDef,
     EvalTrigger,
     ToolContext,

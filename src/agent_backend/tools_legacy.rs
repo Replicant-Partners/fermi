@@ -183,6 +183,27 @@ pub fn builtin_tool_catalogue() -> Vec<(&'static str, &'static str)> {
         .collect()
 }
 
+/// Does this tool's input take an `endpoint`?
+///
+/// The contracts' `response_field` hints all read alike — `standings (rank,
+/// points, form)` next to `estimated_size_mb (assembly total_length)` — and only
+/// one of those two names an endpoint. No amount of reading the prose separates
+/// them, and the schema separates them exactly: `call_football_api` declares
+/// `{endpoint, params}`, `ncbi_genome_search` declares `{scientific_name}`.
+///
+/// Read rather than inferred, so a surface never prefills
+/// `{"endpoint": "estimated_size_mb"}` into a tool that has no endpoints, call it
+/// "the endpoint this field's contract names", and then report the tool's
+/// entirely correct refusal as though the reader had typed something wrong.
+pub fn tool_takes_endpoint(tool: &str) -> bool {
+    builtin_tools()
+        .iter()
+        .find(|t| t.name == tool)
+        .and_then(|t| t.input_schema.get("properties"))
+        .and_then(|p| p.get("endpoint"))
+        .is_some()
+}
+
 /// Arms that exist in `ToolRegistry::execute` but have no `BuiltinToolDef`.
 ///
 /// Such a tool *runs* — card declarations carrying a schema are advertised to

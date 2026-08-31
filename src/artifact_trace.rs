@@ -468,9 +468,11 @@ pub struct Field {
     /// prefill as the wrong endpoint.
     ///
     /// `None` where the hint names a key or several names rather than one
-    /// container — `assembly_name`, `best_bid / best_ask / …`. Those tools take
-    /// no endpoint, and inventing one for them is how a phantom gets something
-    /// to be compared against.
+    /// container — `assembly_name`, `best_bid / best_ask / …` — and `None`
+    /// wherever the tool's own input schema declares no `endpoint` at all.
+    /// Inventing one is how `estimated_size_mb` came to be described as "the
+    /// endpoint this field's contract names" on a tool that takes a species
+    /// binomial.
     pub probe_endpoint: Option<String>,
 }
 
@@ -500,8 +502,7 @@ pub fn fields(agent_id: &str, graded: &[GradedField]) -> (Vec<Field>, &'static s
             settleable: f.kind.is_settleable(),
             tool_runnable: f.settleable_by.is_some_and(crate::field_probe::is_runnable),
             response_hint: crate::field_probe::response_hint(agent_id, f.path),
-            probe_endpoint: crate::field_probe::response_hint(agent_id, f.path)
-                .and_then(|h| crate::field_probe::parse_hint(h).endpoint),
+            probe_endpoint: crate::field_probe::probe_endpoint(agent_id, f.path),
         })
         .collect();
     let floor = grounding_trust::floor(graded.iter().map(|f| f.provenance));

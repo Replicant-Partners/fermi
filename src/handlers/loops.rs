@@ -1375,7 +1375,10 @@ pub async fn probe_field_handler(
     // `null` when the tool takes no endpoint — no mismatch is claimed where none
     // can be known.
     let called = fermi::field_probe::endpoint_of(&input);
-    let expected = target.endpoint.clone();
+    // The same function the trace composed the query from, so the check cannot
+    // disagree with the prefill it is checking — and `None` for a tool with no
+    // endpoints, where there is nothing to be wrong about.
+    let expected = fermi::field_probe::probe_endpoint(&agent_name, path);
     let endpoint_matches = match (&called, &expected) {
         (Some(c), Some(e)) => Some(c == e),
         _ => None,
