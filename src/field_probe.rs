@@ -80,6 +80,111 @@ pub fn response_hint(agent_id: &str, path: &str) -> Option<&'static str> {
         })
 }
 
+/// A `response_field` hint, parsed into the parts a search can use.
+///
+/// The hints have a grammar, and it was being treated as an opaque string:
+///
+/// ```text
+/// standings (rank, points, form, home/away splits)   container + names
+/// fixtures/headtohead                                endpoint only
+/// fixtures/statistics (shots, possession, cards)     endpoint + names
+/// fixtures/statistics.expected_goals                 endpoint + one leaf
+/// assembly_name                                      a bare key name
+/// best_bid / best_ask / book_quality.tradeable       several names
+/// ```
+#[derive(Debug, Default, serde::Serialize)]
+pub struct HintTarget {
+    /// What the head of the hint names. An endpoint for the API pass-throughs;
+    /// for other tools it is the enclosing block, and nothing is claimed of it.
+    pub endpoint: Option<String>,
+    /// The single leaf a dotted hint names.
+    pub leaf: Option<String>,
+    /// Names worth looking for in a response, leaf first.
+    pub keys: Vec<String>,
+    /// Names from the hint that are **prose, not keys** — `home/away splits`.
+    ///
+    /// Separated rather than searched, because searching them guarantees a miss
+    /// and a miss reported beside real misses makes the real ones cheaper. What
+    /// a reader needs to know is that these were never looked for.
+    pub prose: Vec<String>,
+}
+
+/// Parse a contract's `response_field`.
+pub fn parse_hint(hint: &str) -> HintTarget {
+    let head = hint.split(" (").next().unwrap_or_default().trim();
+    let listed: Vec<String> = hint
+        .split_once('(')
+        .and_then(|(_, rest)| rest.split_once(')'))
+        .map(|(inner, _)| {
+            inner
+                .split(',')
+                .map(|k| k.trim().to_string())
+                .filter(|k| !k.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let atoms: Vec<&str> = head
+        .split(" + ")
+        .flat_map(|a| a.split(" / "))
+        .map(str::trim)
+        .filter(|a| !a.is_empty())
+        .collect();
+
+    let mut t = HintTarget::default();
+    match atoms.as_slice() {
+        // A head listing several names names no single container. `endpoint`
+        // stays `None`, which is what stops a surface prefilling
+        // `{"endpoint": "best_bid / best_ask / midpoint / book_quality"}` into a
+        // tool that has no endpoints — and then reporting a mismatch against it.
+        [] => {}
+        [one] => {
+            if let Some((container, name)) = one.rsplit_once('.') {
+                t.endpoint = Some(container.to_string());
+                t.leaf = Some(name.to_string());
+                t.keys.push(name.to_string());
+            } else if one.contains('/') || !listed.is_empty() {
+                // `fixtures/headtohead` is a path; `standings (rank, points)` is
+                // a container followed by its keys. Either way the head is where
+                // the answer lives, not the name to look for inside it.
+                t.endpoint = Some(one.to_string());
+            } else {
+                // `assembly_name` is the key AND the whole hint. Naming it an
+                // endpoint would invent one for a tool that takes none.
+                t.keys.push(one.to_string());
+            }
+        }
+        many => t.keys.extend(many.iter().map(|a| {
+            a.rsplit_once('.')
+                .map_or_else(|| a.to_string(), |(_, n)| n.to_string())
+        })),
+    }
+    t.keys.extend(listed);
+    // A name with a space in it is a description of a group of keys, not a key.
+    let (keys, prose): (Vec<String>, Vec<String>) = t
+        .keys
+        .drain(..)
+        .partition(|k| !k.contains(char::is_whitespace));
+    t.keys = keys;
+    t.prose = prose;
+    t
+}
+
+/// The endpoint a probe request actually asked for, when the tool has endpoints.
+///
+/// `call_football_api` takes `{endpoint, params}`, and a reader who presses a
+/// replay chip is running whatever endpoint that call used — which may not be
+/// this field's. Read from the request so the outcome can say when the two
+/// disagree. `None` for every tool with no endpoint in its input, and no
+/// mismatch is claimed in that case.
+pub fn endpoint_of(input: &Value) -> Option<String> {
+    input
+        .get("endpoint")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .filter(|s| !s.is_empty())
+}
+
 /// Can this field's tool actually be run from a surface?
 pub fn is_runnable(tool: &str) -> bool {
     crate::agent_backend::tools::is_context_free(tool)
@@ -92,6 +197,148 @@ pub fn is_runnable(tool: &str) -> bool {
 /// but a silent truncation is worse, so the outcome says when it cut.
 pub const RESPONSE_CHARS: usize = 12_000;
 
+/// One place a hinted name turns up in a response.
+#[derive(Debug, serde::Serialize)]
+pub struct KeyHit {
+    /// The name from the contract that matched.
+    pub key: String,
+    /// Where, as a path from the response root: `$.response[0].statistics[12]`.
+    pub at: String,
+    /// `key` when the name is an object key; `value` when it is a string value.
+    ///
+    /// Both are needed and only the first was obvious. API-Football returns
+    /// fixture statistics as a list of `{type, value}` pairs, so expected goals
+    /// arrives as `{"type":"expected_goals","value":"1.23"}` — the name is a
+    /// **value**, and a key-only search reports NOT FOUND with the number
+    /// sitting in the payload. On the one field this screen was built to settle,
+    /// that is the difference between catching the agent and exonerating it.
+    pub site: &'static str,
+    /// The value found, for a key hit; the enclosing object, for a value hit —
+    /// because `{"type":"expected_goals","value":"1.23"}` is the answer and
+    /// `"expected_goals"` on its own is not.
+    pub sample: String,
+}
+
+/// How many hits travel back, and how much of each.
+const MAX_HITS: usize = 12;
+const SAMPLE_CHARS: usize = 200;
+
+/// Lowercase, alphanumerics only — so `expected_goals` matches `Expected Goals`.
+///
+/// Deliberately loose in one direction only: it can match a name written in a
+/// different style, and it cannot match a different name.
+fn norm(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn sample_of(v: &Value) -> String {
+    let s = match v {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+    if s.chars().count() > SAMPLE_CHARS {
+        s.chars().take(SAMPLE_CHARS).collect::<String>() + "…"
+    } else {
+        s
+    }
+}
+
+/// What a search over one response body found.
+#[derive(Debug, Default, serde::Serialize)]
+pub struct Search {
+    /// Was the body JSON at all? `false` makes `missing` mean *unknown*.
+    pub parsed: bool,
+    /// Up to [`MAX_HITS`] places, in document order.
+    pub found: Vec<KeyHit>,
+    /// How many places there are altogether. Counted past the cap, because a
+    /// silently truncated list of evidence is the same fault as a silently
+    /// truncated response.
+    pub total: usize,
+    pub missing: Vec<String>,
+}
+
+/// Walk a response and record every place a hinted name appears.
+fn locate(v: &Value, at: &str, wanted: &[(String, String)], out: &mut Search) {
+    match v {
+        Value::Object(map) => {
+            for (k, child) in map {
+                let here = format!("{at}.{k}");
+                if let Some((_, orig)) = wanted.iter().find(|(n, _)| *n == norm(k)) {
+                    out.total += 1;
+                    if out.found.len() < MAX_HITS {
+                        out.found.push(KeyHit {
+                            key: orig.clone(),
+                            at: here.clone(),
+                            site: "key",
+                            sample: sample_of(child),
+                        });
+                    }
+                }
+                if let Value::String(s) = child {
+                    if let Some((_, orig)) = wanted.iter().find(|(n, _)| *n == norm(s)) {
+                        out.total += 1;
+                        if out.found.len() < MAX_HITS {
+                            out.found.push(KeyHit {
+                                key: orig.clone(),
+                                at: here.clone(),
+                                site: "value",
+                                sample: sample_of(v),
+                            });
+                        }
+                    }
+                }
+                locate(child, &here, wanted, out);
+            }
+        }
+        Value::Array(items) => {
+            for (i, child) in items.iter().enumerate() {
+                locate(child, &format!("{at}[{i}]"), wanted, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Search a response body for the names a contract's hint gives.
+///
+/// Over the **whole** body, before [`RESPONSE_CHARS`] truncation. The client did
+/// this on the truncated copy, which meant a large payload could report NOT
+/// FOUND for a name that was in the part that did not travel — a false negative
+/// on a trust surface, produced by a display limit.
+pub fn search(body: &str, keys: &[String]) -> Search {
+    if keys.is_empty() {
+        // Nothing named, so nothing to look for — `fixtures/headtohead` names an
+        // endpoint and no key inside it. `parsed` still reports whether the body
+        // was JSON, because that is a different question.
+        return Search {
+            parsed: serde_json::from_str::<Value>(body).is_ok(),
+            ..Default::default()
+        };
+    }
+    let Ok(doc) = serde_json::from_str::<Value>(body) else {
+        return Search {
+            parsed: false,
+            missing: keys.to_vec(),
+            ..Default::default()
+        };
+    };
+    let wanted: Vec<(String, String)> = keys.iter().map(|k| (norm(k), k.clone())).collect();
+    let mut out = Search {
+        parsed: true,
+        ..Default::default()
+    };
+    locate(&doc, "$", &wanted, &mut out);
+    out.missing = keys
+        .iter()
+        .filter(|k| !out.found.iter().any(|h| h.key == **k))
+        .cloned()
+        .collect();
+    out
+}
+
 /// The outcome of running a named tool.
 #[derive(Debug, serde::Serialize)]
 pub struct Probe {
@@ -103,10 +350,29 @@ pub struct Probe {
     pub response: String,
     pub truncated: bool,
     pub chars: usize,
+    /// The names looked for, from the contract's hint. Reported so a reader can
+    /// see what a miss actually means.
+    pub searched: Vec<String>,
+    /// Names in the hint that are prose and were **not** searched.
+    pub not_searched: Vec<String>,
+    /// Was the body JSON at all? A `false` here is why `found` is empty.
+    pub parsed: bool,
+    pub found: Vec<KeyHit>,
+    /// How many places the names appear altogether, when more than `found` holds.
+    pub found_total: usize,
+    pub missing: Vec<String>,
+    /// Digest of the whole body, so a surface can tell two probes apart — or
+    /// recognise that two fields just received the identical payload, which is
+    /// what happens when one endpoint carries both and is the thing a reader
+    /// otherwise has no way to notice.
+    pub digest: String,
 }
 
-/// Run the tool the contract names for this field.
-pub async fn run(tool: &'static str, input: &Value) -> Probe {
+/// Run the tool the contract names for this field, and locate the hinted names.
+///
+/// The search happens here rather than in the caller because this is the last
+/// place the untruncated body exists.
+pub async fn run(tool: &'static str, input: &Value, target: &HintTarget) -> Probe {
     let (ok, body) = match crate::agent_backend::tools::execute_context_free(tool, input).await {
         Ok(s) => (true, s),
         // The error is the answer here, and it is often the useful one: a
@@ -115,12 +381,27 @@ pub async fn run(tool: &'static str, input: &Value) -> Probe {
         Err(e) => (false, e),
     };
     let chars = body.chars().count();
+    // Not searched when the tool refused: the body is an error message, and
+    // "none of these names appear" said of a rate-limit notice is noise dressed
+    // as evidence.
+    let found = if ok {
+        search(&body, &target.keys)
+    } else {
+        Search::default()
+    };
     Probe {
         tool,
         ok,
         response: body.chars().take(RESPONSE_CHARS).collect(),
         truncated: chars > RESPONSE_CHARS,
         chars,
+        searched: target.keys.clone(),
+        not_searched: target.prose.clone(),
+        parsed: found.parsed,
+        found_total: found.total,
+        missing: found.missing,
+        found: found.found,
+        digest: crate::artifact_hash::of_text(&body),
     }
 }
 
@@ -230,6 +511,143 @@ mod tests {
              surface; it was 11",
             named.len()
         );
+    }
+
+    /// The hint grammar, on the four shapes the contracts actually use.
+    #[test]
+    fn a_hint_yields_an_endpoint_and_the_names_to_look_for() {
+        let t = parse_hint("fixtures/statistics.expected_goals");
+        assert_eq!(t.endpoint.as_deref(), Some("fixtures/statistics"));
+        assert_eq!(t.leaf.as_deref(), Some("expected_goals"));
+        assert_eq!(t.keys, ["expected_goals"]);
+
+        let t = parse_hint("fixtures/statistics (shots, possession, cards)");
+        assert_eq!(t.endpoint.as_deref(), Some("fixtures/statistics"));
+        assert_eq!(t.keys, ["shots", "possession", "cards"]);
+
+        // A bare key name is the whole hint: a key, and NOT an endpoint. Calling
+        // it one would prefill an `endpoint` into a tool that takes none, and
+        // then the mismatch check would have a phantom to compare against.
+        let t = parse_hint("assembly_name");
+        assert_eq!(t.keys, ["assembly_name"]);
+        assert_eq!(t.endpoint, None);
+
+        // Several names, so no single container is claimed.
+        let t = parse_hint("best_bid / best_ask / midpoint / book_quality.tradeable");
+        assert_eq!(t.endpoint, None);
+        assert_eq!(t.keys, ["best_bid", "best_ask", "midpoint", "tradeable"]);
+
+        // An endpoint with nothing to look for inside it. Better than inventing
+        // `headtohead` as a key: the probe reports "no names to search".
+        let t = parse_hint("fixtures/headtohead");
+        assert_eq!(t.endpoint.as_deref(), Some("fixtures/headtohead"));
+        assert!(t.keys.is_empty());
+
+        // Prose is set aside, not searched. A guaranteed miss reported beside
+        // real misses is what makes the real ones cheap to ignore.
+        let t = parse_hint("standings (rank, points, form, home/away splits)");
+        assert_eq!(t.keys, ["rank", "points", "form"]);
+        assert_eq!(t.prose, ["home/away splits"]);
+    }
+
+    /// The case the whole screen exists for: xG is a **value**, not a key.
+    ///
+    /// API-Football returns fixture statistics as `{type, value}` pairs. A
+    /// key-only search over this reports NOT FOUND while the number is right
+    /// there, which would exonerate an agent this trace can prove wrong.
+    #[test]
+    fn a_name_that_is_a_value_is_found_and_says_so() {
+        let body = serde_json::json!({
+            "response": [{
+                "team": {"id": 50},
+                "statistics": [
+                    {"type": "Shots on Goal", "value": 7},
+                    {"type": "expected_goals", "value": "1.23"},
+                ],
+            }],
+        })
+        .to_string();
+
+        let s = search(&body, &["expected_goals".to_string()]);
+        assert!(s.parsed);
+        assert!(s.missing.is_empty());
+        assert_eq!(s.found.len(), 1);
+        assert_eq!(s.total, 1);
+        assert_eq!(s.found[0].site, "value");
+        assert_eq!(s.found[0].at, "$.response[0].statistics[1].type");
+        // The enclosing object, because that is where the number is.
+        assert!(s.found[0].sample.contains("1.23"));
+    }
+
+    /// Style differences match; different names do not.
+    #[test]
+    fn the_search_is_loose_about_style_and_strict_about_identity() {
+        let body = r#"{"Expected Goals": 1.5, "shots_off_goal": 3}"#;
+        let s = search(body, &["expected_goals".to_string()]);
+        assert_eq!(s.found.len(), 1);
+        assert_eq!(s.found[0].site, "key");
+
+        let s = search(body, &["shots_on_goal".to_string()]);
+        assert!(
+            s.found.is_empty(),
+            "`shots_off_goal` is not `shots_on_goal`"
+        );
+        assert_eq!(s.missing, ["shots_on_goal"]);
+    }
+
+    /// A capped list of places still reports how many there are.
+    ///
+    /// `standings` carries a `rank` per team. Twelve paths is plenty to read and
+    /// "twelve" said of twenty is the same fault as a silently truncated
+    /// response, which this module already refuses to commit.
+    #[test]
+    fn a_capped_evidence_list_says_how_much_it_capped() {
+        let rows: Vec<Value> = (0..30).map(|i| serde_json::json!({"rank": i})).collect();
+        let body = serde_json::json!({"response": rows}).to_string();
+        let s = search(&body, &["rank".to_string()]);
+        assert_eq!(s.found.len(), MAX_HITS);
+        assert_eq!(s.total, 30);
+    }
+
+    /// A hint that names an endpoint and no key searches for nothing.
+    #[test]
+    fn an_endpoint_with_no_named_key_searches_for_nothing() {
+        let s = search(r#"{"response":[]}"#, &[]);
+        assert!(
+            s.parsed,
+            "the body was still JSON, and that is worth knowing"
+        );
+        assert_eq!(s.total, 0);
+        assert!(
+            s.missing.is_empty(),
+            "nothing was asked for, so nothing is absent"
+        );
+    }
+
+    /// A body that is not JSON reports that, rather than reporting a miss.
+    ///
+    /// "None of these names appear" said of an HTML error page is a false
+    /// negative wearing the clothes of a finding.
+    #[test]
+    fn an_unparseable_body_is_not_a_miss() {
+        let s = search("<html>rate limited</html>", &["rank".to_string()]);
+        assert!(!s.parsed);
+        assert!(s.found.is_empty());
+        assert_eq!(s.missing, ["rank"], "still unknown, not still absent");
+    }
+
+    /// Two fields whose contracts name the same endpoint get the same payload.
+    ///
+    /// `match_statistics` and `advanced_metrics.xg` both come from
+    /// `fixtures/statistics`. That is correct and it confused a reader, because
+    /// the page showed two identical 16KB answers and said nothing. The digest
+    /// is what lets a surface say "same call, different key".
+    #[test]
+    fn two_fields_can_share_one_endpoint_and_differ_only_in_the_key() {
+        let stats = parse_hint(response_hint("football_analyst", "match_statistics").unwrap());
+        let xg = parse_hint(response_hint("football_analyst", "advanced_metrics.xg").unwrap());
+        assert_eq!(stats.endpoint, xg.endpoint);
+        assert_ne!(stats.keys, xg.keys);
     }
 
     /// The tool is read from the contract, never from the request.

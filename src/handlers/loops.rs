@@ -1359,7 +1359,27 @@ pub async fn probe_field_handler(
     }
 
     let input = body.get("input").cloned().unwrap_or(json!({}));
-    let probe = fermi::field_probe::run(tool, &input).await;
+    let hint = fermi::field_probe::response_hint(&agent_name, path);
+    let target = fermi::field_probe::parse_hint(hint.unwrap_or_default());
+    let probe = fermi::field_probe::run(tool, &input, &target).await;
+
+    // Did the caller run the endpoint this field's contract names?
+    //
+    // The trace offers the calls the agent actually made as replay chips, and a
+    // reader pressing one is running that call's endpoint, not necessarily this
+    // field's: `teams/statistics` pressed on a `match_statistics` row returns a
+    // perfectly good answer to a different question. Served rather than left to
+    // the reader to notice, because two fields probed off one chip produce two
+    // identical payloads and the page used to say nothing about it.
+    //
+    // `null` when the tool takes no endpoint — no mismatch is claimed where none
+    // can be known.
+    let called = fermi::field_probe::endpoint_of(&input);
+    let expected = target.endpoint.clone();
+    let endpoint_matches = match (&called, &expected) {
+        (Some(c), Some(e)) => Some(c == e),
+        _ => None,
+    };
 
     Ok(Json(json!({
         "tool": probe.tool,
@@ -1367,13 +1387,28 @@ pub async fn probe_field_handler(
         "response": probe.response,
         "truncated": probe.truncated,
         "chars": probe.chars,
-        "hint": fermi::field_probe::response_hint(&agent_name, path),
+        "hint": hint,
+        "endpoint_expected": expected,
+        "endpoint_called": called,
+        "endpoint_matches": endpoint_matches,
+        // Does this response contain the field, or not — searched over the whole
+        // body, before the display truncation.
+        "searched": probe.searched,
+        "not_searched": probe.not_searched,
+        "parsed": probe.parsed,
+        "found": probe.found,
+        "found_total": probe.found_total,
+        "missing": probe.missing,
+        "digest": probe.digest,
         // Stated in the payload, not only in this doc comment: a client that
         // read `ok: true` as "the field is verified" would be making exactly the
         // claim this endpoint refuses to make.
         "decides": "nothing. `ok` means the tool answered, not that the claim is \
-                    true and not that this field is settled. Read the response, \
-                    then record what you concluded through the settle form.",
+                    true and not that this field is settled. `found` means the \
+                    contract's name appears at that path in this response \
+                    — which is a fact about the source, not a verdict about the \
+                    agent. Read it, then record what you concluded through the \
+                    settle form.",
     })))
 }
 

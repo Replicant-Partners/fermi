@@ -459,6 +459,19 @@ pub struct Field {
     /// as a hint for composing the query, never used to compose it — which is
     /// also why the tool call cannot be built by the platform alone.
     pub response_hint: Option<&'static str>,
+    /// The endpoint that hint names, when it names one.
+    ///
+    /// Served rather than parsed on the client, because both sides need it and
+    /// two parsers of the same prose is one parser too many: the client composes
+    /// the probe query from it and the probe endpoint checks the query against
+    /// it, so a disagreement between the two would report the reader's own
+    /// prefill as the wrong endpoint.
+    ///
+    /// `None` where the hint names a key or several names rather than one
+    /// container — `assembly_name`, `best_bid / best_ask / …`. Those tools take
+    /// no endpoint, and inventing one for them is how a phantom gets something
+    /// to be compared against.
+    pub probe_endpoint: Option<String>,
 }
 
 /// Dress the graded fields, and compute the document's weakest link.
@@ -487,6 +500,8 @@ pub fn fields(agent_id: &str, graded: &[GradedField]) -> (Vec<Field>, &'static s
             settleable: f.kind.is_settleable(),
             tool_runnable: f.settleable_by.is_some_and(crate::field_probe::is_runnable),
             response_hint: crate::field_probe::response_hint(agent_id, f.path),
+            probe_endpoint: crate::field_probe::response_hint(agent_id, f.path)
+                .and_then(|h| crate::field_probe::parse_hint(h).endpoint),
         })
         .collect();
     let floor = grounding_trust::floor(graded.iter().map(|f| f.provenance));

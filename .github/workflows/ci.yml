@@ -156,6 +156,15 @@ jobs:
       - name: Lint — agent taxonomy conformance
         run: ./scripts/taxonomy.py audit --gate derived
 
+      # `node --check` is a syntax check and the trace's client has shipped
+      # three runtime failures past one: a deleted `ladder()` (blank page in
+      # production), a renamed `esc(head)`, and `h is not defined` — which made a
+      # tool call that worked report itself as a network outage. All three live
+      # inside a `try`, so only running the page finds them. This renders it
+      # across every lens and presses every probe against every response shape.
+      - name: Trace client renders — every lens, every probe
+        run: node scripts/check_trace_probe_render.js
+
       - name: Check all binaries compile
         run: cargo check --bins --workspace
 

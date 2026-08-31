@@ -339,37 +339,64 @@ fn a_value_under_no_contract_shows_no_grade_and_no_label() {
     );
 }
 
-/// Every row emits every cell.
+/// Every row emits every cell, in one order: **value · condition · act**.
 ///
-/// The grid is four columns and a row that renders three gets its key
-/// auto-placed into the 26px pips track. Every uncontracted key then wrapped one
-/// character per line — `man`/`_ci`/`ty_`/`tot`/`al` down the page — which is
-/// what shipped, because the pips cell was emitted as `""` rather than as an
-/// empty element.
+/// Two properties, and the second is the layout's whole premise.
+///
+/// *Every* cell, because a five-column grid given four children auto-places the
+/// key into the 26px pips track and every uncontracted key then wraps one
+/// character per line — `man`/`_ci`/`ty_`/`tot`/`al` down the page, which is what
+/// shipped, because the pips cell was emitted as `""` rather than as an element.
+///
+/// In *that order*, because a reader scans the right-hand edge. One column used
+/// to hold a state token on some rows and a control on others — `never asked`
+/// beside `call_football_api ▸`, meaning different kinds of thing — and on the
+/// absent rows, the ones with something to press, the control was a line further
+/// down inside the prose. Learn one row, read a hundred; that only works if the
+/// hundred agree.
 ///
 /// Checked structurally rather than by counting, because the counting version
 /// lives in a node harness and this file may not assume node exists.
 #[test]
-fn every_row_emits_every_cell() {
+fn every_row_emits_every_cell_in_one_order() {
     let src = trace();
     let at = src
         .find("function arow(")
         .expect("`arow` is gone; the answer's rows are built somewhere unknown");
-    let body: String = src[at..].chars().take(1200).collect();
-    for cell in [
-        "class=\"a-p\"",
-        "class=\"a-k",
-        "class=\"a-v ",
-        "class=\"a-d\"",
-    ] {
-        assert!(
-            body.contains(cell),
-            "`arow` no longer emits `{cell}`. A four-column grid given three \
-             children auto-places the key into the 26px pips track, and every \
-             key wraps one character per line. An empty cell must still be an \
-             element."
-        );
+    let body: String = src[at..].chars().take(1400).collect();
+
+    let mut seen = Vec::new();
+    for cell in ["a-p", "a-k", "a-v", "a-c", "a-a"] {
+        let needle = format!("class=\"{cell}");
+        let pos = body.find(&needle).unwrap_or_else(|| {
+            panic!(
+                "`arow` no longer emits `{cell}`. A five-column grid given four \
+                 children auto-places the key into the 26px pips track, and every \
+                 key wraps one character per line. An empty cell must still be an \
+                 element."
+            )
+        });
+        seen.push((pos, cell));
     }
+    let mut sorted = seen.clone();
+    sorted.sort();
+    assert_eq!(
+        sorted.iter().map(|(_, c)| *c).collect::<Vec<_>>(),
+        ["a-p", "a-k", "a-v", "a-c", "a-a"],
+        "the row's cells are emitted in a different order. The grammar is pips, \
+         field, value, condition, act — positionally fixed, because a column \
+         whose meaning depends on the row cannot be scanned."
+    );
+
+    // The grid must have a track per cell, or the last one wraps under the row.
+    let css = src
+        .find(".arow{display:grid;")
+        .map(|i| src[i..].chars().take(200).collect::<String>())
+        .expect("`.arow` is no longer a grid");
+    assert!(
+        css.matches("px").count() >= 3 && css.contains("1fr"),
+        "`.arow`'s track list no longer looks like five columns: {css}"
+    );
 }
 
 /// A citation has to be followable, because that is what it is scored for.
@@ -473,9 +500,16 @@ fn every_block_the_page_is_assembled_from_is_defined() {
          wrong thing and would pass whatever the page did"
     );
 
+    // A block builder is a `function`, and it may also be a local `const` arrow —
+    // `expert` wraps the folded views and is bound inside `render` itself. Both
+    // are definitions; only an undefined name is fatal.
     let missing: Vec<&String> = called
         .iter()
-        .filter(|n| !src.contains(&format!("function {n}(")))
+        .filter(|n| {
+            !src.contains(&format!("function {n}("))
+                && !src.contains(&format!("const {n} = ("))
+                && !src.contains(&format!("const {n} = "))
+        })
         .collect();
     assert!(
         missing.is_empty(),
@@ -539,7 +573,7 @@ fn a_runnable_tool_is_a_control_and_an_unrunnable_one_is_not() {
     // this one already did, at 1400 and again at 3200.
     let branch: String = src[at..].chars().take(5000).collect();
     assert!(
-        branch.contains("toolControl("),
+        branch.contains("actCell("),
         "a field the agent never produced offers no way to ask whether the tool \
          could have supplied it. That is the only question available about an \
          absence, and answering it splits one state into two with different \
@@ -632,12 +666,100 @@ fn the_three_unsettleable_kinds_are_not_one_state() {
              they are looking at."
         );
     }
+    // Three tokens, three entries. The legend is keyed by the token the row
+    // prints, so one shared entry for all three would be the collapse arriving
+    // in the explanation instead of in the row — which is where it arrived last
+    // time, as a count of "judgements" that included our own arithmetic.
+    let at = src
+        .find("const CONDITION_WHY = {")
+        .expect("the legend no longer explains states by their token");
+    let table: String = src[at..].chars().take(4000).collect();
+    for token in ["a judgement", "platform-computed", "prose"] {
+        assert!(
+            table.contains(&format!("\"{token}\":")),
+            "the legend has no entry for `{token}`, so rows in that state are \
+             explained by somebody else's sentence or by none at all."
+        );
+    }
+}
+
+/// The summary contextualises. It does not dominate.
+///
+/// The five questions were five stacked rows of prose above the thing the reader
+/// came for — a question, a sentence, a line of gate tokens, five times, half a
+/// screen. Everything in it was true and all of it was in the way. They are one
+/// strip now: a label, one token that is the answer, and the checkpoint that
+/// decides it.
+///
+/// Two things must NOT move behind a fold, and they are the reason this is a test
+/// rather than a preference:
+///
+/// * **`no gate`.** Question three is the finding this page ratcheted — nothing
+///   in the system checks whether a contracted field was filled in. A finding
+///   behind a fold is a finding nobody reads.
+/// * **Each fold's own headline.** A summary reading "the loops" hides a count;
+///   a summary reading "1 claim awaiting a verdict" is the reason to open it.
+///   Closing a fold may cost detail and must never cost a finding.
+#[test]
+fn the_summary_is_a_strip_and_the_expert_views_carry_their_headlines() {
+    let src = trace();
+
+    let at = src
+        .find("function questions(d) {")
+        .expect("the five questions are gone");
+    let block: String = src[at..].chars().take(6000).collect();
+
     assert!(
-        code_lines(&src).any(|l| l.contains("kind === \"inferred\"")),
-        "the legend counts judgements by `!settleable`, which also catches \
-         `derived` and `narrative` — so the count reintroduces, in prose, the \
-         collapse the rows just stopped making."
+        block.contains("q5strip") && block.contains("q5c-v"),
+        "the five questions are not a strip. Stacked, they are half a screen of \
+         prose above the document the reader opened the page for."
     );
+    assert!(
+        block.contains("gateNames("),
+        "the strip no longer names the checkpoint that answers each question. A \
+         question with no gate beside it is an opinion."
+    );
+
+    // The finding is above the fold, and the long answers are in it.
+    let fold = block
+        .find("<details class=\"expert\">")
+        .expect("the long answers are not folded, so the summary still dominates");
+    let nogate = block.find("q5-nogate").expect(
+        "the `no gate` paragraph is gone; question three's absence is the \
+                 finding this page ratcheted",
+    );
+    assert!(
+        nogate < fold,
+        "`no gate` moved inside the fold. It is the one answer on this page that \
+         no checkpoint stands behind, and a finding nobody opens is a finding \
+         nobody reads."
+    );
+
+    // The ladder and the loops are below the work and folded, and every summary
+    // is computed rather than written.
+    let at = src
+        .find("function render(d) {")
+        .expect("`render` is gone, which is a larger problem than this test");
+    let body: String = src[at..].chars().take(3000).collect();
+    for (name, what) in [("feeds(d)", "the loops"), ("ladder(d)", "the ladder")] {
+        assert!(
+            body.contains("expert(") && body.contains(name),
+            "{what} is no longer part of the folded expert view. It is true, it is \
+             not what a reader came for, and unfolded it pushes the document down \
+             the page."
+        );
+    }
+    for head in ["loopsHead", "ladderHead"] {
+        let at = body
+            .find(&format!("const {head} = "))
+            .unwrap_or_else(|| panic!("`{head}` is gone, so a fold has no summary"));
+        let line: String = body[at..].chars().take(400).collect();
+        assert!(
+            line.contains("${"),
+            "`{head}` is a fixed string. A fold's summary has to carry the count \
+             it is hiding, or closing it hides a finding rather than a detail."
+        );
+    }
 }
 
 /// One grade, three findings, three owners.
@@ -777,19 +899,32 @@ fn contradicting_an_agent_files_an_anomaly_and_stops_there() {
 /// same 16KB response**, and nothing on the page saying so.
 ///
 /// And then a 16,036-byte blob does not answer "is my field in there". The
-/// contract lists the key names; searching for them turns the blob into a
-/// finding. Reported as a key-name search, because that is what it is: *the
-/// response contains a key called `expected_goals`* is a fact, and *the tool can
-/// supply this field* is the inference a person draws from it.
+/// contract lists the names; locating them turns the blob into a finding.
+/// Reported as a name search, because that is what it is: *`expected_goals`
+/// appears at this path in this response* is a fact, and *the tool can supply
+/// this field* is the inference a person draws from it.
+///
+/// Three later corrections, each from the surface being used:
+///
+/// 1. The search ran on the **truncated** copy, so a large payload could report
+///    NOT FOUND for a name in the part that did not travel. It now runs
+///    server-side over the whole body.
+/// 2. It searched keys only. API-Football returns fixture statistics as
+///    `{type, value}` pairs, so xG arrives as a **value** — the one field this
+///    screen was built to settle would have been reported absent.
+/// 3. `match_statistics` and `advanced_metrics.xg` are both contracted to
+///    `fixtures/statistics`, so they legitimately return the identical payload.
+///    Correct, and it reads as a bug unless the page says so.
 #[test]
 fn a_probe_asks_this_fields_question_and_says_if_the_answer_is_there() {
     let src = trace();
 
     assert!(
-        src.contains("function parseHint("),
-        "`response_field` is opaque again, so the endpoint for a field is \
-         unknown and the query loads empty — which is what sent a reader to run \
-         an unrelated call and get an unrelated answer."
+        src.contains("function hintEndpoint(") && !src.contains("function parseHint("),
+        "the client parses `response_field` itself again. There are now two \
+         parsers of the same prose — the probe endpoint checks the query it \
+         receives against ITS parse — so a disagreement has the platform \
+         reporting the reader's own prefill as the wrong endpoint."
     );
     assert!(
         src.contains("function sharedParams("),
@@ -801,7 +936,7 @@ fn a_probe_asks_this_fields_question_and_says_if_the_answer_is_there() {
 
     // The prefill must be the field's own call, never a replayed one.
     assert!(
-        src.contains("endpoint: h.endpoint"),
+        src.contains("endpoint: ep,"),
         "the loaded query no longer comes from this field's contract. A replay \
          chip is a call the agent happened to make; it answers its own question, \
          not this row's."
@@ -814,7 +949,7 @@ fn a_probe_asks_this_fields_question_and_says_if_the_answer_is_there() {
     );
 
     // And the response has to be read for us.
-    for token in ["FOUND in this response", "NOT FOUND"] {
+    for token in ["FOUND:", "NOT FOUND"] {
         assert!(
             src.contains(token),
             "`{token}` is gone, so a 16,000-byte response is handed over with no \
@@ -822,6 +957,44 @@ fn a_probe_asks_this_fields_question_and_says_if_the_answer_is_there() {
              this answers."
         );
     }
+
+    // The search is the server's, over the untruncated body.
+    let probe = std::fs::read_to_string("src/field_probe.rs").expect("src/field_probe.rs");
+    assert!(
+        probe.contains("pub fn search(") && probe.contains("search(&body, &target.keys)"),
+        "the name search is no longer performed where the whole response exists. \
+         Run on the truncated copy it reports NOT FOUND for names in the part \
+         that did not travel: a false negative on a trust surface, produced by a \
+         display limit."
+    );
+    assert!(
+        probe.contains("site: \"value\""),
+        "the search looks at keys only again. API-Football returns fixture \
+         statistics as `{{type, value}}` pairs, so `expected_goals` is a VALUE — \
+         and a key-only search reports the one field this screen exists to \
+         settle as absent while the number sits in the payload."
+    );
+    assert!(
+        src.contains("Byte-identical"),
+        "two fields that share an endpoint get the identical payload and the \
+         page says nothing again. `match_statistics` and `advanced_metrics.xg` \
+         are both `fixtures/statistics`: correct, and indistinguishable from a \
+         bug unless it is stated."
+    );
+    assert!(
+        src.contains("not this field's endpoint"),
+        "a probe run against an endpoint the contract does not name is no longer \
+         called out. A replay chip is one press away and returns a sound answer \
+         to a different question."
+    );
+
+    // A bug in this file must not wear a network failure's clothes.
+    assert!(
+        src.contains("failed to render it"),
+        "every throw inside `runProbe` reads as `Could not reach the platform` \
+         again. That is how `h is not defined` — a live tool run, answered \
+         correctly — spent a deploy looking like an outage."
+    );
 }
 
 /// The scan must be able to fail.

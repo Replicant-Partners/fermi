@@ -680,6 +680,39 @@ decision instead of a habit.
 * **Promoting grounding to a control as-is** — do the wrapped output type
   instead. Same safety property, no break, keeps the evidence (§4, Q4).
 
+## 7.1 Queued — the chained probe
+
+**Deferred deliberately, 2026-08-31, after the single-call probe shipped.**
+
+The probe runs *one* call. The reference case cannot be closed with one:
+
+```text
+advanced_metrics.xg  →  contract names  fixtures/statistics.expected_goals
+                        fixtures/statistics requires  fixture=<id>
+                        the record carries no fixture id
+                          (the agent called standings, teams/statistics×2,
+                           players×2, injuries, players/topscorers — never fixtures)
+```
+
+So pressing run on the xG row returns `MISSING PARAMETER: fixture`, honestly and
+uselessly. Completing the proof needs two calls: `fixtures?league&season&team` →
+take an id → `fixtures/statistics?fixture=<id>`. That is a **chain**, and a chain
+is a different object from a call: it has intermediate state, a step that can
+fail on its own, and a question about which step the reader is endorsing.
+
+Not built yet, and the reason is readability rather than difficulty. A chain adds
+a second axis to a row that does not yet have a stable first one. Layout first;
+then the chain has somewhere to live.
+
+What exists already and does not need redoing:
+
+* `field_probe::parse_hint` gives the endpoint per field, from one parser.
+* `field_probe::search` locates a name anywhere in the full body, as key or as
+  value, with its path — which is what a chain's last step would report.
+* `endpoint_matches` already refuses to let one step's answer be cited for
+  another step's question. A chain makes that check load-bearing rather than
+  advisory.
+
 ## 8. What we need from the UI side
 
 1. **Confirm the trace's `unknown` state is renderable.** An episode with no
