@@ -1060,6 +1060,7 @@
                 <button data-tab="overview" class="active">Overview</button>
                 <button data-tab="activity">Activity</button>
                 <button data-tab="knowledge">Knowledge</button>
+                <button data-tab="contract">Contract</button>
                 <button data-tab="economics">Economics</button>
                 <button data-tab="field-notes">Field Notes</button>
               </div>
@@ -1487,13 +1488,142 @@
               <!-- Intelligence Tab (owner only, injected by renderOwnerTabs) -->
               <div data-tab-panel="intelligence" id="intelligence-tab-panel" style="display:none"></div>
 
+              <!-- Contract Tab — the typed output contract. Visible to
+                   anyone who can see the agent, because "what does this return
+                   and where does it come from" is the question a prospective
+                   consumer has. Editing links out to the full builder. -->
+              <div data-tab-panel="contract" id="contract-tab-panel" style="display:none"></div>
+
               <!-- Manage Tab (owner only, injected by renderOwnerTabs) -->
               <div data-tab-panel="manage" id="manage-tab-panel" style="display:none"></div>
             </div>
           `;
 
+          // ── Contract tab ────────────────────────────────────────────
+          //
+          // Shows the state of the agent's typed output contract and, when it
+          // is incomplete, exactly what is missing per field. That last part
+          // is the reason this is worth a tab: `genome_profiler` has declared
+          // a schema and no grounding map since before any of this existed,
+          // and the only way to find that out was to try to publish it.
+          //
+          // Editing happens in the full builder at /contracts?agent=<id>
+          // rather than here: a three-view editor inside a tab inside a
+          // 6,000-line page is not a kindness to anyone.
+          async function renderContractTab(agentName) {
+            const panel = document.getElementById("contract-tab-panel");
+            if (!panel) return;
+            panel.innerHTML = `<div class="sections"><div class="section">
+              <div style="color:var(--fg3);font-size:0.85em">Loading contract…</div>
+            </div></div>`;
+
+            let d;
+            try {
+              const res = await fetch(
+                "/api/contracts/decompile/" + encodeURIComponent(agentName),
+              );
+              d = res.ok ? await res.json() : null;
+            } catch {
+              d = null;
+            }
+            if (!d) {
+              panel.innerHTML = `<div class="sections"><div class="section">
+                <div class="section-title">Output Contract</div>
+                <div style="color:var(--fg3);font-size:0.85em">
+                  Could not load.
+                </div></div></div>`;
+              return;
+            }
+
+            const builderLink =
+              '/contracts?agent=' + encodeURIComponent(agentName);
+            const findings = d.findings || [];
+            const sk = d.sketch;
+
+            let state, colour;
+            if (!d.has_contract) {
+              state = "Untyped — nothing can compose with this agent, and its output is never validated.";
+              colour = "var(--orange)";
+            } else if (!d.readable) {
+              state = "Declared, but richer than the builder can edit. " + (d.note || "");
+              colour = "var(--yellow)";
+            } else if (findings.length === 0) {
+              state = "Complete — this contract would publish.";
+              colour = "var(--green)";
+            } else {
+              state = findings.length + " finding(s) outstanding. Publish is refused until they are resolved.";
+              colour = "var(--orange)";
+            }
+
+            const blockRows = sk
+              ? (sk.blocks || [])
+                  .map((b) => {
+                    const st = (b.source && b.source.status) || "?";
+                    const tint = {
+                      sourced: "var(--green)",
+                      inferred: "var(--blue)",
+                      narrative: "var(--purple)",
+                      unavailable: "var(--orange)",
+                    }[st] || "var(--fg3)";
+                    const why = (b.why || "").trim();
+                    const nfields = b.fields ? Object.keys(b.fields).length : (b.value ? 1 : 0);
+                    return `<tr>
+                      <td style="padding:4px 10px 4px 0;color:var(--fg1)">${b.name}</td>
+                      <td style="padding:4px 10px 4px 0;color:${tint}">${st}</td>
+                      <td style="padding:4px 10px 4px 0;color:var(--fg3)">${
+                        (b.source && b.source.tool) || ""
+                      }</td>
+                      <td style="padding:4px 10px 4px 0;color:var(--fg3)">${nfields} field${nfields === 1 ? "" : "s"}</td>
+                      <td style="padding:4px 0;color:${why.length >= 40 ? "var(--green)" : "var(--orange)"}">${
+                        why.length >= 40 ? "why ✓" : "why needed"
+                      }</td>
+                    </tr>`;
+                  })
+                  .join("")
+              : "";
+
+            panel.innerHTML = `
+              <div class="sections">
+                <div class="section">
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+                    <div class="section-title" style="margin-bottom:0">Output Contract</div>
+                    <a class="owner-btn" style="border-color:var(--aqua);color:var(--aqua);text-decoration:none"
+                       href="${builderLink}">${d.has_contract ? "Edit contract" : "Create contract"}</a>
+                  </div>
+                  <div style="font-size:0.85em;color:${colour};margin-bottom:10px">${state}</div>
+                  ${
+                    sk
+                      ? `<div style="font-size:0.8em;color:var(--fg3);margin-bottom:8px">
+                           Type <code style="color:var(--yellow)">${sk.produces_schema || "(unnamed)"}</code>
+                           ${sk.domain ? " · domain " + sk.domain : ""}
+                         </div>
+                         <table style="font-size:0.8em;border-collapse:collapse">${blockRows}</table>`
+                      : ""
+                  }
+                </div>
+                ${
+                  findings.length
+                    ? `<div class="section">
+                         <div class="section-title">What is missing</div>
+                         <div style="font-size:0.8em;line-height:1.6">
+                           ${findings
+                             .map(
+                               (f) =>
+                                 `<div style="border-left:3px solid var(--orange);padding:6px 10px;margin-bottom:6px;background:var(--bg0)">
+                                    <code style="color:var(--orange);font-size:0.9em">${f.check}</code><br/>${f.fix}
+                                  </div>`,
+                             )
+                             .join("")}
+                         </div>
+                       </div>`
+                    : ""
+                }
+              </div>`;
+          }
+
           // Initialize tabs with lazy-load callback
           Tabs.init("agent-tabs", 0, function (tabName, idx) {
+            if (tabName === "contract") renderContractTab(agentId);
             if (tabName === "activity") {
               loadExecutionActivity();
               loadEpisodes(0);

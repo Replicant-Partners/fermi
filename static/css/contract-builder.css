@@ -1,0 +1,490 @@
+/* Contract builder — shared by the create wizard (step 4) and the standalone
+   page at /contracts.
+
+   Extracted from templates/agent_create.html rather than copied into a second
+   template: two stylesheets for one widget is the drift this repo keeps
+   finding, and the builder is now reachable from two places. */
+      /* ─── Three views ─── */
+      .cb-viewnav {
+        display: flex;
+        gap: 0;
+        margin: 14px 0 0;
+        border-bottom: 1px solid var(--bg2);
+      }
+      .cb-viewbtn {
+        background: none;
+        border: none;
+        border-bottom: 2px solid transparent;
+        color: var(--fg3);
+        cursor: pointer;
+        font-size: 0.75rem;
+        padding: 8px 14px 7px;
+        text-align: left;
+        font-family: inherit;
+      }
+      .cb-viewbtn:hover {
+        color: var(--fg1);
+      }
+      .cb-viewbtn.active {
+        color: var(--yellow);
+        border-bottom-color: var(--yellow);
+      }
+      .cb-viewbtn .n {
+        display: block;
+        font-size: 0.62rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        opacity: 0.7;
+      }
+      .cb-viewbtn .badge {
+        font-size: 0.62rem;
+        margin-left: 4px;
+      }
+      .cb-viewbtn .badge.todo {
+        color: var(--orange);
+      }
+      .cb-viewbtn .badge.ok {
+        color: var(--green);
+      }
+      .cb-view {
+        padding-top: 14px;
+      }
+      .cb-lead {
+        font-size: 0.74rem;
+        color: var(--fg3);
+        line-height: 1.6;
+        border-left: 2px solid var(--bg3);
+        padding-left: 10px;
+        margin-bottom: 14px;
+      }
+      .cb-sticky {
+        position: sticky;
+        top: 12px;
+      }
+      .cb-shape-row {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        border: 1px solid var(--bg2);
+        border-left: 3px solid var(--bg3);
+        padding: 8px;
+        margin-bottom: 6px;
+        background: var(--bg0);
+      }
+      .cb-shape-row input.nm {
+        flex: 1;
+        font-weight: bold;
+      }
+      .cb-shape-fields {
+        margin: 6px 0 0 12px;
+      }
+      .cb-borrow {
+        margin-top: 18px;
+        border-top: 1px dashed var(--bg2);
+        padding-top: 12px;
+      }
+      .cb-consumer {
+        border: 1px solid var(--bg2);
+        padding: 8px 10px;
+        margin-bottom: 6px;
+        font-size: 0.74rem;
+      }
+      .cb-consumer .who {
+        color: var(--aqua);
+      }
+      .cb-copybtn {
+        float: right;
+        font-size: 0.65rem;
+        padding: 2px 8px;
+      }
+
+      /* Compose-from palette */
+      .cb-palette-wrap {
+        margin: 14px 0;
+      }
+      .cb-sub {
+        font-size: 0.72rem;
+        color: var(--aqua);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 6px;
+      }
+      .cb-hintlet {
+        color: var(--fg3);
+        text-transform: none;
+        letter-spacing: 0;
+        font-size: 0.68rem;
+        margin-left: 6px;
+      }
+      .cb-palette {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .cb-chip {
+        border: 1px solid var(--bg2);
+        background: var(--bg1);
+        color: var(--fg2);
+        font-size: 0.72rem;
+        padding: 6px 10px;
+        cursor: pointer;
+        text-align: left;
+        max-width: 260px;
+      }
+      .cb-chip:hover {
+        border-color: var(--yellow);
+        color: var(--fg0);
+      }
+      .cb-chip.used {
+        opacity: 0.4;
+      }
+      .cb-chip .cb-chip-k {
+        display: block;
+        font-size: 0.62rem;
+        color: var(--fg3);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      .cb-chip.tool {
+        border-left: 3px solid var(--green);
+      }
+      .cb-chip.judgement {
+        border-left: 3px solid var(--blue);
+      }
+      .cb-chip.prose {
+        border-left: 3px solid var(--purple);
+      }
+      .cb-chip.gap {
+        border-left: 3px solid var(--orange);
+      }
+
+      /* Two columns: what you are editing, and what it produces */
+      .cb-split {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+        margin-top: 14px;
+      }
+      @media (max-width: 900px) {
+        .cb-split {
+          grid-template-columns: 1fr;
+        }
+      }
+      .cb-col {
+        min-width: 0;
+      }
+
+      /* Live document preview */
+      .cb-doc {
+        background: var(--bg0-hard);
+        border: 1px solid var(--bg2);
+        padding: 10px;
+        font-size: 0.7rem;
+        line-height: 1.6;
+        white-space: pre-wrap;
+        overflow-x: auto;
+        min-height: 120px;
+      }
+      .cb-doc .k {
+        color: var(--fg1);
+      }
+      .cb-doc .stamp-sourced {
+        color: var(--green);
+      }
+      .cb-doc .stamp-inferred {
+        color: var(--blue);
+      }
+      .cb-doc .stamp-unavailable {
+        color: var(--orange);
+      }
+      .cb-doc .prose {
+        color: var(--purple);
+      }
+      .cb-doc .nul {
+        color: var(--gray);
+      }
+      .cb-doc-legend {
+        font-size: 0.66rem;
+        color: var(--fg3);
+        margin-top: 6px;
+        line-height: 1.6;
+      }
+
+      /* Composition panel */
+      .cb-compose {
+        border: 1px solid var(--bg2);
+        padding: 10px;
+        margin: 14px 0;
+        background: var(--bg0);
+      }
+      .cb-type-row {
+        display: flex;
+        gap: 8px;
+        align-items: baseline;
+        font-size: 0.72rem;
+        padding: 4px 0;
+        border-bottom: 1px dashed var(--bg2);
+      }
+      .cb-type-row:last-child {
+        border-bottom: none;
+      }
+      .cb-type-row .t {
+        color: var(--yellow);
+        font-family: monospace;
+        cursor: pointer;
+      }
+      .cb-type-row .t:hover {
+        text-decoration: underline;
+      }
+      .cb-type-row .b {
+        color: var(--fg3);
+        flex: 1;
+      }
+      .cb-type-row .c {
+        color: var(--aqua);
+      }
+
+      /* Collapsed block summary */
+      .cb-sum {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        cursor: pointer;
+        font-size: 0.75rem;
+      }
+      .cb-sum .nm {
+        font-weight: bold;
+        color: var(--fg1);
+      }
+      .cb-pill {
+        font-size: 0.62rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        padding: 2px 6px;
+        border: 1px solid var(--bg3);
+        color: var(--fg3);
+      }
+      .cb-pill.sourced {
+        color: var(--green);
+        border-color: var(--green);
+      }
+      .cb-pill.inferred {
+        color: var(--blue);
+        border-color: var(--blue);
+      }
+      .cb-pill.narrative {
+        color: var(--purple);
+        border-color: var(--purple);
+      }
+      .cb-pill.unavailable {
+        color: var(--orange);
+        border-color: var(--orange);
+      }
+      .cb-todo {
+        color: var(--orange);
+        font-size: 0.68rem;
+      }
+      .cb-ok {
+        color: var(--green);
+        font-size: 0.68rem;
+      }
+      .cb-body {
+        margin-top: 10px;
+      }
+
+      .cb-block {
+        border: 1px solid var(--bg2);
+        border-left: 3px solid var(--bg3);
+        padding: 12px;
+        margin-bottom: 10px;
+        background: var(--bg0);
+      }
+      .cb-block[data-status="sourced"] {
+        border-left-color: var(--green);
+      }
+      .cb-block[data-status="inferred"] {
+        border-left-color: var(--blue);
+      }
+      .cb-block[data-status="narrative"] {
+        border-left-color: var(--purple);
+      }
+      .cb-block[data-status="unavailable"] {
+        border-left-color: var(--orange);
+      }
+      .cb-block-head {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+      .cb-block-head input.cb-name {
+        flex: 1;
+        font-weight: bold;
+      }
+      .cb-del {
+        background: none;
+        border: 1px solid var(--bg2);
+        color: var(--fg3);
+        cursor: pointer;
+        padding: 4px 8px;
+        font-size: 0.72rem;
+      }
+      .cb-del:hover {
+        color: var(--red);
+        border-color: var(--red);
+      }
+      .cb-fields {
+        margin: 6px 0;
+      }
+      .cb-field-row {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 4px;
+      }
+      .cb-field-row input {
+        font-size: 0.75rem;
+        padding: 4px 6px;
+      }
+      .cb-field-row .cb-fname {
+        flex: 2;
+      }
+      .cb-field-row .cb-ftype {
+        flex: 3;
+        font-family: monospace;
+      }
+      .cb-why-count {
+        font-size: 0.68rem;
+        color: var(--fg3);
+        text-align: right;
+      }
+      .cb-why-count.short {
+        color: var(--orange);
+      }
+      .cb-derived {
+        font-size: 0.7rem;
+        color: var(--fg3);
+        border-top: 1px dashed var(--bg2);
+        margin-top: 8px;
+        padding-top: 6px;
+      }
+      .cb-derived code {
+        color: var(--aqua);
+      }
+      .cb-finding {
+        border-left: 3px solid var(--orange);
+        background: var(--bg1);
+        padding: 8px 10px;
+        margin-bottom: 6px;
+        font-size: 0.75rem;
+        line-height: 1.5;
+      }
+      .cb-finding .cb-check {
+        color: var(--orange);
+        font-family: monospace;
+        font-size: 0.7rem;
+        display: block;
+        margin-bottom: 2px;
+      }
+      .cb-result {
+        border: 1px solid var(--green);
+        padding: 10px;
+        margin-top: 12px;
+      }
+      .cb-result h4 {
+        margin: 0 0 6px;
+        font-size: 0.78rem;
+        color: var(--green);
+      }
+      .cb-pre {
+        background: var(--bg0-hard);
+        border: 1px solid var(--bg2);
+        padding: 8px;
+        font-size: 0.68rem;
+        max-height: 260px;
+        overflow: auto;
+        white-space: pre;
+        color: var(--fg2);
+      }
+      .cb-tabs {
+        display: flex;
+        gap: 0;
+        margin: 8px 0 0;
+      }
+      .cb-tabs button {
+        background: var(--bg1);
+        border: 1px solid var(--bg2);
+        border-bottom: none;
+        color: var(--fg3);
+        font-size: 0.7rem;
+        padding: 4px 10px;
+        cursor: pointer;
+      }
+      .cb-tabs button.active {
+        background: var(--bg0-hard);
+        color: var(--yellow);
+      }
+      .cb-gen {
+        font-size: 0.72rem;
+        color: var(--fg3);
+        margin-top: 6px;
+      }
+      .cb-gen code {
+        color: var(--aqua);
+      }
+
+
+/* Bits the wizard's own stylesheet provided and a standalone page must not
+   assume. Deliberately minimal — this is not a second design system, it is the
+   handful of primitives the widget's markup references. */
+.cb-standalone .form-group { margin-bottom: 14px; }
+.cb-standalone .form-group label {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--fg3);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.cb-standalone .form-group input,
+.cb-standalone .form-group select,
+.cb-standalone .form-group textarea,
+.cb-standalone .cb-field-row input {
+  width: 100%;
+  background: var(--bg0);
+  border: 1px solid var(--bg2);
+  color: var(--fg1);
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: 0.8rem;
+}
+.cb-standalone .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.cb-standalone .hint { font-size: 0.7rem; color: var(--fg3); line-height: 1.5; }
+.cb-standalone .info-box {
+  border: 1px solid var(--bg2);
+  background: var(--bg0);
+  padding: 10px 12px;
+  font-size: 0.76rem;
+  line-height: 1.6;
+  margin-bottom: 14px;
+}
+.cb-standalone .btn {
+  background: var(--bg1);
+  border: 1px solid var(--bg2);
+  color: var(--fg2);
+  padding: 6px 12px;
+  font-size: 0.75rem;
+  font-family: inherit;
+  cursor: pointer;
+}
+.cb-standalone .btn:hover { border-color: var(--yellow); color: var(--fg0); }
+.cb-standalone .btn-primary { color: var(--yellow); border-color: var(--yellow); }
+.cb-standalone .collapsible-header {
+  cursor: pointer;
+  font-size: 0.74rem;
+  color: var(--fg3);
+  padding: 8px 0;
+  border-top: 1px solid var(--bg2);
+  margin-top: 14px;
+}
+.cb-standalone .collapsible-body { display: none; }
+.cb-standalone .collapsible-body.open { display: block; }

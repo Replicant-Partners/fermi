@@ -223,7 +223,7 @@ mod tests {
         assert_eq!(v["compiles"], json!(true), "{v:#}");
     }
 
-    /// And the same proposal, untouched, does NOT compile \u2014 so the button
+    /// And the same proposal, untouched, does NOT compile — so the button
     /// cannot be used to skip the one decision that matters.
     #[test]
     fn an_untouched_proposal_does_not_compile() {
@@ -536,4 +536,249 @@ fn candidate_fields(description: &str) -> Vec<Value> {
         })
         .filter(|f| !f["name"].as_str().unwrap_or("").is_empty())
         .collect()
+}
+
+// ─── managing a contract on an existing agent ──────────────────────────
+//
+// The builder started life inside the create wizard, which meant a contract
+// could only be authored at birth. That is the wrong lifecycle: 90 of 101
+// agents already exist, `genome_profiler` has had a schema and no grounding
+// map since before any of this was written, and the interesting work is
+// modifying a contract rather than minting one.
+//
+// So: read any agent's contract back into an editable sketch.
+
+/// `GET /api/contracts/decompile/:agent_id`
+///
+/// The agent's current contract as a sketch, its declared tools, and what the
+/// sketch is still missing.
+///
+/// `findings` is the useful half. For a card with a complete contract it is
+/// empty. For `genome_profiler` it is five `sketch_why` findings — one per
+/// block — which is exactly the information that card has never had, named per
+/// field instead of as "publish refused".
+pub async fn decompile_handler(
+    State(state): State<AppState>,
+    _principal: AuthPrincipal,
+    axum::extract::Path(agent_id): axum::extract::Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let row = sqlx::query(
+        "SELECT agent_name, produces, mcp_tools, output_contract \
+         FROM agents WHERE agent_name = $1 LIMIT 1",
+    )
+    .bind(&agent_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db: {e}")))?
+    .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no agent `{agent_id}`")))?;
+
+    let produces: Vec<String> = row.try_get("produces").unwrap_or_default();
+    let tool_names: Vec<String> = row
+        .try_get::<Option<Value>, _>("mcp_tools")
+        .ok()
+        .flatten()
+        .and_then(|v| {
+            v.as_array().map(|a| {
+                a.iter()
+                    .filter_map(|t| t.get("name").and_then(|n| n.as_str()).map(str::to_string))
+                    .collect()
+            })
+        })
+        .unwrap_or_default();
+    let oc: Option<Value> = row.try_get("output_contract").ok().flatten();
+
+    // No contract yet: an empty sketch seeded with the agent's tools is a
+    // better starting point than an error, because "this agent has nothing"
+    // is the common case and the next action is the same either way.
+    let Some(oc) = oc.filter(|v| v.is_object()) else {
+        return Ok(Json(json!({
+            "agent_id": agent_id,
+            "has_contract": false,
+            "sketch": Value::Null,
+            "tool_names": tool_names,
+            "produces": produces,
+            "findings": [],
+            "note": "This agent declares no output contract. Start from its \
+                     tools: each one is a candidate retrieved block, and a \
+                     block sourced from a tool the agent really has passes the \
+                     hardest check by construction.",
+        })));
+    };
+
+    let sketch = match fermi::contract_sketch::sketch_from_contract(&oc) {
+        Ok(s) => s,
+        Err(findings) => {
+            // The shape itself could not be read. Distinguished from "reads
+            // fine but is incomplete", because the fixes are different: this
+            // one needs a hand-edit, that one needs a `why`.
+            return Ok(Json(json!({
+                "agent_id": agent_id,
+                "has_contract": true,
+                "readable": false,
+                "sketch": Value::Null,
+                "tool_names": tool_names,
+                "produces": produces,
+                "findings": findings
+                    .iter()
+                    .map(|f| json!({ "check": f.check, "fix": f.message }))
+                    .collect::<Vec<_>>(),
+                "note": "The contract exists but uses schema shapes this \
+                         compiler cannot express, so editing it here would \
+                         change fields you did not touch. Edit the card \
+                         directly.",
+            })));
+        }
+    };
+
+    // What it is missing, phrased per field. Not fatal — the point is to load
+    // the thing and show the to-do list.
+    let findings = sketch
+        .compile(&tool_names)
+        .err()
+        .unwrap_or_default()
+        .iter()
+        .map(|f| json!({ "check": f.check, "fix": f.message }))
+        .collect::<Vec<_>>();
+
+    Ok(Json(json!({
+        "agent_id": agent_id,
+        "has_contract": true,
+        "readable": true,
+        "sketch": serde_json::to_value(&sketch).unwrap_or(Value::Null),
+        "tool_names": tool_names,
+        "produces": produces,
+        "findings": findings,
+        "note": if findings.is_empty() {
+            "This contract is complete and would publish."
+        } else {
+            "Loaded. The findings are what this contract is still missing, per \
+             field. A `why` is never recovered or invented — if the card had no \
+             grounding map, every block needs one written."
+        },
+    })))
+}
+
+/// `POST /api/contracts/tool-request`
+///
+/// Turn an `unavailable` block into a specification for the tool that would
+/// make it `sourced`.
+///
+/// The question this answers: an author declares a block `unavailable` because
+/// nothing can supply it, writes `would_need: "the IUCN Red List API"`, and
+/// then what? Today: nothing. The refusal is honest and permanently stuck,
+/// because the gap is recorded in a card nobody reads as a backlog.
+///
+/// This emits a brief a coding agent can act on. It deliberately does NOT
+/// build the tool: it states what the field needs, what the response must
+/// carry, and — the part an author would forget — that the new tool has to be
+/// added to `capabilities.mcp_tools` and the block flipped from `unavailable`
+/// to `sourced` afterwards, or the contract still refuses.
+pub async fn tool_request_handler(
+    _principal: AuthPrincipal,
+    Json(req): Json<Value>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let agent = req
+        .get("agent_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("(unnamed agent)");
+    let block = req
+        .get("block")
+        .and_then(|v| v.as_str())
+        .ok_or((StatusCode::BAD_REQUEST, "`block` is required".to_string()))?;
+    let would_need = req
+        .get("would_need")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    let fields: Vec<String> = req
+        .get("fields")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if would_need.is_empty() {
+        return Ok(Json(json!({
+            "ready": false,
+            "why": format!(
+                "`{block}` is declared unavailable with no `would_need`. A tool \
+                 cannot be specified from the absence alone — say what source \
+                 would supply it, then this can be written."
+            ),
+        })));
+    }
+
+    let suggested = format!(
+        "{}_{}",
+        would_need
+            .split_whitespace()
+            .next()
+            .unwrap_or("source")
+            .to_lowercase()
+            .chars()
+            .filter(|c| c.is_alphanumeric())
+            .collect::<String>(),
+        block
+    );
+
+    let brief = format!(
+        "Add a platform tool so `{agent}` can source its `{block}` block.\n\
+         \n\
+         WHY IT DOES NOT EXIST YET\n\
+         The block is declared `unavailable` in the agent's output contract, \
+         which is the honest status: no tool the agent declares returns this. \
+         The author recorded what would be needed:\n\
+         \n  {would_need}\n\
+         \n\
+         WHAT THE TOOL MUST RETURN\n\
+         The block's fields, so the contract can be flipped to `sourced`:\n\
+         {}\n\
+         \n\
+         WHERE IT GOES\n\
+         - A `BuiltinToolDef` in src/agent_backend/ (see weather_tools.rs or \
+         the fmp_* tools in tools_legacy.rs for the shape), plus a dispatch arm \
+         in `ToolRegistry::execute`. A name with no arm is a phantom tool: \
+         advertised to the model, called, and answered `Unknown tool`. \
+         `invalid_tool_declarations` rejects the card on any write, so this \
+         cannot be half-done.\n\
+         - Return real fields, not prose. The contract's `response_field` names \
+         which part of the response supplies each value, and that claim is \
+         supposed to be checkable against the tool's actual output.\n\
+         \n\
+         AFTER IT LANDS — do not skip this\n\
+         1. Add `{}` to `{agent}`'s `capabilities.mcp_tools`, or a `sourced` \
+         claim against it is refused as naming a tool the agent cannot call.\n\
+         2. Change the `{block}` block from `unavailable` to `sourced`, naming \
+         the tool and the response field.\n\
+         3. Set `coverage`: `complete` if the tool answers for every field or \
+         honestly reports no match; `partial` if some fields have no source \
+         even when it answers.\n\
+         4. Rewrite the block's `why`. The existing one explains why nothing \
+         could supply it, and that will no longer be true.\n\
+         \n\
+         Until step 1 happens the contract is unchanged and the block is still \
+         correctly refusing.",
+        if fields.is_empty() {
+            "  (the block declares no fields yet)".to_string()
+        } else {
+            fields
+                .iter()
+                .map(|f| format!("  - {f}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        },
+        suggested
+    );
+
+    Ok(Json(json!({
+        "ready": true,
+        "suggested_tool_name": suggested,
+        "brief": brief,
+        "note": "A brief, not a tool. Paste it to a coding agent, or to \
+                 xaman_ek, which knows the card contract and can check the \
+                 result against it.",
+    })))
 }

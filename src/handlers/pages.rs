@@ -546,6 +546,16 @@ pub async fn dashboard_view() -> Response {
     app_shell("templates/dashboard.html")
 }
 
+/// The contract builder on its own page.
+///
+/// `/contracts?agent=<agent_id>` loads that agent's current contract. Lives
+/// outside the create wizard because the wizard could only author a contract
+/// at birth, and 90 of the 101 agents were already born — the interesting work
+/// is modifying a contract, not minting one.
+pub async fn contract_builder_view() -> Response {
+    app_shell("templates/contract_builder.html")
+}
+
 pub async fn agent_create_view() -> Response {
     app_shell("templates/agent_create.html")
 }

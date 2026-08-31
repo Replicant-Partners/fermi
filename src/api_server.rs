@@ -3291,6 +3291,10 @@ async fn main() {
         // Page routes (serve HTML templates)
         .route("/dashboard", get(handlers::pages::dashboard_view))
         .route("/agents/new", get(handlers::pages::agent_create_view))
+        // The contract builder, standalone. `/contracts?agent=<id>` loads that
+        // agent's current contract. Four wizard steps was the wrong way in for
+        // a tool whose main job is editing something that already exists.
+        .route("/contracts", get(handlers::pages::contract_builder_view))
         .route(
             "/workspace/:workspace_id",
             get(handlers::pages::workspace_view),
@@ -3534,6 +3538,20 @@ async fn main() {
         .route(
             "/api/contracts/suggest",
             post(handlers::contracts::suggest_handler),
+        )
+        // Read an existing agent's contract back into an editable sketch, so a
+        // contract can be MODIFIED and not only minted. 90 of 101 agents
+        // already exist; the create wizard was the wrong and only home.
+        .route(
+            "/api/contracts/decompile/:agent_id",
+            get(handlers::contracts::decompile_handler),
+        )
+        // An `unavailable` block turned into a brief for the tool that would
+        // make it `sourced`. The gap was previously recorded honestly and then
+        // stuck for ever, because nothing read cards as a backlog.
+        .route(
+            "/api/contracts/tool-request",
+            post(handlers::contracts::tool_request_handler),
         )
         // Agent CRUD
         .route("/api/agents", post(handlers::agents::create_agent_handler))

@@ -158,6 +158,20 @@ pub enum Base {
     Enum(Vec<String>),
     /// Exactly one value.
     Const(String),
+    /// Pinned to `null`: nothing can supply this field, ever.
+    ///
+    /// Not the same as nullable. `string?` says "a value or nothing"; `null`
+    /// says "nothing, and a value here would be a contract violation". It is
+    /// the field-level form of the `unavailable` grounding status, and the
+    /// corpus already used it — `hud_field_scout.edibility.verdict` and five
+    /// fields across `genome_profiler` — before the compiler could express it.
+    /// The decompiler found that gap.
+    ///
+    /// `envelope::build` names the consequence: grounding runs BEFORE
+    /// validation precisely so a field pinned this way is cleaned before it is
+    /// checked, rather than the agent being blamed for a null the platform was
+    /// about to write.
+    Null,
 }
 
 impl TypeExpr {
@@ -185,12 +199,23 @@ impl TypeExpr {
             ));
         }
 
+        if s == "null" && (nullable || array) {
+            return Err(format!(
+                "`{src}`: `null` is already the absence of a value, so `?` and \
+                 `[]` add nothing to it. Write plain `null` for a field pinned \
+                 to null, or `string?` for one that may or may not have a value \
+                 — they are different claims and only the first says nothing \
+                 could ever supply it."
+            ));
+        }
+
         let base = match s {
             "string" => Base::String,
             "integer" => Base::Integer,
             "number" => Base::Number,
             "boolean" => Base::Boolean,
             "object" => Base::Object,
+            "null" => Base::Null,
             other if other.starts_with("enum:") => {
                 let vals: Vec<String> = other[5..]
                     .split('|')
@@ -247,6 +272,7 @@ impl TypeExpr {
                 Base::Number => Some("number"),
                 Base::Boolean => Some("boolean"),
                 Base::Object => Some("object"),
+                Base::Null => Some("null"),
                 Base::Enum(_) | Base::Const(_) => None,
             }
         };
@@ -706,7 +732,21 @@ impl Sketch {
             }
 
             // ── the derived sibling ──────────────────────────────────
-            if let Some(prov_schema) = b.source.provenance_schema() {
+            //
+            // An underscore-prefixed name is a platform annotation, not an
+            // agent output — `hud_field_scout._hud_review` is the audit trail
+            // `hud_contract::enforce` writes when it has had to correct a
+            // response. A provenance stamp on one would be a retrieval verdict
+            // about the platform's own note, which is the same category error
+            // as stamping prose. It still needs a grounding entry, because the
+            // bijection covers every top-level field; it does not need a stamp.
+            //
+            // Found by the decompiler: recompiling that card produced a
+            // `_hud_review_provenance` the hand-written schema does not have.
+            let platform_annotation = name.starts_with('_');
+            if let Some(prov_schema) =
+                b.source.provenance_schema().filter(|_| !platform_annotation)
+            {
                 let sib = format!("{name}{PROVENANCE_SUFFIX}");
                 properties.insert(sib.clone(), prov_schema);
                 grounding.insert(sib.clone(), stamp_grounding_entry(name, &b.source));
@@ -967,9 +1007,376 @@ fn render_base(b: &Base) -> String {
         Base::Number => "number".into(),
         Base::Boolean => "boolean".into(),
         Base::Object => "object".into(),
+        Base::Null => "null".into(),
         Base::Enum(v) => format!("enum:{}", v.join("|")),
         Base::Const(v) => format!("const:{v}"),
     }
+}
+
+// ─── decompiling an existing contract ──────────────────────────────────
+//
+// The compiler had no inverse, and that made it useful only for greenfield
+// authoring. Three of the corpus's typed cards were hand-written before it
+// existed, and one of them — `genome_profiler`, the agent whose fabricated
+// genome sizes are the reason any of this exists — declares a schema and **no
+// grounding map at all**, so it still fails the publish gate today.
+//
+// Without an inverse the only way to fix that card was to hand-write a sketch
+// that reproduced a 250-line schema exactly, which nobody was going to do. So:
+// read the contract back into a sketch, and let the author fix the part that
+// is missing rather than retype the part that is not.
+//
+// ## What it recovers, and what it cannot
+//
+// Recovered: block names, field names, field types, the shape (object vs
+// single value), the domain, the type name, synthesis and calibration. Those
+// are all mechanically present in the schema.
+//
+// Recovered when a grounding map exists: status, tool, response_field, from,
+// and the author's `why`.
+//
+// **Inferred from the provenance stamp when it does not**: a stamp admitting
+// `tool_verified` means the block was sourced, `const model_inference` means
+// inferred, and no stamp at all means narrative. That is a real signal — the
+// stamp was narrowed by whoever wrote the schema — and it is why decompiling
+// `genome_profiler` produces four correctly-classified blocks rather than four
+// unknowns.
+//
+// **Never recovered: `why`.** If the contract has no grounding map, every
+// block comes back with an empty `why` and the result deliberately does not
+// compile. That is the correct outcome: the whys are the information the card
+// never had, and inventing them here would be the fabrication this module's
+// docs promise not to commit. The compiler's findings then name exactly what
+// is missing, per block.
+
+/// Render a JSON Schema leaf back into a [`TypeExpr`] source string.
+///
+/// The inverse of [`TypeExpr::to_schema`] over the forms that method emits.
+/// Anything outside them returns `None` rather than a guess: a type expression
+/// that does not round-trip would silently change the schema on recompile,
+/// which is worse than telling the author this field needs a look.
+pub fn render_type_expr(schema: &Value) -> Option<String> {
+    let obj = schema.as_object()?;
+
+    // enum — possibly with `null` folded in, which is how `to_schema` spells a
+    // nullable enum.
+    if let Some(vals) = obj.get("enum").and_then(|v| v.as_array()) {
+        let nullable = vals.iter().any(|v| v.is_null());
+        let names: Vec<String> = vals
+            .iter()
+            .filter(|v| !v.is_null())
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect();
+        if names.len() + usize::from(nullable) != vals.len() || names.len() < 2 {
+            return None;
+        }
+        return Some(format!(
+            "enum:{}{}",
+            names.join("|"),
+            if nullable { "?" } else { "" }
+        ));
+    }
+
+    if let Some(c) = obj.get("const").and_then(|v| v.as_str()) {
+        return Some(format!("const:{c}"));
+    }
+
+    let ty = obj.get("type")?;
+    // A field pinned to null, before the nullable-union handling below strips
+    // "null" as a modifier. `{"type": "null"}` is a type, not a modifier.
+    if ty.as_str() == Some("null") {
+        return Some("null".to_string());
+    }
+    let (base, nullable) = match ty {
+        Value::String(s) => (s.clone(), false),
+        Value::Array(a) => {
+            let nullable = a.iter().any(|v| v.as_str() == Some("null"));
+            let concrete: Vec<&str> = a.iter().filter_map(|v| v.as_str()).filter(|s| *s != "null").collect();
+            if concrete.len() != 1 {
+                return None;
+            }
+            (concrete[0].to_string(), nullable)
+        }
+        _ => return None,
+    };
+
+    if base == "array" {
+        // The item type, which `to_schema` always writes.
+        let items = obj.get("items")?;
+        let inner = render_type_expr(items)?;
+        // An array of nullables is not something `to_schema` can emit, so an
+        // inner `?` means this schema was not produced by this compiler.
+        if inner.ends_with('?') {
+            return None;
+        }
+        return Some(format!("{inner}[]{}", if nullable { "?" } else { "" }));
+    }
+
+    if !["string", "integer", "number", "boolean", "object"].contains(&base.as_str()) {
+        return None;
+    }
+    Some(format!("{base}{}", if nullable { "?" } else { "" }))
+}
+
+/// Read an existing `output_contract` back into an editable [`Sketch`].
+///
+/// The returned sketch is not guaranteed to compile — and for a card with no
+/// grounding map it is guaranteed not to. That is the point: the findings are
+/// the to-do list.
+pub fn sketch_from_contract(oc: &Value) -> Result<Sketch, Vec<Finding>> {
+    let schema = oc.get("schema").filter(|s| s.is_object()).ok_or_else(|| {
+        vec![f(
+            "decompile_no_schema",
+            "This contract has no inline `schema`, so there is nothing to read              back. `produces_schema` is a name; a name cannot be decompiled              into a document shape.",
+        )]
+    })?;
+    let props = schema
+        .get("properties")
+        .and_then(|p| p.as_object())
+        .ok_or_else(|| {
+            vec![f(
+                "decompile_no_schema",
+                "The declared schema has no `properties`.",
+            )]
+        })?;
+
+    let grounding = oc.get("grounding").and_then(|g| g.as_object());
+    let required: Vec<&str> = schema
+        .get("required")
+        .and_then(|r| r.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+
+    let mut blocks = Vec::new();
+    let mut errs = Vec::new();
+
+    for (name, sub) in props {
+        // The compiler owns the sibling stamps; they are re-derived, never
+        // authored, so reading them back as blocks would duplicate them on
+        // recompile.
+        if name.ends_with(PROVENANCE_SUFFIX) {
+            continue;
+        }
+
+        let stamp = props.get(&format!("{name}{PROVENANCE_SUFFIX}"));
+        let g = grounding.and_then(|m| m.get(name));
+
+        let source = match g {
+            Some(entry) => {
+                let mut src = source_from_grounding(entry);
+                // `coverage` is a sketch-level concept: it exists to decide
+                // how wide the stamp's enum is, and the card records the
+                // RESULT rather than the input. So it has to be recovered
+                // from the stamp, not from the grounding entry.
+                //
+                // Missing this silently NARROWED enums on recompile — a
+                // `partial` block came back `complete` and lost
+                // `unavailable_no_tool_source`, which is the verdict that says
+                // "the tool answered and this field has no source". The
+                // corpus round-trip test caught it on `macro_data_agent`.
+                if let Source::Sourced {
+                    ref mut coverage, ..
+                } = src
+                {
+                    if let Source::Sourced { coverage: c, .. } = source_from_stamp(stamp) {
+                        *coverage = c;
+                    }
+                }
+                src
+            }
+            // No grounding map. Classify from the stamp the schema author
+            // narrowed, which is real evidence about the block's kind even
+            // though it says nothing about which tool supplied it.
+            None => source_from_stamp(stamp),
+        };
+
+        let why = g
+            .and_then(|e| e.get("why"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let mut block = Block {
+            name: name.clone(),
+            description: sub
+                .get("description")
+                .and_then(|d| d.as_str())
+                .map(str::to_string),
+            source,
+            why,
+            fields: BTreeMap::new(),
+            value: None,
+            required: required.contains(&name.as_str()),
+        };
+
+        match sub.get("properties").and_then(|p| p.as_object()) {
+            Some(fields) => {
+                for (fname, fschema) in fields {
+                    match render_type_expr(fschema) {
+                        Some(ty) => {
+                            let desc = fschema
+                                .get("description")
+                                .and_then(|d| d.as_str())
+                                .map(str::to_string);
+                            block.fields.insert(
+                                fname.clone(),
+                                match desc {
+                                    Some(d) => FieldSpec::Long {
+                                        ty,
+                                        description: Some(d),
+                                    },
+                                    None => FieldSpec::Short(ty),
+                                },
+                            );
+                        }
+                        None => errs.push(f(
+                            "decompile_unreadable_type",
+                            format!(
+                                "`{name}.{fname}` uses a schema shape this                                  compiler cannot express, so it cannot be                                  round-tripped without changing it: {fschema}.                                  Retype it by hand and check the diff."
+                            ),
+                        )),
+                    }
+                }
+            }
+            None => match render_type_expr(sub) {
+                Some(ty) => block.value = Some(ty),
+                None => errs.push(f(
+                    "decompile_unreadable_type",
+                    format!(
+                        "Block `{name}` is a bare value whose schema this                          compiler cannot express: {sub}"
+                    ),
+                )),
+            },
+        }
+
+        blocks.push(block);
+    }
+
+    if !errs.is_empty() {
+        return Err(errs);
+    }
+
+    // Restore the author's block order where the schema recorded one.
+    // `serde_json::Map` is a BTreeMap so `properties` came back alphabetical,
+    // but `required` is an array and preserves the order the compiler wrote.
+    if !required.is_empty() {
+        blocks.sort_by_key(|b| {
+            required
+                .iter()
+                .position(|r| *r == b.name)
+                .unwrap_or(usize::MAX)
+        });
+    }
+
+    Ok(Sketch {
+        domain: oc
+            .get("domain")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        produces_schema: oc
+            .get("produces_schema")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        title: schema
+            .get("title")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        description: schema
+            .get("description")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        synthesis: oc
+            .get("synthesis")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        calibration: oc.get("calibration").cloned(),
+        blocks,
+    })
+}
+
+/// Rebuild a [`Source`] from an existing grounding entry.
+fn source_from_grounding(entry: &Value) -> Source {
+    let get = |k: &str| {
+        entry
+            .get(k)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    match entry.get("status").and_then(|v| v.as_str()) {
+        Some("sourced") => Source::Sourced {
+            tool: get("tool"),
+            response_field: get("response_field"),
+            // A placeholder. The card does not record coverage, so the
+            // caller overwrites this from the provenance stamp — see
+            // `sketch_from_contract`. Left as the narrowest value so that a
+            // caller which forgets to overwrite produces a visible schema
+            // diff rather than a silently widened enum.
+            coverage: Coverage::Complete,
+        },
+        Some("inferred") => Source::Inferred { from: get("from") },
+        Some("unavailable") => Source::Unavailable {
+            would_need: entry
+                .get("would_need")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+        },
+        // `narrative`, and anything unrecognised. An unknown status must not
+        // become `sourced`, which is the only status that makes a retrieval
+        // claim.
+        _ => Source::Narrative,
+    }
+}
+
+/// Classify a block from its provenance stamp, for a contract with no
+/// grounding map.
+///
+/// The stamp is evidence: whoever wrote the schema narrowed it deliberately.
+/// It cannot say *which* tool supplied a sourced block, so `tool` comes back
+/// empty and the compiler will refuse until the author names one — correctly,
+/// since that is the check with teeth.
+fn source_from_stamp(stamp: Option<&Value>) -> Source {
+    let Some(stamp) = stamp else {
+        return Source::Narrative;
+    };
+
+    if let Some(c) = stamp.get("const").and_then(|v| v.as_str()) {
+        return match c {
+            PROV_INFERRED => Source::Inferred {
+                from: String::new(),
+            },
+            PROV_UNAVAILABLE => Source::Unavailable { would_need: None },
+            // `platform_derived` has no authoring token; `inferred`
+            // understates a reproducible value, which is the safe direction.
+            _ => Source::Inferred {
+                from: String::new(),
+            },
+        };
+    }
+
+    if let Some(vals) = stamp.get("enum").and_then(|v| v.as_array()) {
+        let has = |t: &str| vals.iter().any(|v| v.as_str() == Some(t));
+        if has(PROV_TOOL) {
+            return Source::Sourced {
+                tool: String::new(),
+                response_field: String::new(),
+                coverage: if has(PROV_UNAVAILABLE) {
+                    Coverage::Partial
+                } else if has(PROV_PENDING_TOOL) {
+                    Coverage::Deferred
+                } else {
+                    Coverage::Complete
+                },
+            };
+        }
+        if has(PROV_UNAVAILABLE) {
+            return Source::Unavailable { would_need: None };
+        }
+    }
+
+    Source::Narrative
 }
 
 // ─── MCP tool ──────────────────────────────────────────────────────────
@@ -1543,6 +1950,310 @@ mod tests {
         let (t, desc) = ont.field("@intensity").expect("intensity entity");
         assert_eq!(t.base, Base::Number);
         assert!(desc.unwrap().contains("0 to 1"));
+    }
+
+    // ── decompiling ───────────────────────────────────────────────────
+
+    /// **The property that makes the decompiler trustworthy.** For every card
+    /// with a complete contract, decompile → compile reproduces the contract
+    /// byte for byte.
+    ///
+    /// Without this the inverse is a convenience that quietly rewrites
+    /// schemas: an author opens a card to fix one `why`, saves, and three
+    /// unrelated fields have changed type. Run over the real corpus rather
+    /// than a fixture, so a card authored tomorrow is covered too.
+    #[test]
+    fn decompiling_then_compiling_reproduces_the_contract() {
+        let mut checked = 0;
+        for dir in std::fs::read_dir("agents/curated").expect("curated dir") {
+            let dir = dir.expect("entry").path();
+            let card_path = dir.join("agent_card.json");
+            if !card_path.exists() {
+                continue;
+            }
+            let card: Value =
+                serde_json::from_str(&std::fs::read_to_string(&card_path).unwrap()).unwrap();
+            let Some(oc) = card.pointer("/capabilities/output_contract") else {
+                continue;
+            };
+            // Only cards that already satisfy the gate can round-trip: one
+            // with no grounding map decompiles to blocks with no `why`, which
+            // is the intended behaviour and tested separately below.
+            let produces: Vec<String> = card
+                .get("produces")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+                .unwrap_or_default();
+            let tools: Vec<String> = card
+                .pointer("/capabilities/mcp_tools")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|t| t.get("name").and_then(|n| n.as_str()).map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if !card_contract::validate(Some(oc), &produces, &tools).is_empty() {
+                continue;
+            }
+            // Only contracts this compiler PRODUCED are required to round-trip
+            // exactly, and the marker for that is a sketch beside the card.
+            // Hand-written contracts can and do use shapes the mini-language
+            // cannot express; `hud_field_scout` is the worked example and the
+            // three specific gaps are documented in
+            // `a_hand_written_contract_may_exceed_what_the_compiler_can_express`.
+            // Asserting exactness over those would either fail for ever or
+            // pressure someone into widening the mini-language to match one
+            // card, which is the wrong direction.
+            if !dir.join("output_contract.sketch.json").exists() {
+                continue;
+            }
+
+            let name = dir.file_name().unwrap().to_string_lossy().to_string();
+            let sketch = sketch_from_contract(oc)
+                .unwrap_or_else(|e| panic!("{name}: does not decompile:\n{e:#?}"));
+            let recompiled = sketch
+                .compile(&tools)
+                .unwrap_or_else(|e| panic!("{name}: decompiled sketch does not compile:\n{e:#?}"));
+
+            assert_eq!(
+                &recompiled.output_contract, oc,
+                "{name}: decompile -> compile changed the contract. An author \
+                 opening this card to fix one field would silently rewrite \
+                 others."
+            );
+            checked += 1;
+        }
+        assert!(
+            checked >= 5,
+            "only round-tripped {checked} card(s) — the corpus walk is \
+             probably broken, which would make this test vacuously pass"
+        );
+    }
+
+    /// `genome_profiler` is the reason this whole line of work exists, and it
+    /// is still not fixed: it declares a schema and **no grounding map**, so it
+    /// fails `card_contract::validate` to this day.
+    ///
+    /// Decompiling it must (a) recover the shape so nobody retypes 250 lines,
+    /// (b) classify each block from its provenance stamp, and (c) refuse to
+    /// compile, naming the missing whys. Asserted against the real card.
+    #[test]
+    fn genome_profiler_decompiles_to_exactly_what_it_is_missing() {
+        let path = "agents/curated/genome_profiler/agent_card.json";
+        let Ok(raw) = std::fs::read_to_string(path) else {
+            return;
+        };
+        let card: Value = serde_json::from_str(&raw).unwrap();
+        let oc = card
+            .pointer("/capabilities/output_contract")
+            .expect("genome_profiler declares a contract");
+        assert!(
+            oc.get("grounding").is_none(),
+            "this test documents the state of a card that has NO grounding \
+             map. If someone has since added one, rewrite the test rather \
+             than deleting it."
+        );
+
+        let sketch = sketch_from_contract(oc).expect("decompiles");
+
+        // (a) the shape came back
+        let names: Vec<&str> = sketch.blocks.iter().map(|b| b.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["taxonomy", "genome", "phylogeny", "conservation", "summary"],
+            "block order should follow `required`, not the alphabet"
+        );
+
+        // (b) classified from the stamps, which are real evidence
+        let by = |n: &str| {
+            sketch
+                .blocks
+                .iter()
+                .find(|b| b.name == n)
+                .map(|b| b.source.status())
+                .unwrap()
+        };
+        assert_eq!(by("taxonomy"), "sourced", "its stamp admits tool_verified");
+        assert_eq!(by("genome"), "sourced");
+        assert_eq!(by("summary"), "narrative", "prose carries no stamp");
+
+        // The genome block's stamp admits `unavailable_no_tool_source`, so its
+        // coverage is partial — which is precisely the honest reading of the
+        // original bug: the tool answered and the field had no source.
+        let genome = sketch.blocks.iter().find(|b| b.name == "genome").unwrap();
+        match &genome.source {
+            Source::Sourced { coverage, tool, .. } => {
+                assert_eq!(*coverage, Coverage::Partial);
+                assert!(
+                    tool.is_empty(),
+                    "a stamp cannot say WHICH tool supplied a block, so this \
+                     must come back empty and be refused until an author names \
+                     one"
+                );
+            }
+            other => panic!("expected sourced, got {other:?}"),
+        }
+
+        // (c) it must not compile, and the findings must be the to-do list
+        let tools: Vec<String> = card
+            .pointer("/capabilities/mcp_tools")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|t| t.get("name").and_then(|n| n.as_str()).map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let errs = sketch
+            .compile(&tools)
+            .expect_err("a card with no grounding map must not compile");
+        assert!(
+            errs.iter().filter(|e| e.check == "sketch_why").count() >= 4,
+            "every block should be reported as missing its `why` — that is \
+             the information the card never had:\n{errs:#?}"
+        );
+    }
+
+    /// A hand-written contract may exceed what the compiler can express, and
+    /// the decompiler must say so rather than quietly approximating.
+    ///
+    /// `hud_field_scout` is the case. Three distinct gaps, all found by
+    /// attempting the round-trip and all worth having written down:
+    ///
+    /// 1. **`platform_derived` stamps.** Its schema declares
+    ///    `const: "platform_derived"` while its grounding entries say
+    ///    `inferred`, because `card_contract::GROUNDING_STATUSES` has no
+    ///    `derived` token and the runtime's `Grounding` enum does. The card
+    ///    documents that gap in its own `why` text. The compiler therefore
+    ///    emits `model_inference` where the card says `platform_derived`.
+    /// 2. **Nested arrays of objects.** `card.lines` is an array whose items
+    ///    have their own `properties` and `required`. `object[]` in the
+    ///    mini-language emits `items: {"type": "object"}` and drops the inner
+    ///    shape.
+    /// 3. ~~A stamp on a platform annotation~~ — fixed: `_`-prefixed blocks
+    ///    now get no sibling.
+    ///
+    /// The honest response to 1 and 2 is not to widen the mini-language to fit
+    /// one card. It is to let the decompiler recover the *shape* — which is
+    /// what saves an author from retyping 250 lines — and to be explicit that
+    /// a recompile would change these fields, so nobody saves over them by
+    /// accident.
+    #[test]
+    fn a_hand_written_contract_may_exceed_what_the_compiler_can_express() {
+        let path = "agents/curated/hud_field_scout/agent_card.json";
+        let Ok(raw) = std::fs::read_to_string(path) else {
+            return;
+        };
+        let card: Value = serde_json::from_str(&raw).unwrap();
+        let oc = card.pointer("/capabilities/output_contract").unwrap();
+
+        // It decompiles: the shape comes back, which is the useful part.
+        let sketch = sketch_from_contract(oc).expect("the shape is recoverable");
+        assert!(
+            sketch.blocks.len() >= 6,
+            "the blocks should be recovered even though the schema is richer \
+             than the mini-language"
+        );
+
+        // And the round-trip is NOT exact, for the two reasons above. Asserted
+        // so that if someone widens the mini-language the test tells them this
+        // note is now stale rather than leaving it to rot.
+        let tools: Vec<String> = card
+            .pointer("/capabilities/mcp_tools")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|t| t.get("name").and_then(|n| n.as_str()).map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let recompiled = sketch.compile(&tools).expect("it still compiles");
+        assert_ne!(
+            recompiled.output_contract.pointer("/schema/properties"),
+            oc.pointer("/schema/properties"),
+            "the round-trip is now exact for hud_field_scout. If the \
+             mini-language gained `platform_derived` and nested array items, \
+             delete this test and let the corpus round-trip test cover the \
+             card instead."
+        );
+
+        // The specific divergences, named. A future reader should not have to
+        // rediscover which fields these are.
+        let now = recompiled.output_contract.pointer("/schema/properties").unwrap();
+        assert_eq!(
+            now.pointer("/capture_provenance/const").and_then(|v| v.as_str()),
+            Some(PROV_INFERRED),
+            "gap 1: the compiler cannot emit `platform_derived`"
+        );
+        assert!(
+            now.pointer("/card/properties/lines/items/properties").is_none(),
+            "gap 2: nested array item shape is dropped"
+        );
+        // Gap 3 is fixed, and this is what fixed looks like.
+        assert!(
+            now.get("_hud_review_provenance").is_none(),
+            "a platform annotation must not acquire a provenance stamp"
+        );
+    }
+
+    /// No `why` is ever invented while decompiling, including for blocks whose
+    /// kind the stamp identifies confidently. The stamp says what kind of
+    /// value it is; only an author can say why.
+    #[test]
+    fn decompiling_never_invents_a_why() {
+        let oc = json!({
+            "domain": "d",
+            "produces_schema": "x/y",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "a": { "type": "object", "properties": { "n": { "type": "number" } } },
+                    "a_provenance": { "enum": ["tool_verified", "tool_no_match"] },
+                    "summary": { "type": "string" }
+                },
+                "required": ["a", "a_provenance", "summary"]
+            }
+        });
+        let sketch = sketch_from_contract(&oc).unwrap();
+        assert!(
+            sketch.blocks.iter().all(|b| b.why.is_empty()),
+            "a contract with no grounding map has no whys to recover, and \
+             generating one would be the fabrication this module refuses"
+        );
+    }
+
+    #[test]
+    fn a_type_expression_survives_the_round_trip() {
+        for src in [
+            "string",
+            "integer?",
+            "number[]",
+            "string[]?",
+            "boolean",
+            "enum:up|down|flat",
+            "enum:a|b?",
+            "const:model_inference",
+            "object?",
+        ] {
+            let schema = TypeExpr::parse(src).unwrap().to_schema(None);
+            assert_eq!(
+                render_type_expr(&schema).as_deref(),
+                Some(src),
+                "`{src}` did not survive to_schema -> render_type_expr"
+            );
+        }
+    }
+
+    /// A schema shape the compiler cannot express must be REFUSED rather than
+    /// approximated. Approximating it would change the schema on the next save
+    /// while looking like a no-op edit.
+    #[test]
+    fn an_inexpressible_type_is_refused_not_approximated() {
+        // `minimum` is not the problem here — an unrepresentable *type* is.
+        assert_eq!(render_type_expr(&json!({ "type": ["string", "integer"] })), None);
+        assert_eq!(render_type_expr(&json!({ "enum": ["only"] })), None);
+        assert_eq!(render_type_expr(&json!({})), None);
     }
 
     #[test]

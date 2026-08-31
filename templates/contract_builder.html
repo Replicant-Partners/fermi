@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Contract Builder</title>
+    <link rel="stylesheet" href="/static/css/variables.css" />
+    <link rel="stylesheet" href="/static/css/contract-builder.css" />
+    <style>
+      body {
+        background: var(--bg0-hard);
+        color: var(--fg1);
+        font-family: "JetBrains Mono", ui-monospace, monospace;
+        margin: 0;
+      }
+      .wrap {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 20px 24px 60px;
+      }
+      h1 {
+        font-size: 1.05rem;
+        color: var(--yellow);
+        margin: 0 0 4px;
+        font-weight: normal;
+      }
+      .sub {
+        font-size: 0.76rem;
+        color: var(--fg3);
+        line-height: 1.6;
+        margin-bottom: 18px;
+        max-width: 780px;
+      }
+      .agentbar {
+        display: flex;
+        gap: 8px;
+        align-items: flex-end;
+        flex-wrap: wrap;
+        border: 1px solid var(--bg2);
+        padding: 12px;
+        margin-bottom: 18px;
+        background: var(--bg0);
+      }
+      .agentbar .form-group {
+        margin: 0;
+        min-width: 260px;
+      }
+      .agentbar .spacer {
+        flex: 1;
+      }
+      .savemsg {
+        font-size: 0.72rem;
+        padding: 3px 8px;
+        border: 1px solid var(--bg2);
+        color: var(--fg3);
+      }
+      .quick {
+        font-size: 0.72rem;
+        color: var(--fg3);
+        margin-top: 8px;
+      }
+      .quick a {
+        color: var(--aqua);
+        cursor: pointer;
+        text-decoration: none;
+        margin-right: 10px;
+      }
+      .quick a:hover {
+        text-decoration: underline;
+      }
+      .tool-brief {
+        border: 1px solid var(--orange);
+        padding: 12px;
+        margin-top: 14px;
+      }
+      .tool-brief h4 {
+        margin: 0 0 6px;
+        font-size: 0.78rem;
+        color: var(--orange);
+      }
+      .tool-brief pre {
+        background: var(--bg0-hard);
+        border: 1px solid var(--bg2);
+        padding: 10px;
+        font-size: 0.68rem;
+        white-space: pre-wrap;
+        max-height: 320px;
+        overflow: auto;
+        color: var(--fg2);
+      }
+    </style>
+  </head>
+  <body class="cb-standalone">
+    <script src="/static/js/widgets/nav.js"></script>
+    <script>
+      Nav.init({ title: "Contract Builder" });
+    </script>
+
+    <div class="wrap">
+      <h1>Typed output contract</h1>
+      <div class="sub">
+        What an agent returns, where each value comes from, and who can consume
+        it. You declare the parts that need judgement; the compiler writes the
+        JSON Schema, the per-block <code>_provenance</code> stamps, the
+        grounding map and the <code>produces</code> port &mdash; and refuses to
+        emit anything the publish gate would reject.
+      </div>
+
+      <div class="agentbar">
+        <div class="form-group">
+          <label for="agent-picker">Agent</label>
+          <input
+            list="agent-list"
+            id="agent-picker"
+            placeholder="genome_profiler"
+          />
+          <datalist id="agent-list"></datalist>
+        </div>
+        <button class="btn" onclick="loadPickedAgent()">Load contract</button>
+        <button class="btn btn-primary" onclick="savePickedAgent()">
+          Save to agent
+        </button>
+        <span class="spacer"></span>
+        <span class="savemsg" id="savemsg">no agent loaded</span>
+      </div>
+
+      <div class="quick">
+        Try:
+        <a onclick="quick('genome_profiler')">genome_profiler</a>
+        <a onclick="quick('equity_analyst')">equity_analyst</a>
+        <a onclick="quick('weather_oracle')">weather_oracle</a>
+        <a onclick="quick('hud_field_scout')">hud_field_scout</a>
+      </div>
+
+      <div id="builder"></div>
+      <div id="toolbrief"></div>
+    </div>
+
+    <script src="/static/js/widgets/contract-builder.js"></script>
+    <script>
+      // ── boot ────────────────────────────────────────────────────────
+      //
+      // `?agent=<id>` deep-links to one agent's contract, which is what the
+      // link on the agent detail page uses. Without it the page is an empty
+      // builder, which is still useful: a contract can be drafted before the
+      // agent it belongs to exists.
+      const params = new URLSearchParams(window.location.search);
+      const initialAgent = params.get("agent");
+
+      (async () => {
+        const res = await fetch("/api/auth/me");
+        if (!res.ok) {
+          window.location.href = "/";
+          return;
+        }
+        ContractBuilder.mount({
+          container: "builder",
+          agentId: initialAgent || null,
+        });
+        if (initialAgent) {
+          document.getElementById("agent-picker").value = initialAgent;
+          setSaveMsg("loaded " + initialAgent);
+        }
+        loadAgentList();
+      })();
+
+      function setSaveMsg(t) {
+        document.getElementById("savemsg").textContent = t;
+      }
+
+      async function loadAgentList() {
+        try {
+          const res = await fetch("/api/agents/mine");
+          if (!res.ok) return;
+          const data = await res.json();
+          const names = (data.agents || data || [])
+            .map((a) => a.agent_name || a.name)
+            .filter(Boolean);
+          document.getElementById("agent-list").innerHTML = names
+            .map((n) => `<option value="${n}"></option>`)
+            .join("");
+        } catch {}
+      }
+
+      async function loadPickedAgent() {
+        const id = document.getElementById("agent-picker").value.trim();
+        if (!id) return;
+        const data = await ContractBuilder.loadAgent(id);
+        if (!data) {
+          setSaveMsg("could not load " + id);
+          return;
+        }
+        // The findings are the point of loading. A card with a schema and no
+        // grounding map — genome_profiler is the standing example — reports one
+        // per block, which is the to-do list it has never had.
+        const n = (data.findings || []).length;
+        setSaveMsg(
+          n === 0
+            ? id + " — complete, would publish"
+            : `${id} — ${n} finding(s) to resolve`,
+        );
+        // Update the URL so the state is linkable.
+        history.replaceState(null, "", "/contracts?agent=" + encodeURIComponent(id));
+        renderToolBriefOffers(id);
+      }
+
+      async function savePickedAgent() {
+        const id = document.getElementById("agent-picker").value.trim();
+        if (!id) {
+          setSaveMsg("name an agent first");
+          return;
+        }
+        await ContractBuilder.saveTo(id);
+      }
+
+      function quick(id) {
+        document.getElementById("agent-picker").value = id;
+        loadPickedAgent();
+      }
+
+      // ── an unavailable block is a tool that does not exist yet ──────
+      //
+      // The gap was previously recorded honestly and then stuck for ever:
+      // `unavailable` with a `would_need` is a backlog item in a file nobody
+      // reads as a backlog. This turns it into a brief.
+      function renderToolBriefOffers(agentId) {
+        const gaps = ContractBuilder.blocks.filter(
+          (b) => b.status === "unavailable" && b.name,
+        );
+        const el = document.getElementById("toolbrief");
+        if (!gaps.length) {
+          el.innerHTML = "";
+          return;
+        }
+        el.innerHTML = `
+          <div class="tool-brief">
+            <h4>&#9888; ${gaps.length} block(s) have no possible source</h4>
+            <div class="hint" style="margin-bottom:8px">
+              Declaring a gap is the honest answer, and it is also where the
+              work stops. If the data should exist, the missing piece is a
+              tool &mdash; generate a brief a coding agent can act on.
+            </div>
+            ${gaps
+              .map(
+                (b) => `<button class="btn" style="margin-right:6px"
+                          onclick="genToolBrief('${b.name}')">
+                          brief a tool for <code>${b.name}</code>
+                        </button>`,
+              )
+              .join("")}
+            <div id="brief-out"></div>
+          </div>`;
+      }
+
+      async function genToolBrief(blockName) {
+        const id = document.getElementById("agent-picker").value.trim();
+        const out = document.getElementById("brief-out");
+        out.innerHTML = `<div class="hint" style="margin-top:8px">Writing…</div>`;
+        const data = await ContractBuilder.requestTool(id, blockName);
+        if (!data) {
+          out.innerHTML = `<div class="hint" style="margin-top:8px">Could not generate.</div>`;
+          return;
+        }
+        if (!data.ready) {
+          out.innerHTML = `<div class="hint" style="margin-top:8px">${data.why}</div>`;
+          return;
+        }
+        out.innerHTML = `
+          <div style="margin-top:10px">
+            <div class="hint" style="margin-bottom:4px">
+              Suggested tool name: <code>${data.suggested_tool_name}</code>.
+              ${data.note}
+            </div>
+            <pre id="brief-text">${data.brief.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</pre>
+            <button class="btn" onclick="copyBrief()">Copy brief</button>
+          </div>`;
+      }
+
+      function copyBrief() {
+        const t = document.getElementById("brief-text");
+        if (t) navigator.clipboard?.writeText(t.textContent);
+      }
+    </script>
+    <script src="/static/js/theme.js"></script>
+  </body>
+</html>
