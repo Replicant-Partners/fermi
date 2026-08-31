@@ -1326,6 +1326,10 @@ async fn run_migrations(db: &PgPool) {
         // and every column describes consolidation, so the declared Loop 3 ->
         // Loop 1 hop is unfalsifiable even when it fires.
         "migrations/223_semantic_rule_origin.sql",
+        // 225 — `contradicted`: the agent left a contracted field empty and a
+        // tool run shows its own declared tool can fill it. The mirror of
+        // `grounding`, which is the same contract catching fabrication.
+        "migrations/225_contradicted_anomaly.sql",
     ];
 
     // Bootstrap the ledger before anything is recorded into it.
@@ -2984,6 +2988,16 @@ async fn main() {
         .route(
             "/api/episodes/:episode_id/probe",
             post(handlers::loops::probe_field_handler),
+        )
+        // The agent was wrong, and here is the tool run that shows it.
+        //
+        // Files an anomaly; it does not write a correction. Loop 2's queue,
+        // coherence gate, consensus rule and audit trail already exist, and
+        // once verification output is training input those four are what stand
+        // between a misclick and a rule the agent will believe.
+        .route(
+            "/api/episodes/:episode_id/contradict",
+            post(handlers::loops::contradict_field_handler),
         )
         // Why every other surface here says `unknown` so often.
         //

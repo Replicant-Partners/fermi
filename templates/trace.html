@@ -357,6 +357,15 @@
   .probe-out{font-size:0.66rem;color:var(--fg3);white-space:pre-wrap;
              overflow-wrap:anywhere;max-height:16em;overflow:auto;
              border-left:2px solid var(--bg3);padding-left:7px;margin-top:4px;}
+  /* The act. Appears only once a tool run has returned something, because the
+     evidence is what separates this from an opinion about an agent. */
+  .wrong{margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
+  .wrong button{font-size:0.64rem;font-family:inherit;background:none;cursor:pointer;
+                border:1px solid var(--red,#fb4934);color:var(--red,#fb4934);padding:2px 9px;}
+  .wrong button:hover:not(:disabled){background:var(--red,#fb4934);color:var(--bg0-hard);}
+  .wrong button:disabled{opacity:0.4;cursor:default;}
+  .wrong .why{font-size:0.64rem;color:var(--fg4);}
+  .wrong-out{font-size:0.66rem;color:var(--fg3);margin-top:4px;}
   .probe-out.bad{border-left-color:var(--red,#fb4934);color:var(--red,#fb4934);}
   .cite-link{font-size:0.66rem;color:var(--aqua);}
   .empty{padding:16px 8px;font-size:0.76rem;color:var(--fg4);}
@@ -1461,6 +1470,24 @@
         // and the payload says so too — a surface rendering a successful call as
         // a verdict would make exactly the claim the endpoint refuses to make.
         out.className = p.ok ? "probe-out" : "probe-out bad";
+        // The act, offered only now.
+        //
+        // A "the agent is wrong" button that is always available is an opinion
+        // button. This one appears when a tool run has actually returned
+        // something, because the response IS the evidence and the endpoint
+        // refuses the call without it.
+        if (p.ok && p.response && p.response.trim()) {
+          const act = form.querySelector(".wrong") || (() => {
+            const d = document.createElement("div");
+            d.className = "wrong";
+            form.appendChild(d);
+            return d;
+          })();
+          act.innerHTML = `<button data-wrong="${esc(dotted)}">the agent should have had this</button>
+            <span class="why">files a reviewable finding with this response attached \u2014
+              it does not change the agent</span>
+            <span class="wrong-out"></span>`;
+        }
         out.textContent =
           (p.ok ? "" : "the tool refused: ") + p.response
           + (p.truncated ? `\n\u2026 ${p.chars.toLocaleString()} characters in total` : "")
@@ -1477,10 +1504,51 @@
     btn.disabled = false;
   }
 
+  // File the finding, with the tool's answer as the evidence.
+  //
+  // The end of the trail this screen exists for: the grade said the tool had
+  // nothing, the record showed it was never asked, a run showed the data is
+  // there. That is a fact, and Loop 2 is where a fact about an agent becomes a
+  // correction the agent retrieves.
+  //
+  // It stops at the queue on purpose. Intervening runs the coherence gate,
+  // requires a second reviewer for agent-wide scope, and writes an immutable
+  // audit trail; a button that skipped all three would be the fastest way to
+  // teach an agent something wrong.
+  async function fileContradiction(btn) {
+    const dotted = btn.dataset.wrong;
+    const form = btn.closest("[data-probe-form]");
+    const out = form.querySelector(".wrong-out");
+    const evidence = (form.querySelector(".probe-out") || {}).textContent || "";
+    btn.disabled = true;
+    out.textContent = "filing\u2026";
+    try {
+      const r = await fetch(`/api/episodes/${encodeURIComponent(EID)}/contradict`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: dotted, evidence }),
+      });
+      const text = await r.text();
+      if (!r.ok) {
+        out.textContent = text;
+        btn.disabled = false;
+        return;
+      }
+      const p = JSON.parse(text);
+      out.innerHTML = `Filed. <a href="/observatory/hitl">Review it \u2192</a> \u2014 ${
+        esc(p.what_happens_next || "")}`;
+    } catch (err) {
+      out.textContent = "Could not reach the platform: " + err.message;
+      btn.disabled = false;
+    }
+  }
+
   function wireClamps() {
     const root = document.getElementById("content");
     if (!root) return;
     root.addEventListener("click", e => {
+      const wrongBtn = e.target.closest("[data-wrong]");
+      if (wrongBtn) { fileContradiction(wrongBtn); return; }
       const replayBtn = e.target.closest("[data-replay]");
       if (replayBtn) {
         const form = replayBtn.closest("[data-probe-form]");

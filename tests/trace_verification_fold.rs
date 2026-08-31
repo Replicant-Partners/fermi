@@ -692,6 +692,71 @@ fn an_absence_says_whether_the_tool_was_ever_asked() {
     );
 }
 
+/// The contradiction act files a finding; it does not change the agent.
+///
+/// This is the end of the trail the screen exists for: the grade said the tool
+/// had nothing, the record showed it was never asked, a run showed the data is
+/// there. Loop 2 is where that becomes a correction the agent retrieves.
+///
+/// It must stop at the queue. Intervening runs `InterventionEncoder`, the
+/// `CoherenceGate`, second-reviewer consensus for agent-wide scope, and
+/// `TwoWriteMemory`'s audit trail. **Once verification output is training
+/// input, those four are the only things between a misclick and a rule the
+/// agent will believe** — so a surface that wrote a correction directly, or an
+/// endpoint that intervened on its own, would be the fastest way to teach an
+/// agent something false.
+#[test]
+fn contradicting_an_agent_files_an_anomaly_and_stops_there() {
+    let src = trace();
+    let handler = fs::read_to_string("src/handlers/loops.rs").expect("loops.rs");
+
+    assert!(
+        src.contains("data-wrong="),
+        "the trace can prove an agent under-sourced a field and cannot say so. \
+         That is the act the whole screen was building toward."
+    );
+
+    // Evidence, both ends. The client sends what the tool returned and the
+    // endpoint refuses the call without it — the same reasoning as migration
+    // 205's citation CHECK, pointed at an agent instead of a claim.
+    assert!(
+        src.contains("evidence"),
+        "the client no longer sends the tool's response as evidence, so a \
+         contradiction arrives at the review queue indistinguishable from an \
+         opinion."
+    );
+    assert!(
+        handler.contains("`evidence` is required"),
+        "the endpoint accepts a contradiction with no evidence. A one-click \
+         `the agent is wrong` costs the agent a correction, so it has to cost \
+         the reviewer a tool run."
+    );
+
+    // Files an anomaly, and nothing more.
+    let at = handler
+        .find("pub async fn contradict_field_handler")
+        .expect("the contradiction handler is gone");
+    let body: String = handler[at..].chars().take(6000).collect();
+    assert!(
+        body.contains("KIND_CONTRADICTED") && body.contains("create_anomaly_event"),
+        "the contradiction no longer files an anomaly, so it no longer reaches \
+         the HITL queue and Loop 2 has no input from this screen."
+    );
+    for forbidden in [
+        "InterventionEncoder",
+        "TwoWriteMemory",
+        "bump_persona_version",
+    ] {
+        assert!(
+            !body.contains(forbidden),
+            "the contradiction handler reaches `{forbidden}` directly, skipping \
+             the review queue, the coherence gate and the consensus rule. The \
+             point of filing an anomaly is that a human and a gate stand between \
+             this click and the agent's world model."
+        );
+    }
+}
+
 /// The scan must be able to fail.
 #[test]
 fn the_scan_can_actually_fail() {

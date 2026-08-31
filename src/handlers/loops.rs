@@ -1377,6 +1377,157 @@ pub async fn probe_field_handler(
     })))
 }
 
+/// POST `/api/episodes/:episode_id/contradict` — the agent was wrong, and here
+/// is the tool run that shows it.
+///
+/// # The act the trace was missing
+///
+/// You can now run the tool a contract names and read what comes back. On
+/// `advanced_metrics.xg` that produces expected goals from
+/// `fixtures/statistics`, for a field the agent left empty and a block it graded
+/// `tool_no_match` — "the tool answered and had nothing" — having never called
+/// that endpoint. The screen could prove the agent wrong and could not say so.
+///
+/// # It files an anomaly. It does not write a correction.
+///
+/// Loop 2 already exists and this is its input:
+///
+/// ```text
+/// anomaly_events
+///   → HITL queue           GET  /api/observatory/hitl
+///   → reviewer Intervenes  POST /api/observatory/hitl/:id/action
+///   → InterventionEncoder  validate, authority_weight = 1.0
+///   → CoherenceGate        Γ(C) ≥ 0.5; agent-wide blocks, episode-scope advisory
+///   → second reviewer      agent-wide only, a different user, enforced
+///   → TwoWriteMemory       synthetic episode + immutable audit trail
+///   → Loop 1 consolidates  → semantic rule the agent retrieves next run
+/// ```
+///
+/// Every step exists. Writing a correction straight from here would skip the
+/// validation, the coherence gate, the consensus and the audit trail — and the
+/// moment verification output becomes training input, those four are the only
+/// things standing between a misclick and a rule the agent will believe.
+///
+/// So this endpoint's whole job is the first arrow.
+///
+/// # Evidence is required, not optional
+///
+/// The payload carries what the tool actually returned. Without it this is one
+/// more opinion about an agent; with it, it is a fact a reviewer can check and a
+/// correction can cite. `grounding_trust` cannot supply it — its `tool_no_match`
+/// is inferred from the field being empty, which is exactly the thing in
+/// question.
+pub async fn contradict_field_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(episode_id): Path<uuid::Uuid>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let path_field = body
+        .get("path")
+        .and_then(|v| v.as_str())
+        .ok_or((StatusCode::BAD_REQUEST, "`path` is required".to_string()))?;
+    let evidence = body
+        .get("evidence")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .trim();
+
+    // The load-bearing check, and the same reasoning as migration 205's citation
+    // constraint: a one-click "the agent is wrong" with nothing attached is a
+    // laundering UI pointed at an agent instead of a claim. It costs the agent a
+    // correction, so it has to cost the reviewer a tool run.
+    if evidence.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "`evidence` is required: the response the tool actually returned. \
+             Without it this is an opinion, and it would arrive at the review \
+             queue indistinguishable from one backed by a real call."
+                .to_string(),
+        ));
+    }
+
+    let row = sqlx::query(
+        "SELECT e.agent_id, a.agent_name FROM episodes e \
+         JOIN agents a ON a.agent_id = e.agent_id WHERE e.episode_id = $1",
+    )
+    .bind(episode_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, format!("no episode {episode_id}")))?;
+
+    let agent_id: uuid::Uuid = row
+        .try_get("agent_id")
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let agent_name: String = row.try_get("agent_name").unwrap_or_default();
+
+    // Read from the contract, so a caller cannot file a contradiction about a
+    // field the agent never promised.
+    let tool = fermi::field_probe::declared_tool(&agent_name, path_field).ok_or((
+        StatusCode::BAD_REQUEST,
+        format!(
+            "`{agent_name}` declares no tool for `{path_field}`, so there is \
+             nothing for a tool run to contradict. A field with no tool is a gap \
+             in the world, not a fault in the agent."
+        ),
+    ))?;
+
+    let event = agent_bestiary_memory::AnomalyEvent {
+        event_id: uuid::Uuid::new_v4(),
+        agent_id,
+        episode_id: Some(episode_id),
+        run_id: None,
+        dyad_id: None,
+        kind: fermi::anomaly_vocabulary::KIND_CONTRADICTED.to_string(),
+        // A reviewable defect in one output. Not `critical`: the agent produced
+        // a usable answer and under-sourced one field of it.
+        severity: fermi::anomaly_vocabulary::SEV_WARNING.to_string(),
+        payload: json!({
+            "agent": agent_name,
+            "path": path_field,
+            "tool": tool,
+            "reported": "tool_no_match",
+            "reporter": principal.user_id(),
+            // Bounded. A reviewer needs enough to check the claim, not the whole
+            // response — and the call can be re-run from the trace.
+            "evidence": evidence.chars().take(4_000).collect::<String>(),
+            "evidence_chars": evidence.chars().count(),
+            "note": body.get("note").and_then(|v| v.as_str()).unwrap_or_default(),
+        }),
+        requires_review: true,
+        resolved_at: None,
+        resolved_by: None,
+        created_at: chrono::Utc::now(),
+    };
+
+    let written = fermi::write_accounting::observe(
+        fermi::write_accounting::Sink::AnomalyEvents,
+        state.memory_store.create_anomaly_event(&event).await,
+    );
+    if written.is_none() {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "the anomaly could not be written; see write_accounting".to_string(),
+        ));
+    }
+
+    Ok(Json(json!({
+        "event_id": event.event_id,
+        "kind": event.kind,
+        "queued_for": "/observatory/hitl",
+        // Said in the payload because a client that treated this as the
+        // correction would be claiming the loop had turned when it has only
+        // started.
+        "what_happens_next": "A reviewer sees this in the HITL queue. Intervening \
+                              runs it through the coherence gate and writes a \
+                              correction at authority 1.0, which consolidation \
+                              turns into a semantic rule the agent retrieves on \
+                              its next run. Nothing has changed about the agent \
+                              yet.",
+    })))
+}
+
 pub async fn settle_verification_handler(
     State(state): State<AppState>,
     principal: AuthPrincipal,
