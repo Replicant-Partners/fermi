@@ -1221,6 +1221,98 @@ pub async fn verification_queue_handler(
 /// **because** someone else can follow the citation to the same source. The
 /// citation is what earns the score, which is why it is enforced rather than
 /// encouraged, and `human_endorsed` is the honest uncited alternative.
+/// POST `/api/episodes/:episode_id/probe` — run the tool a field contract names.
+///
+/// The trace prints `call_football_api` beside a row and, until this existed,
+/// offered no way to run it. A name the platform can print and cannot offer is a
+/// description, not an affordance.
+///
+/// # It decides nothing
+///
+/// It runs the tool and returns what came out. The contract does not say **where
+/// in the response** the value lives — `response_field` is prose as often as a
+/// path — so comparing the answer to the claim automatically would be
+/// string-matching dressed as verification. The platform performs the retrieval;
+/// a person performs the comparison and records it through the settle form,
+/// which is on the same row.
+///
+/// # The tool comes from the contract, never from the request
+///
+/// The caller names a **field**. The tool is looked up. A handler that ran the
+/// tool the request asked for would be an authenticated outbound HTTP proxy
+/// whose audit trail said "field verification".
+///
+/// The tool's *input* does come from the caller, and has to: `call_football_api`
+/// needs a league id, a season and a team id, and those come from what the
+/// episode was about rather than from the contract. That is a real limit and the
+/// surface says so rather than pretending to know.
+pub async fn probe_field_handler(
+    State(state): State<AppState>,
+    _principal: AuthPrincipal,
+    Path(episode_id): Path<uuid::Uuid>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let path = body
+        .get("path")
+        .and_then(|v| v.as_str())
+        .ok_or((StatusCode::BAD_REQUEST, "`path` is required".to_string()))?;
+
+    // The agent is read from the episode, so a caller cannot borrow one agent's
+    // contract to run a tool against another's field.
+    let agent_name: String = sqlx::query_scalar(
+        "SELECT a.agent_name FROM episodes e \
+         JOIN agents a ON a.agent_id = e.agent_id \
+         WHERE e.episode_id = $1",
+    )
+    .bind(episode_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::NOT_FOUND, format!("no episode {episode_id}")))?;
+
+    let Some(tool) = fermi::field_probe::declared_tool(&agent_name, path) else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "`{agent_name}` declares no tool that could settle `{path}`. A \
+                 field with no tool in its contract is one only a person can \
+                 settle, or one whose gap is a request for an integration that \
+                 does not exist yet."
+            ),
+        ));
+    };
+
+    if !fermi::field_probe::is_runnable(tool) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "`{tool}` is the tool this field's contract names, and it cannot \
+                 be run from here: it needs a workspace, a memory store or \
+                 credentials of its own. Five of the sixteen tools named across \
+                 the contracts are in that position."
+            ),
+        ));
+    }
+
+    let input = body.get("input").cloned().unwrap_or(json!({}));
+    let probe = fermi::field_probe::run(tool, &input).await;
+
+    Ok(Json(json!({
+        "tool": probe.tool,
+        "ok": probe.ok,
+        "response": probe.response,
+        "truncated": probe.truncated,
+        "chars": probe.chars,
+        "hint": fermi::field_probe::response_hint(&agent_name, path),
+        // Stated in the payload, not only in this doc comment: a client that
+        // read `ok: true` as "the field is verified" would be making exactly the
+        // claim this endpoint refuses to make.
+        "decides": "nothing. `ok` means the tool answered, not that the claim is \
+                    true and not that this field is settled. Read the response, \
+                    then record what you concluded through the settle form.",
+    })))
+}
+
 pub async fn settle_verification_handler(
     State(state): State<AppState>,
     principal: AuthPrincipal,

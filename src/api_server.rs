@@ -2974,6 +2974,17 @@ async fn main() {
             "/api/verification-queue/:assertion_id/settle",
             post(handlers::loops::settle_verification_handler),
         )
+        // Run the tool a field contract names.
+        //
+        // The trace printed `call_football_api` beside a row and offered no way
+        // to run it. A name the platform can print and cannot offer is a
+        // description, not an affordance, and that screen was made of them.
+        //
+        // Decides nothing: it retrieves, and a person compares and settles.
+        .route(
+            "/api/episodes/:episode_id/probe",
+            post(handlers::loops::probe_field_handler),
+        )
         // Why every other surface here says `unknown` so often.
         //
         // Measured: of 206 agents that have produced an episode, 110 are

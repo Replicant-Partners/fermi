@@ -416,6 +416,21 @@ pub struct Field {
     /// reads as the queue being broken when the truth was that the agent returned
     /// nothing. Two different remedies wearing one sentence.
     pub not_checkable: Option<&'static str>,
+    /// Can [`crate::field_probe`] actually run the tool named above?
+    ///
+    /// Served rather than inferred from the name, because a surface cannot know
+    /// it. Five of the sixteen tools named across the contracts need a
+    /// workspace, a memory store or credentials of their own and are not
+    /// reachable from a read-only page — and a button the endpoint then refuses
+    /// is worse than no button, because the refusal arrives after the click.
+    pub tool_runnable: bool,
+    /// What the contract says the answer lives in.
+    ///
+    /// Prose as often as a path: `fixtures/headtohead` sits next to
+    /// `standings (rank, points, form, home/away splits)`. Handed to the reader
+    /// as a hint for composing the query, never used to compose it — which is
+    /// also why the tool call cannot be built by the platform alone.
+    pub response_hint: Option<&'static str>,
 }
 
 /// Dress the graded fields, and compute the document's weakest link.
@@ -439,6 +454,8 @@ pub fn fields(agent_id: &str, graded: &[GradedField]) -> (Vec<Field>, &'static s
             settleable_by: f.settleable_by,
             produced: !f.value.is_null(),
             not_checkable: skipped.iter().find(|s| s.path == f.path).map(|s| s.why),
+            tool_runnable: f.settleable_by.is_some_and(crate::field_probe::is_runnable),
+            response_hint: crate::field_probe::response_hint(agent_id, f.path),
         })
         .collect();
     let floor = grounding_trust::floor(graded.iter().map(|f| f.provenance));

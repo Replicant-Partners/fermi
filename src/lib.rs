@@ -382,6 +382,16 @@ pub mod verification_queue;
 // to call.
 pub mod episode_boundary;
 
+// Running the tool a field contract names.
+//
+// Sixteen tools are named across the contracts as the thing that could settle a
+// field, and the trace printed those names beside rows with no way to run them.
+// A name the platform can print and cannot offer is a description, not an
+// affordance. This is the narrow door that turns one into the other: it runs the
+// contract's tool and hands back what came out, and it decides nothing, because
+// the contract does not say where in a response the value lives.
+pub mod field_probe;
+
 // What must an agent declare before this substrate can say anything about it?
 //
 // Every trust surface reports `unknown` more often than anything else, and the

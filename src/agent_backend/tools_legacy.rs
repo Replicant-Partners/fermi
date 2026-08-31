@@ -8022,6 +8022,80 @@ async fn execute_get_workspace_messages(
 
 /// Call API-Football v3 (https://www.api-football.com/documentation-v3).
 /// Requires FOOTBALL_API_KEY environment variable.
+/// Run a builtin that needs no `ToolContext`, by name.
+///
+/// # Why this exists separately from `ToolRegistry::execute`
+///
+/// A field contract names the tool that could settle a field —
+/// `settleable_by: "call_football_api"` — and the trace printed that name beside
+/// a row with no way to run it. A name the platform can print and cannot offer is
+/// a description, not an affordance, and the screen was full of them.
+///
+/// `ToolRegistry::execute` needs a `ToolContext`: a memory store, an embedder, a
+/// registry, credentials, a workspace. Assembling one to answer "could this tool
+/// have supplied this field" would also make every workspace-scoped and
+/// delegating tool reachable from a read-only surface, which is a much larger
+/// door than the question needs.
+///
+/// So this is the narrow one, and the narrowness is the point: it dispatches only
+/// tools that take an input and touch nothing of ours. A tool absent from this
+/// match is refused by name rather than silently doing nothing.
+pub async fn execute_context_free(tool: &str, input: &serde_json::Value) -> Result<String, String> {
+    match tool {
+        "call_football_api" => execute_call_football_api(input).await,
+        "ncbi_genome_search" => {
+            crate::agent_backend::ncbi_tools::execute_ncbi_genome_search(input).await
+        }
+        "web_search" => execute_web_search(input).await,
+        "gbif_species_search" => execute_gbif_species_search(input).await,
+        "gbif_taxonomy_tree" => execute_gbif_taxonomy_tree(input).await,
+        "inat_observations" => execute_inat_observations(input).await,
+        "mycobank_lookup" => execute_mycobank_lookup(input).await,
+        name if crate::agent_backend::weather_tools::handles(name) => {
+            match crate::agent_backend::weather_tools::dispatch(name, input).await {
+                Some(r) => r,
+                None => Err(format!("Unknown weather tool: {name}")),
+            }
+        }
+        other => Err(format!(
+            "`{other}` cannot be run from here. It either needs a workspace, a \
+             memory store or credentials of its own, or it delegates — and a \
+             read-only surface must not be the door to any of those."
+        )),
+    }
+}
+
+/// Whether [`execute_context_free`] can run this tool.
+///
+/// Kept beside the match rather than derived from it, and asserted equal by
+/// `field_probe`'s tests: a surface that offers a button the dispatcher then
+/// refuses is worse than no button, because the refusal arrives after the click.
+///
+/// Not the whole set: [`is_context_free`] also admits every weather tool, which
+/// `weather_tools::handles` owns and which would be a second copy of a list if
+/// restated here. Ask that function, not this array.
+pub const CONTEXT_FREE_TOOLS: &[&str] = &[
+    "call_football_api",
+    "gbif_species_search",
+    "gbif_taxonomy_tree",
+    "inat_observations",
+    "mycobank_lookup",
+    "ncbi_genome_search",
+    "web_search",
+];
+
+/// Whether [`execute_context_free`] will run this tool.
+///
+/// The question a surface has to ask before it offers a button, and it must be
+/// answered by the dispatcher's own coverage rather than by a list beside it.
+/// `polymarket_orderbook` is why: it is named by a field contract, it appears
+/// nowhere in this file, and it is perfectly dispatchable — it lives in
+/// `weather_tools`. A first draft of this concluded from one grep that the
+/// contract named a tool that did not exist, and said so in a comment.
+pub fn is_context_free(tool: &str) -> bool {
+    CONTEXT_FREE_TOOLS.contains(&tool) || crate::agent_backend::weather_tools::handles(tool)
+}
+
 async fn execute_call_football_api(input: &serde_json::Value) -> Result<String, String> {
     let endpoint = input
         .get("endpoint")

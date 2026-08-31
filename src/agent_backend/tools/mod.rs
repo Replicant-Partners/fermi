@@ -83,6 +83,14 @@ pub use legacy::{
     // real evidence about document shape in a way a port label is not.
     builtin_tool_catalogue,
     dispatchable_tool_names,
+    // The same reasoning as the two above, generalised. A field contract names
+    // the tool that could settle a field, and until now a surface could print
+    // that name and not run it. `execute_context_free` is the narrow door for
+    // the tools that need no `ToolContext`. `is_context_free` is what a surface
+    // must ask before offering a button — not the array, which is only part of
+    // the answer — and `field_probe` asserts the two agree, so a button is never
+    // refused after the click.
+    execute_context_free,
     // Two keyless HTTP tools, re-exported so a handler that already holds a name
     // can ground it without standing up a full `ToolContext`. Neither takes
     // `ctx`, so requiring a memory store, an embedder and an agent registry to
@@ -91,6 +99,7 @@ pub use legacy::{
     execute_gbif_species_search,
     execute_mycobank_lookup,
     invalid_tool_declarations,
+    is_context_free,
     platform_tool_names,
     platform_tools,
     BuiltinToolDef,
@@ -98,6 +107,7 @@ pub use legacy::{
     ToolContext,
     ToolDeclarationError,
     ToolRegistry,
+    CONTEXT_FREE_TOOLS,
 };
 
 // The one place a `workspace_intentions` row is written, re-exported for

@@ -332,6 +332,19 @@
   .arow.r-empty > .a-d{color:var(--yellow);}
   .a-owner{grid-column:2 / -1;font-size:0.64rem;color:var(--fg4);
            border-left:2px solid var(--yellow);padding-left:7px;margin:2px 0 4px;}
+  /* The tool a contract names, as a control rather than a label. */
+  .t-run{font-size:0.62rem;font-family:inherit;background:none;cursor:pointer;
+         border:1px solid var(--aqua);color:var(--aqua);padding:1px 7px;}
+  .t-run:hover:not(:disabled){background:var(--aqua);color:var(--bg0-hard);}
+  .t-run:disabled{opacity:0.4;cursor:default;}
+  .probe{grid-column:2 / -1;margin:3px 0 5px;}
+  .probe input{font-family:inherit;font-size:0.66rem;background:var(--bg0-hard);
+               border:1px solid var(--bg3);color:var(--fg2);padding:3px 6px;width:100%;}
+  .probe .why{font-size:0.64rem;color:var(--fg4);display:block;margin-bottom:3px;}
+  .probe-out{font-size:0.66rem;color:var(--fg3);white-space:pre-wrap;
+             overflow-wrap:anywhere;max-height:16em;overflow:auto;
+             border-left:2px solid var(--bg3);padding-left:7px;margin-top:4px;}
+  .probe-out.bad{border-left-color:var(--red,#fb4934);color:var(--red,#fb4934);}
   .cite-link{font-size:0.66rem;color:var(--aqua);}
   .empty{padding:16px 8px;font-size:0.76rem;color:var(--fg4);}
   .absent{color:var(--fg4);font-style:italic;}
@@ -841,7 +854,22 @@
       // two-line paragraphs shipped down the page, which is the wall this whole
       // pass was supposed to remove. It is said once, in `legend`, with the
       // count and the tool that would close them.
-      return { cls: "r-empty", dest: `<span class="t-person">not produced</span>`, body: "" };
+      //
+      // But the tool control belongs HERE, and this branch returned before
+      // reaching it — so the button was absent from precisely the seven rows it
+      // exists for. "Could the tool have supplied this?" is the only question
+      // available about an absent field, and answering it splits one state into
+      // two with different owners: the tool returns data, so the agent had the
+      // means and did not use it; or the tool has nothing, so the gap is the
+      // integration's and not the agent's.
+      return {
+        cls: "r-empty",
+        dest: `<span class="t-person">not produced</span>`,
+        body: f.tool_runnable
+          ? `<div class="a-body">${toolControl(dotted, f)}<span class="why">could it have
+               been? the tool the contract names can be asked</span></div>`
+          : "",
+      };
     }
     if (st && !open) {
       return {
@@ -854,7 +882,7 @@
       return {
         cls: "r-actionable",
         dest: f.settleable_by
-          ? `<span class="t-tool">${esc(f.settleable_by)}</span>`
+          ? toolControl(dotted, f)
           : `<span class="t-person">needs a person</span>`,
         body: `<div class="a-body" data-assertion="${esc(aid)}">
                  ${claimState(st)}${settleForm(aid)}<span class="settle-out"></span>
@@ -869,10 +897,53 @@
     return {
       cls: "r-blocked",
       dest: f.settleable_by
-        ? `<span class="t-tool">${esc(f.settleable_by)}</span>`
+        ? toolControl(dotted, f)
         : `<span class="t-person">needs a person</span>`,
       body: "",
     };
+  }
+
+  // The tool a contract names, as a control.
+  //
+  // `call_football_api` was printed beside a row and did nothing. The name IS the
+  // thing that would close the gap, and the platform can run it, so the name is
+  // the button.
+  //
+  // `tool_runnable` is served per field. Five of the sixteen tools named across
+  // the contracts need a workspace, a memory store or credentials of their own,
+  // and offering a button the endpoint then refuses is worse than offering none:
+  // the refusal arrives after the click, by which time the reader has concluded
+  // the platform could do it.
+  function toolControl(dotted, f) {
+    if (!f.tool_runnable) {
+      return `<span class="t-tool" title="named by the contract, and not runnable from a read-only surface">${esc(f.settleable_by)}</span>`;
+    }
+    return `<button class="t-run" data-probe="${esc(dotted)}" title="run ${
+      esc(f.settleable_by)} and read what it returns">${esc(f.settleable_by)} \u25b8</button>`;
+  }
+
+  // The query the platform cannot supply.
+  //
+  // The contract names the tool and, in `response_field`, sometimes an endpoint
+  // and sometimes a sentence — `fixtures/headtohead` next to
+  // `standings (rank, points, form, home/away splits)`. Neither carries the
+  // league, the season or the team, because those come from what the episode was
+  // ABOUT rather than from the contract. So the caller fills them in, and the
+  // form says that is why rather than presenting an empty box.
+  function probeForm(dotted, f) {
+    const hint = f.response_hint || "";
+    const looksLikePath = /^[a-z0-9/_-]+$/i.test(hint) && !hint.includes(" ");
+    const prefill = JSON.stringify(
+      looksLikePath ? { endpoint: hint, params: {} } : { endpoint: "", params: {} });
+    return `<div class="probe" data-probe-form="${esc(dotted)}">
+      <span class="why">The contract names <b>${esc(f.settleable_by)}</b>${
+        hint ? ` and says the answer is in <b>${esc(hint)}</b>` : ""}. It does not carry
+        the query — league, season and team come from what this run was about — so fill
+        that in, then press again. Nothing is recorded: read the answer, then settle the
+        claim above.</span>
+      <input class="probe-in" value="${esc(prefill)}"/>
+      <div class="probe-out"></div>
+    </div>`;
   }
 
   // The document as a flat list of rows, in the agent's order, deepest last.
@@ -1093,10 +1164,66 @@
   // so both are one listener on the container rather than a handler per element:
   // `render` replaces the container's contents, and per-element handlers wired at
   // render time are how a second render leaves half the page dead.
+  // Run the contract's tool for one field and show what came back.
+  //
+  // The form opens on the first press and runs on the second. This spends an API
+  // quota against somebody's key, and a control that fires on first contact is
+  // the wrong shape for that.
+  async function runProbe(btn) {
+    const dotted = btn.dataset.probe;
+    const row = btn.closest(".arow");
+    const form = row && row.querySelector("[data-probe-form]");
+    if (!form) {
+      btn.insertAdjacentHTML("afterend", probeForm(dotted, FIELD_BY_PATH[dotted]));
+      return;
+    }
+    const out = form.querySelector(".probe-out");
+    let input;
+    try {
+      input = JSON.parse(form.querySelector(".probe-in").value || "{}");
+    } catch (err) {
+      out.className = "probe-out bad";
+      out.textContent = "That is not valid JSON: " + err.message;
+      return;
+    }
+    btn.disabled = true;
+    out.className = "probe-out";
+    out.textContent = "running\u2026";
+    try {
+      const r = await fetch(`/api/episodes/${encodeURIComponent(EID)}/probe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: dotted, input }),
+      });
+      const text = await r.text();
+      if (!r.ok) {
+        out.className = "probe-out bad";
+        out.textContent = text;
+      } else {
+        const p = JSON.parse(text);
+        // `ok` means the tool answered. It does not mean the field is settled,
+        // and the payload says so too — a surface rendering a successful call as
+        // a verdict would make exactly the claim the endpoint refuses to make.
+        out.className = p.ok ? "probe-out" : "probe-out bad";
+        out.textContent =
+          (p.ok ? "" : "the tool refused: ") + p.response
+          + (p.truncated ? `\n\u2026 ${p.chars.toLocaleString()} characters in total` : "")
+          + "\n\nThis decides nothing. If it answers the claim, settle it above and cite "
+          + "this call.";
+      }
+    } catch (err) {
+      out.className = "probe-out bad";
+      out.textContent = "Could not reach the platform: " + err.message;
+    }
+    btn.disabled = false;
+  }
+
   function wireClamps() {
     const root = document.getElementById("content");
     if (!root) return;
     root.addEventListener("click", e => {
+      const probeBtn = e.target.closest("[data-probe]");
+      if (probeBtn) { runProbe(probeBtn); return; }
       const lensBtn = e.target.closest("[data-lens]");
       if (lensBtn) {
         LENS = lensBtn.dataset.lens;

@@ -489,6 +489,74 @@ fn every_block_the_page_is_assembled_from_is_defined() {
     }
 }
 
+/// A named remedy the platform can perform must be a control.
+///
+/// The rule the whole screen kept failing: **if the platform can name what would
+/// close a gap, the name is the control.** `call_football_api` was printed beside
+/// eleven rows and ran from none of them, which makes it a description.
+///
+/// Both halves matter. A tool that cannot be run from a read-only surface — five
+/// of the sixteen the contracts name need a workspace, a memory store or
+/// credentials of their own — must stay a label, because a button the endpoint
+/// refuses is worse than no button: the refusal arrives after the click, by which
+/// point the reader has concluded the platform could do it.
+#[test]
+fn a_runnable_tool_is_a_control_and_an_unrunnable_one_is_not() {
+    let src = trace();
+
+    assert!(
+        src.contains("function toolControl("),
+        "the tool a contract names is printed rather than offered. That is the \
+         defect this screen was reported for: descriptions where affordances \
+         belong."
+    );
+    assert!(
+        src.contains("f.tool_runnable"),
+        "`tool_runnable` is no longer consulted, so every named tool gets a \
+         button — including the five that need a workspace or credentials and \
+         will be refused by the endpoint after the click."
+    );
+    assert!(
+        src.contains("data-probe="),
+        "nothing on the page can run a tool. `/api/episodes/:id/probe` exists and \
+         is unreachable, which is the same gap one layer down."
+    );
+
+    // The rows it matters most on are the empty ones, and that branch returned
+    // before reaching the control the first time it was written.
+    let at = src
+        .find("if (f.produced === false)")
+        .expect("the not-produced branch is gone");
+    let branch: String = src[at..].chars().take(1400).collect();
+    assert!(
+        branch.contains("toolControl("),
+        "a field the agent never produced offers no way to ask whether the tool \
+         could have supplied it. That is the only question available about an \
+         absence, and answering it splits one state into two with different \
+         owners: the agent had the means and did not use them, or the \
+         integration genuinely has nothing."
+    );
+}
+
+/// Running a tool must not be presented as settling anything.
+///
+/// The probe retrieves; a person compares. The contract does not say where in a
+/// response the value lives — `response_field` is prose as often as a path — so a
+/// surface that rendered a successful call as a verdict would be making exactly
+/// the claim the endpoint refuses to make, which is string-matching dressed as
+/// verification.
+#[test]
+fn a_tool_run_is_not_rendered_as_a_verdict() {
+    let src = trace();
+    assert!(
+        src.contains("This decides nothing"),
+        "the probe's result no longer says it settles nothing. `ok` means the \
+         tool answered, not that the claim is true, and a reader who reads a \
+         green result as a verdict has been told the wrong thing by the surface \
+         rather than by the endpoint."
+    );
+}
+
 /// The scan must be able to fail.
 #[test]
 fn the_scan_can_actually_fail() {
