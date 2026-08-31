@@ -1342,6 +1342,16 @@
               </div>
 
               <!-- Economics Tab -->
+              <!-- Contract Tab.
+                   POSITION IS LOAD-BEARING: `Tabs.init` pairs buttons to
+                   panels BY INDEX, not by matching `data-tab` to
+                   `data-tab-panel`. This panel must sit in the same ordinal
+                   position as its button (4th, after Knowledge), or every tab
+                   after it shows the wrong panel — which is exactly what
+                   happened when it was added at the end: Contract rendered
+                   Economics, and Intelligence rendered Contract. -->
+              <div data-tab-panel="contract" id="contract-tab-panel" style="display:none"></div>
+
               <div data-tab-panel="economics" style="display:none">
                 <div class="sections">
                   ${
@@ -1487,12 +1497,6 @@
 
               <!-- Intelligence Tab (owner only, injected by renderOwnerTabs) -->
               <div data-tab-panel="intelligence" id="intelligence-tab-panel" style="display:none"></div>
-
-              <!-- Contract Tab — the typed output contract. Visible to
-                   anyone who can see the agent, because "what does this return
-                   and where does it come from" is the question a prospective
-                   consumer has. Editing links out to the full builder. -->
-              <div data-tab-panel="contract" id="contract-tab-panel" style="display:none"></div>
 
               <!-- Manage Tab (owner only, injected by renderOwnerTabs) -->
               <div data-tab-panel="manage" id="manage-tab-panel" style="display:none"></div>

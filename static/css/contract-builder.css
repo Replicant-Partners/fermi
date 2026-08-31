@@ -467,17 +467,11 @@
   line-height: 1.6;
   margin-bottom: 14px;
 }
-.cb-standalone .btn {
-  background: var(--bg1);
-  border: 1px solid var(--bg2);
-  color: var(--fg2);
-  padding: 6px 12px;
-  font-size: 0.75rem;
-  font-family: inherit;
-  cursor: pointer;
-}
-.cb-standalone .btn:hover { border-color: var(--yellow); color: var(--fg0); }
-.cb-standalone .btn-primary { color: var(--yellow); border-color: var(--yellow); }
+/* `.btn` / `.btn-primary` deliberately absent: components.css owns them, and
+   a more specific copy here would silently win and drift from every other
+   button on the platform. The standalone page links common.css and
+   components.css for exactly this reason — the first version did not, which is
+   why nav.js and every primitive rendered as unstyled text. */
 .cb-standalone .collapsible-header {
   cursor: pointer;
   font-size: 0.74rem;
