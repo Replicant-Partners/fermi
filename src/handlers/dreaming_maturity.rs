@@ -105,6 +105,27 @@ pub struct MaturityInputs {
     /// 537 of 731 agents have zero episodes — so conflating the two reported
     /// most of the platform as broken when it was merely idle.
     pub total_episodes: i64,
+    /// How long ago the last completed cycle was, in days. `None` when none has
+    /// completed or the date was not read.
+    ///
+    /// Added because the classifier had no time dimension and therefore could
+    /// not tell a **live** fault from a **closed window**, and the difference is
+    /// the whole action. Measured on the real fleet:
+    ///
+    /// ```text
+    ///   month      cycles completed    entities extracted
+    ///   2026-05    75                  902
+    ///   2026-06    73                  0
+    ///   2026-08    68                  534
+    /// ```
+    ///
+    /// Seventy-three cycles completed in June and extracted nothing at all, and
+    /// extraction resumed in August. So of the agents this module bands
+    /// `unproductive`, 43 of 45 whose last cycle was in June are one outage that
+    /// is over — and the Observatory listed each of them as its own fault, with
+    /// the same sentence, telling their owners to check an ontologist that
+    /// demonstrably works.
+    pub last_cycle_days_ago: Option<i64>,
 }
 
 impl MaturityInputs {
@@ -174,13 +195,35 @@ pub fn classify_maturity(i: MaturityInputs) -> (DreamMaturity, String) {
                     i.completed_cycles, i.rules_rejected
                 )
             } else {
-                format!(
-                    "{} cycles completed over {} episodes but extracted nothing at all \
-                     — no entities, facts or rules. The loop is running on real \
-                     material and learning nothing. Check that the ontologist has a \
-                     working model and credentials.",
-                    i.completed_cycles, i.total_episodes
-                )
+                // Facts first, and the remedy only where it is a live question.
+                //
+                // This said "Check that the ontologist has a working model and
+                // credentials" on every agent in the band. That is a diagnosis
+                // nothing here measured, it was identical on 52 rows, and it was
+                // wrong: the ontologist extracted 534 entities the month after
+                // the window most of those agents last dreamt in. A remedy
+                // asserted on a trust surface and stale is worse than no remedy.
+                match i.last_cycle_days_ago {
+                    Some(d) if d > 30 => format!(
+                        "{} cycles over {} episodes and nothing durable came out. The \
+                         last one ran {} days ago, so this is the record of a window \
+                         that has closed rather than a live fault — the next cycle is \
+                         the test, and it costs one credit to run.",
+                        i.completed_cycles, i.total_episodes, d
+                    ),
+                    Some(d) => format!(
+                        "{} cycles over {} episodes and nothing durable came out, most \
+                         recently {} day(s) ago. Recent enough to be live: the first \
+                         thing to check is the ontologist's model and credentials.",
+                        i.completed_cycles, i.total_episodes, d
+                    ),
+                    None => format!(
+                        "{} cycles over {} episodes and nothing durable came out. No \
+                         completion date was read, so whether this is live or historical \
+                         cannot be said from here.",
+                        i.completed_cycles, i.total_episodes
+                    ),
+                }
             },
         );
     }
@@ -336,6 +379,16 @@ pub async fn agent_dreaming_maturity_handler(
         rules_rejected,
         unconsolidated_episodes: unconsolidated,
         total_episodes,
+        // Read from the same row the response already reports it from, so the
+        // diagnosis and `last_completed_at` cannot disagree.
+        last_cycle_days_ago: cyc
+            .as_ref()
+            .and_then(|r| {
+                r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("last_completed_at")
+                    .ok()
+                    .flatten()
+            })
+            .map(|t| (chrono::Utc::now() - t).num_days()),
     });
 
     let remaining = db_agent.dreaming_budget_credits - db_agent.dreaming_credits_used;
@@ -469,6 +522,13 @@ pub async fn fleet_dreaming_maturity_handler(
             rules_rejected: gi("rules_rejected"),
             unconsolidated_episodes: gi("unconsolidated"),
             total_episodes: gi("total_episodes"),
+            // The fleet query already selects `a.last_consolidated_at` and the
+            // classifier never asked for it — which is why 43 agents from one closed
+            // window read as 43 live faults.
+            last_cycle_days_ago: r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("last_consolidated_at")
+                .ok()
+                .flatten()
+                .map(|t| (chrono::Utc::now() - t).num_days()),
         };
         let (band, diagnosis) = classify_maturity(inputs);
         match band {
@@ -564,7 +624,64 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(band, DreamMaturity::Unproductive);
-        assert!(why.contains("learning nothing"), "{why}");
+        assert!(why.contains("nothing durable came out"), "{why}");
+    }
+
+    /// A closed window is not a live fault, and the difference is the action.
+    ///
+    /// Measured on the real fleet, and this is why the classifier gained a time
+    /// dimension at all:
+    ///
+    /// ```text
+    ///   month      cycles completed    entities extracted
+    ///   2026-05    75                  902
+    ///   2026-06    73                  0
+    ///   2026-08    68                  534
+    /// ```
+    ///
+    /// Seventy-three cycles completed in June and extracted nothing; extraction
+    /// resumed in August. Of the agents banded `unproductive`, 43 of the 45
+    /// whose last cycle was in June are that one outage — and the Observatory
+    /// listed each as its own fault, with one identical sentence, telling their
+    /// owners to check an ontologist that demonstrably works.
+    ///
+    /// A remedy asserted on a trust surface and stale is worse than no remedy.
+    #[test]
+    fn an_old_unproductive_window_is_not_reported_as_a_live_fault() {
+        let stale = MaturityInputs {
+            completed_cycles: 3,
+            total_episodes: 18,
+            last_cycle_days_ago: Some(92),
+            ..Default::default()
+        };
+        let (band, why) = classify_maturity(stale);
+        assert_eq!(band, DreamMaturity::Unproductive, "still a finding");
+        assert!(
+            !why.contains("credentials"),
+            "an agent that last dreamt three months ago is being told to check \
+             credentials that nothing here measured: {why}"
+        );
+        assert!(why.contains("window"), "{why}");
+        assert!(why.contains("next cycle is the test"), "must say what to do: {why}");
+
+        // Recent enough to be live, and only then is the ontologist worth naming.
+        let live = MaturityInputs {
+            last_cycle_days_ago: Some(2),
+            ..stale
+        };
+        let (band, why) = classify_maturity(live);
+        assert_eq!(band, DreamMaturity::Unproductive);
+        assert!(why.contains("credentials"), "a live fault must name what to check: {why}");
+        assert!(!why.contains("window"), "{why}");
+
+        // No date read is a third answer, not a default to either.
+        let unknown = MaturityInputs {
+            last_cycle_days_ago: None,
+            ..stale
+        };
+        let (_, why) = classify_maturity(unknown);
+        assert!(why.contains("cannot be said"), "{why}");
+        assert!(!why.contains("credentials"), "{why}");
     }
 
     /// An agent that was never executed has nothing to consolidate, so an empty

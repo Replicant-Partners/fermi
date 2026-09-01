@@ -55,6 +55,7 @@ Two relations do the rest of the work:
 | surface | why | where its content goes |
 |---|---|---|
 | `/loops` | mostly documentation; the per-artifact answer is already on the trace | the loops fold on `/trace/:id`; the prose to `/docs` |
+| the specimen **Health** tab | eleven panels answering *can the platform say anything about this agent* — a question about the platform, on the page you opened to read an agent. Built as an entry into the Observatory, which exists and is where fleet health belongs. It is also the only reason a single-agent page computes a fleet census | one line on `/specimen`: what the platform cannot currently say about this agent, and whose job that is — linking into the Observatory |
 | `/gates` | routes to the same handler as `/loops` — literally the same page twice | as above |
 | `/agent/:id` (legacy detail) | 6,500-line template, eight tabs, thirteen metrics rendered twice under different names | `/specimen/:name` + the configuration shelf |
 | `/rounds`, `/ecology`, `/declarations`, `/catalogue` | already demoted to a "More" dropdown, which is where surfaces go to be forgotten rather than removed | `/declarations` is a real worklist and should merge into the bestiary as a lens; the rest to `/docs` |
@@ -173,6 +174,29 @@ half-built shelf plus a deleted page is worse than either.
   It is also the only reason `/api/specimen/:name` computes a fleet-wide census:
   46s before the conformance fix, 9.4s after, and the remaining 9s is
   `Observation::collect` plus eleven serial `resolve_for_subject` calls.
+
+  **Measured, on the real fleet, after the Observatory was reviewed:**
+
+  ```text
+    month      consolidation cycles completed    entities extracted
+    2026-05    75                                902
+    2026-06    73                                  0
+    2026-08    68                                534
+  ```
+
+  Seventy-three cycles completed in June and extracted nothing at all;
+  extraction resumed in August. Of the 78 agents banded `unproductive`, 43 of the
+  45 whose last cycle fell in June are **that one outage, which is over** — and
+  the Observatory listed each of them as its own fault, in one identical
+  sentence, telling their owners to *"check that the ontologist has a working
+  model and credentials"*. The ontologist works: it produced 534 entities the
+  following month.
+
+  That is three defects in one block, and all three are ones this project has
+  already named elsewhere: a reason belonging to a **state** printed per row; a
+  **remedy asserted rather than measured**; and a **sentence outliving its fact**.
+  Fixed in `dreaming_maturity.rs` by giving the classifier the time dimension it
+  never had — every call site already had the date and none of them passed it.
 
   Three things to decide together, and they are one decision:
 

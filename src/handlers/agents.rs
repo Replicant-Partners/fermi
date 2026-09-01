@@ -3162,6 +3162,10 @@ pub async fn loop_health_handler(
                 rules_rejected: gi("rules_rejected"),
                 unconsolidated_episodes: unconsolidated,
                 total_episodes: gi("total_episodes"),
+                // Already computed above for the backlog reading. `999` is this site's
+                // sentinel for never-consolidated, so `None` is passed instead — the
+                // classifier needs to tell absent from very old.
+                last_cycle_days_ago: last_consolidated.map(|_| days_since),
             },
         );
         let unproductive =
