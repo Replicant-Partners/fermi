@@ -1,0 +1,345 @@
+# The agent compiles — tool registry migration and the UX that depends on it
+
+**Written 2026-09-01 as a fresh-session entry point.** Everything needed to start
+is here; nothing in it requires the conversation it came out of.
+
+**Companion:** `docs/plans/TOOL_REGISTRY_REFACTOR.md` — the mechanical migration,
+already written, plus two amendments (§2.1.1 and §3.6) added at the same time as
+this document. Read that for *how*. Read this for *why now*, *what not to touch*,
+and *what the UX needs from it*.
+
+---
+
+## 1. The goal, in one paragraph
+
+An author gives an agent some tools and selects, from those tools' declared
+responses, which fields the agent will produce. The platform then **compiles**
+the agent: every declaration is resolved against what actually exists, and the
+author is told what resolved, what is wrong, and what is merely waiting on a
+source that does not exist yet. No wizard, no forms — source and diagnostics, the
+way a compiler works. An agent that compiles is an agent ready to produce
+information somebody else can trust.
+
+## 2. Measured facts
+
+Re-derived at the time of writing. **Do not re-measure these to start; do
+re-measure before claiming any of them fixed.**
+
+| fact | value | why it matters |
+|---|---|---|
+| tools with a declared response shape | **12** of ~100 | the other 88 fall back to extracting nouns from description prose, marked `unconfirmed` |
+| `BuiltinToolDef` literals | 93 in `tools_legacy.rs`, 7 in `weather_tools.rs` | why response shapes live in a side table today |
+| `FIELD_CONTRACTS` entries | 105, across **10** distinct agents | the counts in them are per *agent*; this bit us once already (46s endpoint) |
+| `genome_profiler` fields | 6 `Sourced`, 7 `Unsourced`, 1 `Derived`, 1 `Narrative` | the richest honest declaration on the platform; **do not prune it** |
+| `Reading` variants | `Idle`, `Fault`, `Unknown` | **there is no green.** An agent that works reads `idle` |
+| `Finding` fields | `check`, `message` | no severity, therefore no `pending` state |
+| `PUT /api/agents/:agent_id` accepts | ~20 fields incl. `system_prompt`, `model`, `llm_provider`, `temperature`, `model_params`, `valence`, `fork_pricing`, `output_contract`, `accepts`, `produces` | **no missing endpoints.** Panels are UI work, not backend work |
+| `episodes.workspace_id` | exists (mig-226), **0 of 3,688** attributed | forward-only; attribution starts from the next workspace run |
+| episodes with no embedding | **2,770 of 3,688** | see §7, "the dream thing" |
+
+## 3. What already exists — read this before building anything
+
+The single largest risk to this work is rebuilding something that is already
+here. Inventory, with paths:
+
+| thing | where | state |
+|---|---|---|
+| **contract compiler** | `src/contract_sketch.rs::compile(&self, tool_names) -> Result<Compiled, Vec<Finding>>` | works. Server-side on purpose |
+| compile HTTP seam | `src/handlers/contracts.rs::compile_handler` | works |
+| **contract editor widget** | `static/js/widgets/contract-builder.js` (1,756 lines) + `static/css/contract-builder.css` | works. `ContractBuilder.mount({ container, agentId })`. **Three hosts:** the create wizard step 4, `/contracts`, and the specimen shelf |
+| **tool response shapes** | `src/tool_response_shapes.rs` — `ToolResponse { tool, evidence, fields }`, `Evidence::Constructed \| Vendor`, `response_for(tool)` | right in every respect except where it lives. 12 tools |
+| tools endpoint for authoring | `GET /api/contracts/tools` → `{ tools, response_shapes, note }` | works, and its `note` states that absence means *unread*, not *empty* |
+| decompile (contract → sketch) | `GET /api/contracts/decompile/:id` | works |
+| **declaration ladder** | `src/declaration_ladder.rs::LADDER` — `rung`, `declares`, `owner`, `unlocks`, `without_it` | works. Served per agent by `/api/specimen/:name` as `declaration.rungs` |
+| **the configuration shelf** | `templates/specimen.html` — drag handle, persisted width, three groups | Declaration group live and ranked; Intelligence and Manage are read-only |
+| create wizard | `/agents/new`, `templates/agent_create.html` (1,691 lines) | 6 steps: Identity, Ontology, Capabilities, Contract, Economics, Review |
+| legacy agent page | `/agent/:id`, `templates/agent_detail.html` (~6,500 lines) | **stays reachable** until the shelf absorbs it |
+| grounding enforcement | `src/grounding_trust.rs` | `Grounding::Sourced \| Unsourced \| Inferred \| Derived \| Narrative` |
+| the reader for legacy prose | `src/field_probe.rs` — `parse_hint`, `tool_takes_endpoint`, `search` | keep. It reads the 105 hand-written `response_field` strings. New contracts should not need it |
+
+## 4. The parallel work, and the seam
+
+**A typed schema builder is in flight in the same tree.** At the time of writing
+these files are modified or new and uncommitted:
+
+```
+src/workflows/agent_contract.rs          src/declaration_ladder.rs
+src/grounding_trust.rs                   src/agent_backend/envelope.rs
+src/agent_backend/tools_legacy.rs        src/api_server.rs   src/lib.rs
+static/js/widgets/contract-builder.js    agents/port_binding_expected.json
+agents/curated/*/output_contract.sketch.json      (new: per-agent sketch files)
+src/a2a_card.rs  src/a2a_task.rs  src/a2a_webhook.rs  src/handlers/a2a.rs
+```
+
+**The seam, stated so both sides can move:**
+
+1. **The typed-schema side owns**: the sketch format, the compiler, the schema
+   registry, `enforce_from_output_contract`, and the contract-builder widget's
+   internals.
+2. **This work owns**: the `PlatformTool` trait, the registry, domain modules,
+   and `response_shape()`.
+3. **The contract between them is one function signature** —
+   `ContractBuilder.mount({ container, agentId })` — and one data shape:
+   `GET /api/contracts/tools` returning `response_shapes`. The shelf depends on
+   nothing else about the widget. If `mount`'s signature changes, exactly one
+   line in `templates/specimen.html` changes.
+4. **`response_shape()` is additive to the typed-schema work, not a competitor.**
+   The sketch compiler asks *"is this contract well-formed?"*. `response_shape()`
+   answers a question it currently cannot: *"does the tool you named actually
+   return the field you claimed?"* One is syntax, the other is a fact about the
+   world.
+5. **Staging discipline, learned the hard way.** `tools_legacy.rs`,
+   `api_server.rs`, `grounding_trust.rs`, `lib.rs` and `declaration_ladder.rs`
+   are edited by both sides. Committing whole files there commits the other
+   author's uncommitted work and has broken the release build once. Rebuild the
+   file as `git show HEAD:<f>` plus only your hunks, stage the blob with
+   `git hash-object -w` + `git update-index --cacheinfo`, then assert their
+   symbols are absent from the staged blob before committing.
+
+## 5. Is this blocking UX?
+
+**Partly, and the blocked part is the part that matters.** Itemised, so the two
+tracks can run at once:
+
+### Blocked on `response_shape()` coverage
+
+* **Selecting fields from a tool.** The core authoring interaction. Possible for
+  12 tools today; for the other 88 the builder extracts nouns from description
+  prose and marks them `unconfirmed`, which is honest labelling of a method that
+  cannot be trusted.
+* **The interesting half of the compile.** *Does the tool you named return the
+  field you claimed?* Answerable for 12% of tools.
+* **"This agent is ready."** A positive statement needs sourced fields with
+  named evidence. Without declared responses the platform can say a contract is
+  well-formed and cannot say it is *true*.
+
+### Not blocked — can proceed in parallel, today
+
+* **Intelligence and Manage panels, editable.** `PUT /api/agents/:agent_id`
+  already accepts every field. Pure UI work. This is the largest immediately
+  available UX win.
+* **`pending` as a first-class state.** `Grounding::Unsourced` already means *no
+  tool exists, so the field must be null*. The vocabulary exists; the surfaces
+  collapse it into failure. Fixing that is independent of the registry.
+* **A fourth `Reading`.** See §6.1. Independent.
+* **The shelf's other rungs** getting their editors (`ports` is `accepts` /
+  `produces` — two arrays and a `PUT`).
+* **Pulse views by workspace and app.** Unblocked by mig-226; waiting on
+  attribution to accumulate, not on this.
+
+**Conclusion:** start the registry migration in a fresh session, and keep the
+non-blocked UX moving in parallel. They meet at Phase 5.
+
+## 6. The UX requirements this must satisfy
+
+Written as requirements rather than designs, except where the design is already
+settled by a rule this project holds.
+
+### 6.1 There must be a way to say an agent works
+
+```rust
+pub enum Reading { Idle, Fault, Unknown }   // src/panel_absence.rs
+```
+
+Three readings, none meaning *working*. `genome_profiler`'s health today is 8
+`idle`, 2 `unknown`, nothing at fault — so no surface can state the true thing,
+which is that this agent functions.
+
+The module name is the confession: `panel_absence` was built to explain absences
+honestly, and does. It was never built to assert presence.
+
+**Requirement.** A positive reading, and it must be *earned* rather than default:
+resolved declarations, sourced fields with named evidence, and pulses that
+carried grades. Not "no fault found" — a statement with a subject. Whatever it is
+called, `Idle` must keep meaning *has had no occasion*, because that distinction
+was expensive to win.
+
+### 6.2 The compile has three states, and the third is load-bearing
+
+| state | meaning | who acts |
+|---|---|---|
+| **resolved** | a tool exists, dispatches, and declares a response containing this field | nobody |
+| **error** | the named tool does not exist, or cannot supply the named field | the author, now |
+| **pending** | no tool can supply it **yet** | nobody — a standing request for an integration |
+
+**Green means zero errors, not zero pending.** An agent with seven pending fields
+and no errors compiles.
+
+`Finding { check, message }` has no severity today, so the compiler can only say
+*wrong*. It needs a third outcome — and `pending` must not be a lesser `resolved`
+or a milder `error`; it is a different kind of thing with a different owner.
+
+Why this is not a nicety: without it the only route to a green agent is deleting
+ambition. `genome_profiler` declares seven fields no tool can supply, which is
+"it should eventually be richer" made machine-readable, and it is the best
+example on the platform of what the contract system is for.
+
+### 6.3 Field selection, not field typing
+
+Given an agent's tools, the union of their declared response fields is the
+**candidate set**. Selecting from it yields a `Sourced { tool, response_field }`
+that is correct by construction. No prose, no parser, no heuristic.
+
+`field_probe::parse_hint` and `tool_takes_endpoint` exist because the 105
+existing contracts are prose. They stay, as a reader for those. **A newly
+authored contract must not need them.**
+
+A tool with no declared shape must be **visibly** unread rather than silently
+absent — `Evidence` already carries this and the tools endpoint already says so
+in its `note`. Do not lose it.
+
+### 6.4 No wizard
+
+A wizard asks a fixed sequence and tells you nothing until the end, which is
+exactly the reported experience of `/agents/new`. The replacement is not a
+better sequence, it is a different model: **edit, compile, read the diagnostics,
+edit again.**
+
+Creation and management are then the same components in two arrangements:
+
+| wizard step | shelf panel | state |
+|---|---|---|
+| 4 · Contract | Declaration → `field_contract` | **done** — `ContractBuilder`, three hosts |
+| 3 · Capabilities | Intelligence | extract as a mountable widget |
+| 1 · Identity | Manage | extract as a mountable widget |
+
+Extract each the way `ContractBuilder` already was, and *"create an agent by
+walking it up the declaration ladder"* stops being a flow to build. It becomes
+the same editors mounted in the ladder's order. **Any design that produces a
+third creation path is wrong** — there are already two.
+
+### 6.5 The row grammar is settled; reuse it
+
+The diagnostics list is a list of declarations, and the trace already settled
+what such a row looks like: **`value · condition · act`**, positionally fixed,
+where the condition is one token from a closed vocabulary and the act is the
+control that closes it. Learn one row, read a hundred.
+
+The rules that go with it, all of them paid for:
+
+1. A table cell holds a value or a token, never a sentence.
+2. **Explain once, not per row.** A reason belonging to a *state* goes in one
+   legend keyed by the token the rows print.
+3. **Absent must look different from bad.**
+4. A fold hides detail, never a finding, and its summary carries the count it is
+   hiding.
+5. **If the platform can name what would close a gap, the name is the control.**
+   Never print the name of a remedy you do not offer.
+6. A lens changes columns and sort, not the page.
+
+### 6.6 Embedding is a declaration with a visible consequence
+
+The create wizard collects embedding provider/model as configuration. It is not
+configuration; it decides whether the agent can ever learn. See §7.
+
+**Requirement.** Wherever the embedding choice is made, the consequence is stated
+next to it, and the platform's own default is honest about the cost.
+
+### 6.7 Also outstanding, from the same review
+
+* **Compound agents are agents** — no new noun. `cohere_and_coordinate` needs a
+  **roster** on its specimen page; its pulse children already render in the
+  trace's flow strip.
+* **`/flow/:id`** needs the agent roster and a link to the actual work surface.
+* **The agent page** needs the reverse join: which workspaces and apps it belongs
+  to.
+* **The specimen Health tab** is eleven panels answering a question about the
+  platform, and is the only reason a single-agent page computes a fleet census
+  (46s → 9.4s so far; the remaining ~9s is that census). Replace with one line
+  linking into the Observatory, and put the census on a clock with a cache.
+* **`/loops` and `/gates`** route to the same handler. Two routes to one render.
+
+## 7. The dream thing, so a fresh session does not rediscover it
+
+Not this plan's work, but it is the same defect class and it will come up.
+
+```
+no embedding → find_neighbors returns [] → no neighbours → min_samples unmet
+→ DBSCAN noise → never joins a cluster → the ontologist is handed nothing
+→ job completes, charges a credit, advances last_consolidated_at, learns nothing
+```
+
+`EpisodeClusterer::find_neighbors` in `agent-bestiary/memory/src/clustering.rs`.
+Every zero-yield consolidation cycle on the fleet had `clusters_identified = 0`;
+**52 of 52** zero-yield agents are explained by unembedded episodes and **0** have
+any other cause. 2,770 of 3,688 episodes have no embedding.
+
+The diagnosis now names it (`dreaming_maturity::MaturityInputs.episodes_without_embedding`).
+**The cause is untouched, because it is a decision:** `episode_boundary::Write`
+takes `provenance: Option<&ProvenancedEmbedding>` and several call sites pass
+`None` — the delegation hop deliberately, documented as *"a per-fan-out cost
+decision and not a bug to slip into a refactor."* That is correct, and it is also
+why Loop 1 does not turn for most of the fleet. Embedding every episode costs an
+embedding call per pulse; not embedding them costs the whole dreaming loop.
+
+## 8. Order of work
+
+**Phase 0 — amend the trait design.** `docs/plans/TOOL_REGISTRY_REFACTOR.md`
+§2.1.1 is already written. Confirm `response_shape()` is on `PlatformTool` before
+any tool is migrated. *Phase 2 touches every tool exactly once; without this it
+touches every tool twice, and the second pass is the one that does not happen.*
+
+**Phase 1 — trait and registry alongside the old.** No deletion, no behaviour
+change. Invariant test: names unique, and every registered name dispatchable.
+
+**Phase 2 — migrate domain by domain, declaring responses as you go.** Fold
+`tool_response_shapes` into the impls, keeping `Evidence` exactly as it is.
+Report coverage per domain; absent stays visible.
+
+**Phase 3 — switch dispatch.** As written in the companion doc.
+
+**Phase 4 — delete the legacy file.** Only after `ARMS_WITHOUT_DEFS` is empty and
+stays empty.
+
+**Phase 5 — the compile surface.** Now answerable, because the tools declare what
+they return. Diagnostics in the settled row grammar; the three states from §6.2;
+green from §6.1.
+
+**In parallel, not blocked:** Intelligence and Manage as mountable widgets
+(§6.4), `pending` stopping being rendered as failure (§6.2), the fourth `Reading`
+(§6.1).
+
+## 9. How to verify, and the traps
+
+* **`node --check` is a syntax check.** It has passed over three runtime failures
+  in `templates/trace.html` alone. Render checks live in `scripts/check_*.js` and
+  run in CI: `check_trace_probe_render.js`, `check_pulse_row.js`,
+  `check_specimen_shelf.js`. Add one for any new surface, and **assert on the
+  distinctions, not the markup**.
+* **Fixtures are the bug twice so far** — a document under the wrong key made six
+  lens checks vacuous, and a lineage stub of the wrong shape meant four cells
+  rendered their "nothing" branch. Prove a check can fail by breaking the thing
+  it guards.
+* **Verify the committed tree, not the working tree.** Your tree holds the other
+  author's uncommitted files. `git worktree add /tmp/fv HEAD --detach` with
+  `CARGO_TARGET_DIR=` pointed at the main target dir, then **`touch src/lib.rs`**
+  — the shared target dir serves stale artifacts that look like real errors, and
+  it has done so three times in one session.
+* **Ask Postgres about SQL.** `scripts/lint-schema-consistency.py` resolves a
+  qualified name against a *global* set of columns, not the aliased table, so
+  `e.error_message` passed while the column is `error_details` — 500s on
+  `/api/stream` and a silent empty list on the specimen. Guard projections with a
+  `LIMIT 0` execution: `the_pulse_projection_resolves_against_the_schema`,
+  `the_workspace_attribution_resolves_against_the_schema`.
+* **`.unwrap_or_default()` on a query is a lie.** It turned a broken read into
+  "No pulse recorded" for an agent with 218. Let the error travel as a value.
+* **Pre-existing red tests, not yours:** `every_decision_function_is_registered_or_exempted`
+  (5 unregistered, incl. the parallel `enforce_from_output_contract`),
+  `every_source_scan_declares_the_test_that_proves_it_can_fire`
+  (`tests/inline_js_syntax.rs` not in `SCANS`).
+* Migrations are registered in `run_migrations` in `src/api_server.rs`, and CI
+  parses that list rather than sorting the directory. `DATABASE_URL` in `.env` is
+  **production** — additive and read-only only.
+
+## 10. What success looks like
+
+An author opens a specimen, drags the shelf wider, and sees:
+
+* which of its declarations resolved, which are wrong, and which are waiting on
+  the world — each with the control that closes it;
+* the fields it produces, selected from what its tools actually return, with the
+  evidence for each;
+* its pulses, in the same grammar as everywhere else, showing who addressed whom
+  and whether anything checked the answer.
+
+And the platform can say, of an agent that has earned it, that it works.
