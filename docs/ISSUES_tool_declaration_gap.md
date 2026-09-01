@@ -1,8 +1,18 @@
 # Captured: the tool declaration gap
 
-**Status: recorded, not fixed. Deliberately blocked on the tool registry
-refactor**, because three of the four issues below are decisions about what the
-registry *is*, and making them twice would be worse than making them late.
+**Status: steps 1 and 2 done. The rest is deliberately blocked on the tool
+registry refactor**, because those are decisions about what the registry *is*,
+and making them twice would be worse than making them late.
+
+| | | |
+|---|---|---|
+| ✅ | reconciliation test | `tests/tool_declaration_reconciliation.rs` — a tool named by `FIELD_CONTRACTS` must be declared on the card. Was 2 failures; now 0. |
+| ✅ | the two stale cards | `football_analyst` gained `call_football_api`; `weather_oracle` gained its four. |
+| ✅ | heuristic report | `scripts/tool_declaration_report.py` — prints both checks. Exits 0 always. |
+| ⏸ | does `mcp_tools` grant? | §0, §2 — the registry refactor decides |
+| ⏸ | generate the card list from `FIELD_CONTRACTS`? | §0.1 |
+| ⏸ | should the trace's per-field reconciliation emit a gate decision? | the prize — see the ordering section |
+| ⏸ | `football_analyst` has no grounding map | §3 — an ordinary migration, not blocked, not yet done |
 
 Found while loading `football_analyst` in the contract builder. Nothing here is
 a builder bug — the builder reported all of it accurately. It is what the
@@ -85,10 +95,19 @@ The trace **already reconciles 2 against 3**, per field, per episode. That is
 what produces `never asked · call_football_api would close 4 of them` and
 `asked, empty`. Nothing reconciles either of them against 1.
 
-### Mechanical reconciliation, run now
+### Mechanical reconciliation — **now enforced**
 
-Of the 9 agents with tool-sourced entries in `FIELD_CONTRACTS`, **2 name a tool
-their own card does not declare**:
+`tests/tool_declaration_reconciliation.rs` reads `FIELD_CONTRACTS` through the
+compiler (not a regex over the source — a regex would quietly find nothing if
+the formatting changed, and pass by having no work to do) and asserts that every
+tool a field contract names is declared on that agent's card. It also asserts
+the named tool actually dispatches, which nothing checked before: the trace
+offers a `run` button for a contracted tool, so a phantom name there is an
+affordance that cannot work.
+
+At the time of writing it failed on **2 of the 9** agents with tool-sourced
+entries. Both are now fixed; the failure it produced is recorded here because
+it is the thing the test exists to keep catching:
 
 ```
 football_analyst   contract says  call_football_api
@@ -103,7 +122,12 @@ weather_oracle     contract says  polymarket_orderbook, weather_climatology,
 `weather_oracle` is the uncomfortable one: it is part of the fully-typed
 weather composition, migrated deliberately and covered by
 `tests/weather_composition.rs`. Being freshly typed did not prevent the
-divergence, because nothing compares the two declarations.
+divergence, because nothing compared the two declarations.
+
+The added entries carry `{name, description}` and **no `input_schema`**. The
+registry owns the schema, 212 of the 352 existing `mcp_tools` entries already
+omit it, and a second copy is a second thing to drift — which is the whole
+subject of this document.
 
 ### Why this makes the fix cheaper than §0 implies
 
@@ -306,13 +330,15 @@ Trusted declarations are a **prerequisite**, not a nice-to-have. A gate over a
 declaration nothing keeps honest is a gate over an opinion, and every downstream
 verdict inherits that. So:
 
-1. **Now, safe under any registry semantics** — a reconciliation test:
-   `FIELD_CONTRACTS` names a tool ⇒ the card must declare it. Two failures
-   today, both true facts, both one-line card edits. Prevents new divergence
-   whatever the refactor decides.
-2. **Now, as a report rather than a gate** — the prompt scan (22 cards). It is a
-   regex over prose and should not be load-bearing, but an unowned list of 22
-   is better than an unowned list of 0.
+1. ~~**Now, safe under any registry semantics**~~ — **done.** The reconciliation
+   test, and the two card fixes it found.
+2. ~~**Now, as a report rather than a gate**~~ — **done.**
+   `scripts/tool_declaration_report.py`. Left ungated on purpose, and running it
+   shows why: `xaman_ek` accounts for 59 of the hits because it is the navigator
+   agent and its prompt *describes* the tool catalogue. A ratchet over that would
+   have to grow an exemption list on its first day. The other 21 rows mostly look
+   like real omissions (`web_search` is the common one), but "looks like" is the
+   correct strength of claim for a regex over prose.
 3. **After the refactor** — whether `mcp_tools` grants; whether the card's
    declaration should be *generated* from `FIELD_CONTRACTS` rather than
    maintained beside it; whether the trace's per-field reconciliation should

@@ -105,6 +105,22 @@
             }
           }
         }
+      },
+      {
+        "name": "weather_ensemble_forecast",
+        "description": "Multi-model, multi-member weather ensemble from Open-Meteo reduced to a predictive distribution for one station and target date. Returns member values, ensemble mean/median/std, per-model medians and exceedance probabilities, aggregated in the station's own timezone and the market's own unit. Keyless."
+      },
+      {
+        "name": "weather_climatology",
+        "description": "Climatological base rate for a weather event at a station from the ERA5 reanalysis archive. Returns per-year values across the same calendar-day window, the empirical distribution, a fitted warming trend and the trend-adjusted base rate. The reference forecast and the Brier Skill Score denominator. Keyless."
+      },
+      {
+        "name": "weather_dispersion_fit",
+        "description": "A station's measured forecast error by lead time, returned as fitted calibration parameters rather than guessed priors. Reconstructs forecast-versus-outcome pairs from Open-Meteo's previous-runs archive; RMSE is the calibration target directly. Keyless."
+      },
+      {
+        "name": "polymarket_orderbook",
+        "description": "Live CLOB order book for a Polymarket outcome token, converted into decision numbers: best bid/ask with depth, midpoint, spread, implied probability, and — given your own calibrated probability — fee-adjusted expected value and Kelly stake."
       }
     ],
     "skills": [

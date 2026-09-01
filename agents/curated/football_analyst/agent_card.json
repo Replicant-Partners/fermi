@@ -27,6 +27,10 @@
             "query"
           ]
         }
+      },
+      {
+        "name": "call_football_api",
+        "description": "Call the API-Football v3 REST API for live football data: standings, fixtures, results, team and player statistics, injuries, lineups, head-to-head records and match predictions. Pass-through to the vendor; the response shape is theirs. Requires FOOTBALL_API_KEY."
       }
     ],
     "skills": [
