@@ -276,7 +276,27 @@ globalThis.fetch = (url, opts) => {
   if (url.includes("verification-queue")) {
     return reply({ settleable_verdicts: ["human_sourced", "human_endorsed", "rejected"] });
   }
-  if (url.endsWith("/lineage")) return reply({ callers: [], callees: [] });
+  // The shape `flowStrip` actually reads. It was `{callers, callees}`, which is
+  // not it, so every cell rendered its "nothing" branch and the resolved parent,
+  // the delegated children and the workspace delivery — the three cells worth
+  // having — were never drawn once.
+  if (url.endsWith("/lineage")) {
+    return reply({
+      parent: { state: "resolved", agent: "orchestrator",
+                episode_id: "11111111-1111-1111-1111-111111111111" },
+      children: [
+        { agent: "genome_profiler", status: "success",
+          episode_id: "22222222-2222-2222-2222-222222222222" },
+        { agent: "prey_locator", status: "failed",
+          episode_id: "33333333-3333-3333-3333-333333333333" },
+      ],
+      delivered: [
+        { workspace: "Fermi — Will Manchester City win the 2026-27 EPL",
+          workspace_id: "44444444-4444-4444-4444-444444444444",
+          message_type: "execution_result" },
+      ],
+    });
+  }
   if (url.endsWith("/probe")) return reply(probeReply(NEXT_PROBE));
   if (url.endsWith("/contradict")) return reply({ anomaly_id: "x" });
   return reply({}, 404);
@@ -362,6 +382,36 @@ const P = mod.exports;
     `to the state and the state's reason is in the legend — this is the wall ` +
     `that shipped twice`);
 
+  // 1e. the chain is a picture, on the page, above the loops.
+  //
+  // Four cells: who called it, this pulse, who it called, where it landed. A
+  // pulse nothing consumed fed nothing, so this outranks a claim about learning
+  // over months — and it was three stacked sentences two folds down.
+  CONTENT.html = "";
+  P.render();
+  const flowAt = CONTENT.html.indexOf('class="flowstrip"');
+  ok(flowAt >= 0, "the chain is not drawn at all");
+  const cells = (CONTENT.html.slice(flowAt).match(/<div class="fc t-/g) || []).length;
+  ok(cells === 4, `the chain drew ${cells} cells, not four`);
+  const loopsAt = CONTENT.html.indexOf("the loops");
+  ok(loopsAt > flowAt, "the loops are drawn above the chain");
+  // The links are the affordance. A chain you cannot follow is a diagram.
+  for (const [href, what] of [
+    ["/trace/11111111", "the caller"],
+    ["/trace/22222222", "a delegated pulse"],
+    ["/flow/44444444", "the workspace it landed in"],
+  ]) {
+    ok(CONTENT.html.includes(href),
+      `${what} is named and not linked. If the platform can name it, the name is ` +
+      `the control.`);
+  }
+  ok(/failed/.test(CONTENT.html.slice(flowAt, flowAt + 2000)),
+    "a delegated pulse that failed is drawn as though it succeeded");
+  {
+    const strip = CONTENT.html.slice(flowAt, flowAt + 2500);
+    ok(!/undefined|NaN/.test(strip), "the chain printed a placeholder: " + strip.slice(0, 200));
+  }
+
   // 2. the probe form opens on every field, runnable or not.
   for (const f of TRACE.fields) {
     const html = P.probeForm(f.name, P.FIELD_BY_PATH[f.name] || f);
@@ -397,7 +447,7 @@ const P = mod.exports;
     ["missing", /NOT FOUND/, /source does not carry it/],
     ["no_keys", /nothing to look for/, null],
     ["unparseable", /not JSON/, /unknown, not absent/],
-    ["wrong_endpoint", /not this field's endpoint/, /teams\/statistics/],
+    ["wrong_endpoint", /Not this field's endpoint/, /teams\/statistics/],
     ["refused", /The tool refused/, null],
     ["truncated", /FOUND/, /160,312/],
   ];

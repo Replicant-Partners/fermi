@@ -740,8 +740,12 @@ fn the_summary_is_a_strip_and_the_expert_views_carry_their_headlines() {
     let at = src
         .find("function render(d) {")
         .expect("`render` is gone, which is a larger problem than this test");
-    let body: String = src[at..].chars().take(3000).collect();
-    for (name, what) in [("feeds(d)", "the loops"), ("ladder(d)", "the ladder")] {
+    // Generous: `render` carries the head template, the fold summaries and the
+    // assembly chain, and a window tight enough to feel precise is a window that
+    // fails on a comment. It already did, at 3000, four characters short of the
+    // line it was looking for.
+    let body: String = src[at..].chars().take(6000).collect();
+    for (name, what) in [("loopsFed(d)", "the loops"), ("ladder(d)", "the ladder")] {
         assert!(
             body.contains("expert(") && body.contains(name),
             "{what} is no longer part of the folded expert view. It is true, it is \
@@ -749,6 +753,29 @@ fn the_summary_is_a_strip_and_the_expert_views_carry_their_headlines() {
              the page."
         );
     }
+    // The chain is on the page and the loops are under it.
+    //
+    // A pulse nothing consumed fed nothing, and a pulse a teammate picked up is
+    // the whole point of a composition — so where an artifact came from and where
+    // it landed outranks a claim about learning over months. Both were in one
+    // fold, loops first.
+    let flow = body.find("collaboration(d)").expect(
+        "the chain is no longer drawn. Who called this pulse and where its \
+                 output landed is the half that says whether it was consumed at all",
+    );
+    let loops = body.find("loopsFed(d)").expect("the loops block is gone");
+    assert!(
+        flow < loops,
+        "the loops are drawn above the chain again. What happened to the artifact \
+         comes before what it might teach over months."
+    );
+    assert!(
+        src.contains("function flowStrip("),
+        "the chain is prose again. It is the one thing on this page that is \
+         genuinely a picture — who called it, this pulse, who it called, where it \
+         landed — and it was three stacked sentences two folds down."
+    );
+
     for head in ["loopsHead", "ladderHead"] {
         let at = body
             .find(&format!("const {head} = "))
@@ -982,7 +1009,7 @@ fn a_probe_asks_this_fields_question_and_says_if_the_answer_is_there() {
          bug unless it is stated."
     );
     assert!(
-        src.contains("not this field's endpoint"),
+        src.contains("Not this field's endpoint"),
         "a probe run against an endpoint the contract does not name is no longer \
          called out. A replay chip is one press away and returns a sound answer \
          to a different question."

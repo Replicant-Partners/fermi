@@ -249,6 +249,33 @@
   /* The finding stays in the open. A `no gate` behind a fold is a `no gate`
      nobody reads. */
   .q5-nogate{margin:0 0 4px;}
+  /* What an absent row means to something consuming this document. One line,
+     above the rows, because every absence was being read as a failure. */
+  .consumed{margin:0 0 8px;font-style:normal;}
+
+  /* ── The chain, as a picture ───────────────────────────────────
+     Four cells: who called it, this pulse, who it called, where it landed. It
+     was three rows of prose below the loops; it is the half that says whether
+     the artifact was consumed at all. */
+  .flowstrip{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;
+             background:var(--bg2);border:1px solid var(--bg2);margin-bottom:4px;}
+  .fc{background:var(--bg0);padding:6px 9px 8px;border-top:2px solid var(--bg3);}
+  .fc-l{font-size:0.63rem;color:var(--fg4);}
+  .fc-g{display:inline-block;min-width:15px;color:var(--bg4,#7c6f64);}
+  .fc-v{font-size:0.8rem;color:var(--fg2);margin:3px 0 3px;overflow-wrap:anywhere;}
+  .fc-a{font-size:0.63rem;color:var(--fg4);line-height:1.45;overflow-wrap:anywhere;}
+  .fc-a a{color:var(--aqua);}
+  .fc-bad{color:var(--red,#fb4934);}
+  .fc.t-ok{border-top-color:var(--green);}
+  .fc.t-bad{border-top-color:var(--red,#fb4934);}
+  .fc.t-bad .fc-v{color:var(--red,#fb4934);}
+  .fc.t-inert{border-top-color:var(--yellow);}
+  .fc.t-inert .fc-v{color:var(--yellow);}
+  .fc.t-na .fc-v{color:var(--fg4);}
+  /* You are here. */
+  .fc.t-here{border-top-color:var(--aqua);}
+  .fc.t-here .fc-v{color:var(--aqua);}
+  @media (max-width:880px){ .flowstrip{grid-template-columns:repeat(2,1fr);} }
   @media (max-width:880px){ .q5strip{grid-template-columns:repeat(2,1fr);} }
 
   /* The expert views: the ladder, the loops, and the long answers. Below the
@@ -417,6 +444,12 @@
   .probe{grid-column:2 / -1;margin:3px 0 5px;}
   .probe input{font-family:inherit;font-size:0.66rem;background:var(--bg0-hard);
                border:1px solid var(--bg3);color:var(--fg2);padding:3px 6px;width:100%;}
+  /* The query and the control that runs it, in one place. The run button used to
+     be only in the act column, three lines up and across the row — you edited a
+     box and then had to find the thing that fired it. */
+  .probe-run{display:flex;gap:6px;align-items:stretch;}
+  .probe-run input{flex:1;}
+  .probe-run .t-run{white-space:nowrap;padding:2px 10px;}
   .probe .why{font-size:0.64rem;color:var(--fg4);display:block;margin-bottom:3px;}
   .replay{display:flex;gap:5px;flex-wrap:wrap;margin:4px 0 5px;}
   .replay button{font-size:0.62rem;font-family:inherit;background:none;cursor:pointer;
@@ -1391,25 +1424,26 @@ declare it">${esc(id)}</span>`;
                  data-settleable="${ASSERTION_BY_PATH[dotted] ? "1" : "0"}">
       <span class="why">${
         hit
-          ? `<b>The agent already called this.</b> It asked <b>${esc(ep)}</b> and got ${
+          ? `<b>The agent already asked this.</b> <b>${esc(ep)}</b> returned ${
               hit.output_chars ? `${hit.output_chars.toLocaleString()} bytes` : "nothing"
-            } back, and this field is still empty — so the gap is not a missing
-             integration. The call is loaded below; press again to repeat it.`
+            } and this field is still empty, so the gap is not a missing integration.`
           : ep
-            ? `Loaded: <b>${esc(ep)}</b>, which is the endpoint this field's
-               contract names${
+            ? `Loaded <b>${esc(ep)}</b>${
                Object.keys(sharedParams(f.settleable_by)).length
-                 ? `, with the ${esc(Object.keys(sharedParams(f.settleable_by)).join(" and "))}
-                    this run used`
-                 : ""}. Anything else the endpoint needs is yours to add \u2014 the tool's own
-               error will say which.`
-            : `The contract names <b>${esc(f.settleable_by)}</b>${
-                hint ? ` and says the answer is in <b>${esc(hint)}</b>` : ""}, and the agent
-                made no call with it during this run. The query is yours to write \u2014 the
-                contract names the tool and not the arguments.`
-      } Nothing is recorded \u2014 read the answer, then settle the claim above.</span>
+                 ? ` with the ${esc(Object.keys(sharedParams(f.settleable_by)).join(" and "))}
+                     this run used`
+                 : ""}. Add anything else it needs \u2014 the tool's own error names it.`
+            : `The contract names the tool and not its arguments${
+                hint ? `, and says the answer is in <b>${esc(hint)}</b>` : ""}. The query is
+                yours to write.`
+      } Nothing is recorded.</span>
       ${replay}
-      <input class="probe-in" value="${esc(prefill)}"/>
+      <div class="probe-run">
+        <input class="probe-in" value="${esc(prefill)}"
+               title="edit the query, then press run \u2014 or hit Enter"/>
+        <button class="t-run" data-probe="${esc(dotted)}"
+                title="run ${esc(f.settleable_by)} with this query">run \u25b8</button>
+      </div>
       <div class="probe-verdict"></div>
       <div class="probe-out"></div>
     </div>`;
@@ -1537,30 +1571,28 @@ declare it">${esc(id)}</span>`;
   // is a paragraph to skip.
   const CONDITION_WHY = {
     "no tool exists": { close: false, why:
-      `No tool returns these, so a value would be the violation and the absence is the
-       agent complying. Each is still a standing request for the integration that would
-       close it.` },
+      `No tool returns these, so the absence is the contract obeyed \u2014 and a standing
+       request for the integration that would close it.` },
     "no tool for this": { close: false, why:
-      `The contract says nothing retrieves this, and a value is present. Whether that is a
-       fabrication or a documented gap is grounding's call, and grounding has made it.` },
+      `Nothing retrieves this and a value is present. Invention or a documented gap is
+       grounding's call, and grounding has made it.` },
     "a judgement": { close: false, why:
-      `Commissioned work, not retrieval. Nothing settles these, so an endorsement is the
-       strongest verdict available rather than a weaker one than a citation.` },
+      `Commissioned work, not retrieval. An endorsement is the strongest verdict
+       available, not a weaker one than a citation.` },
     "prose": { close: false, why:
       `Narrative. There is no proposition here to settle.` },
     "platform-computed": { close: false, why:
-      `A transform this platform applied to other fields. Reproducible by construction, so
-       a disagreement is our bug and not the agent's.` },
+      `Our transform over other fields, reproducible by construction \u2014 so a
+       disagreement is our bug and not the agent's.` },
     "asked, empty": { close: true, why:
-      `The tool was asked, plenty came back, and the field is still empty. The answer may
-       have been in that response. The byte count is on the row and running it settles
-       which.` },
+      `Asked, plenty came back, still empty. The answer may have been in there \u2014 the
+       byte count is on the row and running it settles which.` },
     "no data there": { close: true, why:
-      `The tool was asked and had nothing. That is a capability gap and nobody's fault —
-       closing it needs a source that does not exist here yet.` },
+      `Asked, and had nothing. A capability gap and nobody's fault: closing it needs a
+       source that does not exist here yet.` },
     "never asked": { close: true, why:
-      `The tool is declared, and the record shows it was not consulted for these. The
-       grade's "the tool had nothing" is not what happened.` },
+      `Declared, and the record shows it was not consulted. The grade's "the tool had
+       nothing" is not what happened.` },
     "tool unused": { close: true, why:
       `The contract names a tool the agent did not call at all during this run.` },
     "awaiting a verdict": { close: false, why:
@@ -1643,6 +1675,23 @@ declare it">${esc(id)}</span>`;
            <div class="pl-body">${esc(r.text)}</div></details>`
       : "";
 
+    // What an absent row means downstream. Said once, above the rows.
+    //
+    // The page reads as a verdict on whether the agent worked, and it is not
+    // one: an app consuming this document uses the fields that are in it. "The
+    // agent didn't bring everything back" and "the payload isn't usable" are
+    // different statements, and every absence on this screen was being read as
+    // the second.
+    //
+    // Two facts, both the platform's: an absent field arrives as a null, and a
+    // value the contract forbade was already removed before the document
+    // travelled. What these rows add is how far each value that IS here can be
+    // relied on — which is the question a consumer cannot answer for itself.
+    const consumed = `<div class="note consumed"><b>Absent is not undelivered.</b>
+      A consumer reads the fields that are here and receives the rest as null; a value
+      the contract forbade was nulled before this document travelled. These rows say how
+      far each value can be relied on, not whether the artifact was usable.</div>`;
+
     let body = "", lens = "";
     if (r.document) {
       const rows = [];
@@ -1694,6 +1743,7 @@ declare it">${esc(id)}</span>`;
           : ""}
       <div class="pl-h">Answered</div>
       ${lens}
+      ${consumed}
       ${body}
       ${r.truncated
         ? `<div class="pl-cut">The platform is showing the first ${
@@ -1749,10 +1799,9 @@ declare it">${esc(id)}</span>`;
 
     // The wrong call, first: it invalidates everything after it.
     if (p.endpoint_matches === false) {
-      parts.push(`<b class="v-warn">This is not this field's endpoint.</b> You ran
-        <code>${esc(p.endpoint_called)}</code>; this field's contract names
-        <code>${esc(p.endpoint_expected)}</code>. A sound answer to a different
-        question \u2014 press again with the loaded query to ask this one.`);
+      parts.push(`<b class="v-warn">Not this field's endpoint.</b> You ran
+        <code>${esc(p.endpoint_called)}</code>; the contract names
+        <code>${esc(p.endpoint_expected)}</code>. Load that one and press run again.`);
     }
 
     const seen = PROBE_DIGESTS.get(p.digest) || [];
@@ -1812,8 +1861,7 @@ declare it">${esc(id)}</span>`;
     // a citation, whatever it contains.
     parts.push(`<span class="v-note">This decides nothing. ${
       p.endpoint_matches === false
-        ? "And it is not this row's question \u2014 load the contract's endpoint and press \
-again before settling anything with it."
+        ? "And nothing here settles this row."
         : settleable
           ? "If it answers the claim, settle it above and cite this call."
           : "There is no claim on this row to settle \u2014 the field is empty, so what this \
@@ -1955,6 +2003,23 @@ tells you is whether the agent COULD have filled it."}</span>`);
   function wireClamps() {
     const root = document.getElementById("content");
     if (!root) return;
+    // Enter runs the query you are looking at.
+    //
+    // The reported fault: you edit the query, and the control that runs it is
+    // back up in the act column, out of context and not obviously connected to
+    // the box you just typed in. There is a run button beside the box now, and
+    // the key everyone presses in a text field works too. One delegated
+    // listener, because `render` replaces the container and handlers wired per
+    // element die with it.
+    root.addEventListener("keydown", e => {
+      if (e.key !== "Enter") return;
+      const box = e.target.closest && e.target.closest(".probe-in");
+      if (!box) return;
+      e.preventDefault();
+      const form = box.closest("[data-probe-form]");
+      const run = form && form.querySelector("[data-probe]");
+      if (run) runProbe(run);
+    });
     root.addEventListener("click", e => {
       const wrongBtn = e.target.closest("[data-wrong]");
       if (wrongBtn) { fileContradiction(wrongBtn); return; }
@@ -2232,6 +2297,81 @@ something specific about each checkpoint.")}</div></div>`;
     </div>`;
   }
 
+  // Where this pulse sits in a chain, as four cells you can read at a glance.
+  //
+  // This was three stacked prose rows under a heading, two folds down, below the
+  // loops — and it is the more important half. A pulse nobody consumed fed
+  // nothing; a pulse a teammate picked up is the whole point of a composition.
+  // The loops are a timescale claim about learning; this is what actually
+  // happened to the artifact. So it comes first, and it gets glyphs, because the
+  // shape of a chain is the one thing on this page that is genuinely a picture:
+  //
+  //   ◀ who called it     ● this pulse     ▶ who it called     ⇥ where it landed
+  //
+  // Absent must look different from bad, so three kinds of nothing keep three
+  // renderings: `nobody` is an answer (it ran directly, it delegated to no one),
+  // `broken chain` is a finding (it WAS delegated and the caller was never
+  // recorded), and `unread` means the lineage query did not answer at all.
+  function flowStrip(d) {
+    const par = LINEAGE && LINEAGE.parent;
+    const kids = (LINEAGE && LINEAGE.children) || [];
+    const sent = (LINEAGE && LINEAGE.delivered) || [];
+
+    const up = !LINEAGE
+      ? { tone: "na", v: "unread", a: "the lineage read did not answer" }
+      : par && par.state === "resolved"
+        ? { tone: "ok", v: esc(par.agent || "another agent"),
+            a: `<a href="/trace/${encodeURIComponent(par.episode_id)}">trace the caller \u2192</a>` }
+        : par && par.state === "dangling"
+          ? { tone: "bad", v: "broken chain",
+              a: "it was delegated and the caller was never recorded" }
+          : { tone: "na", v: "nobody", a: "called directly, not as a sub-task" };
+
+    const down = !LINEAGE
+      ? { tone: "na", v: "unread", a: "the lineage read did not answer" }
+      : kids.length
+        ? { tone: "ok", v: `${kids.length} agent${kids.length === 1 ? "" : "s"}`,
+            a: kids.map(k => `<a href="/trace/${encodeURIComponent(k.episode_id)}">${
+                 esc(k.agent)}${k.status && k.status !== "success"
+                   ? ` <span class="fc-bad">${esc(k.status)}</span>` : ""} \u2192</a>`).join(" ") }
+        : { tone: "na", v: "nobody", a: "it did the work itself" };
+
+    const land = !LINEAGE
+      ? { tone: "na", v: "unread", a: "the lineage read did not answer" }
+      : sent.length
+        ? { tone: "ok", v: `${sent.length} workspace${sent.length === 1 ? "" : "s"}`,
+            a: sent.map(s => (s.workspace_id
+                 ? `<a href="/flow/${encodeURIComponent(s.workspace_id)}">${
+                     esc(s.workspace || "a workspace")} \u2192 see the flow</a>`
+                 : esc(s.workspace || "a workspace"))).join(" ") }
+        : { tone: "inert", v: "no link",
+            a: "no workspace message carries this pulse \u2014 for a run that predates the join, the link was never written" };
+
+    const cells = [
+      ["\u25c0", "hired by", up],
+      ["\u25cf", "this pulse", { tone: "here", v: esc(d.agent.name),
+        a: `<a href="/specimen/${encodeURIComponent(d.agent.name)}">the agent \u2192</a>` }],
+      ["\u25b6", "it hired", down],
+      ["\u21e5", "delivered to", land],
+    ];
+
+    return `<div class="flowstrip">${cells.map(([g, label, c]) => `<div class="fc t-${c.tone}">
+      <div class="fc-l"><span class="fc-g">${g}</span>${esc(label)}</div>
+      <div class="fc-v">${c.v}</div>
+      <div class="fc-a">${c.a}</div>
+    </div>`).join("")}</div>`;
+  }
+
+  // What happened to the artifact: who called, who was called, where it landed.
+  function collaboration(d) {
+    return `<div class="block">
+      <h2>Where this pulse came from and went</h2>
+      <div class="note">An artifact is a packet and a packet has a next hop. A pulse
+        nothing consumed fed nothing \u2014 which is why this is not a detail.</div>
+      ${flowStrip(d)}
+    </div>`;
+  }
+
   // The join between the two axes. An artifact is a packet (it crosses gates)
   // and a data point (it feeds loops) - the same object in two roles - and
   // neither screen used to say so.
@@ -2241,31 +2381,35 @@ something specific about each checkpoint.")}</div></div>`;
   // thing they consume: not every agent is ever calibrated against an external
   // outcome, and saying a loop does not apply is different from saying it is
   // broken.
-  function feeds(d) {
+  function loopsFed(d) {
     const a = readArtifact(d);
     const items = [];
 
     items.push(["Loop 1 · Individual learning", "hours",
-      `This episode is Loop 1's first stage. Consolidation reads it and may turn it into a
-       semantic rule the agent retrieves later.`,
+      `Consolidation reads this episode and may turn it into a semantic rule the agent
+       retrieves later.`,
       a.violations > 0 && !a.contentsGuarded ? "bad" : "ok"]);
 
     if (a.held.length || a.settled.length) {
       items.push(["Verification queue", "days",
         a.held.length
-          ? `${a.held.length} claim(s) from this artifact are awaiting a verdict. Until one
-             is recorded, “nobody checked” and “checked and fine” are the same state.`
-          : `${a.settled.length} claim(s) were queued and settled. This is the loop having
-             turned — not the loop having nothing to do.`,
+          ? `${a.held.length} claim(s) here are awaiting a verdict. Until one is recorded,
+             “nobody checked” and “checked and fine” are the same state.`
+          : `${a.settled.length} claim(s) were queued and settled \u2014 the loop having turned,
+             not the loop having nothing to do.`,
         a.held.length ? "warm" : "ok"]);
     }
     if ((d.fields || []).some(f => (f.strength ?? 0) === 2)) {
       items.push(["Loop 5 · Calibration", "months+",
-        `Reproducible values here can be scored against an outcome that resolves independently
-         of what this agent said — a hard-verified signal, which needs no coherence gate.`, "ok"]);
+        `Reproducible values here can be scored against an outcome that resolves
+         independently of what this agent said \u2014 a hard-verified signal, which needs no
+         coherence gate.`, "ok"]);
     }
 
-    const loops = `${items.map(([name, ts, body, tone]) => `<div class="rung">
+    return `<div class="block"><h2>What this artifact fed \u2014 the loops</h2>
+      <div class="note">A gate decides whether an artifact is fit to enter a loop. This is
+        where this one went.</div>
+      ${items.map(([name, ts, body, tone]) => `<div class="rung">
         <div class="rung-b">
           <div class="rung-q">${esc(name)}</div>
           <div class="rung-pw">${body}</div>
@@ -2274,81 +2418,7 @@ something specific about each checkpoint.")}</div></div>`;
           tone === "bad" ? "v-silent" : tone === "warm" ? "v-inert" : "v-elsewhere"}">${esc(ts)}</span></div>
       </div>`).join("")}
       <div class="rung-pw" style="margin-top:8px">Loops not listed do not apply to this
-        artifact. <a href="/loops">All loops, by timescale →</a></div>`;
-
-    // The other downstream, and the one the platform cannot currently answer:
-    // which agent picked this up. An artifact that no one consumes fed nothing,
-    // and an artifact consumed by a teammate is the whole point of a
-    // composition - so silence here is the most expensive silence on the page.
-    // Three states, and the middle one is a broken chain rather than an absence.
-    const par = LINEAGE && LINEAGE.parent;
-    const up = par && par.state === "resolved"
-      ? `<div class="rung"><div class="rung-b">
-           <div class="rung-q">Hired by <b>${esc(par.agent || "another agent")}</b></div>
-           <div class="rung-pw">This run was called as a sub-task.
-             <a href="/trace/${encodeURIComponent(par.episode_id)}">Trace the caller →</a></div>
-         </div><div class="rung-v"><span class="v-ok">upstream</span></div></div>`
-      : par && par.state === "dangling"
-        ? `<div class="rung"><div class="rung-b">
-             <div class="rung-q">Hired by an agent whose run was never recorded</div>
-             <div class="rung-pw">${esc(par.because || "")} <b>The chain is broken here</b> —
-               this pulse was delegated and the caller cannot be identified.</div>
-           </div><div class="rung-v"><span class="v-silent">broken chain</span></div></div>`
-        : `<div class="rung"><div class="rung-b">
-             <div class="rung-q">Hired by another agent</div>
-             <div class="rung-pw">No. This run was called directly, not as a sub-task.</div>
-           </div><div class="rung-v"><span class="v-elsewhere">not delegated</span></div></div>`;
-
-    // Read, not asserted. The paragraph that used to live here claimed no
-    // episode_id existed anywhere - true when written, false the moment
-    // migration 222 shipped. Hardcoded prose outlived its fact.
-    const kids = (LINEAGE && LINEAGE.children) || [];
-    const sent = (LINEAGE && LINEAGE.delivered) || [];
-
-    const down = !LINEAGE
-      ? `<div class="rung"><div class="rung-b">
-           <div class="rung-q">Who this pulse hired</div>
-           <div class="rung-pw">The lineage read did not answer, so this says nothing
-             rather than reporting nobody.</div>
-         </div><div class="rung-v"><span class="v-inert">unread</span></div></div>`
-      : kids.length
-        ? `<div class="rung"><div class="rung-b">
-             <div class="rung-q">Who this pulse hired — ${kids.length}</div>
-             ${kids.map(k => `<div class="rung-pw">→ <b>${esc(k.agent)}</b>
-               ${k.status && k.status !== "success"
-                 ? `<span style="color:var(--red,#fb4934)">${esc(k.status)}</span>` : ""}
-               <a href="/trace/${encodeURIComponent(k.episode_id)}">trace it →</a></div>`).join("")}
-           </div><div class="rung-v"><span class="v-ok">delegated</span></div></div>`
-        : `<div class="rung"><div class="rung-b">
-             <div class="rung-q">Who this pulse hired</div>
-             <div class="rung-pw">Nobody. This agent did the work itself — a real answer,
-               not a missing one.</div>
-           </div><div class="rung-v"><span class="v-elsewhere">no delegation</span></div></div>`;
-
-    const deliv = !LINEAGE ? "" : sent.length
-      ? `<div class="rung"><div class="rung-b">
-           <div class="rung-q">Delivered to a team — ${sent.length}</div>
-           ${sent.map(s => `<div class="rung-pw">${esc(s.workspace || "a workspace")}
-             <span class="absent">${esc(s.message_type || "")}</span>
-             ${s.workspace_id ? `<a href="/flow/${encodeURIComponent(s.workspace_id)}">see the flow →</a>` : ""}</div>`).join("")}
-         </div><div class="rung-v"><span class="v-ok">delivered</span></div></div>`
-      : `<div class="rung"><div class="rung-b">
-           <div class="rung-q">Delivered to a team</div>
-           <div class="rung-pw">No workspace message carries this pulse. For anything that
-             ran before the join shipped that means <b>the link was never written</b> — not
-             that nobody read it. Those are different, and this cannot tell them apart.</div>
-         </div><div class="rung-v"><span class="v-inert">no link</span></div></div>`;
-
-    return `<div class="block"><h2>What this artifact fed — the loops</h2>
-      <div class="note">A gate decides whether an artifact is fit to enter a loop. This is
-        where this one went.</div>
-      ${loops}
-      <h2 style="margin-top:20px">What this artifact fed — the collaboration</h2>
-      <div class="note">The other half of the question: an artifact is a packet, and a packet
-        has a next hop. This is the axis the platform cannot yet answer.</div>
-      ${up}
-      ${down}
-      ${deliv}
+        artifact. <a href="/loops">All loops, by timescale \u2192</a></div>
     </div>`;
   }
 
@@ -2398,10 +2468,10 @@ something specific about each checkpoint.")}</div></div>`;
            inner}</details>`
       : "";
     const loopsHead = a.held.length
-      ? `Where this went — <b>${a.held.length} claim(s) awaiting a verdict</b>`
+      ? `What it fed — <b>${a.held.length} claim(s) awaiting a verdict</b>`
       : a.settled.length
-        ? `Where this went — <b>${a.settled.length} settled</b>, so the loop turned`
-        : `Where this went — <b>Loop 1 reads it; nothing is queued for review</b>`;
+        ? `What it fed — <b>${a.settled.length} settled</b>, so the loop turned`
+        : `What it fed — <b>Loop 1 reads it; nothing is queued for review</b>`;
     const ladderHead = `Every checkpoint on this route — <b>${
       Object.keys(a.by).length} recorded, ${a.couldRefuse.length} able to refuse</b>`;
 
@@ -2409,9 +2479,17 @@ something specific about each checkpoint.")}</div></div>`;
     // to come first and that is why the page could not be read; then the five
     // questions led and took half a screen doing it. The document the agent
     // wrote, annotated in place, IS the page — everything else contextualises it.
+    // The chain is not a detail and the loops are not the headline.
+    //
+    // Both used to live in one folded block, loops first. But a pulse nobody
+    // consumed fed nothing, and a pulse a teammate picked up is the whole point
+    // of a composition — so where it came from and where it landed is on the
+    // page, and the loops, which are a claim about learning over months, are
+    // folded underneath it.
     document.getElementById("content").innerHTML =
       head + questions(d) + answer(d) + unattached(d) + ownerBlock(d)
-      + expert(loopsHead, feeds(d), true)
+      + collaboration(d)
+      + expert(loopsHead, loopsFed(d), false)
       + expert(ladderHead, ladder(d) + substrateBlock(d), false)
       + chain + caveats(d);
   }
