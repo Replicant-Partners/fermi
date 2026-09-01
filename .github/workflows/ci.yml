@@ -179,6 +179,14 @@ jobs:
       - name: Configuration shelf renders — the ladder and the drag handle
         run: node scripts/check_specimen_shelf.js
 
+      # The field editor writes to a live agent, so its guards are not cosmetic:
+      # every key it sends is checked against the real `AgentUpdate` struct read
+      # off disk, `status` and `visibility` must never be offered as fields
+      # (the PUT refuses them — lifecycle runs through the publish pipeline),
+      # and save must send a diff rather than echoing every value back.
+      - name: Agent field editor — accepted keys, lifecycle actions, diff on save
+        run: node scripts/check_agent_fields.js
+
       - name: Check all binaries compile
         run: cargo check --bins --workspace
 

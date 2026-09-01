@@ -170,7 +170,13 @@
        the shelf recommends and cannot act on is a description, and a second
        copy of a 1,700-line editor is the drift this repo keeps finding. -->
   <link rel="stylesheet" href="/static/css/contract-builder.css">
+  <!-- One renderer for every configurable field, driven by a spec, so the shelf
+       and a future creation flow cannot drift into two forms. Only fields the
+       PUT actually accepts; status and visibility are lifecycle ACTIONS there,
+       because the PUT refuses them. -->
+  <link rel="stylesheet" href="/static/css/agent-fields.css">
   <script src="/static/js/widgets/contract-builder.js"></script>
+  <script src="/static/js/widgets/agent-fields.js"></script>
   <script src="/static/js/widgets/nav.js"></script>
   <script src="/static/js/theme.js"></script>
   <script src="/static/js/widgets/xaman-ek.js"></script>
@@ -443,31 +449,51 @@
       </div>
       ${declarationPanel()}
       <div class="block"><h3>Intelligence</h3>
-        <dl class="kv">
-          <dt>Provider</dt><dd>${esc((p.substrate || {}).provider || "\u2014")}</dd>
-          <dt>Model</dt><dd>${esc((p.substrate || {}).model || "\u2014")}</dd>
-          <dt>Executor</dt><dd>${esc((p.substrate || {}).executor || "\u2014")}</dd>
-          <dt>Temperature</dt><dd>${(p.substrate || {}).temperature ?? "\u2014"}</dd>
-          <dt>Persona</dt><dd>v${(p.substrate || {}).persona_version ?? 1}</dd>
-        </dl>
-        <div class="note">Read-only here for now. Every one of these is writable through
-          <code>PUT /api/agents/:id</code> \u2014 the panel is next, not the endpoint.</div></div>
+        <div class="note">What the agent runs on. The persona version on every pulse
+          records which prompt produced it, so changing this does not rewrite history
+          \u2014 it starts a new version.
+          ${(p.substrate || {}).executor ? `Executor <b>${esc((p.substrate).executor)}</b>,
+            persona <b>v${(p.substrate).persona_version ?? 1}</b>, neither editable here.` : ""}
+        </div>
+        <div id="af-intelligence"></div></div>
       <div class="block"><h3>Manage</h3>
-        <dl class="kv">
-          <dt>Status</dt><dd>${esc(p.status || "\u2014")}</dd>
-          <dt>Visibility</dt><dd>${esc(p.visibility || "\u2014")}</dd>
-          <dt>Tier</dt><dd>${esc(p.tier || "\u2014")}${
-            p.min_tier ? ` (min ${esc(p.min_tier)})` : ""}</dd>
-          <dt>Forks</dt><dd>${p.fork_count ?? 0}${
-            p.forked_from ? ` \u00b7 from ${esc(p.forked_from)}` : ""}</dd>
-        </dl>
-        <div class="note">Same: <code>PUT /api/agents/:id</code> already accepts
-          <code>status</code>, <code>visibility</code>, <code>min_tier</code>,
-          <code>fork_pricing</code> and <code>valence</code>.</div>
-        <a href="/agent/${encodeURIComponent(p.agent_name)}#manage">The old page, until
-          these panels are editable \u2192</a></div>`;
+        <div class="note">Identity and reach. ${p.fork_count ?? 0} fork(s)${
+          p.forked_from ? `, itself forked from <b>${esc(p.forked_from)}</b>` : ""}.</div>
+        <div id="af-manage"></div>
+        <a href="/agent/${encodeURIComponent(p.agent_name)}#manage">The old page, for
+          what has not moved yet \u2192</a></div>`;
     document.getElementById("close-drawer").onclick = closeDrawer;
     wireGrip();
+
+    // Both groups, from one spec. `profile` is the served object and the widget
+    // reads each field out of it by path, so there is no second copy of "where
+    // does the model live" — which is the mistake that made the old page render
+    // thirteen metrics twice under different names.
+    if (typeof AgentFields !== "undefined") {
+      ["intelligence", "manage"].forEach(group => {
+        const host = document.getElementById("af-" + group);
+        if (!host) return;
+        AgentFields.mount({
+          container: host,
+          agentId: p.agent_name,
+          group,
+          profile: p,
+          // Re-read rather than patch the local copy: the PUT may normalise a
+          // value, and a shelf showing what you typed while the platform holds
+          // something else is the drift this whole surface exists to prevent.
+          onSaved: () => boot(),
+        });
+      });
+    } else {
+      ["intelligence", "manage"].forEach(group => {
+        const host = document.getElementById("af-" + group);
+        if (host) {
+          host.innerHTML = `<div class="note">The field editor did not load, so this
+            group cannot be changed from here.
+            <a href="/agent/${encodeURIComponent(p.agent_name)}">The old page \u2192</a></div>`;
+        }
+      });
+    }
 
     // Mounted on the press, not on render. The widget fetches tool names and
     // type definitions on mount, and paying for that every time the shelf opens

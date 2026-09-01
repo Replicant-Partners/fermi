@@ -162,8 +162,17 @@ ok(/contract-builder\.js/.test(HTML),
 // Only that rung. A button on every rung is a button that means nothing.
 ok((shelf.match(/data-open-contract/g) || []).length === 1,
   "more than one rung carries the contract editor");
-ok(shelf.includes("claude-opus-4") && shelf.includes("anthropic"),
-  "Intelligence does not show what the agent actually runs on");
+// The two groups mount the shared field editor rather than printing a <dl>.
+// A read-only summary where an editor belongs is how the old page grew eight
+// tabs, and a second hand-written form is how they drifted.
+for (const g of ["intelligence", "manage"]) {
+  ok(shelf.includes(`id="af-${g}"`),
+    `the ${g} group has no mount point, so it is a read-only summary again`);
+}
+ok(/agent-fields\.js/.test(HTML),
+  "the shelf does not load the shared field editor");
+ok(!/<dt>Provider<\/dt>/.test(shelf),
+  "Intelligence is back to a definition list");
 ok(!/undefined|NaN/.test(shelf),
   "the shelf printed a placeholder: " +
   (shelf.match(/.{0,60}(undefined|NaN).{0,60}/) || [""])[0]);

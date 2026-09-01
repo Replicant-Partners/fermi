@@ -1,0 +1,45 @@
+/* Agent configuration fields. Paired with /static/js/widgets/agent-fields.js —
+   the markup and its styling travel together, so the next host cannot get the
+   structure without the affordances.
+
+   A label, the control, and one line saying what the field does to the agent.
+   The help line is not decoration: `temperature` is a number anyone can set and
+   almost nobody can say what it costs an agent under a field contract. */
+.af-row { padding: 7px 0; border-top: 1px solid var(--bg2); }
+.af-label { display: block; font-size: 0.63rem; color: var(--fg4);
+            text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 3px; }
+.af-row input, .af-row textarea {
+  width: 100%; font-family: inherit; font-size: 0.7rem; background: var(--bg0-hard);
+  border: 1px solid var(--bg3); color: var(--fg2); padding: 4px 7px;
+}
+.af-row input:focus, .af-row textarea:focus { outline: none; border-color: var(--aqua); }
+.af-row textarea { line-height: 1.5; resize: vertical; }
+.af-help { font-size: 0.63rem; color: var(--fg4); line-height: 1.45; margin-top: 3px; }
+
+/* Save is disabled until something differs, and says how much differs. A save
+   button that is always live invites a PUT that changes nothing and makes the
+   `agent_card.updated` event claim otherwise. */
+.af-bar { display: flex; gap: 9px; align-items: center; margin-top: 11px;
+          padding-top: 9px; border-top: 1px solid var(--bg3); }
+.af-save { font-size: 0.66rem; font-family: inherit; background: none; cursor: pointer;
+           border: 1px solid var(--yellow); color: var(--yellow); padding: 3px 11px; }
+.af-save:hover:not(:disabled) { background: var(--yellow); color: var(--bg0-hard); }
+.af-save:disabled { opacity: 0.35; cursor: default; border-color: var(--bg3);
+                    color: var(--fg4); }
+.af-out { font-size: 0.64rem; color: var(--fg4); overflow-wrap: anywhere; }
+.af-out.ok { color: var(--green); }
+.af-out.bad { color: var(--red, #fb4934); }
+
+/* Lifecycle is not a field, and must not look like one. Its own block, its own
+   colour, and the sentence saying why the PUT refuses it. */
+.af-life { margin-top: 12px; padding: 9px 0 0; border-top: 1px solid var(--bg3); }
+.af-life-now { font-size: 0.7rem; color: var(--fg3); }
+.af-life-now b { color: var(--fg2); font-weight: normal; }
+.af-note { font-size: 0.63rem; color: var(--fg4); line-height: 1.45; margin: 4px 0 6px;
+           font-style: italic; }
+.af-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.af-life-btn { font-size: 0.64rem; font-family: inherit; background: none;
+               cursor: pointer; border: 1px solid var(--bg3); color: var(--fg3);
+               padding: 2px 10px; }
+.af-life-btn:hover:not(:disabled) { border-color: var(--aqua); color: var(--aqua); }
+.af-life-btn:disabled { opacity: 0.4; cursor: default; }
