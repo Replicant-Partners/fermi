@@ -136,6 +136,17 @@
             border:1px solid var(--yellow);color:var(--yellow);padding:0 5px;
             margin-left:6px;white-space:nowrap;}
   .shelf-count{font-size:0.66rem;color:var(--fg4);margin-bottom:2px;}
+  /* The rung's own control. `unlocks`/`without_it` says why it matters; this is
+     the thing that closes it — and a rung the shelf recommends and cannot act on
+     is a description, which is the defect the trace's act column was rebuilt to
+     end. */
+  .rung-act{margin-top:6px;font-size:0.64rem;font-family:inherit;background:none;
+            cursor:pointer;border:1px solid var(--yellow);color:var(--yellow);
+            padding:2px 9px;}
+  .rung-act:hover:not(:disabled){background:var(--yellow);color:var(--bg0-hard);}
+  .rung-act:disabled{opacity:0.4;cursor:default;}
+  .shelf-mount{margin-top:10px;}
+  .shelf-mount:empty{display:none;}
   /* ── A pulse row is a door, and it has to look like one ──────────────────
      The date was already a link and rendered in the body colour, so nothing
      about the row said it could be opened. The whole row is the target now. */
@@ -154,6 +165,12 @@
   <div class="drawer" id="drawer"></div>
 
   <script src="/static/js/widgets/pulse.js"></script>
+  <!-- The contract editor, already shared by the create wizard (step 4) and
+       the standalone page at /contracts. The shelf is its third host: a rung
+       the shelf recommends and cannot act on is a description, and a second
+       copy of a 1,700-line editor is the drift this repo keeps finding. -->
+  <link rel="stylesheet" href="/static/css/contract-builder.css">
+  <script src="/static/js/widgets/contract-builder.js"></script>
   <script src="/static/js/widgets/nav.js"></script>
   <script src="/static/js/theme.js"></script>
   <script src="/static/js/widgets/xaman-ek.js"></script>
@@ -405,8 +422,11 @@
             ? `<b>Unlocks:</b> ${esc(r.unlocks)}`
             : `<b>Without it:</b> ${esc(r.without_it)}`}</div>
           ${r.present ? "" : `<div class="rung-own">declared in ${esc(r.owner)}</div>`}
+          ${r.rung === "field_contract" ? `<button class="rung-act"
+            data-open-contract="1">${r.present ? "edit the contract" : "build it"} \u2192</button>` : ""}
         </div>
-      </div>`).join("")}</div>`;
+      </div>`).join("")}
+      <div id="shelf-contract" class="shelf-mount"></div></div>`;
   }
 
   function drawer() {
@@ -448,6 +468,35 @@
           these panels are editable \u2192</a></div>`;
     document.getElementById("close-drawer").onclick = closeDrawer;
     wireGrip();
+
+    // Mounted on the press, not on render. The widget fetches tool names and
+    // type definitions on mount, and paying for that every time the shelf opens
+    // — including to read the Manage panel — is a cost nobody asked for.
+    //
+    // Once mounted it stays: it holds unsaved edits, and remounting would throw
+    // them away silently, which is the worst way for an editor to behave.
+    const openBtn = document.querySelector("[data-open-contract]");
+    if (openBtn) {
+      openBtn.onclick = () => {
+        const host = document.getElementById("shelf-contract");
+        if (host.dataset.mounted === "1") { host.scrollIntoView({ block: "nearest" }); return; }
+        if (typeof ContractBuilder === "undefined") {
+          host.innerHTML = `<div class="note">The contract editor did not load, so this
+            rung cannot be built from here. <a href="/contracts">The standalone page
+            \u2192</a></div>`;
+          return;
+        }
+        host.dataset.mounted = "1";
+        openBtn.disabled = true;
+        // A wider shelf, because a contract editor in 520px is a form in a
+        // corridor. Only widens — a reader who has already dragged it wider
+        // keeps their width.
+        const cur = parseInt(getComputedStyle(document.documentElement)
+          .getPropertyValue("--shelf-w"), 10) || 520;
+        if (cur < 860) setShelfWidth(860);
+        ContractBuilder.mount({ container: host, agentId: D.profile.agent_name });
+      };
+    }
   }
 
   // ── The drag handle ──────────────────────────────────────────────────

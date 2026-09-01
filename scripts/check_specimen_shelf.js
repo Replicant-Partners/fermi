@@ -144,6 +144,24 @@ for (const group of ["Declaration", "Intelligence", "Manage"]) {
   ok(shelf.includes(`<h3>${group}</h3>`), `the ${group} group is missing from the shelf`);
 }
 ok(shelf.includes('id="shelf-grip"'), "there is no drag handle");
+
+// ── 4b. the recommended rung has the control that closes it ─────────────
+//
+// `ContractBuilder` is already shared by the create wizard and /contracts. A
+// rung the shelf recommends and cannot act on is a description, which is the
+// defect the trace's act column was rebuilt to end — so the field_contract rung
+// carries the editor, and the editor is the existing widget rather than a
+// fourth copy of it.
+ok(/data-open-contract/.test(shelf),
+  "the field_contract rung recommends itself and offers no way to build it");
+ok(/id="shelf-contract"/.test(shelf), "there is nowhere for the editor to mount");
+ok(/contract-builder\.js/.test(HTML),
+  "the shelf does not load the shared contract editor, so it would have to grow " +
+  "its own — and a second copy of a 1,700-line editor is the drift this repo " +
+  "keeps finding");
+// Only that rung. A button on every rung is a button that means nothing.
+ok((shelf.match(/data-open-contract/g) || []).length === 1,
+  "more than one rung carries the contract editor");
 ok(shelf.includes("claude-opus-4") && shelf.includes("anthropic"),
   "Intelligence does not show what the agent actually runs on");
 ok(!/undefined|NaN/.test(shelf),
