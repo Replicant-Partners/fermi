@@ -1240,6 +1240,31 @@ Rules, each enforced by the platform:
 
   // ─── compile ──────────────────────────────────────────────────
 
+  // The one element the widget reads and does not own.
+  //
+  // The wizard has an `agent-name` input, and the title should track it as the
+  // author types — so that case reads the DOM live rather than caching. The
+  // standalone page has no such field, because it edits an agent that already
+  // exists, and reading it unguarded threw `Cannot read properties of null`
+  // inside `cbSketch`.
+  //
+  // That is called by every compile and, through `cbTouch`, by every
+  // keystroke, so nothing on /contracts could compile. Nothing said so either:
+  // the throw happened inside a debounced handler, so the status chip just
+  // never left "Compiling…". Found by loading the page in a browser; the
+  // DOM-stub harness cannot see it, because a stub that answers every
+  // `getElementById` with an element is exactly what makes the renders work,
+  // and it papers over this at the same time.
+  //
+  // Falling back to "" would have been the smaller-looking fix and the worse
+  // one: `title` reaches the compiled contract, so the same agent would
+  // compile to a different document depending on which page you opened it in.
+  let cbTitleFor = "";
+  function cbAgentTitle() {
+    const el = document.getElementById("agent-name");
+    return el ? el.value.trim() : cbTitleFor.trim();
+  }
+
   function cbSketch() {
     const s = {
       domain: document.getElementById("cb-domain").value.trim(),
@@ -1267,7 +1292,7 @@ Rules, each enforced by the platform:
         return out;
       }),
     };
-    const title = document.getElementById("agent-name").value.trim();
+    const title = cbAgentTitle();
     if (title) s.title = title.replace(/_/g, " ");
 
     // View 3's answers. Passed through by the compiler, which has no
@@ -1587,6 +1612,9 @@ Rules, each enforced by the platform:
   // ── loading an existing agent's contract ─────────────────────────
   async function loadAgent(agentId) {
     cbSetStatusChip("Loading " + agentId + "…", "busy");
+    // Set before the fetch, so a contract compiled after a failed load still
+    // carries the right title rather than an empty one.
+    cbTitleFor = agentId;
     let data;
     try {
       const res = await fetch(

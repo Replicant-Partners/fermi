@@ -366,22 +366,22 @@ close.
 Recorded rather than fixed, because each is a decision someone should make
 deliberately.
 
-1. **No gate counts schema validation.** `envelope::build` computes
-   `validation.status == "invalid"` — a document contradicting its producer's
-   own declared type — and reports it to nobody. There is no
-   `Gate::OutputSchema` in `gate_trust::Gate`, so it cannot be a
-   `Stage::gated_by`, cannot appear on `/api/gates`, and can never be
-   reviewed. That sits awkwardly against `gate_trust`'s own premise, that a
-   refusal nobody counted is the state it exists to make impossible. Adding
-   the variant also means widening the `gate_decisions_gate_check` CHECK, so
-   it is a migration, not a patch.
+> **Four of the original gaps are now closed.** Left as struck text rather than
+> deleted, because the reasoning for each is what makes the replacement legible
+> — and because a gap list that quietly loses entries is one nobody trusts.
+>
+> - ~~**No gate counts schema validation.**~~ `Gate::OutputSchema` exists
+>   (`src/gate_trust.rs`), with the CHECK widened by migration.
+> - ~~**Nothing consumes `envelope.validation`.**~~ The coordinator reads it
+>   per hop (`agent_backend/tools_legacy.rs`), and `schema_conformance` writes
+>   a loop4 signal — and deliberately writes *no* signal when the status is
+>   `unverified_*`, so "not checked" never scores as "checked and fine".
+> - ~~**The public execute path builds no envelope.**~~ All three execute
+>   routes validate.
+> - ~~**No sketch decompiler.**~~ `contract_sketch::sketch_from_contract`,
+>   behind `/api/contracts/decompile/:id` and the Contract tab.
 
-2. **Nothing consumes `envelope.validation`.** No coordinator prompt, credit
-   path or anomaly raiser branches on it. `envelope.rs` warns that a consumer
-   treating `unverified_*` as a pass has reintroduced the defect; currently
-   every consumer does, by ignoring the field.
-
-3. **`grounding` is validated at publish and never read at runtime.**
+1. **`grounding` is validated at publish and never read at runtime.**
    `grounding_trust::enforce` resolves from the Rust const `FIELD_CONTRACTS`,
    which has no `equity_analyst` entry — so the hop checks the *shape* of its
    document and not the *sourcing* of its values.
@@ -390,20 +390,45 @@ deliberately.
    card's `output_contract.grounding` into `enforce`, the test tells them to
    update the claim.
 
-4. **The public execute path builds no envelope.**
-   `handlers::execution::execute_agent_handler` never calls
-   `envelope::build`, so a declared schema is enforced agent→agent and
-   unenforced over HTTP.
+2. **12 of ~140 tools have a declared response shape.**
+   `src/tool_response_shapes.rs` is what makes the builder's field picker a
+   choice among keys that exist, and the reverse lookup (field name → which
+   tools return it) gets strictly better with each one added. Absence is
+   meaningful and handled — `coverage()` returns `None` for an unread tool
+   rather than "covered" — but 128 tools still fall back to extracting nouns
+   from a description and marking them `unconfirmed`. Adding one means reading
+   its implementation; the table is deliberately hostile to guessing.
 
-5. **No sketch decompiler.** The three pre-existing typed cards
-   (`football_analyst`, `genome_profiler`, `hud_field_scout`) are still
-   hand-written, and two of them have no `grounding` map at all. A
-   `sketch_from_contract` would let them join this path; until then they are
-   guarded only by their own tests.
+3. **The UI checks are three, and each is blind to what the others see.**
+   This was the worst gap in the toolchain and is now the best-instrumented,
+   so it is worth writing down what each layer can and cannot see:
+
+   | layer | sees | blind to |
+   |---|---|---|
+   | `tests/inline_js_syntax.rs` | a template whose script does not parse | anything that parses and misbehaves |
+   | `scripts/check_contract_builder.js` (DOM stub) | the widget's logic and rendered markup | layout, CSS, a page ever loading |
+   | `scripts/check_pages_headless.js` (Chrome, CDP) | console, network, computed style, what a click shows | any page not in its list |
+
+   The DOM stub is blind *by construction*: it answers every
+   `getElementById` with an element, because otherwise the renders bail early
+   and nothing is exercised. That is exactly what hid `cbSketch` reading
+   `#agent-name`, an element only the wizard has — so nothing on `/contracts`
+   could compile, and the only symptom was a status chip that never left
+   "Compiling…". `the_contract_builder_only_reads_dom_it_owns` now pins the
+   class without needing a browser.
+
+   Remaining: only `/contracts` and `/agent/:id` are loaded. Every other page
+   is unchecked, and adding one is a fixture list plus a page function.
 
 ---
 
-## 10. Burning down the remaining 85
+## 10. Burning down the rest
+
+<!-- Not a count. This heading said 85, then 86, then 80; the number moves
+     every time anyone migrates an agent, and a stale one in a doc reads as
+     authoritative. The live figure is `TYPED_TIER_EXEMPT.len()` in
+     `src/workflows/agent_contract.rs`, and its `BASELINE` is enforced by a
+     test that only lets it shrink. -->
 
 Per agent:
 
