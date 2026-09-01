@@ -1343,13 +1343,14 @@
 
               <!-- Economics Tab -->
               <!-- Contract Tab.
-                   POSITION IS LOAD-BEARING: `Tabs.init` pairs buttons to
-                   panels BY INDEX, not by matching `data-tab` to
-                   `data-tab-panel`. This panel must sit in the same ordinal
-                   position as its button (4th, after Knowledge), or every tab
-                   after it shows the wrong panel — which is exactly what
-                   happened when it was added at the end: Contract rendered
-                   Economics, and Intelligence rendered Contract. -->
+                   POSITION IS LOAD-BEARING: Tabs.init pairs buttons to panels
+                   BY INDEX, not by matching data-tab to data-tab-panel. This
+                   panel must sit in the same ordinal position as its button
+                   (4th, after Knowledge), or every tab after it shows the
+                   wrong panel. See tests/agent_detail_tabs.rs.
+                   NB: this comment is inside a JS template literal, so it must
+                   contain no backticks and no dollar-brace. A backtick here
+                   ends the string, which is how it broke the page once. -->
               <div data-tab-panel="contract" id="contract-tab-panel" style="display:none"></div>
 
               <div data-tab-panel="economics" style="display:none">
