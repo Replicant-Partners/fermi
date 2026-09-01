@@ -460,6 +460,9 @@ pub async fn execute_agent_stream_handler(
                         route: fermi::route_trust::RouteSelection::CallerNamed,
                         provenance: provenance.as_ref(),
                         source_ref: Some(source_ref),
+                        // This route has no workspace, and says so twenty lines below:
+                        // `workspace_id` is hardcoded `None` in its tool context.
+                        workspace: None,
                     },
                 )
                 .await

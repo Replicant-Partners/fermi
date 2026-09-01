@@ -1405,6 +1405,9 @@ pub async fn consolidate_agent_handler(
                                             "job_id": job_id,
                                             "subject_agent_id": spawn_agent_id,
                                         })),
+                                        // A consolidation run is the agent dreaming over its own history. It
+                                        // belongs to an agent, not to a workspace.
+                                        workspace: None,
                                     },
                                 )
                                 .await,

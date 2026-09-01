@@ -19,9 +19,20 @@ Five, and everything on the platform is one of them or a view of one.
 |---|---|---|---|
 | **pulse** | one invocation and its output | `/pulses` | — |
 | **trace** | the audit of one pulse | — | `/trace/:id` |
-| **agent** | a specimen; simple or compound | `/bestiary` | `/specimen/:name` |
-| **workspace** | the place a team of agents works | `/workspaces` | `/flow/:id` |
+| **agent** | a specimen. **simple or compound — both are agents** | `/bestiary` | `/specimen/:name` |
+| **workspace** | the place a team of agents works | `/workspaces` | `/flow/:id` → the work surface |
 | **app** | a manifest that instantiates as a workspace | `/apps` | `/app/:id` |
+
+**A compound agent is an agent.** `cohere_and_coordinate` has a card, takes a
+query, emits a pulse and has a trace, exactly like a simple one. What differs is
+*implementation* — its work fans out to a team — and that is a property, not a
+fifth noun. Asked and answered: there was no reason for it to be anything else,
+and inventing one would have split the bestiary in two for nothing.
+
+What it does need is two things a simple agent does not: a **roster** on its
+specimen page, and the knowledge that its pulses have children. The second
+already renders — the trace's flow strip draws `▶ it hired` — so the missing
+piece is the roster.
 
 Two relations do the rest of the work:
 
@@ -69,16 +80,26 @@ Replaces the legacy tabs. The requirements, from use:
 3. **The opposite shelf is Xaman Ek.** Guidance sits on the other side, in some
    modes, and talks about the configuration in progress. Two shelves, one
    subject, and the subject stays in the middle.
-4. **One panel per declaration rung.** The ladder already names them — ports,
-   output type, output schema, grounding contract — and `/declarations` already
-   computes the cheapest next one per agent. The shelf's panels should *be* those
-   rungs, in that order, so "what should I configure next" is answered by the
-   platform rather than by the reader guessing which tab matters.
+4. **Panels, grouped, in the order the platform can rank.** An earlier draft of
+   this said "one panel per declaration rung", which was too narrow — **contract
+   is not the only configuration aspect.** Three groups:
 
-What this kills: Overview · Activity · Knowledge · Contract · Economics · Field
-Notes as *tabs*. Overview/Activity/Economics are `/specimen`'s Profile and Record.
-Knowledge and Field Notes are read-only content, not configuration. Contract is
-the only tab that is genuinely configuration, and it becomes several rung panels.
+   | group | what it holds |
+   |---|---|
+   | **intelligence** | model, provider, executor, system prompt, temperature, persona version |
+   | **manage** | price, fork policy, valence, visibility, tier, status |
+   | **declaration** | ports, output type, output schema, grounding contract |
+
+   Only the third is rankable by the platform — `/declarations` already computes
+   the cheapest next rung per agent — so that group leads with a *recommended
+   next action* and the other two are edited on demand. That is the difference
+   between a form and a workbench: the platform says what is missing, and the
+   author decides what to do about it.
+
+What this kills as *tabs*: Overview · Activity · Knowledge · Contract · Economics
+· Field Notes. Overview/Activity/Economics are `/specimen`'s Profile and Record.
+Knowledge and Field Notes are read-only content, not configuration. Contract,
+Intelligence and Manage are the three groups above.
 
 ## 4. Pulse views
 
@@ -96,6 +117,22 @@ One list, three filters. The row is already shared (`static/js/widgets/pulse.js`
 `/stream` becomes `/pulses` with a redirect. The nav already says **Pulses**;
 the page said "Stream" until today, which is the vocabulary lagging the map.
 
+## 4.1 What `/flow/:id` is missing
+
+The singular workspace surface is the right shape already. Three additions, in
+order of how much they are missed:
+
+1. **The agent roster.** Who is in this workspace. `workspace_agents` has it and
+   the flow does not show it, so a diagram of hops names agents without ever
+   listing the team.
+2. **A link to the actual work surface.** `/flow/:id` is the *record* of a
+   workspace; the place work happens is a different screen and there is no way
+   to get from one to the other. That surface needs its own cleanup later — the
+   link does not.
+3. **Which workspaces and apps an agent belongs to.** Missing entirely, in the
+   other direction: open a specimen and you cannot tell what teams it is on.
+   This belongs on the agent page, and it is the same join in reverse.
+
 ## 5. Complexity hiding — the rules already in use
 
 Stated because they were derived on the trace and now apply everywhere:
@@ -112,8 +149,15 @@ Stated because they were derived on the trace and now apply everywhere:
 
 ## 6. Order of work
 
-1. **`episodes.workspace_id`**, written at the execute boundary. Unblocks
-   everything in §4 and half of what a workspace view is for.
+**Nothing legacy is removed until its replacement is complete.** `/agent/:id`
+stays reachable — it is the reference for what the shelf has to absorb, and a
+half-built shelf plus a deleted page is worse than either.
+
+1. **`episodes.workspace_id`** — **done, mig-226.** Written at the execute
+   boundary, which now *requires* every call site to declare a workspace or
+   `None`; six of the eleven turned out to have one in scope already, including
+   the delegation hop, where `ToolContext.workspace_id` had been sitting unused.
+   Not backfilled, for the reason in the migration. Unblocks §4.
 2. **The configuration shelf**, one rung panel at a time, against `/specimen`.
    Legacy `/agent/:id` stays reachable until every panel exists.
 3. **`/pulses`** with the three filters; `/stream` redirects.
@@ -122,12 +166,24 @@ Stated because they were derived on the trace and now apply everywhere:
 
 ## 7. Open questions
 
-* **Does the Health tab survive?** It is the only reason `/api/specimen/:name`
-  computes a fleet-wide census, which is what made it slow. If per-agent health
-  is worth keeping, the census should be computed on a clock and cached, not
-  per request.
-* **Compound agents** — is a compound agent a workspace with one entrypoint, or a
-  distinct noun? If the former, `/specimen` needs to render a team, and the
-  bestiary needs to say which specimens are compound.
+* **The Observatory needs rethinking, and the Health tab is its symptom.** The
+  tab was built as an *entry into* the Observatory and is not useful on its own —
+  eleven panels, each answering "can the platform say anything about this agent",
+  which is a question about the platform rather than about the agent you opened.
+  It is also the only reason `/api/specimen/:name` computes a fleet-wide census:
+  46s before the conformance fix, 9.4s after, and the remaining 9s is
+  `Observation::collect` plus eleven serial `resolve_for_subject` calls.
+
+  Three things to decide together, and they are one decision:
+
+  1. What is the Observatory *for*? If it is "what is wrong across the fleet",
+     it is a worklist and should look like `/declarations` — rows with an owner
+     and a next action — not a grid of panels.
+  2. What does an agent's page owe it? Probably one line: *what the platform
+     cannot currently say about this agent, and whose job that is*. One line,
+     not eleven panels.
+  3. Either way the census belongs on a clock with a cache. A page about one
+     agent computing a fleet-wide observation is the defect, and it will come
+     back under a different name until that is fixed.
 * **App manifest format.** Named as having "their own configurations, manifests
   etc." — it needs a home in the repo before the UI can read it.

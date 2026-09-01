@@ -403,6 +403,7 @@ pub async fn solicit(
     // in no ledger.
     record_ask_episode(
         asker,
+        workspace_id,
         target,
         &agent_name,
         parent_episode_id,
@@ -562,6 +563,11 @@ async fn elicitation_prompt(
 /// questionnaires.
 async fn record_ask_episode(
     asker: &Asker,
+    // Stage 0 coordination is workspace work by definition — the intention map
+    // is per workspace and membership is checked before the ask. It was simply
+    // not threaded this far, so the member's own run was recorded as though a
+    // person had invoked it directly.
+    workspace_id: Uuid,
     target: Uuid,
     agent_slug: &str,
     parent_episode_id: Option<Uuid>,
@@ -611,6 +617,7 @@ async fn record_ask_episode(
                 route: crate::route_trust::RouteSelection::CallerNamed,
                 provenance: provenance.as_ref(),
                 source_ref: Some(source_ref),
+                workspace: Some(workspace_id),
             },
         )
         .await,

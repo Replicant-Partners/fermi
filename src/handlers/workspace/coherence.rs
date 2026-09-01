@@ -720,6 +720,8 @@ pub async fn evaluate_coherence_handler(
                                         route: fermi::route_trust::RouteSelection::CallerNamed,
                                         provenance: provenance.as_ref(),
                                         source_ref: Some(source_ref),
+                                        // The strategist's brief is about one workspace, commissioned by it.
+                                        workspace: Some(ws_uuid),
                                     },
                                 )
                                 .await,

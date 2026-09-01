@@ -637,6 +637,10 @@ pub async fn post_workspace_message_handler(
                                     route: fermi::route_trust::RouteSelection::CallerNamed,
                                     provenance: provenance.as_ref(),
                                     source_ref: Some(source_ref),
+                                    // The @-mention path: a member is addressed in a workspace and answers
+                                    // there. This is the canonical workspace pulse and it has been recorded
+                                    // as belonging nowhere.
+                                    workspace: Some(ws_uuid2),
                                 },
                             )
                             .await,

@@ -526,6 +526,8 @@ pub async fn ingest_telemetry_handler(
                                     route: fermi::route_trust::RouteSelection::CallerNamed,
                                     provenance: provenance.as_ref(),
                                     source_ref: Some(source_ref),
+                                    // Telemetry the platform writes about itself.
+                                    workspace: None,
                                 },
                             )
                             .await,

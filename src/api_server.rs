@@ -1330,6 +1330,13 @@ async fn run_migrations(db: &PgPool) {
         // tool run shows its own declared tool can fill it. The mirror of
         // `grounding`, which is the same contract catching fabrication.
         "migrations/225_contradicted_anomaly.sql",
+        // 226 — `episodes.workspace_id`: which workspace a pulse happened in.
+        // `/api/stream` has been saying "there is no workspace filter because
+        // `episodes` carries no workspace column" in its own contract string
+        // for months. Deliberately not backfilled — at 226 the only links that
+        // existed were 10 of 5,657 `workspace_messages.episode_id` and 70
+        // context blobs whose values included workspace NAMES.
+        "migrations/226_episode_workspace.sql",
     ];
 
     // Bootstrap the ledger before anything is recorded into it.

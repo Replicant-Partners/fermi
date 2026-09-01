@@ -341,6 +341,20 @@ pub struct Write<'a> {
     pub route: RouteSelection,
     pub provenance: Option<&'a ProvenancedEmbedding>,
     pub source_ref: Option<Value>,
+    /// The workspace this pulse happened in, if it happened in one.
+    ///
+    /// A required field rather than a defaulted one, and that is the whole
+    /// point: every existing call site has to write `workspace: None`, which
+    /// makes the set of paths that *could* supply one visible in a compile
+    /// error instead of in a survey. This is the same move `after_the_fact(why)`
+    /// made, and it immediately surfaced three sites that could reserve and
+    /// were not.
+    ///
+    /// `None` is a real answer — a person or a script calling an agent directly
+    /// belongs to no workspace — so it is never inferred and never guessed from
+    /// the context blob, whose 70 existing `workspace_id` values include
+    /// `'wild'`, `'current'` and `'Efrain AI'`.
+    pub workspace: Option<Uuid>,
 }
 
 /// Stamp the grade on the episode itself.
@@ -397,6 +411,44 @@ pub async fn close(pulse: Pulse, graded: &Graded, mut w: Write<'_>) -> anyhow::R
         .store
         .store_episode_with_provenance(w.episode, w.provenance, w.source_ref)
         .await?;
+
+    // ── Which workspace this happened in ─────────────────────────────────
+    //
+    // A second statement rather than a column on the memory crate's `Episode`,
+    // and the reason is ownership: `episodes.workspace_id` is a fact the
+    // *platform* knows about a run, not something the memory bundle carries or
+    // can validate. Adding it to `Episode` would put a platform join key inside
+    // the type the consolidation loop reads.
+    //
+    // Written only when there is one, so a direct invocation costs no
+    // statement, and non-fatal: an agent must not fail to answer because the
+    // row could not be told which workspace it belonged to. It IS logged,
+    // because a silently unattributed pulse is the failure this column exists
+    // to end — every workspace surface has been reading a transcript instead.
+    if let Some(ws) = w.workspace {
+        if let Some(db) = w.db {
+            if let Err(e) = sqlx::query(
+                "UPDATE episodes SET workspace_id = $1 WHERE episode_id = $2",
+            )
+            .bind(ws)
+            .bind(stored)
+            .execute(db)
+            .await
+            {
+                tracing::error!(
+                    episode = %stored, workspace = %ws,
+                    "workspace attribution failed, so this pulse will read as \
+                     non-workspace work: {e}"
+                );
+            }
+        } else {
+            tracing::warn!(
+                episode = %stored, workspace = %ws,
+                "a workspace was named and this call site has no pool, so the \
+                 pulse is unattributed"
+            );
+        }
+    }
 
     // ── Loop 2's seed ────────────────────────────────────────────────────
     //
@@ -536,5 +588,45 @@ mod tests {
             "reserved-elsewhere and never-reserved must not compare equal: only \
              the second one orphans children"
         );
+    }
+}
+
+#[cfg(test)]
+mod workspace_tests {
+    /// The attribution statement must resolve against the live schema.
+    ///
+    /// Written after `PULSE_SELECT` named a column that does not exist and took
+    /// `/api/stream` to 500 for half an hour. The repo's schema lint resolves a
+    /// qualified name against a global set of columns rather than against the
+    /// aliased table, so it cannot catch that class; Postgres can, exactly, and
+    /// a statement with an impossible predicate resolves every identifier
+    /// without touching a row.
+    ///
+    /// `WHERE false` rather than a real id: this is the one statement in the
+    /// boundary that WRITES, and a test that updates production is not a test.
+    #[tokio::test]
+    async fn the_workspace_attribution_resolves_against_the_schema() {
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipped: needs DATABASE_URL");
+            return;
+        };
+        let Ok(pool) = sqlx::PgPool::connect(&url).await else {
+            eprintln!("skipped: could not connect");
+            return;
+        };
+        if let Err(e) = sqlx::query(
+            "UPDATE episodes SET workspace_id = $1 WHERE episode_id = $2 AND false",
+        )
+        .bind(uuid::Uuid::nil())
+        .bind(uuid::Uuid::nil())
+        .execute(&pool)
+        .await
+        {
+            panic!(
+                "the boundary cannot attribute a pulse to a workspace: {e}\n\n\
+                 Migration 226 adds `episodes.workspace_id`. Without it every \
+                 workspace surface is reading a transcript instead of a record."
+            );
+        }
     }
 }

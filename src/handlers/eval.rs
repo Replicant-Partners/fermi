@@ -662,6 +662,9 @@ pub async fn run_eval_cases(
                             route: fermi::route_trust::RouteSelection::CallerNamed,
                             provenance: provenance.as_ref(),
                             source_ref: Some(source_ref),
+                            // An eval harness run. Commissioned by the platform against a fixed
+                            // question set, not by a team.
+                            workspace: None,
                         },
                     )
                     .await,

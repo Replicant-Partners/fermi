@@ -669,6 +669,10 @@ pub async fn execute_agent_handler(
             route: fermi::route_trust::RouteSelection::CallerNamed,
             provenance: provenance.as_ref(),
             source_ref: Some(source_ref),
+            // Already computed above for the post-agent hook, which needs the same
+            // id for the same reason: this run may have been commissioned by a
+            // workspace. `None` when a person called the agent directly.
+            workspace: ws_id_opt,
         },
     )
     .await

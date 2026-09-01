@@ -6526,6 +6526,11 @@ async fn record_delegated_episode(
                 "delegated_by": ctx.current_agent_id,
                 "agent_id": target_agent_id,
             })),
+            // The delegation hop, and `ToolContext` has carried the workspace all
+            // along. This is the call site that matters most: an agent invoking a
+            // peer is what workspace work IS, and every one of those pulses has
+            // been recorded as though it happened nowhere.
+            workspace: ctx.workspace_id,
         },
     )
     .await

@@ -773,6 +773,8 @@ pub async fn ingest_observations_handler(
                                     route: fermi::route_trust::RouteSelection::CallerNamed,
                                     provenance: provenance.as_ref(),
                                     source_ref: Some(source_ref),
+                                    // A system record about an agent, not work done in a workspace.
+                                    workspace: None,
                                 },
                             )
                             .await,

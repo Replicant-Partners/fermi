@@ -452,6 +452,9 @@ pub async fn dispatch_rabble_action(
                         route: fermi::route_trust::RouteSelection::CallerNamed,
                         provenance: provenance.as_ref(),
                         source_ref: Some(source_ref),
+                        // Rabble dispatches into a workspace — an app instantiated as one — and
+                        // the tool context above is already built with this id.
+                        workspace: Some(workspace_id),
                     },
                 )
                 .await,
