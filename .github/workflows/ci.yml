@@ -172,6 +172,13 @@ jobs:
       - name: Pulse row renders — every addresser, every grounding state
         run: node scripts/check_pulse_row.js
 
+      # The configuration shelf. Its one rankable panel must recommend exactly
+      # one rung, tell a declared rung what it unlocks and an absent one what
+      # reads `unknown` without it, and distinguish a ladder that failed to load
+      # from an agent that has declared nothing.
+      - name: Configuration shelf renders — the ladder and the drag handle
+        run: node scripts/check_specimen_shelf.js
+
       - name: Check all binaries compile
         run: cargo check --bins --workspace
 

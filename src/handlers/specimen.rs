@@ -910,6 +910,65 @@ pub async fn specimen_handler(
         }));
     }
 
+    // ── The declaration ladder, for this agent ───────────────────────────
+    //
+    // Served per agent rather than fetched from `/api/declarations`, which is a
+    // fleet read. A page about one agent computing a fleet-wide anything is the
+    // defect that made this endpoint take 46 seconds, and it is not going to be
+    // reintroduced for a config panel.
+    //
+    // The rungs are the answer to "why can nothing say anything about this
+    // agent's pulses" — each carries what it unlocks and what reads `unknown`
+    // without it — so this is the one config group the platform can rank, and
+    // the recommended next action is the first absent rung.
+    let rungs_row = sqlx::query(
+        "SELECT COALESCE(array_length(a.accepts, 1), 0) > 0
+                  AND COALESCE(array_length(a.produces, 1), 0) > 0        AS ports,
+                a.output_contract ? 'produces_schema'                     AS output_type,
+                jsonb_typeof(a.output_contract -> 'schema') = 'object'    AS output_schema,
+                jsonb_typeof(a.output_contract -> 'grounding') = 'object'
+                  AND (a.output_contract -> 'grounding') != '{}'          AS field_contract
+           FROM agents a WHERE a.agent_id = $1",
+    )
+    .bind(agent_id)
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten();
+
+    let present: Vec<&'static str> = fermi::declaration_ladder::LADDER
+        .iter()
+        .filter(|d| {
+            // `field_contract` has two paths and the SQL covers only one: the
+            // card's `output_contract.grounding`. The Rust const table is the
+            // other, and an agent declared there is declared.
+            if d.rung == "field_contract"
+                && fermi::declaration_ladder::has_field_contract(&agent_name)
+            {
+                return true;
+            }
+            rungs_row
+                .as_ref()
+                .and_then(|r| r.try_get::<Option<bool>, _>(d.rung).ok().flatten())
+                .unwrap_or(false)
+        })
+        .map(|d| d.rung)
+        .collect();
+
+    let ladder: Vec<Value> = fermi::declaration_ladder::LADDER
+        .iter()
+        .map(|d| {
+            json!({
+                "rung": d.rung,
+                "declares": d.declares,
+                "owner": d.owner,
+                "unlocks": d.unlocks,
+                "without_it": d.without_it,
+                "present": present.contains(&d.rung),
+            })
+        })
+        .collect();
+
     let taxonomy: Option<Value> = row.try_get("taxonomy").ok().flatten();
     let succeeded: i64 = rec.try_get("succeeded").unwrap_or(0);
 
@@ -973,6 +1032,20 @@ pub async fn specimen_handler(
             "episodes_error": episodes_error,
         },
         "health": health,
+        // What this agent has declared, rung by rung, with what each unlocks and
+        // what reads `unknown` without it. The configuration shelf's one
+        // rankable group: `next` is the cheapest absent rung, which is the only
+        // configuration question the platform can answer for the author rather
+        // than the other way round.
+        "declaration": {
+            "rungs": ladder,
+            "declared": present.len(),
+            "total": fermi::declaration_ladder::LADDER.len(),
+            "next": fermi::declaration_ladder::LADDER
+                .iter()
+                .find(|d| !present.contains(&d.rung))
+                .map(|d| d.rung),
+        },
     })))
 }
 

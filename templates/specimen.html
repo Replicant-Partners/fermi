@@ -88,16 +88,54 @@
   /* ── Drawer ── */
   .scrim{position:fixed;inset:0;background:rgba(0,0,0,0.55);display:none;z-index:40;}
   .scrim.open{display:block;}
-  .drawer{position:fixed;top:0;right:0;bottom:0;width:min(520px,92vw);background:var(--bg0);
+  /* A shelf, not a page. The subject stays on screen while you configure it,
+     because configuration is something you do TO the thing you are looking at —
+     which is exactly what the eight-tab page got wrong: it replaced the agent
+     with a form about the agent.
+
+     Width is a CSS variable so one drag handle can set it, and it is persisted,
+     because a width you have to set twice is a width the tool forgot. */
+  .drawer{position:fixed;top:0;right:0;bottom:0;width:var(--shelf-w,520px);
+          max-width:96vw;min-width:380px;background:var(--bg0);
           border-left:1px solid var(--bg2);z-index:41;transform:translateX(100%);
           transition:transform 0.18s ease;overflow-y:auto;padding:18px 20px 40px;}
   .drawer.open{transform:translateX(0);}
+  /* The handle. Wide enough to hit, invisible until you are near it. */
+  .grip{position:absolute;top:0;left:0;bottom:0;width:9px;cursor:col-resize;
+        z-index:2;background:transparent;}
+  .grip:hover, .grip.dragging{background:var(--yellow);opacity:0.5;}
+  /* No transition mid-drag, or the shelf lags the pointer by 180ms. */
+  .drawer.resizing{transition:none;}
+  body.resizing{user-select:none;cursor:col-resize;}
   .drawer h2{font-size:0.9rem;color:var(--yellow);margin:0 0 3px;}
   .drawer .sub{font-size:0.7rem;color:var(--fg4);margin-bottom:16px;}
   .drawer .close{position:absolute;top:14px;right:16px;background:transparent;border:none;
                  color:var(--fg4);cursor:pointer;font-size:1rem;font-family:inherit;}
   .note{font-size:0.71rem;color:var(--fg4);font-style:italic;line-height:1.5;margin:-2px 0 10px;}
   .empty{padding:14px 8px;font-size:0.76rem;color:var(--fg4);}
+
+  /* ── The declaration ladder, as the shelf's one rankable group ──────────
+     Each rung says what it unlocks and what reads `unknown` without it, which
+     is the difference between a checklist and an argument. */
+  .rung{display:grid;grid-template-columns:18px 1fr;gap:9px;padding:8px 0;
+        border-top:1px solid var(--bg2);}
+  .rung-mark{font-size:0.72rem;line-height:1.4;}
+  .rung.on .rung-mark{color:var(--green);}
+  .rung.off .rung-mark{color:var(--bg4,#7c6f64);}
+  .rung-n{font-size:0.74rem;color:var(--fg2);}
+  .rung.off .rung-n{color:var(--fg4);}
+  .rung-d{font-size:0.68rem;color:var(--fg3);margin-top:2px;line-height:1.5;}
+  .rung-x{font-size:0.66rem;color:var(--fg4);margin-top:4px;line-height:1.5;}
+  .rung-x b{color:var(--fg3);font-weight:normal;}
+  .rung-own{font-size:0.62rem;color:var(--bg4,#7c6f64);margin-top:3px;
+            overflow-wrap:anywhere;}
+  /* The one the platform recommends. Exactly one, or it is not a recommendation. */
+  .rung.next{background:var(--bg1);}
+  .rung.next .rung-n{color:var(--yellow);}
+  .next-tag{font-size:0.57rem;text-transform:uppercase;letter-spacing:0.06em;
+            border:1px solid var(--yellow);color:var(--yellow);padding:0 5px;
+            margin-left:6px;white-space:nowrap;}
+  .shelf-count{font-size:0.66rem;color:var(--fg4);margin-bottom:2px;}
   /* ── A pulse row is a door, and it has to look like one ──────────────────
      The date was already a link and rendered in the body colour, so nothing
      about the row said it could be opened. The whole row is the target now. */
@@ -332,27 +370,131 @@
     </div>`;
   }
 
+  // ── The declaration group ────────────────────────────────────────────
+  //
+  // The one configuration group the platform can RANK. Ports, a type name, a
+  // checkable schema, a field contract — in the order they cost an author, each
+  // carrying what it unlocks and what reads `unknown` without it. That last
+  // field is what makes this a workbench panel rather than a checklist: it says
+  // what the agent's pulses cannot be checked for until you declare it.
+  //
+  // Exactly one rung is marked `next`, and it is the first absent one. A
+  // recommendation that points at four things is a list.
+  function declarationPanel() {
+    const d = D.declaration || {};
+    const rungs = d.rungs || [];
+    if (!rungs.length) {
+      return `<div class="block"><h3>Declaration</h3>
+        <div class="note">The ladder did not load, so nothing is claimed about what
+        this agent has declared \u2014 which is different from it having declared
+        nothing.</div></div>`;
+    }
+    return `<div class="block"><h3>Declaration</h3>
+      <div class="shelf-count"><b>${d.declared} of ${d.total}</b> rungs declared${
+        d.next ? ` \u00b7 cheapest next: <b>${esc(d.next)}</b>` : " \u00b7 nothing left to declare"}</div>
+      <div class="note">What the platform can check about this agent's pulses, and what
+        it cannot until each rung exists.</div>
+      ${rungs.map(r => `<div class="rung ${r.present ? "on" : "off"}${
+        r.rung === d.next ? " next" : ""}">
+        <div class="rung-mark">${r.present ? "\u25c9" : "\u25cb"}</div>
+        <div>
+          <div class="rung-n">${esc(r.rung)}${
+            r.rung === d.next ? `<span class="next-tag">do this next</span>` : ""}</div>
+          <div class="rung-d">${esc(r.declares)}</div>
+          <div class="rung-x">${r.present
+            ? `<b>Unlocks:</b> ${esc(r.unlocks)}`
+            : `<b>Without it:</b> ${esc(r.without_it)}`}</div>
+          ${r.present ? "" : `<div class="rung-own">declared in ${esc(r.owner)}</div>`}
+        </div>
+      </div>`).join("")}</div>`;
+  }
+
   function drawer() {
     const p = D.profile;
     document.getElementById("drawer").innerHTML = `
-      <button class="close" id="close-drawer">✕</button>
+      <div class="grip" id="shelf-grip" title="drag to resize"></div>
+      <button class="close" id="close-drawer">\u2715</button>
       <h2>Configure</h2>
       <div class="sub">${esc(p.label)}</div>
       <div class="note">
         Editing is a mode, not a tab: it is a different activity from reading, and
-        mixing them is how a page grows eight tabs. These controls still live on the
-        old agent page; this drawer is where they belong.
+        mixing them is how a page grows eight tabs. The subject stays on screen \u2014
+        drag the left edge if you need more room.
       </div>
-      <div class="block"><h3>Lifecycle</h3>
-        <dl class="kv"><dt>Status</dt><dd>${esc(p.status || "—")}</dd>
-        <dt>Visibility</dt><dd>${esc(p.visibility || "—")}</dd></dl></div>
-      <div class="block"><h3>Not yet moved</h3>
-        <div class="note">Manage, Intelligence and eval authoring are still served by the
-        previous page. They move here in the deletion pass, once these three tabs have
-        earned their place.</div>
-        <a href="/agent/${encodeURIComponent(p.agent_name)}#manage">Open the old page →</a></div>`;
+      ${declarationPanel()}
+      <div class="block"><h3>Intelligence</h3>
+        <dl class="kv">
+          <dt>Provider</dt><dd>${esc((p.substrate || {}).provider || "\u2014")}</dd>
+          <dt>Model</dt><dd>${esc((p.substrate || {}).model || "\u2014")}</dd>
+          <dt>Executor</dt><dd>${esc((p.substrate || {}).executor || "\u2014")}</dd>
+          <dt>Temperature</dt><dd>${(p.substrate || {}).temperature ?? "\u2014"}</dd>
+          <dt>Persona</dt><dd>v${(p.substrate || {}).persona_version ?? 1}</dd>
+        </dl>
+        <div class="note">Read-only here for now. Every one of these is writable through
+          <code>PUT /api/agents/:id</code> \u2014 the panel is next, not the endpoint.</div></div>
+      <div class="block"><h3>Manage</h3>
+        <dl class="kv">
+          <dt>Status</dt><dd>${esc(p.status || "\u2014")}</dd>
+          <dt>Visibility</dt><dd>${esc(p.visibility || "\u2014")}</dd>
+          <dt>Tier</dt><dd>${esc(p.tier || "\u2014")}${
+            p.min_tier ? ` (min ${esc(p.min_tier)})` : ""}</dd>
+          <dt>Forks</dt><dd>${p.fork_count ?? 0}${
+            p.forked_from ? ` \u00b7 from ${esc(p.forked_from)}` : ""}</dd>
+        </dl>
+        <div class="note">Same: <code>PUT /api/agents/:id</code> already accepts
+          <code>status</code>, <code>visibility</code>, <code>min_tier</code>,
+          <code>fork_pricing</code> and <code>valence</code>.</div>
+        <a href="/agent/${encodeURIComponent(p.agent_name)}#manage">The old page, until
+          these panels are editable \u2192</a></div>`;
     document.getElementById("close-drawer").onclick = closeDrawer;
+    wireGrip();
   }
+
+  // ── The drag handle ──────────────────────────────────────────────────
+  //
+  // One handle, on the shelf's leading edge, and the width is remembered. A
+  // width you have to set twice is a width the tool forgot.
+  //
+  // Pointer events rather than mouse events, so a trackpad and a stylus behave
+  // the same, and `setPointerCapture` so the drag survives the pointer leaving
+  // the 9px strip — which it does immediately, every time.
+  const SHELF_MIN = 380, SHELF_KEY = "abw.shelf.width";
+  function setShelfWidth(px) {
+    const w = Math.max(SHELF_MIN, Math.min(px, Math.round(window.innerWidth * 0.96)));
+    document.documentElement.style.setProperty("--shelf-w", w + "px");
+    return w;
+  }
+  function wireGrip() {
+    const grip = document.getElementById("shelf-grip");
+    const shelf = document.getElementById("drawer");
+    if (!grip || !shelf) return;
+    grip.addEventListener("pointerdown", ev => {
+      ev.preventDefault();
+      grip.setPointerCapture(ev.pointerId);
+      grip.classList.add("dragging");
+      shelf.classList.add("resizing");
+      document.body.classList.add("resizing");
+      const move = e => setShelfWidth(window.innerWidth - e.clientX);
+      const up = e => {
+        grip.releasePointerCapture(ev.pointerId);
+        grip.classList.remove("dragging");
+        shelf.classList.remove("resizing");
+        document.body.classList.remove("resizing");
+        grip.removeEventListener("pointermove", move);
+        grip.removeEventListener("pointerup", up);
+        // Persisted on release, not on every move: one write per drag.
+        try { localStorage.setItem(SHELF_KEY, String(setShelfWidth(window.innerWidth - e.clientX))); }
+        catch (_) { /* private mode: the width is still applied, just not kept */ }
+      };
+      grip.addEventListener("pointermove", move);
+      grip.addEventListener("pointerup", up);
+    });
+  }
+  // Applied before the shelf is ever opened, so it does not visibly jump.
+  try {
+    const saved = parseInt(localStorage.getItem(SHELF_KEY) || "", 10);
+    if (saved) setShelfWidth(saved);
+  } catch (_) { /* no storage: the CSS default stands */ }
   const openDrawer = () => { drawer();
     document.getElementById("drawer").classList.add("open");
     document.getElementById("scrim").classList.add("open"); };
