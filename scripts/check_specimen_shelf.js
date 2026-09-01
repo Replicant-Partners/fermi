@@ -121,6 +121,70 @@ ok(missing.includes("declared in"),
   "an absent rung does not say where the declaration goes, so the reader cannot act");
 ok(!/undefined|NaN/.test(h), "the ladder printed a placeholder: " + h.slice(0, 200));
 
+// ── 2b. the three compile states, and pending is not failure ────────────
+//
+// The case this exists for: genome_profiler declares fifteen fields, seven
+// saying "no tool exists for this yet". It is the best-declared agent on the
+// platform and every surface reported it as not-green, which made the only route
+// to a healthy agent deleting the ambition the contract records.
+const GP = {
+  rungs: RUNGS, declared: 4, total: 4, next: null,
+  counts: { resolved: 6, pending: 7, derived: 1, narrative: 1 },
+  compiles: true,
+  fields: [
+    { path: "taxonomy", state: "resolved", tool: "gbif_taxonomy_tree" },
+    { path: "genome.notable_genes", state: "pending", tool: null },
+    { path: "phylogeny.superorder", state: "derived", tool: null },
+    { path: "summary", state: "narrative", tool: null },
+  ],
+};
+S.D = { profile: PROFILE, declaration: GP };
+let c = S.declarationPanel();
+ok(/Compiles\./.test(c),
+  "an agent with seven pending fields and no errors does not read as compiling");
+ok(/Green means zero <b>errors<\/b>/.test(c),
+  "the page does not say green means zero errors, so pending reads as failure");
+ok(/c-pending/.test(c), "pending fields carry no state class");
+// Read from the stylesheet, because that is where the colour is. The previous
+// version of this line tested the rendered markup for a CSS rule and therefore
+// tested nothing — caught by mutating the rule and watching the check pass.
+const pendingRule = (/\.c-pending\s*\{([^}]*)\}/.exec(HTML) || [])[1] || "";
+ok(pendingRule && !/--red|#fb4934/.test(pendingRule),
+  `pending is coloured as a fault (${pendingRule.trim()}). It is a declared gap ` +
+  `with no source yet — colouring it like an error is what made the only route ` +
+  `to a healthy agent deleting the agent's ambition`);
+const errorRule = (/\.c-error\s*\{([^}]*)\}/.exec(HTML) || [])[1] || "";
+ok(/--red|#fb4934/.test(errorRule),
+  "error is not coloured as a fault, so the one state that IS somebody's fault " +
+  "reads like the ones that are not");
+for (const k of ["resolved", "pending", "derived", "narrative"]) {
+  ok(new RegExp(`<b>\\d+</b> ${k}`).test(c), `the ${k} count is missing from the tally`);
+}
+// Explain once: one legend row per state present, never one per field.
+ok((c.match(/class="cmp-leg"/g) || []).length === 4,
+  `${(c.match(/class="cmp-leg"/g) || []).length} legend rows for 4 states present`);
+
+// An error is the only state that stops a compile, and it names the tool.
+S.D = { profile: PROFILE, declaration: { ...GP, compiles: false,
+  counts: { resolved: 1, error: 2, pending: 7 },
+  fields: [{ path: "a", state: "error", tool: "ghost_tool" },
+           { path: "b", state: "error", tool: "ghost_tool" },
+           { path: "c", state: "pending", tool: null }] } };
+c = S.declarationPanel();
+ok(/does not compile/.test(c), "two unsettleable fields still read as compiling");
+ok(/ghost_tool/.test(c), "the error does not name the tool nobody can dispatch");
+// Even then, pending must not be swept into the failure.
+ok(/standing request/.test(c),
+  "pending lost its meaning as soon as an unrelated error appeared");
+
+// No contract at all is not the same as a contract that resolves to nothing.
+S.D = { profile: PROFILE, declaration: { rungs: RUNGS, declared: 2, total: 4,
+                                         next: "output_schema" } };
+c = S.declarationPanel();
+ok(!/Compiles\./.test(c),
+  "an agent with no declared fields claims to compile, which asserts something " +
+  "about a contract that does not exist");
+
 // ── 3. nothing left to declare, and a ladder that did not load ──────────
 S.D = { profile: PROFILE,
         declaration: { rungs: RUNGS.map((r) => ({ ...r, present: true })),

@@ -150,6 +150,34 @@
      exist. */
   .rung-own2{display:block;font-size:0.62rem;color:var(--aqua);margin-top:3px;
              opacity:0.8;}
+  /* Does the contract resolve. `pending` is deliberately NOT red: it is a
+     declared gap with no source yet, which is a standing request rather than a
+     defect, and colouring it like a fault is what made the only route to a
+     healthy agent deleting its ambition. */
+  .cmp{margin-bottom:11px;padding-bottom:9px;border-bottom:1px solid var(--bg2);}
+  .cmp-head{font-size:0.7rem;color:var(--fg3);margin-bottom:5px;}
+  .cmp-head.ok b{color:var(--green);}
+  .cmp-head.bad b{color:var(--red,#fb4934);}
+  .cmp-tally{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px;}
+  .cmp-chip{font-size:0.6rem;border:1px solid var(--bg3);padding:1px 6px;color:var(--fg4);}
+  .cmp-chip b{color:var(--fg2);font-weight:normal;}
+  .cmp-leg{display:grid;grid-template-columns:22px 74px 1fr;gap:8px;align-items:baseline;
+           padding:2px 0;font-size:0.64rem;}
+  .cmp-n{text-align:right;color:var(--fg2);}
+  .cmp-t{font-size:0.6rem;}
+  .cmp-w{color:var(--fg4);line-height:1.45;}
+  .cmp-row{display:grid;grid-template-columns:74px 1fr 130px;gap:8px;align-items:baseline;
+           padding:2px 0;font-size:0.64rem;border-top:1px solid var(--bg2);}
+  .cmp-path{color:var(--fg2);overflow-wrap:anywhere;}
+  .cmp-tool{color:var(--fg4);text-align:right;overflow-wrap:anywhere;}
+  /* error is the only one that is somebody's fault today. */
+  .c-error{color:var(--red,#fb4934);}
+  .c-resolved{color:var(--green);}
+  .c-pending{color:var(--aqua);}
+  .c-derived, .c-inferred, .c-narrative{color:var(--fg4);}
+  .cmp-chip.c-error{border-color:var(--red,#fb4934);}
+  .cmp-chip.c-resolved{border-color:var(--green);}
+  .cmp-chip.c-pending{border-color:var(--aqua);}
   .shelf-mount{margin-top:10px;}
   .shelf-mount:empty{display:none;}
   /* ── A pulse row is a door, and it has to look like one ──────────────────
@@ -418,6 +446,62 @@
   // the last of them.
   const CONTRACT_RUNGS = ["output_type", "output_schema", "field_contract"];
 
+  // Does the contract resolve? Three states, and the third is the point.
+  //
+  // `pending` is not a lesser `resolved`. `Grounding::Unsourced` means no tool
+  // exists for this field YET — the field must be null and a value would be the
+  // violation — so it is a standing request for an integration and nobody's
+  // fault. Every surface before this collapsed it into failure, which made the
+  // only route to a healthy agent deleting its ambition: `genome_profiler`
+  // declares seven and is the best-declared agent on the platform.
+  //
+  // **Green means zero errors.** Said in the headline, not in a tooltip.
+  //
+  // Explain once: the reason belongs to the STATE, so it is one legend keyed by
+  // the token the rows print, and the rows carry only what differs.
+  const COMPILE_ORDER = ["error", "resolved", "pending", "derived", "inferred", "narrative"];
+  const COMPILE_WORD = {
+    error: "cannot be settled by anything",
+    resolved: "a tool is named and the platform can run it",
+    pending: "no source exists yet \u2014 a standing request, not a defect",
+    derived: "computed by the platform from other fields",
+    inferred: "a judgement, and an endorsement is the terminal verdict",
+    narrative: "prose, with no proposition to settle",
+  };
+
+  function compileBlock(d) {
+    const fields = d.fields || [];
+    if (!fields.length) return "";
+    const counts = d.counts || {};
+    const errors = counts.error || 0;
+    const present = COMPILE_ORDER.filter(k => counts[k]);
+    return `<div class="cmp">
+      <div class="cmp-head ${errors ? "bad" : "ok"}">${errors
+        ? `<b>${errors} field(s) cannot be settled by anything.</b> This does not compile.`
+        : `<b>Compiles.</b> ${fields.length} declared field(s), nothing unresolvable.`}</div>
+      <div class="cmp-tally">${present.map(k =>
+        `<span class="cmp-chip c-${k}"><b>${counts[k]}</b> ${esc(k)}</span>`).join("")}</div>
+      ${counts.pending ? `<div class="af-note">Green means zero <b>errors</b>. The
+        ${counts.pending} pending field(s) are declared gaps with no source yet \u2014 the
+        agent compiles, and pruning them to reach green would delete the ambition the
+        contract exists to record.</div>` : ""}
+      ${present.map(k => `<div class="cmp-leg">
+        <span class="cmp-n">${counts[k]}</span>
+        <span class="cmp-t c-${k}">${esc(k)}</span>
+        <span class="cmp-w">${esc(COMPILE_WORD[k] || "")}${k === "error"
+          ? ` \u2014 ${esc([...new Set(fields.filter(f => f.state === "error")
+              .map(f => f.tool).filter(Boolean))].join(", "))}` : ""}</span>
+      </div>`).join("")}
+      <details class="expert"><summary>every declared field</summary>
+        ${fields.map(f => `<div class="cmp-row">
+          <span class="cmp-t c-${esc(f.state)}">${esc(f.state)}</span>
+          <span class="cmp-path">${esc(f.path)}</span>
+          <span class="cmp-tool">${esc(f.tool || "\u2014")}</span>
+        </div>`).join("")}
+      </details>
+    </div>`;
+  }
+
   function declarationPanel() {
     const d = D.declaration || {};
     const rungs = d.rungs || [];
@@ -433,6 +517,7 @@
       <div class="note">What the platform can check about this agent's pulses, and what
         it cannot until each rung exists. Three of the four are one save: the contract
         editor writes the type name, the schema and the grounding together.</div>
+      ${compileBlock(d)}
       ${rungs.map(r => `<div class="rung ${r.present ? "on" : "off"}${
         r.rung === d.next ? " next" : ""}">
         <div class="rung-mark">${r.present ? "\u25c9" : "\u25cb"}</div>

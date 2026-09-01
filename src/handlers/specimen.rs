@@ -975,6 +975,74 @@ pub async fn specimen_handler(
         })
         .collect();
 
+    // ── The contract's fields, in the three states a compile has ─────────
+    //
+    // The ladder says whether a contract EXISTS. This says whether the one that
+    // exists resolves, and it is the distinction that decides whether an agent
+    // can ever read as finished.
+    //
+    //   resolved  a tool is named and the platform can dispatch it
+    //   error     a tool is named and no such tool exists — the author's, now
+    //   pending   no tool exists for this field YET, by declaration. Nobody's
+    //             fault, and NOT a lesser `resolved`
+    //
+    // `pending` is the load-bearing one. `Grounding::Unsourced` has meant "no
+    // tool exists, so the field must be null, and a value here is the violation"
+    // since migration 200 — `ratings.elo_current` even carries the note "returns
+    // when a ClubElo or equivalent tool is added". Surfaces have been collapsing
+    // it into failure, which makes the only route to a healthy agent deleting
+    // its ambition: `genome_profiler` declares seven such fields and is the
+    // best-declared agent on the platform.
+    //
+    // **Green means zero errors, not zero pending.**
+    //
+    // The half of `error` that needs a tool's declared RESPONSE — does the named
+    // tool actually return this field — is not checkable yet and is not guessed
+    // at. See docs/plans/AGENT_COMPILE_AND_TOOL_REGISTRY.md.
+    let dispatchable: std::collections::HashSet<&'static str> =
+        fermi::agent_backend::tools::dispatchable_tool_names()
+            .into_iter()
+            .collect();
+
+    let mut counts = std::collections::BTreeMap::<&'static str, usize>::new();
+    let contract_fields: Vec<Value> = fermi::grounding_trust::contracts_for(&agent_name)
+        .map(|c| {
+            let (state, tool, why) = match c.grounding {
+                fermi::grounding_trust::Grounding::Sourced { tool, .. } => {
+                    if dispatchable.contains(tool) {
+                        ("resolved", Some(tool), "a tool is named and the platform can run it")
+                    } else {
+                        (
+                            "error",
+                            Some(tool),
+                            "the contract names a tool the platform cannot dispatch, so                              nothing can ever settle this field",
+                        )
+                    }
+                }
+                fermi::grounding_trust::Grounding::Unsourced => (
+                    "pending",
+                    None,
+                    "no tool exists for this yet. The field must be null and a value                      here is the violation — this is a standing request for an                      integration, not a defect",
+                ),
+                fermi::grounding_trust::Grounding::Derived { .. } => (
+                    "derived",
+                    None,
+                    "computed by the platform from other fields, so it is reproducible                      by construction",
+                ),
+                fermi::grounding_trust::Grounding::Inferred { .. } => (
+                    "inferred",
+                    None,
+                    "a judgement the agent is commissioned to make. An endorsement is                      the terminal verdict, not a weak citation",
+                ),
+                fermi::grounding_trust::Grounding::Narrative => {
+                    ("narrative", None, "prose. There is no proposition to settle")
+                }
+            };
+            *counts.entry(state).or_default() += 1;
+            json!({ "path": c.path, "state": state, "tool": tool, "why": why })
+        })
+        .collect();
+
     let taxonomy: Option<Value> = row.try_get("taxonomy").ok().flatten();
     let succeeded: i64 = rec.try_get("succeeded").unwrap_or(0);
 
@@ -1062,6 +1130,13 @@ pub async fn specimen_handler(
                 .iter()
                 .find(|d| !present.contains(&d.rung))
                 .map(|d| d.rung),
+            // The contract's own fields, and whether each resolves.
+            "fields": contract_fields,
+            "counts": counts,
+            // Stated rather than left to each surface to decide, because every
+            // surface so far has decided it the same wrong way.
+            "compiles": counts.get("error").copied().unwrap_or(0) == 0,
+            "green_means": "zero errors. `pending` fields are declared gaps with no                             source yet — an agent with pending fields and no errors                             compiles, and pruning them to reach green would delete                             the ambition the contract exists to record.",
         },
     })))
 }
@@ -1119,5 +1194,91 @@ mod tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod compile_state_tests {
+    /// `pending` is not a lesser `resolved`, and an agent full of it compiles.
+    ///
+    /// The case this is written from: `genome_profiler` declares fifteen fields,
+    /// seven of which say *no tool exists for this yet*. It is the best-declared
+    /// agent on the platform, and every surface reported it as not-green —
+    /// making the only route to a healthy agent deleting the ambition the
+    /// contract exists to record.
+    ///
+    /// Checked against the real `FIELD_CONTRACTS` rather than a fixture, because
+    /// the thing that would break this is somebody re-grading a field, and a
+    /// fixture would keep passing while the fleet changed underneath it.
+    #[test]
+    fn an_agent_of_pending_fields_still_compiles() {
+        use fermi::grounding_trust::{contracts_for, Grounding};
+
+        let mut pending = 0;
+        let mut sourced = 0;
+        let mut unknown_tool = 0;
+        let dispatchable: std::collections::HashSet<&'static str> =
+            fermi::agent_backend::tools::dispatchable_tool_names()
+                .into_iter()
+                .collect();
+
+        for c in contracts_for("genome_profiler") {
+            match c.grounding {
+                Grounding::Unsourced => pending += 1,
+                Grounding::Sourced { tool, .. } => {
+                    sourced += 1;
+                    if !dispatchable.contains(tool) {
+                        unknown_tool += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        assert!(
+            pending >= 5,
+            "genome_profiler declares {pending} unsourced fields; this test is \
+             reading the wrong agent or the contract was pruned — which is the \
+             thing it exists to make unnecessary"
+        );
+        assert!(sourced > 0, "no sourced fields, so nothing could resolve");
+        assert_eq!(
+            unknown_tool, 0,
+            "genome_profiler names {unknown_tool} tool(s) the platform cannot \
+             dispatch. Those are ERRORS and the agent does not compile — which \
+             is a real finding, not a test to relax"
+        );
+    }
+
+    /// Every tool named by any contract must be dispatchable, or the field it
+    /// claims to settle can never be settled by anything.
+    ///
+    /// This is the `error` state, computed over the whole fleet. It is empty
+    /// today; if it stops being empty, some agent is carrying a promise nothing
+    /// can keep.
+    #[test]
+    fn no_contract_names_a_tool_the_platform_cannot_dispatch() {
+        use fermi::grounding_trust::{Grounding, FIELD_CONTRACTS};
+
+        let dispatchable: std::collections::HashSet<&'static str> =
+            fermi::agent_backend::tools::dispatchable_tool_names()
+                .into_iter()
+                .collect();
+
+        let broken: Vec<String> = FIELD_CONTRACTS
+            .iter()
+            .filter_map(|c| match c.grounding {
+                Grounding::Sourced { tool, .. } if !dispatchable.contains(tool) => {
+                    Some(format!("{}.{} -> {tool}", c.agent_id, c.path))
+                }
+                _ => None,
+            })
+            .collect();
+
+        assert!(
+            broken.is_empty(),
+            "these contracts name tools the platform cannot dispatch, so the \
+             fields can never be settled by anything: {broken:#?}"
+        );
     }
 }
