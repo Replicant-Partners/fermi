@@ -491,7 +491,8 @@ const ContractBuilder = (() => {
                        <input class="cb-ftype" value="${esc(f.type)}" placeholder="string?"
                               oninput="cbSetField(${i},${j},'type',this.value)" />
                        <button class="cb-del" onclick="cbDelField(${i},${j})">&times;</button>
-                     </div>`,
+                     </div>
+                     ${cbSourceHint(i, j)}`,
                      )
                      .join("")}
                    <button class="btn" style="font-size:0.7rem;padding:3px 8px"
@@ -771,6 +772,123 @@ const ContractBuilder = (() => {
     return b.fields
       .map((f) => (f.name || "").trim())
       .filter((n) => n && !known.has(n));
+  }
+
+  // ── reverse lookup: I know the field, who returns it? ────────────
+  //
+  // The picker answers "I have this tool, what does it give me". This answers
+  // the question authors actually arrive with: they know the field they want
+  // in the document and not which tool has it. Without it the only way to
+  // find out is to name a tool and look, once per tool.
+  //
+  // Two tools can return `symbol`, and this does NOT pick between them. Every
+  // hit carries its tool AND its full path, so the author chooses. A system
+  // that guessed here would be making a grounding claim on the author's
+  // behalf, which is the one thing this whole feature exists to prevent.
+  function cbFieldSources(name) {
+    const n = (name || "").trim().toLowerCase();
+    // One or two characters match nearly everything; that is noise, not a
+    // lead, and it would put a hint under every half-typed field.
+    if (n.length < 3) return [];
+    const hits = [];
+    Object.keys(cbShapes).forEach((tool) => {
+      const sh = cbShapes[tool];
+      (sh.fields || []).forEach((f) => {
+        const leaf = f.path.split(".").pop().replace(/\[\]$/, "").toLowerCase();
+        const key = (f.field || "").toLowerCase();
+        const exact = key === n || leaf === n;
+        if (exact || key.includes(n) || leaf.includes(n))
+          hits.push({
+            tool: sh.tool,
+            path: f.path,
+            type: f.type,
+            field: f.field,
+            exact: exact,
+          });
+      });
+    });
+    // Exact before substring, then by tool name, so the obvious answer is
+    // first and the ordering does not move as unrelated tools get declared.
+    hits.sort(
+      (a, b) => Number(b.exact) - Number(a.exact) || a.tool.localeCompare(b.tool),
+    );
+    return hits;
+  }
+
+  // The candidates for ONE field row. Shared by the hint and by the adopt, so
+  // the button and the action cannot disagree — the button passes an index
+  // into this list rather than a tool name, which also keeps tool and path out
+  // of an `onclick` attribute where escaping would have to be trusted.
+  function cbSourceCandidates(i, j) {
+    const b = cbBlocks[i];
+    if (!b) return [];
+    const f = (b.fields || [])[j];
+    if (!f) return [];
+    const name = (f.name || "").trim();
+    if (!name) return [];
+    const cur = (b.tool || "").trim();
+    const sh = cbShapes[cur];
+    // Already answered by this block's own tool. The picker above said so;
+    // repeating it underneath would be noise on the common case.
+    if (
+      sh &&
+      (sh.fields || []).some(
+        (x) =>
+          x.field === name ||
+          x.path.split(".").pop().replace(/\[\]$/, "") === name,
+      )
+    )
+      return [];
+    return cbFieldSources(name)
+      .filter((h) => h.tool !== cur)
+      .slice(0, 4);
+  }
+
+  function cbSourceHint(i, j) {
+    const hits = cbSourceCandidates(i, j);
+    if (!hits.length) return "";
+    const cur = (cbBlocks[i].tool || "").trim();
+    // Said plainly when the block is already sourced: this is the uncovered
+    // case, the field the named tool cannot supply.
+    const lead = cur ? "not returned by " + cur + " \u00b7 but is by" : "returned by";
+    return `<div class="cb-src-hint"><span class="k">${esc(lead)}</span>${hits
+      .map(
+        (h, k) => `<button class="cb-src-hit" onclick="cbAdoptSource(${i},${j},${k})"
+                title="${esc(h.path)} \u2014 ${esc(h.type)}${h.exact ? "" : " (name match, not exact)"}">${esc(
+                  h.tool,
+                )}<span class="p">${esc(h.path)}</span></button>`,
+      )
+      .join("")}</div>`;
+  }
+
+  function cbAdoptSource(i, j, k) {
+    const b = cbBlocks[i];
+    const hit = cbSourceCandidates(i, j)[k];
+    if (!b || !hit) return;
+    const prev = (b.tool || "").trim();
+    b.status = "sourced";
+    b.tool = hit.tool;
+    if (hit.type) b.fields[j].type = hit.type;
+    if (prev && prev !== hit.tool) {
+      // The old paths named the old tool. Carrying them over would leave a
+      // `response_field` that claims paths this tool never returns, which is
+      // exactly the unverifiable claim the picker exists to stop.
+      b.response_field = hit.path;
+    } else {
+      const paths = new Set(
+        (b.response_field || "")
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
+      );
+      paths.add(hit.path);
+      b.response_field = Array.from(paths).join(", ");
+    }
+    // `why` is deliberately untouched. It is the one field the compiler
+    // refuses to write, and a UI that filled it in would break that rule from
+    // the other side: the author would ship a justification nobody wrote.
+    cbRenderAll();
+    cbTouch();
   }
 
   function cbDerivedHint(b) {
@@ -1438,6 +1556,11 @@ Rules, each enforced by the platform:
         dl.innerHTML = cbAvailableTools
           .map((t) => `<option value="${esc(t)}"></option>`)
           .join("");
+      // Redraw. This fetch resolves after mount's initial render, so without
+      // it the shapes sat in `cbShapes` and were never drawn: the picker
+      // simply never appeared, and the reverse-lookup hints never fired. The
+      // data was right and invisible, which is the worst kind of wrong.
+      cbRenderAll();
     } catch {}
   }
 
@@ -1581,7 +1704,7 @@ Rules, each enforced by the platform:
     cbSet, cbSetField, cbSetStatus, cbSetShape, cbRenameBlock,
     cbToggle, cbAddFromProposal, cbAddJudgement, cbAddProse, cbAddGap,
     cbBorrow, cbTab, cbToolsChanged, cbTouch, cbLoadExample, cbClear,
-    cbToggleShapeField,
+    cbToggleShapeField, cbAdoptSource,
     cbCopySnippet, cbRenderAll, cbRenderNav, cbRenderConsumers,
   });
 

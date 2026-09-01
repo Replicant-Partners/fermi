@@ -639,6 +639,32 @@ pub fn response_for(tool: &str) -> Option<&'static ToolResponse> {
     TOOL_RESPONSES.iter().find(|t| t.tool == tool)
 }
 
+/// This table as the builder receives it, on `/api/contracts/tools`.
+///
+/// One function rather than a `json!` in the handler, because the headless
+/// check of the builder (`scripts/check_contract_builder.js`) needs the same
+/// bytes the browser gets. A fixture written by hand in the JavaScript would
+/// keep passing about a tool whose response had since changed, which is the
+/// failure mode this whole table exists to remove — one level up.
+pub fn declared_shapes_json() -> Vec<serde_json::Value> {
+    TOOL_RESPONSES
+        .iter()
+        .map(|t| {
+            serde_json::json!({
+                "tool": t.tool,
+                "evidence": t.evidence.kind(),
+                "evidence_from": t.evidence.where_from(),
+                "fields": t.fields.iter().map(|f| serde_json::json!({
+                    "path": f.path,
+                    "field": f.field,
+                    "type": f.ty,
+                    "note": f.note,
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect()
+}
+
 /// Which of a block's declared fields have a matching response field, and
 /// which do not.
 ///
@@ -649,10 +675,7 @@ pub fn response_for(tool: &str) -> Option<&'static ToolResponse> {
 ///
 /// Returns `None` when the tool has no declaration, which must not be read as
 /// "everything is covered".
-pub fn coverage<'a>(
-    tool: &str,
-    block_fields: &[&'a str],
-) -> Option<(Vec<&'a str>, Vec<&'a str>)> {
+pub fn coverage<'a>(tool: &str, block_fields: &[&'a str]) -> Option<(Vec<&'a str>, Vec<&'a str>)> {
     let decl = response_for(tool)?;
     let mut covered = Vec::new();
     let mut uncovered = Vec::new();
@@ -662,8 +685,7 @@ pub fn coverage<'a>(
         // not lost the source, and flagging that would train people to ignore
         // this.
         let hit = decl.fields.iter().any(|r| {
-            r.field == *f
-                || r.path.rsplit('.').next().map(|p| p.trim_end_matches("[]")) == Some(*f)
+            r.field == *f || r.path.rsplit('.').next().map(|p| p.trim_end_matches("[]")) == Some(*f)
         });
         if hit {
             covered.push(*f);
@@ -752,7 +774,12 @@ mod tests {
     /// builder can say it while the author is looking at the block.
     #[test]
     fn the_coverage_check_finds_the_field_that_started_all_this() {
-        let block = ["estimated_size_mb", "chromosome_count", "notable_genes", "ploidy"];
+        let block = [
+            "estimated_size_mb",
+            "chromosome_count",
+            "notable_genes",
+            "ploidy",
+        ];
         let (covered, uncovered) =
             coverage("ncbi_genome_search", &block).expect("the tool is declared");
 

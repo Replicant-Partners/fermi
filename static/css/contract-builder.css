@@ -531,3 +531,28 @@
 }
 .cb-uncovered code { color: var(--orange); margin-right: 4px; }
 .cb-uncovered div { color: var(--fg3); margin-top: 4px; }
+
+/* ── Reverse lookup: which tool returns this field? ──────────────────
+   The forward question is the picker; this is "I know the field, who has
+   it". Each hit shows its tool AND its path, because two tools returning
+   `symbol` is a choice for the author, not an ambiguity to resolve
+   automatically. */
+.cb-src-hint {
+  font-size: 0.66rem;
+  color: var(--fg3);
+  margin: 2px 0 6px 4px;
+  line-height: 1.7;
+}
+.cb-src-hint .k { color: var(--aqua); }
+.cb-src-hit {
+  background: none;
+  border: 1px solid var(--bg2);
+  color: var(--green);
+  font-family: inherit;
+  font-size: 0.64rem;
+  padding: 1px 6px;
+  margin-left: 4px;
+  cursor: pointer;
+}
+.cb-src-hit:hover { border-color: var(--green); background: var(--bg1); }
+.cb-src-hit .p { color: var(--gray); margin-left: 5px; }

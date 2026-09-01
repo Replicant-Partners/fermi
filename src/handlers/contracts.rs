@@ -22,7 +22,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::Row;
 
-use crate::AppState;
+use crate::{resolve_agent, resolve_agent_card, AppState};
 
 #[derive(Deserialize)]
 pub struct CompileRequest {
@@ -105,22 +105,11 @@ pub async fn tool_names_handler(_principal: AuthPrincipal) -> Json<Value> {
     // identically. A tool absent from the table has simply not been read, and
     // the builder falls back to extracting candidates from its description
     // and marking them unconfirmed.
-    let shapes: Vec<Value> = fermi::tool_response_shapes::TOOL_RESPONSES
-        .iter()
-        .map(|t| {
-            json!({
-                "tool": t.tool,
-                "evidence": t.evidence.kind(),
-                "evidence_from": t.evidence.where_from(),
-                "fields": t.fields.iter().map(|f| json!({
-                    "path": f.path,
-                    "field": f.field,
-                    "type": f.ty,
-                    "note": f.note,
-                })).collect::<Vec<_>>(),
-            })
-        })
-        .collect();
+    //
+    // Serialised by the table's own module, not here, so the headless check of
+    // the builder can be handed the same bytes the browser gets rather than a
+    // fixture that drifts.
+    let shapes: Vec<Value> = fermi::tool_response_shapes::declared_shapes_json();
 
     Json(json!({
         "tools": names,
@@ -655,30 +644,34 @@ pub async fn decompile_handler(
     _principal: AuthPrincipal,
     axum::extract::Path(agent_id): axum::extract::Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let row = sqlx::query(
-        "SELECT agent_name, produces, mcp_tools, output_contract \
-         FROM agents WHERE agent_name = $1 LIMIT 1",
-    )
-    .bind(&agent_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("db: {e}")))?
-    .ok_or_else(|| (StatusCode::NOT_FOUND, format!("no agent `{agent_id}`")))?;
+    // The RESOLVED card, not the raw `agents` row.
+    //
+    // This read the `mcp_tools` column directly and reported "no tools
+    // declared" for agents that plainly have them: `genome_profiler` shows
+    // four on its own page and the builder showed none. For a curated agent
+    // the tools live in the on-disk card and the column is NULL, because
+    // `resolve_agent_card` prefers the registry and only falls back to the
+    // database. Every other surface uses that resolution; reading the column
+    // was a second answer to a question the platform had already settled.
+    //
+    // The consequence was not cosmetic. With no tool names, the palette had
+    // nothing to offer, the response-shape picker never appeared, and an
+    // author had to type field names from memory — which is precisely the
+    // failure this whole feature was built to remove, reintroduced by reading
+    // the wrong column.
+    let db_agent = resolve_agent(&state, &agent_id)
+        .await
+        .map_err(|_| (StatusCode::NOT_FOUND, format!("no agent `{agent_id}`")))?;
+    let card = resolve_agent_card(&state, &db_agent);
 
-    let produces: Vec<String> = row.try_get("produces").unwrap_or_default();
-    let tool_names: Vec<String> = row
-        .try_get::<Option<Value>, _>("mcp_tools")
-        .ok()
-        .flatten()
-        .and_then(|v| {
-            v.as_array().map(|a| {
-                a.iter()
-                    .filter_map(|t| t.get("name").and_then(|n| n.as_str()).map(str::to_string))
-                    .collect()
-            })
-        })
-        .unwrap_or_default();
-    let oc: Option<Value> = row.try_get("output_contract").ok().flatten();
+    let produces: Vec<String> = card.produces.clone();
+    let tool_names: Vec<String> = card
+        .capabilities
+        .mcp_tools
+        .iter()
+        .map(|t| t.name.clone())
+        .collect();
+    let oc: Option<Value> = card.capabilities.output_contract.clone();
 
     // No contract yet: an empty sketch seeded with the agent's tools is a
     // better starting point than an error, because "this agent has nothing"
