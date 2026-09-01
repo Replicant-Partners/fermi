@@ -62,6 +62,63 @@ declaration.
 
 ---
 
+---
+
+## 0.1 Three places declare which tool supplies a field. They disagree.
+
+Added after the trace view for episode `386a6248` was pointed out: it prints
+`call_football_api` beside seven rows, lists the seven calls the run actually
+made with their endpoints and byte counts, and grades each contracted field
+`never asked` / `asked, empty` / `tool unused`. **The trace knows the tool. The
+card and the builder do not.**
+
+So this is not missing knowledge. It is three sources of the same fact, only
+one of which is wired to the gate — and it is the wrong one.
+
+| # | source | says | read by | correct? |
+|---|---|---|---|---|
+| 1 | `agent_card.json` → `capabilities.mcp_tools` | `execute_agent` | contract builder, publish gate, `invalid_tool_declarations` | **no** |
+| 2 | `grounding_trust::FIELD_CONTRACTS` (Rust const) | `league_context` ← `call_football_api`, and 5 more paths | trace view, `field_probe::declared_tool`, hop enforcement | **yes** |
+| 3 | the episode record (`tool_calls`) | 7 real calls: `standings`, `teams/statistics` ×2, `players` ×2, `injuries`, `players/topscorers` | trace view (`TOOL_CALLS`) | **ground truth** |
+
+The trace **already reconciles 2 against 3**, per field, per episode. That is
+what produces `never asked · call_football_api would close 4 of them` and
+`asked, empty`. Nothing reconciles either of them against 1.
+
+### Mechanical reconciliation, run now
+
+Of the 9 agents with tool-sourced entries in `FIELD_CONTRACTS`, **2 name a tool
+their own card does not declare**:
+
+```
+football_analyst   contract says  call_football_api
+                   card declares  execute_agent
+
+weather_oracle     contract says  polymarket_orderbook, weather_climatology,
+                                  weather_dispersion_fit, weather_ensemble_forecast
+                   card declares  execute_agent, polymarket_weather_markets,
+                                  weather_settlement_spec
+```
+
+`weather_oracle` is the uncomfortable one: it is part of the fully-typed
+weather composition, migrated deliberately and covered by
+`tests/weather_composition.rs`. Being freshly typed did not prevent the
+divergence, because nothing compares the two declarations.
+
+### Why this makes the fix cheaper than §0 implies
+
+The declaration does not need to be *authored*. It needs to be *derived and
+reconciled*: source 2 already holds the per-field mapping, and source 3 can
+falsify it against what actually ran.
+
+And the reconciliation test is **safe to write before the registry refactor**,
+because it does not depend on what `mcp_tools` is decided to mean. "This agent
+calls `call_football_api`" is true under every candidate semantics — grant,
+documentation, or deleted-in-favour-of-registry-class. Only the *consequence*
+of the declaration is undecided, not its truth.
+
+---
+
 ## 1. Prompt and declaration disagree on 22 of 101 curated cards
 
 Not a `football_analyst` quirk. A scan of every curated card for builtin names
@@ -184,6 +241,28 @@ should not be quietly taken to.
 No — but it is **narrower than it reads**, and this finding is a clean example
 of the difference.
 
+**Revised after §0.1, and the revision matters.** My first answer framed this as
+an epistemic gap: the platform cannot tell what a tool really supplied, so it
+checks a declaration instead. That was wrong. The platform *can* tell, does
+tell, and shows it on the trace screen — per field, per episode, graded `never
+asked` / `asked, empty` / `tool unused` against the actual call log.
+
+So the honest diagnosis is not "the gate checks a weak thing because a strong
+thing is unavailable." It is:
+
+> **The strong check exists and runs. It is rendered for human review and is not
+> what the gate reads.** The gate reads a third declaration that nothing keeps
+> honest.
+
+That is a better problem to have — it is wiring, not epistemics — but it is
+also a sharper criticism, because the capability is already paid for.
+
+It also revises `DESIGN_typed_output_contracts.md` §9 item 1, which says
+`grounding` is "validated at publish and never read at runtime". Runtime
+per-field grounding verification is implemented; it lives in the trace view and
+feeds a human settle form. Whether any of it reaches `gate_decisions` I have
+**not** verified and should not be assumed.
+
 **What holds.** The platform is consistent where it matters most: `unverified`
 never scores as a pass. `unverified_*` maps to `Decision::Undetermined`;
 `schema_conformance` writes *no* loop4 signal rather than a neutral one;
@@ -220,6 +299,27 @@ one the UI currently makes:
 If that sentence is unacceptable, the fix is to make `mcp_tools` enforcing. If
 it is acceptable, the fix is to stop implying otherwise. Either is fine. Doing
 neither is what makes it flimsy.
+
+### The ordering this implies
+
+Trusted declarations are a **prerequisite**, not a nice-to-have. A gate over a
+declaration nothing keeps honest is a gate over an opinion, and every downstream
+verdict inherits that. So:
+
+1. **Now, safe under any registry semantics** — a reconciliation test:
+   `FIELD_CONTRACTS` names a tool ⇒ the card must declare it. Two failures
+   today, both true facts, both one-line card edits. Prevents new divergence
+   whatever the refactor decides.
+2. **Now, as a report rather than a gate** — the prompt scan (22 cards). It is a
+   regex over prose and should not be load-bearing, but an unowned list of 22
+   is better than an unowned list of 0.
+3. **After the refactor** — whether `mcp_tools` grants; whether the card's
+   declaration should be *generated* from `FIELD_CONTRACTS` rather than
+   maintained beside it; whether the trace's per-field reconciliation should
+   emit a gate decision instead of only a review row.
+
+Step 3 is where the real prize is. Steps 1 and 2 exist so that the ground under
+step 3 is not still moving when it is attempted.
 
 ---
 
