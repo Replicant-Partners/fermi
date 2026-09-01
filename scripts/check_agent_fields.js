@@ -160,6 +160,46 @@ for (const f of AF.FIELDS) {
   ok(host.html.includes("claude-opus-4"), "the served model was not loaded into the control");
   ok(host.html.includes("You analyse football."), "the system prompt was not loaded");
 
+  // ── 4b. the ladder decides which model runs, so it must be visible ────
+  //
+  // `AgentCard::apply_tier_resolution` picks the highest rung at or below the
+  // caller's tier and OVERWRITES model and provider. An Intelligence panel that
+  // shows one model for such an agent is lying by omission, and calling that
+  // field "model" rather than "fallback model" is the lie in miniature.
+  const provider = AF.FIELDS.find((f) => f.key === "llm_provider");
+  const modelF = AF.FIELDS.find((f) => f.key === "model");
+  ok(/fallback/i.test(modelF.label) && /fallback/i.test(provider.label),
+    `model is labelled "${modelF.label}" and provider "${provider.label}" — both are ` +
+    `defaults that a ladder rung overwrites, and presenting either as THE model is ` +
+    `wrong for every agent with a ladder`);
+  ok(/apply_tier_resolution|rung/.test(modelF.help),
+    "the model field does not say what overrides it");
+
+  const laddered = { ...PROFILE, substrate: { ...PROFILE.substrate, model_ladder: [
+    { tier: "free", provider: "anthropic", model: "claude-haiku-4", eval_score: 0.61 },
+    { tier: "premium", provider: "anthropic", model: "claude-opus-4", eval_score: 0.88 },
+  ] } };
+  const hostL = makeEl("div");
+  AF.mount({ container: hostL, agentId: "x", group: "intelligence", profile: laddered });
+  ok(/af-ladder/.test(hostL.html), "the ladder is not rendered at all");
+  for (const t of ["local", "free", "standard", "premium"]) {
+    ok(hostL.html.includes(t), `tier ${t} is missing from the ladder`);
+  }
+  // free and standard both resolve to the free rung; premium to the premium one.
+  const rows = hostL.html.split("af-rung").slice(1);
+  ok(/falls back/.test(rows[0]), "local has no rung and should fall back");
+  ok(/claude-haiku-4/.test(rows[1]), "free does not resolve to the free rung");
+  ok(/claude-haiku-4/.test(rows[2]),
+    "standard does not resolve DOWN to the free rung — the rule is highest at or below");
+  ok(/claude-opus-4/.test(rows[3]), "premium does not resolve to the premium rung");
+
+  // No ladder must say so rather than rendering an empty block.
+  const hostN = makeEl("div");
+  AF.mount({ container: hostN, agentId: "x", group: "intelligence", profile: PROFILE });
+  ok(/No ladder/.test(hostN.html),
+    "an agent with no ladder gets an empty block instead of being told the fallback " +
+    "is what every caller gets");
+
   const save = host.querySelector("[data-af-save]");
   ok(!!save, "there is no save control");
   ok(save.disabled === true, "save is live before anything changed");
@@ -204,6 +244,17 @@ for (const f of AF.FIELDS) {
   const host3 = makeEl("div");
   AF.mount({ container: host3, agentId: "football_analyst", group: "manage",
              profile: PROFILE });
+  // ── 6b. valence is four fields, not a JSON box ───────────────────────
+  const val = AF.FIELDS.find((f) => f.key === "valence");
+  ok(!!val, "valence is missing from the manage group entirely");
+  ok(val.kind === "object" && Array.isArray(val.members),
+    "valence is not a structured field, so it is a JSON box somebody can put the " +
+    "wrong shape into");
+  ok(val.members.map((m) => m.key).sort().join(",") ===
+     "arousal,personality_traits,primary_affect,valence",
+    `valence's members are ${val.members.map((m) => m.key).join(",")} — the struct is ` +
+    `AgentValence { primary_affect, arousal, valence, personality_traits }`);
+
   ok(/af-life/.test(host3.html), "the manage group has no lifecycle block");
   ok(/publish pipeline/.test(host3.html),
     "the lifecycle block does not say why these are not fields");
@@ -226,6 +277,25 @@ for (const f of AF.FIELDS) {
   const life4 = host4.querySelectorAll("[data-lifecycle]");
   ok(life4.some((b) => b.dataset.lifecycle === "restore"),
     "an archived agent is not offered restore");
+
+  // ── 6c. editing one valence member sends the whole object, once ───────
+  const hostV = makeEl("div");
+  AF.mount({ container: hostV, agentId: "x", group: "manage",
+             profile: { ...PROFILE, valence: { primary_affect: "curious", arousal: 0.4,
+                                               valence: 0.6, personality_traits: ["dry"] } } });
+  const arousal = hostV.querySelectorAll("[data-field]")
+    .find((i) => i.dataset.field === "valence.arousal");
+  ok(!!arousal, "valence.arousal has no control");
+  arousal.value = "0.9"; arousal.fire("input");
+  LAST_FETCH = null;
+  hostV.querySelector("[data-af-save]").fire("click");
+  await new Promise((r) => setTimeout(r, 0));
+  ok(Object.keys(LAST_FETCH.body).join(",") === "valence",
+    `the PUT carried ${Object.keys(LAST_FETCH.body).join(",")} — the endpoint takes ` +
+    `\`valence\`, not \`valence.arousal\`, and a member edit is one change to one field`);
+  ok(LAST_FETCH.body.valence.arousal === 0.9, "the edited member did not travel");
+  ok(LAST_FETCH.body.valence.primary_affect === "curious",
+    "the untouched members were dropped, so saving one would erase the rest");
 
   // ── 7. creation mode collects instead of saving ──────────────────────────
   const host5 = makeEl("div");

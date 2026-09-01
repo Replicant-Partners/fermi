@@ -44,12 +44,15 @@ window.AgentFields = (function () {
   const FIELDS = [
     // ── intelligence ──────────────────────────────────────────────────
     { group: "intelligence", key: "llm_provider", path: "substrate.provider",
-      label: "provider", kind: "text",
-      help: "The vendor. Changing it without changing the model is how an agent " +
-            "ends up asking Anthropic for a GPT model." },
+      label: "fallback provider", kind: "text",
+      help: "Used only when no ladder rung matches the caller's tier. Changing it " +
+            "without changing the model is how an agent ends up asking Anthropic " +
+            "for a GPT model." },
     { group: "intelligence", key: "model", path: "substrate.model",
-      label: "model", kind: "text",
-      help: "The exact model id the provider expects." },
+      label: "fallback model", kind: "text",
+      help: "The default, NOT necessarily what runs. `apply_tier_resolution` picks " +
+            "the highest ladder rung at or below the caller's tier and overwrites " +
+            "both fields; this stands only when no rung matches." },
     { group: "intelligence", key: "temperature", path: "substrate.temperature",
       label: "temperature", kind: "number", step: "0.05", min: "0", max: "2",
       help: "Higher is more varied. An agent under a field contract is being " +
@@ -70,7 +73,29 @@ window.AgentFields = (function () {
     { group: "manage", key: "min_tier", path: "min_tier",
       label: "minimum tier", kind: "text",
       help: "The lowest tier of caller allowed to invoke this agent." },
+    // Valence is a structured object and was missing entirely, because the spec
+    // had no kind for one. A raw JSON box is how somebody writes valid JSON of
+    // the wrong shape, so the four members it actually has get four controls:
+    // `AgentValence { primary_affect, arousal, valence, personality_traits }`.
+    //
+    // Not decoration. Composition dreaming audits the valence distribution
+    // across a workspace and flags homophily when arousal or valence spread
+    // falls below 0.25, which is a real proposal about the team's membership.
+    { group: "manage", key: "valence", path: "valence", label: "valence", kind: "object",
+      help: "The agent's affective signature. Dreaming audits the spread of these " +
+            "across a workspace and proposes membership changes when it collapses " +
+            "\u2014 an all-alike team is a team that agrees too easily.",
+      members: [
+        { key: "primary_affect", label: "primary affect", kind: "text" },
+        { key: "arousal", label: "arousal", kind: "number", step: "0.05", min: "0", max: "1" },
+        { key: "valence", label: "valence", kind: "number", step: "0.05", min: "-1", max: "1" },
+        { key: "personality_traits", label: "traits", kind: "tags" },
+      ] },
   ];
+
+  /// The four cognition tiers, in resolution order. A caller asks at a tier and
+  /// gets the highest rung at or below it.
+  const TIERS = ["local", "free", "standard", "premium"];
 
   const at = (obj, path) =>
     String(path).split(".").reduce((o, k) => (o == null ? o : o[k]), obj);
@@ -78,6 +103,17 @@ window.AgentFields = (function () {
   function control(f, value) {
     const v = value == null ? "" : value;
     const common = `data-field="${f.key}" data-kind="${f.kind}"`;
+    if (f.kind === "object") {
+      // One control per member, each carrying its parent so `read` can rebuild
+      // the object. Sub-controls are the members the struct actually has, so a
+      // key it does not have cannot be typed.
+      const obj = value && typeof value === "object" ? value : {};
+      return `<div class="af-obj" data-object="${f.key}">${f.members.map(m =>
+        `<div class="af-sub">
+          <label class="af-sublabel">${esc(m.label)}</label>
+          ${control({ ...m, key: `${f.key}.${m.key}` }, obj[m.key])}
+        </div>`).join("")}</div>`;
+    }
     if (f.kind === "textarea") {
       return `<textarea ${common} rows="7">${esc(v)}</textarea>`;
     }
@@ -111,10 +147,15 @@ window.AgentFields = (function () {
     }
   }
 
-  const same = (a, b) =>
-    Array.isArray(a) || Array.isArray(b)
-      ? JSON.stringify(a || []) === JSON.stringify(b || [])
-      : (a ?? null) === (b ?? null);
+  // Objects and arrays compare by value. `valence` is an object and a member
+  // edit has to register as a change to it.
+  const same = (a, b) => {
+    const structural = (x) => x !== null && typeof x === "object";
+    if (structural(a) || structural(b)) {
+      return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+    }
+    return (a ?? null) === (b ?? null);
+  };
 
   // Lifecycle is not a field. Which action is offered depends on where the agent
   // is, because offering "publish" to a published agent is offering nothing.
@@ -142,6 +183,62 @@ window.AgentFields = (function () {
     </div>`;
   }
 
+  // The ladder, and which rung each tier resolves to.
+  //
+  // Read-only for now, and stated as such. But NOT omitted: an Intelligence
+  // panel that shows one model for an agent whose model is chosen per call is
+  // lying by omission, and the fallback fields above only make sense once you
+  // can see what overrides them.
+  //
+  // The resolution rule is `AgentCard::apply_tier_resolution`: the highest rung
+  // at or below the requested tier wins, and if none matches the fallback
+  // stands. Computed here rather than described, because a reader wants to know
+  // what a `free` caller gets, not the algorithm.
+  function ladderBlock(profile) {
+    const raw = at(profile, "substrate.model_ladder");
+    const rungs = Array.isArray(raw) ? raw : [];
+    const fb = {
+      provider: at(profile, "substrate.provider"),
+      model: at(profile, "substrate.model"),
+    };
+    if (!rungs.length) {
+      return `<div class="af-ladder">
+        <div class="af-sublabel">model ladder</div>
+        <div class="af-note">No ladder. Every caller gets the fallback above \u2014
+          <b>${esc(fb.model || "no model set")}</b> on
+          <b>${esc(fb.provider || "no provider set")}</b> \u2014 whatever tier they ask at.</div>
+      </div>`;
+    }
+    const idx = (t) => TIERS.indexOf(String(t || "").toLowerCase());
+    const resolve = (tier) => {
+      const want = idx(tier);
+      let best = null;
+      rungs.forEach((r) => {
+        const at_ = idx(r.tier);
+        if (at_ >= 0 && at_ <= want && (best === null || at_ > idx(best.tier))) best = r;
+      });
+      return best;
+    };
+    return `<div class="af-ladder">
+      <div class="af-sublabel">model ladder \u00b7 ${rungs.length} rung(s)</div>
+      <div class="af-note">What actually runs, by the tier the caller asks at. The
+        highest rung at or below that tier wins; the fallback above stands only where
+        no rung matches. Read-only here \u2014 the rung editor is next.</div>
+      ${TIERS.map(t => {
+        const r = resolve(t);
+        return `<div class="af-rung ${r ? "on" : "off"}">
+          <span class="af-tier">${esc(t)}</span>
+          <span class="af-what">${r
+            ? `${esc(r.model)} <span class="af-dim">on ${esc(r.provider)}</span>${
+                r.eval_score != null ? ` <span class="af-dim">\u00b7 eval ${
+                  esc(String(r.eval_score))}</span>` : ""}`
+            : `<span class="af-dim">falls back to ${esc(fb.model || "nothing set")}</span>`}
+          </span>
+        </div>`;
+      }).join("")}
+    </div>`;
+  }
+
   function mount(opts) {
     const el = typeof opts.container === "string"
       ? document.getElementById(opts.container) : opts.container;
@@ -154,12 +251,32 @@ window.AgentFields = (function () {
     const initial = {};
     fields.forEach((f) => { initial[f.key] = at(profile, f.path); });
 
+    // An object field's value is assembled from its members at save time, so the
+    // diff is computed against the whole object rather than per member — the
+    // endpoint takes `valence`, not `valence.arousal`.
+    const objectOf = (key) => fields.find((f) => f.kind === "object" && f.key === key);
+    const assemble = (f, inputs) => {
+      const out = {};
+      let any = false;
+      f.members.forEach((m) => {
+        const el = inputs.find((i) => i.dataset.field === `${f.key}.${m.key}`);
+        if (!el) return;
+        const v = read(el);
+        if (v !== null && !(Array.isArray(v) && v.length === 0)) any = true;
+        out[m.key] = v;
+      });
+      // Every member emptied means the author cleared it, which is `null` and
+      // not an object of nulls.
+      return any ? out : null;
+    };
+
     el.innerHTML = `
       ${fields.map((f) => `<div class="af-row">
         <label class="af-label" for="af-${esc(f.key)}">${esc(f.label)}</label>
         ${control(f, initial[f.key])}
         <div class="af-help">${esc(f.help)}</div>
       </div>`).join("")}
+      ${group === "intelligence" ? ladderBlock(profile) : ""}
       ${group === "manage" ? lifecycle(profile) : ""}
       <div class="af-bar">
         <button class="af-save" data-af-save disabled>save</button>
@@ -170,8 +287,21 @@ window.AgentFields = (function () {
     const saveBtn = el.querySelector("[data-af-save]");
     const out = el.querySelector("[data-af-out]");
 
-    const changed = () =>
-      inputs.filter((i) => !same(read(i), initial[i.dataset.field]));
+    // Member controls are not fields; their object is. So a dotted control
+    // reports its PARENT as the changed key, and only once.
+    const changed = () => {
+      const keys = new Set();
+      inputs.forEach((i) => {
+        const [head, member] = i.dataset.field.split(".");
+        if (member) {
+          const f = objectOf(head);
+          if (f && !same(assemble(f, inputs), initial[head])) keys.add(head);
+          return;
+        }
+        if (!same(read(i), initial[head])) keys.add(head);
+      });
+      return [...keys];
+    };
 
     const refresh = () => {
       const n = changed().length;
@@ -182,7 +312,12 @@ window.AgentFields = (function () {
 
     saveBtn.addEventListener("click", async () => {
       const diff = {};
-      changed().forEach((i) => { diff[i.dataset.field] = read(i); });
+      changed().forEach((key) => {
+        const f = objectOf(key);
+        if (f) { diff[key] = assemble(f, inputs); return; }
+        const el = inputs.find((i) => i.dataset.field === key);
+        if (el) diff[key] = read(el);
+      });
       if (!Object.keys(diff).length) return;
 
       // No agentId means creation: hand the values back rather than saving.
@@ -252,7 +387,7 @@ window.AgentFields = (function () {
     });
 
     refresh();
-    return { changed: () => changed().map((i) => i.dataset.field) };
+    return { changed };
   }
 
   return { mount, FIELDS, groups: () => [...new Set(FIELDS.map((f) => f.group))] };

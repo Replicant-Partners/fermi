@@ -786,6 +786,12 @@ pub async fn specimen_handler(
                 COALESCE(a.display_alias, a.agent_name) AS label,
                 a.description, a.agent_type, a.tier, a.min_tier,
                 a.llm_provider, a.model, a.executor_type, a.temperature,
+                -- The ladder decides which model actually runs. `model` and
+                -- `llm_provider` are only the fallback used when no rung matches
+                -- the caller's tier (see AgentCard::apply_tier_resolution), and a
+                -- surface presenting them as THE model is wrong for every agent
+                -- that has a ladder.
+                a.model_ladder, a.valence, a.system_prompt,
                 a.status, a.visibility, a.tags, a.accepts, a.produces,
                 a.taxonomy, a.fork_count, a.forked_from, a.persona_version,
                 a.system_prompt, a.sample_queries, a.mcp_tools,
@@ -1000,7 +1006,18 @@ pub async fn specimen_handler(
                 "executor": row.try_get::<Option<String>, _>("executor_type").ok().flatten(),
                 "temperature": row.try_get::<Option<f64>, _>("temperature").ok().flatten(),
                 "persona_version": row.try_get::<Option<i32>, _>("persona_version").ok().flatten(),
+                // Read `model`/`provider` as the FALLBACK. `apply_tier_resolution`
+                // picks the highest rung whose tier is at or below the caller's
+                // and overwrites both; the defaults stand only when no rung
+                // matches. An empty array means there is no ladder and the
+                // defaults are what runs.
+                "model_ladder": row.try_get::<Option<Value>, _>("model_ladder").ok().flatten(),
             },
+            // The affective signature: primary_affect, arousal, valence,
+            // personality_traits. Served so the shelf can edit the four fields it
+            // actually has rather than offering a JSON box.
+            "valence": row.try_get::<Option<Value>, _>("valence").ok().flatten(),
+            "system_prompt": row.try_get::<Option<String>, _>("system_prompt").ok().flatten(),
         },
         "record": {
             "runs": runs,
