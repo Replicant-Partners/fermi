@@ -145,6 +145,11 @@
             padding:2px 9px;}
   .rung-act:hover:not(:disabled){background:var(--yellow);color:var(--bg0-hard);}
   .rung-act:disabled{opacity:0.4;cursor:default;}
+  /* Which editor closes this rung. Three of the four are one save, and a button
+     on only one of them implied the other two needed something that does not
+     exist. */
+  .rung-own2{display:block;font-size:0.62rem;color:var(--aqua);margin-top:3px;
+             opacity:0.8;}
   .shelf-mount{margin-top:10px;}
   .shelf-mount:empty{display:none;}
   /* ── A pulse row is a door, and it has to look like one ──────────────────
@@ -403,6 +408,16 @@
   //
   // Exactly one rung is marked `next`, and it is the first absent one. A
   // recommendation that points at four things is a list.
+  // Which rungs one editor closes.
+  //
+  // `ContractBuilder` compiles a sketch into `output_contract` and writes
+  // `produces_schema`, `schema` AND `grounding` in one save — so three rungs
+  // close together and there is no separate editor for the first two. The shelf
+  // put its only button on `field_contract`, which implied the other two needed
+  // something else that does not exist. Marked on each, and the control sits on
+  // the last of them.
+  const CONTRACT_RUNGS = ["output_type", "output_schema", "field_contract"];
+
   function declarationPanel() {
     const d = D.declaration || {};
     const rungs = d.rungs || [];
@@ -416,7 +431,8 @@
       <div class="shelf-count"><b>${d.declared} of ${d.total}</b> rungs declared${
         d.next ? ` \u00b7 cheapest next: <b>${esc(d.next)}</b>` : " \u00b7 nothing left to declare"}</div>
       <div class="note">What the platform can check about this agent's pulses, and what
-        it cannot until each rung exists.</div>
+        it cannot until each rung exists. Three of the four are one save: the contract
+        editor writes the type name, the schema and the grounding together.</div>
       ${rungs.map(r => `<div class="rung ${r.present ? "on" : "off"}${
         r.rung === d.next ? " next" : ""}">
         <div class="rung-mark">${r.present ? "\u25c9" : "\u25cb"}</div>
@@ -428,7 +444,9 @@
             ? `<b>Unlocks:</b> ${esc(r.unlocks)}`
             : `<b>Without it:</b> ${esc(r.without_it)}`}</div>
           ${r.present ? "" : `<div class="rung-own">declared in ${esc(r.owner)}</div>`}
-          ${r.rung === "field_contract" ? `<button class="rung-act"
+          ${CONTRACT_RUNGS.includes(r.rung) ? `<span class="rung-own2">closed by the
+            contract editor${r.rung === CONTRACT_RUNGS[0] ? "" : ", with the rung above"}</span>` : ""}
+          ${r.rung === CONTRACT_RUNGS[CONTRACT_RUNGS.length - 1] ? `<button class="rung-act"
             data-open-contract="1">${r.present ? "edit the contract" : "build it"} \u2192</button>` : ""}
         </div>
       </div>`).join("")}

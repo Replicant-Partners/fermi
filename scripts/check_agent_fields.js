@@ -126,6 +126,27 @@ const agents = fs.readFileSync(path.join(ROOT, "src", "handlers", "agents.rs"), 
 ok(/fn reject_lifecycle_fields/.test(agents),
   "reject_lifecycle_fields is gone — re-check whether the PUT still refuses " +
   "status and visibility before offering them");
+// ── 2b. two columns belong to the contract builder, exclusively ──────────
+//
+// `ContractBuilder.saveTo` PUTs `{ output_contract, produces }` through this
+// same endpoint. A field here for either would make two writers of one column,
+// and the compiler would silently overwrite whatever the author typed on the
+// next compile.
+//
+// `produces` measured on the fleet, because this is not hypothetical: 4 of the
+// 14 agents with a `produces_schema` already disagree with it, and the
+// disagreement is not noise. `football_analyst` holds the schema name plus six
+// port labels — `evidence`, `win-probability`, `elo-analysis`,
+// `match-prediction`, `form-analysis`, `league-analysis` — and `Compiled` says
+// what it does to them: "Replaces the card's `produces`. One entry, the declared
+// type." Those six are seam-matching labels other agents bind against.
+for (const owned of ["produces", "output_contract"]) {
+  ok(!AF.FIELDS.some((f) => f.key === owned),
+    `\`${owned}\` is offered as a field and ContractBuilder also writes it. Two ` +
+    `writers of one column means the compiler overwrites the author, or the ` +
+    `author overwrites the compiler, and neither is told`);
+}
+
 for (const refused of ["status", "visibility"]) {
   ok(!AF.FIELDS.some((f) => f.key === refused),
     `\`${refused}\` is offered as an editable field and the PUT refuses it. The ` +

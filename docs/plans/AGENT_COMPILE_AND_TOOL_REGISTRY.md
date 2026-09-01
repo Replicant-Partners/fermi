@@ -249,6 +249,71 @@ next to it, and the platform's own default is honest about the cost.
   linking into the Observatory, and put the census on a clock with a cache.
 * **`/loops` and `/gates`** route to the same handler. Two routes to one render.
 
+## 6.8 Live defect found while wiring the shelf: the compiler deletes port labels
+
+**Measured 2026-09-01. Not fixed here, because both files are in flight on the
+other side of §4's seam.**
+
+`ContractBuilder.saveTo` PUTs two columns:
+
+```js
+body: JSON.stringify({
+  output_contract: cbCompiled.output_contract,
+  produces: cbCompiled.produces,          // <- one entry
+})
+```
+
+and `Compiled` documents the intent plainly: *"Replaces the card's `produces`.
+One entry, the declared type."*
+
+But `agents.produces` is not the declared type. It is the **port label set** that
+`port_trust::bind_input` and the seam census match on — the ladder's own `ports`
+rung says so, and cites 289 distinct `produces` labels across the fleet. Measured:
+
+```text
+14 agents have output_contract.produces_schema
+10 agree with produces
+ 4 disagree, and the disagreement is not noise:
+
+  football_analyst      schema: fermi/football_evidence
+                        produces: {fermi/football_evidence, evidence,
+                                   win-probability, elo-analysis,
+                                   match-prediction, form-analysis,
+                                   league-analysis}
+
+  condition_forecaster  schema: kask_wild/condition_forecast
+                        produces: {condition_forecast, species_probability,
+                                   brier_forecast}   ← none is the schema name
+```
+
+**Recompiling and saving `football_analyst` deletes six labels other agents can
+be matched against on a belt.** `condition_forecaster` loses all three and gains
+one it never declared.
+
+The decision this needs, and it is a decision rather than a bug fix: does
+`produces` mean *the type I emit* or *the labels I can be matched on*? If both,
+they cannot share a column, or the compile must **merge** rather than replace —
+and a merge needs a rule for which labels are the contract's to remove.
+
+Until then, the shelf's field editor deliberately offers neither `produces` nor
+`output_contract`, and `scripts/check_agent_fields.js` asserts it — with this
+measurement as the reason, so the guard cannot be removed as pedantry.
+
+### Which rungs one editor closes
+
+Worth stating because the shelf got it wrong first:
+
+| declaration | rung | written by |
+|---|---|---|
+| `agents.accepts` | ports (half) | **nobody yet** — the one genuinely missing editor |
+| `agents.produces` | ports (half) | ContractBuilder, derived from `produces_schema` |
+| `output_contract.produces_schema` | output_type | ContractBuilder |
+| `output_contract.schema` | output_schema | ContractBuilder |
+| `output_contract.grounding` | field_contract | ContractBuilder |
+
+So **one save closes three rungs and half of a fourth**, and the only declaration
+with no editor at all is `accepts`.
+
 ## 7. The dream thing, so a fresh session does not rediscover it
 
 Not this plan's work, but it is the same defect class and it will come up.

@@ -159,9 +159,22 @@ ok(/contract-builder\.js/.test(HTML),
   "the shelf does not load the shared contract editor, so it would have to grow " +
   "its own — and a second copy of a 1,700-line editor is the drift this repo " +
   "keeps finding");
-// Only that rung. A button on every rung is a button that means nothing.
+// One control, and it says which rungs it closes.
+//
+// ContractBuilder writes produces_schema, schema AND grounding in one save, so
+// three rungs close together. The shelf's only button sat on `field_contract`,
+// which implied the other two needed a separate editor that does not exist.
 ok((shelf.match(/data-open-contract/g) || []).length === 1,
   "more than one rung carries the contract editor");
+ok((shelf.match(/closed by the\s+contract editor/g) || []).length === 3,
+  `${(shelf.match(/closed by the\s+contract editor/g) || []).length} rungs say the ` +
+  `contract editor closes them; it writes produces_schema, schema and grounding, ` +
+  `so it is three`);
+// `ports` is the one rung the contract editor does NOT close — and only half of
+// it, because the compiler derives `produces` from `produces_schema`.
+const portsRow = shelf.slice(shelf.indexOf("ports"), shelf.indexOf("output_type"));
+ok(!/closed by the/.test(portsRow),
+  "the ports rung claims the contract editor closes it; `accepts` is nobody else's");
 // The two groups mount the shared field editor rather than printing a <dl>.
 // A read-only summary where an editor belongs is how the old page grew eight
 // tabs, and a second hand-written form is how they drifted.
