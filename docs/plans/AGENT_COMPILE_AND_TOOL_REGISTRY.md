@@ -314,6 +314,77 @@ Worth stating because the shelf got it wrong first:
 So **one save closes three rungs and half of a fourth**, and the only declaration
 with no editor at all is `accepts`.
 
+### 6.8.1 It is now blocking a migration, and here is the cost measured
+
+*(added from the contract-authoring side, same day.)*
+
+`football_analyst` was next for migration — §3 of
+`docs/ISSUES_tool_declaration_gap.md`: it is one of three cards typed by hand
+before the compiler existed and has **no `grounding` map at all**, so the hop
+checks its document's shape and nothing about where its values came from.
+
+The sketch is written and compiles. It is parked at
+`agents/curated/football_analyst/output_contract.sketch.blocked.json` —
+deliberately misnamed, because both the corpus test and the `contract-sketch`
+binary match the exact filename `output_contract.sketch.json`. Rename, splice
+and delist in one commit the moment this is decided.
+
+Diffed stamp-for-stamp against the live hand-written contract:
+
+| | |
+|---|---|
+| provenance stamps byte-identical | **7 of 9** |
+| schema properties added or removed | **none**; `required` identical |
+| grounding entries | **0 → 19** — the entire point |
+| stamps narrowed on purpose | 2 — `ratings`, `squad_value` (see below) |
+| **`produces` labels lost** | **6 of 7** — this, and only this, is the blocker |
+
+Which labels, and who would notice:
+
+```
+evidence           named in 8 other cards
+win-probability    1
+elo-analysis       1
+match-prediction   0
+form-analysis      0
+league-analysis    0
+```
+
+So the loss is real but small and countable, which is the useful thing to know
+when deciding: a merge rule does not have to be clever to be safe here. Nothing
+about the rest of the migration is blocked — it is one column.
+
+The two deliberate narrowings are unrelated to §6.8 and worth recording:
+`ratings` and `squad_value` currently admit the human-settlement ladder
+(`human_sourced`, `human_endorsed`, `pending_human_check`, `rejected`) in their
+**document** stamps, which lets the agent write into its own output that a
+person verified an Elo it recalled from training data. Settlement is recorded in
+`assertion_verifications` and read from there — `assessment` is settled
+`human_sourced` in production today while carrying a bare
+`const: model_inference` stamp, which is the proof that the schema enum was
+never what made settling work. Removing them costs nothing and closes that.
+
+### 6.8.2 One language gap found by writing it, already fixed
+
+Every sourced block on that card is `coverage: deferred`, not `complete` — the
+hand-written stamps all admitted `pending_tool_check` and were right to, because
+the trace for a real episode grades contracted fields `never asked` while the
+run made seven other calls.
+
+`advanced_metrics` needed both `partial` and `deferred` at once and could have
+neither: `xg` is in `fixtures/statistics` but often not requested, while `ppda`
+and `progressive_passes` are Opta event-data metrics API-Football will never
+carry. Dropping `pending_tool_check` collapses "never asked" into
+`tool_no_match` — the exact pair the trace exists to separate. Dropping
+`unavailable_no_tool_source` leaves the contract unable to say `ppda` is
+unobtainable.
+
+`Coverage::PartialDeferred` now exists, with `Coverage::TOKENS` so the guidance
+prompt and its test read the vocabulary instead of keeping a third copy. The
+decompiler tested `has(UNAVAILABLE)` first and so read a four-verdict stamp back
+as three — the same silent narrowing already caught once on `macro_data_agent`,
+which would have hit this card on its first recompile.
+
 ## 7. The dream thing, so a fresh session does not rediscover it
 
 Not this plan's work, but it is the same defect class and it will come up.

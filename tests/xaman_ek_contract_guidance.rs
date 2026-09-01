@@ -147,8 +147,18 @@ fn it_names_the_verdicts_the_runtime_actually_stamps() {
 #[test]
 fn it_explains_every_coverage_setting() {
     let p = prompt();
-    for c in ["complete", "partial", "deferred"] {
-        assert!(p.contains(c), "the prompt does not explain `coverage: {c}`");
+    // Read off the enum, not a literal list. The literal version described
+    // three settings and would have gone on describing three after
+    // `partial_deferred` was added — an assistant confidently enumerating a
+    // vocabulary it no longer knows, which is worse than one that says it is
+    // unsure.
+    for c in fermi::contract_sketch::Coverage::TOKENS {
+        assert!(
+            p.contains(c),
+            "the prompt does not explain `coverage: {c}`. It is in \
+             `Coverage::TOKENS`, so it is authorable and the assistant guiding \
+             authors has to know it exists."
+        );
     }
 }
 

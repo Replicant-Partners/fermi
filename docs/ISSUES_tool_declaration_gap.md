@@ -12,7 +12,7 @@ and making them twice would be worse than making them late.
 | ⏸ | does `mcp_tools` grant? | §0, §2 — the registry refactor decides |
 | ⏸ | generate the card list from `FIELD_CONTRACTS`? | §0.1 |
 | ⏸ | should the trace's per-field reconciliation emit a gate decision? | the prize — see the ordering section |
-| ⏸ | `football_analyst` has no grounding map | §3 — an ordinary migration, not blocked, not yet done |
+| 🚫 | `football_analyst` has no grounding map | §3 — **written, compiles, blocked on one column.** See below |
 
 Found while loading `football_analyst` in the contract builder. Nothing here is
 a builder bug — the builder reported all of it accurately. It is what the
@@ -214,11 +214,30 @@ The schema is real and enforced; the *sourcing* of its values is undeclared.
 `grounding_trust::enforce` resolves from the Rust const `FIELD_CONTRACTS`, so
 for this agent the hop checks document shape and not value provenance.
 
-**Not blocked on the refactor.** This is a migration: write
-`agents/curated/football_analyst/output_contract.sketch.json`, per
-`DESIGN_typed_output_contracts.md` §10. It is a good early candidate — real
-data tool, 218 runs, an existing prompt that already names what is retrievable
-and what must be null.
+**Attempted, and it is blocked — on one column, not on the registry.**
+
+The sketch is written and compiles, parked at
+`agents/curated/football_analyst/output_contract.sketch.blocked.json`
+(deliberately misnamed: the corpus test and the `contract-sketch` binary both
+match the exact filename `output_contract.sketch.json`). Diffed stamp-for-stamp
+against the live contract: **7 of 9 provenance stamps byte-identical, no schema
+property added or removed, `required` unchanged, grounding 0 → 19.**
+
+What stops it is `Compiled.produces`, which **replaces** the card's `produces`
+— but that column is also the port label set the seam census matches on.
+Landing this cuts football_analyst from 7 labels to 1, deleting `evidence`
+(named in 8 other cards), `win-probability` and `elo-analysis` (1 each), and
+three with no consumers.
+
+That is an open decision recorded the same day by the other session in
+`docs/plans/AGENT_COMPILE_AND_TOOL_REGISTRY.md` §6.8: *does `produces` mean the
+type I emit, or the labels I can be matched on?* Forcing it from here would
+settle it in the direction that loses labels, so it is not forced. The
+measurement above is now in §6.8.1 so whoever decides has the cost in front of
+them.
+
+One language gap did come out of writing it and is fixed:
+`Coverage::PartialDeferred`. See §6.8.2.
 
 ---
 

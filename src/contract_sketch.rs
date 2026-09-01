@@ -391,6 +391,39 @@ pub enum Coverage {
     /// `pending_tool_check` is reachable. Distinct from `Partial`: "not yet
     /// asked" and "asked, nothing exists" need different fixes.
     Deferred,
+    /// Both at once: part of the block has no source at all, AND the check on
+    /// the part that does may not have run.
+    ///
+    /// Added for `football_analyst.advanced_metrics`, whose hand-written
+    /// contract already declared all four verdicts. `xg` comes from
+    /// `fixtures/statistics` and is often simply not asked for; `ppda` and
+    /// `progressive_passes` are Opta event-data metrics that API-Football does
+    /// not carry at all and never will.
+    ///
+    /// Without this the migration had to pick one, and both choices destroy a
+    /// distinction the platform makes elsewhere. Dropping `pending_tool_check`
+    /// collapses "never asked" into `tool_no_match` ("asked and had nothing")
+    /// — which is the exact pair the trace view is built to separate, and the
+    /// pair `Deferred`'s own doc comment says "need different fixes". Dropping
+    /// `unavailable_no_tool_source` leaves the contract unable to say that
+    /// `ppda` is unobtainable, so a null there would read as a failed lookup
+    /// rather than an honest gap.
+    ///
+    /// Rare on purpose. A block needing this is usually a block that wants
+    /// splitting; `advanced_metrics` cannot be split because it is a live
+    /// document shape with consumers.
+    PartialDeferred,
+}
+
+impl Coverage {
+    /// Every authorable token, in the order an author should consider them.
+    ///
+    /// Exists so the things that must enumerate coverage — `xaman_ek`'s
+    /// guidance prompt and the test that checks it — read the list rather than
+    /// keeping a second copy. A hand-maintained literal is how a fourth
+    /// variant gets added and the assistant keeps describing three.
+    pub const TOKENS: &'static [&'static str] =
+        &["complete", "partial", "deferred", "partial_deferred"];
 }
 
 /// Where a block's value comes from. Mirrors `card_contract::GROUNDING_STATUSES`
@@ -439,6 +472,12 @@ impl Source {
                 Coverage::Complete => vec![PROV_TOOL, PROV_NO_MATCH],
                 Coverage::Partial => vec![PROV_TOOL, PROV_NO_MATCH, PROV_UNAVAILABLE],
                 Coverage::Deferred => vec![PROV_TOOL, PROV_NO_MATCH, PROV_PENDING_TOOL],
+                Coverage::PartialDeferred => vec![
+                    PROV_TOOL,
+                    PROV_NO_MATCH,
+                    PROV_UNAVAILABLE,
+                    PROV_PENDING_TOOL,
+                ],
             },
             Source::Inferred { .. } => return Some(json!({ "const": PROV_INFERRED })),
             Source::Unavailable { .. } => return Some(json!({ "const": PROV_UNAVAILABLE })),
@@ -464,6 +503,11 @@ impl Source {
                     Coverage::Deferred => {
                         format!("{base}, and `{PROV_PENDING_TOOL}` when the check had not run yet")
                     }
+                    Coverage::PartialDeferred => format!(
+                        "{base}, `{PROV_UNAVAILABLE}` for the parts of `{block}` that \
+                         `{tool}` does not cover, and `{PROV_PENDING_TOOL}` when the \
+                         check on the parts it does cover had not run yet"
+                    ),
                 }
             }
             Source::Inferred { .. } => format!(
@@ -744,8 +788,10 @@ impl Sketch {
             // Found by the decompiler: recompiling that card produced a
             // `_hud_review_provenance` the hand-written schema does not have.
             let platform_annotation = name.starts_with('_');
-            if let Some(prov_schema) =
-                b.source.provenance_schema().filter(|_| !platform_annotation)
+            if let Some(prov_schema) = b
+                .source
+                .provenance_schema()
+                .filter(|_| !platform_annotation)
             {
                 let sib = format!("{name}{PROVENANCE_SUFFIX}");
                 properties.insert(sib.clone(), prov_schema);
@@ -1091,7 +1137,11 @@ pub fn render_type_expr(schema: &Value) -> Option<String> {
         Value::String(s) => (s.clone(), false),
         Value::Array(a) => {
             let nullable = a.iter().any(|v| v.as_str() == Some("null"));
-            let concrete: Vec<&str> = a.iter().filter_map(|v| v.as_str()).filter(|s| *s != "null").collect();
+            let concrete: Vec<&str> = a
+                .iter()
+                .filter_map(|v| v.as_str())
+                .filter(|s| *s != "null")
+                .collect();
             if concrete.len() != 1 {
                 return None;
             }
@@ -1362,12 +1412,16 @@ fn source_from_stamp(stamp: Option<&Value>) -> Source {
             return Source::Sourced {
                 tool: String::new(),
                 response_field: String::new(),
-                coverage: if has(PROV_UNAVAILABLE) {
-                    Coverage::Partial
-                } else if has(PROV_PENDING_TOOL) {
-                    Coverage::Deferred
-                } else {
-                    Coverage::Complete
+                // Both before either. Testing `unavailable` first and
+                // returning `Partial` is what silently narrowed
+                // `macro_data_agent` on recompile, and a four-verdict stamp
+                // read back as three would do it again — this time dropping
+                // `pending_tool_check` from a live `football_analyst`.
+                coverage: match (has(PROV_UNAVAILABLE), has(PROV_PENDING_TOOL)) {
+                    (true, true) => Coverage::PartialDeferred,
+                    (true, false) => Coverage::Partial,
+                    (false, true) => Coverage::Deferred,
+                    (false, false) => Coverage::Complete,
                 },
             };
         }
@@ -1982,7 +2036,11 @@ mod tests {
             let produces: Vec<String> = card
                 .get("produces")
                 .and_then(|v| v.as_array())
-                .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(str::to_string))
+                        .collect()
+                })
                 .unwrap_or_default();
             let tools: Vec<String> = card
                 .pointer("/capabilities/mcp_tools")
@@ -2029,6 +2087,72 @@ mod tests {
             "only round-tripped {checked} card(s) — the corpus walk is \
              probably broken, which would make this test vacuously pass"
         );
+    }
+
+    /// A four-verdict stamp must survive a round trip.
+    ///
+    /// `Coverage::Partial` and `Coverage::Deferred` each drop one verdict the
+    /// other keeps, so before `PartialDeferred` existed a block declaring all
+    /// four could only be read back as three. The `if has(UNAVAILABLE)` branch
+    /// tested first, so it always came back `Partial` and `pending_tool_check`
+    /// vanished on recompile — the same silent narrowing already caught once
+    /// on `macro_data_agent`, and this time it would have hit a live
+    /// `football_analyst` where "never asked" is the common case.
+    #[test]
+    fn a_block_that_is_both_partial_and_deferred_survives_a_round_trip() {
+        let all_four = json!({
+            "enum": [PROV_TOOL, PROV_NO_MATCH, PROV_UNAVAILABLE, PROV_PENDING_TOOL]
+        });
+
+        let src = source_from_stamp(Some(&all_four));
+        let Source::Sourced { coverage, .. } = src else {
+            panic!("a stamp naming `{PROV_TOOL}` must read back as sourced, got {src:?}");
+        };
+        assert_eq!(
+            coverage,
+            Coverage::PartialDeferred,
+            "a stamp admitting both `{PROV_UNAVAILABLE}` and `{PROV_PENDING_TOOL}` \
+             read back as {coverage:?}, which emits only three verdicts. The \
+             missing one disappears on the next recompile and nothing says so."
+        );
+
+        // And back out again, identically. This is the direction that actually
+        // rewrites the card.
+        let emitted = Source::Sourced {
+            tool: "call_football_api".into(),
+            response_field: "fixtures/statistics.expected_goals".into(),
+            coverage: Coverage::PartialDeferred,
+        }
+        .provenance_schema()
+        .expect("a sourced block has a stamp");
+        assert_eq!(
+            emitted, all_four,
+            "compiling `partial_deferred` did not reproduce the four-verdict stamp"
+        );
+    }
+
+    /// Every coverage token the guidance prompt is required to explain must
+    /// actually parse. `Coverage::TOKENS` is read by
+    /// `tests/xaman_ek_contract_guidance.rs`; a token in that list that the
+    /// compiler rejects would have the assistant teaching authors a setting
+    /// that fails to compile.
+    #[test]
+    fn every_advertised_coverage_token_parses() {
+        for t in Coverage::TOKENS {
+            let parsed: Coverage = serde_json::from_value(json!(t)).unwrap_or_else(|e| {
+                panic!("`coverage: {t}` is advertised but does not parse: {e}")
+            });
+            assert!(
+                Source::Sourced {
+                    tool: "t".into(),
+                    response_field: "f".into(),
+                    coverage: parsed,
+                }
+                .provenance_schema()
+                .is_some(),
+                "`coverage: {t}` parsed but emits no provenance stamp"
+            );
+        }
     }
 
     /// `genome_profiler` is the reason this whole line of work exists, and it
@@ -2180,14 +2304,19 @@ mod tests {
 
         // The specific divergences, named. A future reader should not have to
         // rediscover which fields these are.
-        let now = recompiled.output_contract.pointer("/schema/properties").unwrap();
+        let now = recompiled
+            .output_contract
+            .pointer("/schema/properties")
+            .unwrap();
         assert_eq!(
-            now.pointer("/capture_provenance/const").and_then(|v| v.as_str()),
+            now.pointer("/capture_provenance/const")
+                .and_then(|v| v.as_str()),
             Some(PROV_INFERRED),
             "gap 1: the compiler cannot emit `platform_derived`"
         );
         assert!(
-            now.pointer("/card/properties/lines/items/properties").is_none(),
+            now.pointer("/card/properties/lines/items/properties")
+                .is_none(),
             "gap 2: nested array item shape is dropped"
         );
         // Gap 3 is fixed, and this is what fixed looks like.
@@ -2251,7 +2380,10 @@ mod tests {
     #[test]
     fn an_inexpressible_type_is_refused_not_approximated() {
         // `minimum` is not the problem here — an unrepresentable *type* is.
-        assert_eq!(render_type_expr(&json!({ "type": ["string", "integer"] })), None);
+        assert_eq!(
+            render_type_expr(&json!({ "type": ["string", "integer"] })),
+            None
+        );
         assert_eq!(render_type_expr(&json!({ "enum": ["only"] })), None);
         assert_eq!(render_type_expr(&json!({})), None);
     }

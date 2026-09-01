@@ -903,6 +903,8 @@ const ContractBuilder = (() => {
       return `Stamp: <code>enum [${base}, unavailable_no_tool_source]</code>`;
     if (b.coverage === "deferred")
       return `Stamp: <code>enum [${base}, pending_tool_check]</code>`;
+    if (b.coverage === "partial_deferred")
+      return `Stamp: <code>enum [${base}, unavailable_no_tool_source, pending_tool_check]</code>`;
     return `Stamp: <code>enum [${base}]</code>`;
   }
 
@@ -985,6 +987,7 @@ const ContractBuilder = (() => {
                    <option value="complete" ${b.coverage === "complete" ? "selected" : ""}>complete — answers for every field, or honestly reports no match</option>
                    <option value="partial" ${b.coverage === "partial" ? "selected" : ""}>partial — some fields have no source at all</option>
                    <option value="deferred" ${b.coverage === "deferred" ? "selected" : ""}>deferred — the check may not have run yet</option>
+                   <option value="partial_deferred" ${b.coverage === "partial_deferred" ? "selected" : ""}>partial + deferred — both, and usually a sign the part wants splitting</option>
                  </select>
                </div>`
             : b.status === "inferred"
@@ -1190,7 +1193,9 @@ Rules, each enforced by the platform:
                 ? " | unavailable_no_tool_source"
                 : b.coverage === "deferred"
                   ? " | pending_tool_check"
-                  : "")
+                  : b.coverage === "partial_deferred"
+                    ? " | unavailable_no_tool_source | pending_tool_check"
+                    : "")
             : b.status === "inferred"
               ? "model_inference"
               : "unavailable_no_tool_source";
