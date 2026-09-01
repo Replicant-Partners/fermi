@@ -1,0 +1,51 @@
+/* One pulse row, wherever pulses are listed. Paired with
+   /static/js/widgets/pulse.js — the markup and the styling for one object
+   travel together, or the second surface to adopt the widget gets the structure
+   without the iconography, which is exactly the state this replaced.
+
+   ── Entity iconography ──────────────────────────────────────────────────
+   A person and an agent looked identical, which made the whole stream
+   unreadable: you could not see at a glance whether the platform was working or
+   a human was doing all the asking. Four kinds, four marks. */
+.ent { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+.glyph { width: 15px; height: 15px; flex-shrink: 0; display: inline-flex;
+         align-items: center; justify-content: center; font-size: 0.66rem;
+         border: 1px solid; line-height: 1; }
+/* human — the only entity that can be asked a question back */
+.g-human { border-radius: 50%; border-color: var(--aqua); color: var(--aqua); }
+/* agent — a species. square, like a card */
+.g-agent { border-color: var(--yellow); color: var(--yellow); }
+/* system — scheduler or sweeper. no intent, so no colour */
+.g-system { border-color: var(--bg3); color: var(--fg4); }
+/* unattributed — a gap in the record, not an actor. must not look benign */
+.g-unattributed { border-color: var(--purple, #d3869b); color: var(--purple, #d3869b);
+                  border-style: dashed; }
+.ent-n { font-size: 0.72rem; color: var(--fg3); overflow: hidden;
+         text-overflow: ellipsis; white-space: nowrap; }
+.arrow { color: var(--fg4); flex-shrink: 0; }
+
+.ex { display: grid; grid-template-columns: 118px 1fr 128px 74px; gap: 12px;
+      align-items: start; padding: 9px 6px; border-bottom: 1px solid var(--bg2);
+      cursor: pointer; }
+.ex:hover { background: var(--bg1); }
+/* A pulse with no episode id cannot be opened. Not clickable, and it says so by
+   not offering the cursor rather than by failing after the click. */
+.ex-dead { cursor: default; }
+.ex-dead:hover { background: none; }
+.ex .when { font-size: 0.66rem; color: var(--fg4); white-space: nowrap; }
+.ex .body { min-width: 0; }
+.hop { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.ex .q { font-size: 0.7rem; color: var(--fg4); margin-top: 3px; overflow: hidden;
+         text-overflow: ellipsis; white-space: nowrap; }
+.ex:hover .q { color: var(--fg3); }
+.marks { display: flex; gap: 5px; flex-wrap: wrap; }
+.m { font-size: 0.57rem; text-transform: uppercase; letter-spacing: 0.05em;
+     padding: 0 5px; border: 1px solid; white-space: nowrap; }
+.m-clean { color: var(--green); border-color: var(--green); }
+.m-viol { color: var(--red, #fb4934); border-color: var(--red, #fb4934); }
+/* Ungraded is not a pass and not a failure: nothing checked the contents. */
+.m-ungraded { color: var(--fg4); border-color: var(--bg3); border-style: dashed; }
+.m-rec { color: var(--aqua); border-color: var(--aqua); }
+.cost { font-size: 0.66rem; color: var(--fg4); text-align: right;
+        font-variant-numeric: tabular-nums; }
+.ex .bad { color: var(--red, #fb4934); }

@@ -26,48 +26,13 @@
   input.q{background:var(--bg1);border:1px solid var(--bg3);color:var(--fg2);
           font-family:inherit;font-size:0.72rem;padding:4px 8px;min-width:190px;}
 
-  /* ── Entity iconography ────────────────────────────────────────────────
-     A person and an agent looked identical, which made the whole stream
-     unreadable: you could not see at a glance whether the platform was
-     working or a human was doing all the asking. Four kinds, four marks. */
-  .ent{display:inline-flex;align-items:center;gap:5px;min-width:0;}
-  .glyph{width:15px;height:15px;flex-shrink:0;display:inline-flex;align-items:center;
-         justify-content:center;font-size:0.66rem;border:1px solid;line-height:1;}
-  /* human — the only entity that can be asked a question back */
-  .g-human{border-radius:50%;border-color:var(--aqua);color:var(--aqua);}
-  /* agent — a species. square, like a card */
-  .g-agent{border-color:var(--yellow);color:var(--yellow);}
-  /* system — scheduler or sweeper. no intent, so no colour */
-  .g-system{border-color:var(--bg3);color:var(--fg4);}
-  /* unattributed — a gap in the record, not an actor. must not look benign */
-  .g-unattributed{border-color:var(--purple,#d3869b);color:var(--purple,#d3869b);
-                  border-style:dashed;}
-  .ent-n{font-size:0.72rem;color:var(--fg3);overflow:hidden;text-overflow:ellipsis;
-         white-space:nowrap;}
-  .arrow{color:var(--fg4);flex-shrink:0;}
-
-  .ex{display:grid;grid-template-columns:118px 1fr 128px 74px;gap:12px;align-items:start;
-      padding:9px 6px;border-bottom:1px solid var(--bg2);cursor:pointer;}
-  .ex:hover{background:var(--bg1);}
-  .ex .when{font-size:0.66rem;color:var(--fg4);white-space:nowrap;}
-  .ex .body{min-width:0;}
-  .hop{display:flex;align-items:center;gap:7px;min-width:0;}
-  .q{font-size:0.7rem;color:var(--fg4);margin-top:3px;overflow:hidden;
-     text-overflow:ellipsis;white-space:nowrap;}
-  .ex:hover .q{color:var(--fg3);}
-  .marks{display:flex;gap:5px;flex-wrap:wrap;}
-  .m{font-size:0.57rem;text-transform:uppercase;letter-spacing:0.05em;padding:0 5px;
-     border:1px solid;white-space:nowrap;}
-  .m-clean{color:var(--green);border-color:var(--green);}
-  .m-viol{color:var(--red,#fb4934);border-color:var(--red,#fb4934);}
-  /* Ungraded is not a pass and not a failure: nothing checked the contents. */
-  .m-ungraded{color:var(--fg4);border-color:var(--bg3);border-style:dashed;}
-  .m-rec{color:var(--aqua);border-color:var(--aqua);}
-  .cost{font-size:0.66rem;color:var(--fg4);text-align:right;font-variant-numeric:tabular-nums;}
+  /* The pulse row and its iconography: /static/css/pulse.css, shared with
+     every other surface that lists pulses. */
   .bad{color:var(--red,#fb4934);}
   .empty{padding:18px 6px;font-size:0.76rem;color:var(--fg4);line-height:1.55;}
   .note{font-size:0.7rem;color:var(--fg4);font-style:italic;line-height:1.5;margin:10px 0 0;}
   </style>
+  <link rel="stylesheet" href="/static/css/pulse.css">
 </head>
 <body>
   <div id="nav-root"></div>
@@ -80,6 +45,7 @@
     <div id="content"><div class="empty">Loading…</div></div>
   </div>
 
+  <script src="/static/js/widgets/pulse.js"></script>
   <script src="/static/js/widgets/nav.js"></script>
   <script src="/static/js/theme.js"></script>
   <script src="/static/js/widgets/xaman-ek.js"></script>
@@ -89,43 +55,8 @@
 
   let DATA = null, KIND = "all", TERM = "";
 
-  const GLYPH = { human: "◍", agent: "▣", system: "⚙", unattributed: "?" };
-  const entity = e => {
-    const k = GLYPH[e.kind] ? e.kind : "unattributed";
-    return `<span class="ent"><span class="glyph g-${k}"
-      title="${esc(k)}">${GLYPH[k]}</span><span class="ent-n">${
-      esc(e.name || (k === "unattributed" ? "not recorded" : k))}</span></span>`;
-  };
-
-  const when = iso => {
-    if (!iso) return "";
-    const d = new Date(iso), mins = (Date.now() - d.getTime()) / 60000;
-    if (mins < 60) return `${Math.max(0, Math.round(mins))}m ago`;
-    if (mins < 1440) return `${Math.round(mins / 60)}h ago`;
-    return d.toISOString().slice(0, 16).replace("T", " ");
-  };
-
-  function row(x) {
-    // Three grounding states, never two. `ungraded` is neither a pass nor a
-    // failure — nothing examined the contents — so it reads as neither.
-    const g = x.grounding;
-    const mark = g === "clean" ? `<span class="m m-clean">grounded</span>`
-               : g === "violations" ? `<span class="m m-viol">violations</span>`
-               : `<span class="m m-ungraded" title="No contract applied, or no path enforced one. Not a pass.">ungraded</span>`;
-    const rec = x.recorded ? `<span class="m m-rec">recorded</span>` : "";
-
-    return `<div class="ex" data-href="/trace/${encodeURIComponent(x.episode_id)}">
-      <div class="when">${esc(when(x.at))}</div>
-      <div class="body">
-        <div class="hop">${entity(x.from)}<span class="arrow">→</span>${entity(x.to)}</div>
-        <div class="q">${esc(x.query || "—")}</div>
-      </div>
-      <div class="marks">${mark}${rec}
-        ${x.status && x.status !== "success"
-          ? `<span class="m m-viol">${esc(x.status)}</span>` : ""}</div>
-      <div class="cost">${x.cost_usd != null ? "$" + x.cost_usd.toFixed(4) : "—"}</div>
-    </div>`;
-  }
+  // `Pulse` owns the row, the glyphs and the relative clock.
+  const when = Pulse.when;
 
   function render() {
     const all = DATA.exchanges || [];
@@ -153,7 +84,7 @@
         <input class="q" id="term" placeholder="filter by agent or text" value="${esc(TERM)}"/>
         <span class="count">${rows.length} of ${all.length}</span>
       </div>
-      ${rows.length ? rows.map(row).join("")
+      ${rows.length ? Pulse.rows(rows)
         : `<div class="empty">Nothing matches that filter.</div>`}
       <div class="note">${esc(DATA.contract || "")}</div>
       ${agentLed === 0 && all.length
@@ -171,8 +102,9 @@
     });
     document.querySelectorAll(".f").forEach(b =>
       b.addEventListener("click", () => { KIND = b.dataset.kind; render(); }));
-    document.querySelectorAll(".ex").forEach(el =>
-      el.addEventListener("click", () => { location.href = el.dataset.href; }));
+    // One delegated listener, owned by the widget. Per-element handlers wired at
+    // render time are how the second render leaves half the list dead.
+    Pulse.wire(document.getElementById("content"));
   }
 
   async function boot() {

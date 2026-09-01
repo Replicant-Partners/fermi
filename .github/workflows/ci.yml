@@ -165,6 +165,13 @@ jobs:
       - name: Trace client renders — every lens, every probe
         run: node scripts/check_trace_probe_render.js
 
+      # The pulse row is shared by the stream and every specimen's Record tab.
+      # It exists because those two had drifted into two renderings of one
+      # object and the surface an agent's owner opens was the stripped one — so
+      # the distinctions the good one made are asserted, not reviewed.
+      - name: Pulse row renders — every addresser, every grounding state
+        run: node scripts/check_pulse_row.js
+
       - name: Check all binaries compile
         run: cargo check --bins --workspace
 

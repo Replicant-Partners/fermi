@@ -240,45 +240,105 @@ pub async fn delegation_integrity(pool: &sqlx::PgPool) -> Option<(i64, i64)> {
 /// work exists to name.
 pub async fn contract_conformance(pool: &sqlx::PgPool) -> Option<Vec<ContractConformance>> {
     use sqlx::Row;
+    use std::collections::HashMap;
 
-    let mut out = Vec::new();
+    // Two queries, grouped by agent. It was two queries PER CONTRACT.
+    //
+    // The counts are per agent: 105 contracts name ten distinct agents, so the
+    // loop ran 210 sequential scans of `episodes` — each with a `LIKE '%{%'`
+    // over `response_text` and an `ANY(tags)` — to produce ten distinct rows.
+    // `/api/specimen/:agent_name` waited **46 seconds** for that, on every
+    // agent, because the Health tab reads the platform-wide census; the page
+    // read as broken rather than slow.
+    //
+    // The old comment said "the set is ten long and this runs on the standing
+    // clock". Both halves were true when written: the set WAS ten, because it
+    // meant agents, and this did run on a clock rather than in a request. A
+    // sentence that outlived its fact, and the fact it outlived was a factor of
+    // ten in the number of queries.
+    //
+    // Shape is unchanged — one entry per contract, as before — so no consumer
+    // moves. Worth knowing separately: those entries duplicate their agent's
+    // numbers once per contract, so `EveryContractGrades` lists a gap ten times
+    // for one agent. That is a real wart and a different change.
+    let mut agents: Vec<&'static str> = Vec::new();
     for c in crate::grounding_trust::FIELD_CONTRACTS.iter() {
-        // One row per contract rather than one query: the set is ten long and
-        // this runs on the standing clock.
-        let row = sqlx::query(
-            "SELECT count(*)                                                        AS pulses,
-                    count(*) FILTER (WHERE e.response_text LIKE '%{%')              AS with_document,
-                    count(*) FILTER (WHERE 'grounding:enforced'   = ANY(e.tags)
-                                        OR 'grounding:violations' = ANY(e.tags))    AS graded
-               FROM episodes e
-               JOIN agents a ON a.agent_id = e.agent_id
-              WHERE a.agent_name = $1",
-        )
-        .bind(c.agent_id)
-        .fetch_optional(pool)
-        .await
-        .ok()??;
-
-        let recorded: i64 = sqlx::query_scalar(
-            "SELECT count(*)::bigint FROM gate_decisions gd
-               JOIN episodes e ON e.episode_id = gd.episode_id
-               JOIN agents a  ON a.agent_id = e.agent_id
-              WHERE gd.gate = 'grounding' AND a.agent_name = $1",
-        )
-        .bind(c.agent_id)
-        .fetch_one(pool)
-        .await
-        .unwrap_or(0);
-
-        out.push(ContractConformance {
-            agent: c.agent_id,
-            pulses: row.try_get("pulses").unwrap_or(0),
-            with_document: row.try_get("with_document").unwrap_or(0),
-            graded: row.try_get("graded").unwrap_or(0),
-            recorded,
-        });
+        if !agents.contains(&c.agent_id) {
+            agents.push(c.agent_id);
+        }
     }
-    Some(out)
+    let names: Vec<String> = agents.iter().map(|a| a.to_string()).collect();
+
+    let rows = sqlx::query(
+        "SELECT a.agent_name,
+                count(*)                                                        AS pulses,
+                count(*) FILTER (WHERE e.response_text LIKE '%{%')              AS with_document,
+                count(*) FILTER (WHERE 'grounding:enforced'   = ANY(e.tags)
+                                    OR 'grounding:violations' = ANY(e.tags))    AS graded
+           FROM episodes e
+           JOIN agents a ON a.agent_id = e.agent_id
+          WHERE a.agent_name = ANY($1)
+          GROUP BY a.agent_name",
+    )
+    .bind(&names)
+    .fetch_all(pool)
+    .await
+    .ok()?;
+
+    let recorded_rows = sqlx::query(
+        "SELECT a.agent_name, count(*)::bigint AS recorded
+           FROM gate_decisions gd
+           JOIN episodes e ON e.episode_id = gd.episode_id
+           JOIN agents a  ON a.agent_id = e.agent_id
+          WHERE gd.gate = 'grounding' AND a.agent_name = ANY($1)
+          GROUP BY a.agent_name",
+    )
+    .bind(&names)
+    .fetch_all(pool)
+    .await
+    .ok()?;
+
+    // An agent with no pulses returns no row, and zero is the right answer for
+    // it — `untested`, which the evaluator reports and never scores. A missing
+    // row must not drop the contract from the list, or a declared-and-never-run
+    // contract would become invisible, which is the finding this exists for.
+    let mut by_agent: HashMap<String, (i64, i64, i64)> = HashMap::new();
+    for r in &rows {
+        let Ok(name) = r.try_get::<String, _>("agent_name") else {
+            continue;
+        };
+        by_agent.insert(
+            name,
+            (
+                r.try_get("pulses").unwrap_or(0),
+                r.try_get("with_document").unwrap_or(0),
+                r.try_get("graded").unwrap_or(0),
+            ),
+        );
+    }
+    let mut recorded: HashMap<String, i64> = HashMap::new();
+    for r in &recorded_rows {
+        if let Ok(name) = r.try_get::<String, _>("agent_name") {
+            recorded.insert(name, r.try_get("recorded").unwrap_or(0));
+        }
+    }
+
+    Some(
+        crate::grounding_trust::FIELD_CONTRACTS
+            .iter()
+            .map(|c| {
+                let (pulses, with_document, graded) =
+                    by_agent.get(c.agent_id).copied().unwrap_or((0, 0, 0));
+                ContractConformance {
+                    agent: c.agent_id,
+                    pulses,
+                    with_document,
+                    graded,
+                    recorded: recorded.get(c.agent_id).copied().unwrap_or(0),
+                }
+            })
+            .collect(),
+    )
 }
 
 /// Measure what the fleet has declared, for [`Observation::collect`].

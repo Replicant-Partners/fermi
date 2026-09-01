@@ -107,6 +107,7 @@
   tr.rowlink .go{color:var(--bg3);font-size:0.66rem;text-align:right;white-space:nowrap;}
   tr.rowlink:hover .go{color:var(--yellow);}
   </style>
+  <link rel="stylesheet" href="/static/css/pulse.css">
 </head>
 <body>
   <div id="nav-root"></div>
@@ -114,6 +115,7 @@
   <div class="scrim" id="scrim"></div>
   <div class="drawer" id="drawer"></div>
 
+  <script src="/static/js/widgets/pulse.js"></script>
   <script src="/static/js/widgets/nav.js"></script>
   <script src="/static/js/theme.js"></script>
   <script src="/static/js/widgets/xaman-ek.js"></script>
@@ -282,19 +284,11 @@
 
       <div class="block">
         <h3>Pulses</h3>
-        <div class="note">Every invocation and its output. <b>Open one</b> to see the
-          checkpoints it crossed, what it claimed, and what could not be sourced.</div>
-        ${r.episodes.length ? `<table class="pulses"><thead><tr><th>When</th><th>Query</th>
-          <th>Status</th><th class="num">Cost</th><th></th></tr></thead><tbody>
-          ${r.episodes.map(e => `<tr ${e.episode_id
-              ? `class="rowlink" data-href="/trace/${esc(e.episode_id)}"` : ""}>
-            <td class="dim">${esc((e.at || "").slice(0,10))}</td>
-            <td>${esc((e.query || "").slice(0,70))}</td>
-            <td class="${e.status === "success" ? "ok" : "bad"}">${esc(e.status || "—")}
-              ${e.error ? `<div class="dim">${esc(e.error.slice(0,80))}</div>` : ""}</td>
-            <td class="num dim">${e.cost_usd != null ? "$" + e.cost_usd.toFixed(5) : "—"}</td>
-            <td class="go">${e.episode_id ? "trace →" : ""}</td>
-          </tr>`).join("")}</tbody></table>`
+        <div class="note">Every invocation and its output, in the stream's own grammar:
+          <b>who addressed whom</b>, whether grounding graded the contents, and whether any
+          checkpoint recorded a decision. <b>Open one</b> to see what it claimed and what
+          could not be sourced.</div>
+        ${r.episodes.length ? Pulse.rows(r.episodes)
           : `<div class="absent">No pulse recorded.</div>`}
       </div>
     </div>`;
@@ -407,9 +401,13 @@
   }
 
   // Delegated, so it survives every re-render of the panes.
+  // Any row that carries a destination. `tr.rowlink` for the tables still built
+  // here, and `Pulse.wire` for the pulse list, which is the shared widget's.
   document.addEventListener("click", ev => {
     const tr = ev.target.closest && ev.target.closest("tr.rowlink");
     if (tr && tr.dataset.href) location.href = tr.dataset.href;
+    const ex = ev.target.closest && ev.target.closest(".ex[data-href]");
+    if (ex) location.href = ex.dataset.href;
   });
 
   boot();

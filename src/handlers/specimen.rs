@@ -283,30 +283,20 @@ pub async fn episode_lineage_handler(
     })))
 }
 
-/// `GET /api/stream`
+/// One pulse, as every surface that lists pulses reads it.
 ///
-/// Every exchange, newest first, across every agent.
+/// The stream and a specimen's Record tab list the same object and listed it two
+/// different ways: the stream gave you the hop (who addressed whom, with a glyph
+/// for each), whether grounding graded it, and whether any checkpoint recorded a
+/// decision; the specimen gave you a date, a truncated query and a cost. Same
+/// rows, one of them stripped of everything that makes a pulse legible.
 ///
-/// The object is a **pulse with its addresser made explicit**. That subsumes
-/// workspace hops, direct API calls, delegations and scheduled runs as one list,
-/// and it needs no new data: who invoked a pulse is already derivable.
-///
-/// An earlier version of this was bound to a workspace, because that is where
-/// the typed hops live in `workspace_messages`. That was the wrong scope - the
-/// workspace already shows its own flow, and what is missing is the aggregated
-/// stream across everything. `workspace_messages` becomes an enrichment rather
-/// than the source.
-pub async fn stream_handler(
-    State(state): State<AppState>,
-) -> Result<Json<Value>, (StatusCode, String)> {
-    let db = &state.db;
-
-    // `parent_episode_id` names an agent addresser; `user_id` names a human.
-    // Neither means the invoker was not recorded - 514 of 3,651 - and that is
-    // reported as `unattributed` rather than guessed at.
-    let rows = sqlx::query(
-        "SELECT e.episode_id, e.created_at, e.query, e.execution_status,
+/// So the projection lives here once and both handlers select it. The `WHERE`
+/// clause is the caller's — that is the only thing that actually differs between
+/// "every pulse" and "this agent's pulses".
+const PULSE_SELECT: &str = "SELECT e.episode_id, e.created_at, e.query, e.execution_status,
                 e.cost_usd::float8 AS cost_usd, e.user_id, e.parent_episode_id,
+                e.error_message,
                 a.agent_name,
                 pa.agent_name AS parent_agent,
                 u.name AS user_name, u.email AS user_email,
@@ -321,64 +311,90 @@ pub async fn stream_handler(
            -- A person is a name, not a uuid prefix. The stream showed eight
            -- characters of a hash, which is unreadable and makes the human
            -- indistinguishable from any other human.
-           LEFT JOIN users u ON u.id::text = e.user_id
+           LEFT JOIN users u ON u.id::text = e.user_id";
+
+/// Turn a [`PULSE_SELECT`] row into the pulse object both surfaces render.
+///
+/// `parent_episode_id` names an agent addresser; `user_id` names a human.
+/// Neither means the invoker was not recorded — 514 of 3,651 — and that is
+/// reported as `unattributed` rather than guessed at.
+fn pulse_row(r: &sqlx::postgres::PgRow) -> Value {
+    let parent_agent: Option<String> = r.try_get("parent_agent").ok().flatten();
+    let user_id: Option<String> = r.try_get("user_id").ok().flatten();
+    let user_name: Option<String> = r.try_get("user_name").ok().flatten();
+    let user_email: Option<String> = r.try_get("user_email").ok().flatten();
+    // Ordered: a delegating agent is the addresser even when a human started the
+    // chain, because the hop this row records is the agent-to-agent one.
+    let (kind, who) = match (&parent_agent, &user_id) {
+        (Some(a), _) => ("agent", a.clone()),
+        (None, Some(u)) => (
+            "human",
+            // Name, then the local part of the email, and only then a short id.
+            // An unresolvable id still says something, but it is the last resort
+            // rather than the default.
+            user_name
+                .clone()
+                .filter(|s| !s.trim().is_empty())
+                .or_else(|| {
+                    user_email
+                        .as_deref()
+                        .and_then(|e| e.split('@').next())
+                        .map(str::to_string)
+                })
+                .unwrap_or_else(|| u.chars().take(8).collect()),
+        ),
+        _ => ("unattributed", String::new()),
+    };
+    let clean: bool = r.try_get("clean").unwrap_or(false);
+    let dirty: bool = r.try_get("dirty").unwrap_or(false);
+    let decisions: i64 = r.try_get("decisions").unwrap_or(0);
+    json!({
+        "episode_id": r.try_get::<uuid::Uuid, _>("episode_id").ok(),
+        "at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at")
+                .ok().map(|t| t.to_rfc3339()),
+        "from": { "kind": kind, "name": who },
+        "to":   { "kind": "agent", "name": r.get::<String, _>("agent_name") },
+        "query": r.try_get::<Option<String>, _>("query").ok().flatten(),
+        "status": r.try_get::<Option<String>, _>("execution_status").ok().flatten(),
+        "error": r.try_get::<Option<String>, _>("error_message").ok().flatten(),
+        "cost_usd": r.try_get::<Option<f64>, _>("cost_usd").ok().flatten(),
+        // Three states, never two: graded clean, graded and violating, or not
+        // graded at all - which is not a pass.
+        "grounding": if clean { "clean" } else if dirty { "violations" } else { "ungraded" },
+        "recorded": decisions > 0,
+    })
+}
+
+/// `GET /api/stream`
+///
+/// Every exchange, newest first, across every agent.
+///
+/// The object is a **pulse with its addresser made explicit**. That subsumes
+/// workspace hops, direct API calls, delegations and scheduled runs as one list,
+/// and it needs no new data: who invoked a pulse is already derivable.
+///
+/// An earlier version of this was bound to a workspace, because that is where
+/// the typed hops live in `workspace_messages`. That was the wrong scope - the
+/// workspace already shows its own flow, and what is missing is the aggregated
+/// stream across everything. `workspace_messages` becomes an enrichment rather
+/// than the source.
+
+pub async fn stream_handler(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db = &state.db;
+
+    let rows = sqlx::query(&format!(
+        "{PULSE_SELECT}
           WHERE a.agent_name NOT LIKE 'test\\_agent\\_%'
           ORDER BY e.created_at DESC
-          LIMIT 200",
-    )
+          LIMIT 200"
+    ))
     .fetch_all(db)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("stream: {e}")))?;
 
-    let exchanges: Vec<Value> = rows
-        .iter()
-        .map(|r| {
-            let parent_agent: Option<String> = r.try_get("parent_agent").ok().flatten();
-            let user_id: Option<String> = r.try_get("user_id").ok().flatten();
-            // Ordered: a delegating agent is the addresser even when a human
-            // started the chain, because the hop this row records is the
-            // agent-to-agent one.
-            let user_name: Option<String> = r.try_get("user_name").ok().flatten();
-            let user_email: Option<String> = r.try_get("user_email").ok().flatten();
-            let (kind, who) = match (&parent_agent, &user_id) {
-                (Some(a), _) => ("agent", a.clone()),
-                (None, Some(u)) => (
-                    "human",
-                    // Name, then the local part of the email, and only then a
-                    // short id. An unresolvable id still says something, but it
-                    // is the last resort rather than the default.
-                    user_name
-                        .clone()
-                        .filter(|s| !s.trim().is_empty())
-                        .or_else(|| {
-                            user_email
-                                .as_deref()
-                                .and_then(|e| e.split('@').next())
-                                .map(str::to_string)
-                        })
-                        .unwrap_or_else(|| u.chars().take(8).collect()),
-                ),
-                _ => ("unattributed", String::new()),
-            };
-            let clean: bool = r.try_get("clean").unwrap_or(false);
-            let dirty: bool = r.try_get("dirty").unwrap_or(false);
-            let decisions: i64 = r.try_get("decisions").unwrap_or(0);
-            json!({
-                "episode_id": r.try_get::<uuid::Uuid, _>("episode_id").ok(),
-                "at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("created_at")
-                        .ok().map(|t| t.to_rfc3339()),
-                "from": { "kind": kind, "name": who },
-                "to":   { "kind": "agent", "name": r.get::<String, _>("agent_name") },
-                "query": r.try_get::<Option<String>, _>("query").ok().flatten(),
-                "status": r.try_get::<Option<String>, _>("execution_status").ok().flatten(),
-                "cost_usd": r.try_get::<Option<f64>, _>("cost_usd").ok().flatten(),
-                // Three states, never two: graded clean, graded and violating,
-                // or not graded at all - which is not a pass.
-                "grounding": if clean { "clean" } else if dirty { "violations" } else { "ungraded" },
-                "recorded": decisions > 0,
-            })
-        })
-        .collect();
+    let exchanges: Vec<Value> = rows.iter().map(pulse_row).collect();
 
     Ok(Json(json!({
         "exchanges": exchanges,
@@ -829,12 +845,18 @@ pub async fn specimen_handler(
     let cost: Option<f64> = rec.try_get("cost_usd").ok().flatten();
 
     // ── Recent episodes ──────────────────────────────────────────────────
-    let episodes = sqlx::query(
-        "SELECT episode_id, query, execution_status, error_details,
-                cost_usd::float8 AS cost_usd, created_at
-           FROM episodes WHERE agent_id = $1
-          ORDER BY created_at DESC LIMIT 15",
-    )
+    // The same projection the stream reads, filtered to this agent.
+    //
+    // It was its own five-column select, so the Record tab could show a date, a
+    // query and a cost and nothing else — no addresser, no grounding state, no
+    // "did any checkpoint record a decision". The stream has shown all three for
+    // months. Same object, two renderings, and the stripped one was on the page
+    // an agent's owner actually opens.
+    let episodes = sqlx::query(&format!(
+        "{PULSE_SELECT}
+          WHERE e.agent_id = $1
+          ORDER BY e.created_at DESC LIMIT 15"
+    ))
     .bind(agent_id)
     .fetch_all(db)
     .await
@@ -924,16 +946,8 @@ pub async fn specimen_handler(
             "dream_used": row.try_get::<Option<i32>, _>("dreaming_credits_used").ok().flatten().unwrap_or(0),
             "eval_runs": rec.try_get::<Option<i64>, _>("eval_runs").ok().flatten().unwrap_or(0),
             "last_eval": rec.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("last_eval").ok().flatten().map(|t| t.to_rfc3339()),
-            "episodes": episodes.iter().map(|e| json!({
-                // The handle the artifact trace needs. Without it the Record tab
-                // lists executions nobody can open.
-                "episode_id": e.try_get::<uuid::Uuid, _>("episode_id").ok(),
-                "query": e.try_get::<Option<String>, _>("query").ok().flatten(),
-                "status": e.try_get::<Option<String>, _>("execution_status").ok().flatten(),
-                "error": e.try_get::<Option<String>, _>("error_details").ok().flatten(),
-                "cost_usd": e.try_get::<Option<f64>, _>("cost_usd").ok().flatten(),
-                "at": e.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("created_at").ok().flatten().map(|t| t.to_rfc3339()),
-            })).collect::<Vec<_>>(),
+            // One mapper, so a pulse means the same thing here as in the stream.
+            "episodes": episodes.iter().map(pulse_row).collect::<Vec<_>>(),
         },
         "health": health,
     })))
