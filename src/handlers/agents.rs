@@ -3166,6 +3166,10 @@ pub async fn loop_health_handler(
                 // sentinel for never-consolidated, so `None` is passed instead — the
                 // classifier needs to tell absent from very old.
                 last_cycle_days_ago: last_consolidated.map(|_| days_since),
+                // Not measured on this route, and `None` rather than `0`: zero
+                // would assert that every episode is embedded, which is the
+                // opposite of true on 75% of the fleet.
+                episodes_without_embedding: None,
             },
         );
         let unproductive =

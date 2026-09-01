@@ -126,6 +126,33 @@ pub struct MaturityInputs {
     /// the same sentence, telling their owners to check an ontologist that
     /// demonstrably works.
     pub last_cycle_days_ago: Option<i64>,
+    /// How many of this agent's episodes have no embedding. `None` = not measured.
+    ///
+    /// The actual cause of an empty ontology, and it took three passes to name
+    /// because nothing here measured it. `EpisodeClusterer::find_neighbors`
+    /// returns an empty vector for an episode whose `embedding` is `None`, so
+    /// such an episode has no neighbours, fails `min_samples`, and is marked
+    /// DBSCAN **noise**. A batch in which every episode is unembedded therefore
+    /// yields `clusters_identified = 0`, the ontologist is handed nothing to
+    /// extract from, and the job completes — charging a credit and advancing
+    /// `last_consolidated_at` — having learned nothing.
+    ///
+    /// Measured on the fleet, and every single zero-yield cycle fits it:
+    ///
+    /// ```text
+    ///   month     cycles  produced  zero-yield  of which 0 clusters
+    ///   2026-05   75      50        25          25
+    ///   2026-06   73       1        72          72
+    ///   2026-08   68      49        19          19
+    /// ```
+    ///
+    /// 2,770 of 3,688 episodes have no embedding. The boundary takes
+    /// `provenance: Option<&ProvenancedEmbedding>` and several call sites pass
+    /// `None` — the delegation hop does so deliberately, documenting it as "a
+    /// per-fan-out cost decision and not a bug to slip into a refactor". That
+    /// decision is upstream of this field; what this field ends is the surface
+    /// blaming the ontologist for it.
+    pub episodes_without_embedding: Option<i64>,
 }
 
 impl MaturityInputs {
@@ -203,6 +230,30 @@ pub fn classify_maturity(i: MaturityInputs) -> (DreamMaturity, String) {
                 // wrong: the ontologist extracted 534 entities the month after
                 // the window most of those agents last dreamt in. A remedy
                 // asserted on a trust surface and stale is worse than no remedy.
+                // The measured cause first, where it was measured.
+                //
+                // Every zero-yield cycle on the fleet had `clusters_identified
+                // = 0`, and an episode with no embedding cannot join a cluster
+                // at all. So if this agent's episodes are largely unembedded,
+                // that is the answer, and it is not the ontologist's fault or
+                // its owner's.
+                if let Some(unembedded) = i.episodes_without_embedding {
+                    if i.total_episodes > 0 && unembedded * 2 >= i.total_episodes {
+                        return (
+                            DreamMaturity::Unproductive,
+                            format!(
+                                "{} of {} episodes have no embedding, so clustering has \
+                                 nothing to work with: an unembedded episode has no \
+                                 neighbours, becomes noise, and never reaches the \
+                                 ontologist. {} cycles have completed over them and \
+                                 extracted nothing, which is the arithmetic rather than a \
+                                 fault in this agent. Embedding at write time is a \
+                                 platform decision — see `episode_boundary::Write.provenance`.",
+                                unembedded, i.total_episodes, i.completed_cycles
+                            ),
+                        );
+                    }
+                }
                 match i.last_cycle_days_ago {
                     Some(d) if d > 30 => format!(
                         "{} cycles over {} episodes and nothing durable came out. The \
@@ -268,7 +319,11 @@ pub async fn agent_dreaming_maturity_handler(
     // ── Episode backlog ──────────────────────────────────────────────────────
     let ep = sqlx::query(
         "SELECT COUNT(*) AS total,
-                COUNT(*) FILTER (WHERE NOT consolidated) AS unconsolidated
+                COUNT(*) FILTER (WHERE NOT consolidated) AS unconsolidated,
+                -- Why an empty ontology is arithmetic rather than a fault: an
+                -- episode with no embedding has no neighbours, becomes DBSCAN
+                -- noise, and never reaches the ontologist.
+                COUNT(*) FILTER (WHERE embedding IS NULL) AS unembedded
            FROM episodes WHERE agent_id = $1",
     )
     .bind(aid)
@@ -378,6 +433,9 @@ pub async fn agent_dreaming_maturity_handler(
         rules,
         rules_rejected,
         unconsolidated_episodes: unconsolidated,
+        episodes_without_embedding: ep
+            .as_ref()
+            .and_then(|r| r.try_get::<i64, _>("unembedded").ok()),
         total_episodes,
         // Read from the same row the response already reports it from, so the
         // diagnosis and `last_completed_at` cannot disagree.
@@ -490,6 +548,11 @@ pub async fn fleet_dreaming_maturity_handler(
                   WHERE e.agent_id = a.agent_id AND NOT e.consolidated) AS unconsolidated,
                 (SELECT COUNT(*) FROM episodes e
                   WHERE e.agent_id = a.agent_id) AS total_episodes,
+                -- The cause, measured. An episode with no embedding cannot join
+                -- a cluster, so a batch of them yields nothing and the ontologist
+                -- never sees a thing.
+                (SELECT COUNT(*) FROM episodes e
+                  WHERE e.agent_id = a.agent_id AND e.embedding IS NULL) AS unembedded,
                 (SELECT COUNT(*) FROM consolidation_jobs j
                   WHERE j.agent_id = a.agent_id AND j.status = 'completed') AS completed,
                 (SELECT COUNT(*) FROM consolidation_jobs j
@@ -522,6 +585,7 @@ pub async fn fleet_dreaming_maturity_handler(
             rules_rejected: gi("rules_rejected"),
             unconsolidated_episodes: gi("unconsolidated"),
             total_episodes: gi("total_episodes"),
+            episodes_without_embedding: Some(gi("unembedded")),
             // The fleet query already selects `a.last_consolidated_at` and the
             // classifier never asked for it — which is why 43 agents from one closed
             // window read as 43 live faults.
@@ -625,6 +689,57 @@ mod tests {
         });
         assert_eq!(band, DreamMaturity::Unproductive);
         assert!(why.contains("nothing durable came out"), "{why}");
+    }
+
+    /// The measured cause outranks the guessed one.
+    ///
+    /// `find_neighbors` in `EpisodeClusterer` returns an empty vector for an
+    /// episode whose embedding is `None`. No neighbours means `min_samples` is
+    /// never met, which means DBSCAN noise, which means no cluster, which means
+    /// the ontologist is handed nothing. Every zero-yield cycle on the fleet had
+    /// `clusters_identified = 0`, and 2,770 of 3,688 episodes have no embedding.
+    ///
+    /// So an agent whose episodes are mostly unembedded is not a broken agent
+    /// and its owner has nothing to fix. Saying anything else spends somebody's
+    /// afternoon on a credential that is fine.
+    #[test]
+    fn unembedded_episodes_are_named_as_the_cause_rather_than_the_ontologist() {
+        let (band, why) = classify_maturity(MaturityInputs {
+            completed_cycles: 3,
+            total_episodes: 18,
+            episodes_without_embedding: Some(18),
+            last_cycle_days_ago: Some(2),
+            ..Default::default()
+        });
+        assert_eq!(band, DreamMaturity::Unproductive, "still worth surfacing");
+        assert!(why.contains("no embedding"), "{why}");
+        assert!(why.contains("18 of 18"), "the count is the evidence: {why}");
+        assert!(
+            !why.contains("credentials"),
+            "the ontologist is being blamed for arithmetic: {why}"
+        );
+
+        // A minority unembedded is not the explanation, so the live/stale
+        // reading still applies.
+        let (_, why) = classify_maturity(MaturityInputs {
+            completed_cycles: 3,
+            total_episodes: 18,
+            episodes_without_embedding: Some(2),
+            last_cycle_days_ago: Some(2),
+            ..Default::default()
+        });
+        assert!(!why.contains("no embedding"), "{why}");
+        assert!(why.contains("credentials"), "{why}");
+
+        // Not measured must not read as measured-and-fine.
+        let (_, why) = classify_maturity(MaturityInputs {
+            completed_cycles: 3,
+            total_episodes: 18,
+            episodes_without_embedding: None,
+            last_cycle_days_ago: Some(2),
+            ..Default::default()
+        });
+        assert!(!why.contains("no embedding"), "{why}");
     }
 
     /// A closed window is not a live fault, and the difference is the action.
