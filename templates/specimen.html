@@ -288,8 +288,12 @@
           <b>who addressed whom</b>, whether grounding graded the contents, and whether any
           checkpoint recorded a decision. <b>Open one</b> to see what it claimed and what
           could not be sourced.</div>
-        ${r.episodes.length ? Pulse.rows(r.episodes)
-          : `<div class="absent">No pulse recorded.</div>`}
+        ${r.episodes_error
+          ? `<div class="absent">The pulse list could not be read — <b>${
+              esc(r.episodes_error)}</b>. That is unknown, not empty: this agent may have
+              any number of pulses and this page cannot currently see them.</div>`
+          : r.episodes.length ? Pulse.rows(r.episodes)
+            : `<div class="absent">No pulse recorded.</div>`}
       </div>
     </div>`;
   }

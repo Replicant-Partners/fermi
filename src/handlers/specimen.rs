@@ -296,7 +296,7 @@ pub async fn episode_lineage_handler(
 /// "every pulse" and "this agent's pulses".
 const PULSE_SELECT: &str = "SELECT e.episode_id, e.created_at, e.query, e.execution_status,
                 e.cost_usd::float8 AS cost_usd, e.user_id, e.parent_episode_id,
-                e.error_message,
+                e.error_details,
                 a.agent_name,
                 pa.agent_name AS parent_agent,
                 u.name AS user_name, u.email AS user_email,
@@ -356,7 +356,7 @@ fn pulse_row(r: &sqlx::postgres::PgRow) -> Value {
         "to":   { "kind": "agent", "name": r.get::<String, _>("agent_name") },
         "query": r.try_get::<Option<String>, _>("query").ok().flatten(),
         "status": r.try_get::<Option<String>, _>("execution_status").ok().flatten(),
-        "error": r.try_get::<Option<String>, _>("error_message").ok().flatten(),
+        "error": r.try_get::<Option<String>, _>("error_details").ok().flatten(),
         "cost_usd": r.try_get::<Option<f64>, _>("cost_usd").ok().flatten(),
         // Three states, never two: graded clean, graded and violating, or not
         // graded at all - which is not a pass.
@@ -859,8 +859,28 @@ pub async fn specimen_handler(
     ))
     .bind(agent_id)
     .fetch_all(db)
-    .await
-    .unwrap_or_default();
+    .await;
+
+    // A failed read must not render as an empty list.
+    //
+    // This was `.unwrap_or_default()`, and it hid a real defect for a whole
+    // deploy: the projection named `e.error_message` and the column is
+    // `error_details`, so the query failed on every request and the Record tab
+    // said **"No pulse recorded"** for an agent with 218 of them. The stream,
+    // which propagates its error, went 502 and was noticed immediately; this one
+    // lied quietly, which is the worse of the two behaviours and the exact rule
+    // this codebase keeps re-learning: absent must look different from broken.
+    //
+    // Not fatal to the page, though — profile and record are worth serving
+    // without the list. So the error travels as a value and the surface can say
+    // which of the two it met.
+    let (episodes, episodes_error) = match episodes {
+        Ok(rows) => (rows, None),
+        Err(e) => {
+            tracing::error!("specimen pulse list failed for {agent_name}: {e}");
+            (Vec::new(), Some(e.to_string()))
+        }
+    };
 
     // ── Health: what the platform can and cannot say about THIS agent ────
     // `collect`, not a hand-built literal. This site reassembled the snapshot
@@ -948,7 +968,66 @@ pub async fn specimen_handler(
             "last_eval": rec.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("last_eval").ok().flatten().map(|t| t.to_rfc3339()),
             // One mapper, so a pulse means the same thing here as in the stream.
             "episodes": episodes.iter().map(pulse_row).collect::<Vec<_>>(),
+            // `null` when the read succeeded. A string here means the list is
+            // unknown rather than empty, and the surface must say so.
+            "episodes_error": episodes_error,
         },
         "health": health,
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The pulse projection must resolve against the live schema.
+    ///
+    /// It named `e.error_message`, and the column is `error_details`. Both
+    /// readers broke: `/api/stream` propagated and went 502, and the specimen
+    /// swallowed the error with `.unwrap_or_default()` and rendered **"No pulse
+    /// recorded"** for an agent with 218 of them — the quieter failure, and the
+    /// worse one.
+    ///
+    /// The repo's schema lint passed on that commit. It resolves a qualified
+    /// name against a **global** set of 968 known columns rather than against
+    /// the table the alias refers to, and `error_message` exists on another
+    /// table, so `e.error_message` looked fine. Postgres can answer this
+    /// question exactly, so this asks Postgres: `LIMIT 0` executes the plan,
+    /// resolves every column, and returns no rows.
+    ///
+    /// Skips rather than fails without a database, because the unit suite runs
+    /// where there is none — and CI has one.
+    #[tokio::test]
+    async fn the_pulse_projection_resolves_against_the_schema() {
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("skipped: needs DATABASE_URL");
+            return;
+        };
+        let Ok(pool) = sqlx::PgPool::connect(&url).await else {
+            eprintln!("skipped: could not connect");
+            return;
+        };
+        for (what, sql) in [
+            ("agent-scoped", format!("{PULSE_SELECT} WHERE e.agent_id = $1 LIMIT 0")),
+            (
+                "the whole stream",
+                format!("{PULSE_SELECT} WHERE a.agent_name NOT LIKE 'x' LIMIT 0"),
+            ),
+        ] {
+            let q = sqlx::query(&sql);
+            let q = if what == "agent-scoped" {
+                q.bind(uuid::Uuid::nil())
+            } else {
+                q
+            };
+            if let Err(e) = q.fetch_all(&pool).await {
+                panic!(
+                    "`PULSE_SELECT` does not resolve for {what}: {e}\n\n\
+                     Every surface that lists pulses reads this projection. A \
+                     column that does not exist takes the stream to 502 and the \
+                     specimen to a silent empty list."
+                );
+            }
+        }
+    }
 }
