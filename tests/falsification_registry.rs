@@ -618,6 +618,121 @@ const FALSIFICATIONS: &[Falsification] = &[
     },
     // ── grounding_trust ─────────────────────────────────────────────────
     Falsification {
+        check: "grounding_trust::is_settleable",
+        owner: "src/grounding_trust.rs",
+        // Permissive reading: "a verdict could eventually settle this field."
+        passes: || gt::GroundingKind::Sourced.is_settleable(),
+        fires: || gt::GroundingKind::Unsourced.is_settleable(),
+        models: "A claim nothing can ever resolve, queued as though it were \
+                 waiting. `settleable_by: None` could not answer this, and the \
+                 consequence is in the function's own doc comment: the \
+                 scoreboard reads empty forever while appearing to work. A \
+                 permissive default here fills the verification queue with rows \
+                 no actor can ever close.",
+    },
+    Falsification {
+        check: "grounding_trust::absence_is_expected",
+        owner: "src/grounding_trust.rs",
+        // Permissive reading: "a null here is the contract being obeyed."
+        passes: || gt::GroundingKind::Unsourced.absence_is_expected(),
+        fires: || gt::GroundingKind::Sourced.absence_is_expected(),
+        models: "Getting this backwards made a compliant agent look like a \
+                 failing one, which the source records. `Unsourced` REQUIRES \
+                 null, so an absence is obedience; `Sourced` had a tool and \
+                 produced nothing, so the same absence is a finding. One \
+                 inverted `matches!` turns every honest null into a violation \
+                 and every silent retrieval failure into a pass.",
+    },
+    Falsification {
+        check: "panel_absence::is_positive",
+        owner: "src/panel_absence.rs",
+        // Permissive reading: "this panel positively functions."
+        passes: || pa::Reading::Working.is_positive(),
+        fires: || pa::Reading::Unknown.is_positive(),
+        models: "`Unknown` reading as working is the platform-wide failure this \
+                 codebase keeps finding: `Reading::Working` is documented as \
+                 earned — a statement with a subject — and `Unknown` means no \
+                 contract can say. Treating them alike is the same move as \
+                 `unverified` scoring as a pass, on the panel a person reads.",
+    },
+    Falsification {
+        check: "panel_absence::is_fault",
+        owner: "src/panel_absence.rs",
+        // Permissive reading, so both worlds negate: "nothing to act on here."
+        passes: || !pa::Reading::Idle.is_fault(),
+        fires: || !pa::Reading::Fault.is_fault(),
+        models: "`Idle` is correctly empty and `Fault` is something that should \
+                 have happened and did not. Collapsing them is what made the \
+                 panels unreadable before the ladder: every empty surface looked \
+                 the same, so the ones that were findings were never actioned.",
+    },
+    Falsification {
+        check: "declaration_ladder::has_grounding_contract",
+        owner: "src/declaration_ladder.rs",
+        // Permissive reading: "this agent's field provenance is declared."
+        passes: || {
+            dl::has_grounding_contract(
+                "no_such_agent_anywhere",
+                Some(&serde_json::json!({
+                    "grounding": { "profile": { "status": "sourced" } }
+                })),
+            )
+        },
+        fires: || dl::has_grounding_contract("no_such_agent_anywhere", None),
+        models: "The rung reporting itself closed for an agent that declares no \
+                 provenance at all. It answers over two paths — the compiled \
+                 `output_contract.grounding` and the legacy `FIELD_CONTRACTS` \
+                 const — and an agent on neither must come back false. A card \
+                 with an EMPTY grounding object is the case that matters: the \
+                 key exists, so a `get(\"grounding\").is_some()` check passes \
+                 while nothing is declared, which is why the `!g.is_empty()` is \
+                 load-bearing.",
+    },
+    Falsification {
+        check: "grounding_trust::enforce_from_output_contract",
+        owner: "src/grounding_trust.rs",
+        // Permissive reading: "the document is clean, nothing was violated."
+        passes: || {
+            let mut doc = serde_json::json!({ "ratings": null });
+            gt::enforce_from_output_contract(
+                "no_such_agent_anywhere",
+                Some(&serde_json::json!({
+                    "grounding": {
+                        "ratings": {
+                            "status": "unavailable",
+                            "why": "no tool returns an Elo, so this must be null"
+                        }
+                    }
+                })),
+                &mut doc,
+            )
+            .is_clean()
+        },
+        fires: || {
+            let mut doc = serde_json::json!({ "ratings": { "elo_current": 1875.0 } });
+            gt::enforce_from_output_contract(
+                "no_such_agent_anywhere",
+                Some(&serde_json::json!({
+                    "grounding": {
+                        "ratings": {
+                            "status": "unavailable",
+                            "why": "no tool returns an Elo, so this must be null"
+                        }
+                    }
+                })),
+                &mut doc,
+            )
+            .is_clean()
+        },
+        models: "The original incident, at the hop that is supposed to stop it: \
+                 `genome_profiler` shipped a recalled genome size for 56 \
+                 episodes because a value sat in a field no tool could fill. \
+                 This is the same shape with `football_analyst`'s Elo — a \
+                 precise number in an `unavailable` block. A permissive reading \
+                 of the compiled grounding map means every delegation hop hands \
+                 the fabrication onward with a clean report.",
+    },
+    Falsification {
         check: "grounding_trust::strength",
         owner: "src/grounding_trust.rs",
         // Permissive reading: "this verdict is reproducible."
@@ -1901,6 +2016,15 @@ const ENUMERATOR: &str = "Walks a declared table and yields what is in it. The \
                           filtering a `const` array has nothing to falsify.";
 
 const EXEMPT: &[(&str, &str)] = &[
+    (
+        "grounding_trust::kind",
+        "A total mapping from `Grounding` to `GroundingKind`, one arm per \
+         variant, and the compiler rejects a missing one. There is no \
+         world in which it fires: every input has exactly one correct \
+         answer and no evidence is weighed. What the KINDS then mean is \
+         falsified by `is_settleable` and `absence_is_expected`, which are \
+         registered above.",
+    ),
     // liveness_trust
     (
         "liveness_trust::known_silent",

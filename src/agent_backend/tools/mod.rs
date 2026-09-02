@@ -336,7 +336,15 @@ use serde_json::json;
 ///
 /// # Example
 ///
-/// ```rust
+/// `text`, not `rust`: this is the SHAPE of an implementation, with `{...}` and
+/// `...` where the body goes. Tagged `rust` it was compiled as a doctest and
+/// had failed for as long as it has existed — six errors about `async_trait`,
+/// `SkillCategory` and `json!` not being in scope, none of which is the
+/// example's point. A doctest that cannot pass is a test nobody can act on;
+/// see `src/distributions.rs` for the other resolution, where the examples
+/// were real code and were given their imports instead.
+///
+/// ```text
 /// pub struct RunMonteCarlo;
 ///
 /// #[async_trait]

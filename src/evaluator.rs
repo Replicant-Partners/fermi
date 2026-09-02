@@ -83,6 +83,9 @@ pub type EvalResult<T> = Result<T, EvalError>;
 /// # Examples
 ///
 /// ```
+/// use fermi::ast::Expression;
+/// use fermi::evaluator::{evaluate, EvaluationContext};
+///
 /// let mut ctx = EvaluationContext::new();
 /// ctx.set("market_size".to_string(), 1200.0);
 /// ctx.set("growth_rate".to_string(), 0.25);
@@ -96,7 +99,7 @@ pub type EvalResult<T> = Result<T, EvalError>;
 ///     )),
 /// );
 ///
-/// let result = evaluate(&expr, &ctx)?;
+/// let result = evaluate(&expr, &ctx).unwrap();
 /// assert_eq!(result, 1500.0); // 1200 * 1.25
 /// ```
 pub fn evaluate(expr: &Expression, ctx: &EvaluationContext) -> EvalResult<f64> {

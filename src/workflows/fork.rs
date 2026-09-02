@@ -252,7 +252,7 @@ pub async fn fork_agent(
     // annotated with `{"forked_from": <source_agent_id>}` so the audit trail
     // is preserved.
     if include_embeddings {
-        sqlx::query(
+        let copied = sqlx::query(
             "INSERT INTO episodes (
                 episode_id, agent_id, timestamp_ref, query, context,
                 execution_status, error_details, execution_time_ms,
@@ -276,8 +276,11 @@ pub async fn fork_agent(
         .bind(source_id)
         .bind(new_id)
         .execute(pool)
-        .await
-        .ok();
+        .await;
+        // `.ok()` discarded this silently: a fork whose episode history did
+        // not copy looks like an agent that never ran, and the fork itself
+        // still reports success. Counted so the discrepancy is a number.
+        crate::write_accounting::observe(crate::write_accounting::Sink::Episodes, copied);
     }
 
     Ok(ForkResult {

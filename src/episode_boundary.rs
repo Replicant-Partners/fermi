@@ -427,18 +427,24 @@ pub async fn close(pulse: Pulse, graded: &Graded, mut w: Write<'_>) -> anyhow::R
     // to end — every workspace surface has been reading a transcript instead.
     if let Some(ws) = w.workspace {
         if let Some(db) = w.db {
-            if let Err(e) = sqlx::query(
-                "UPDATE episodes SET workspace_id = $1 WHERE episode_id = $2",
-            )
-            .bind(ws)
-            .bind(stored)
-            .execute(db)
-            .await
+            // Counted, not only logged. `tracing::error!` here made a failed
+            // attribution a line in a file nobody reads, and the whole reason
+            // this column exists is that unattributed pulses were invisible.
+            // `observe` still logs — it warns with the sink and writer — and
+            // additionally makes the failure a number on `/api/writes`.
+            let attributed =
+                sqlx::query("UPDATE episodes SET workspace_id = $1 WHERE episode_id = $2")
+                    .bind(ws)
+                    .bind(stored)
+                    .execute(db)
+                    .await;
+            if crate::write_accounting::observe(crate::write_accounting::Sink::Episodes, attributed)
+                .is_none()
             {
                 tracing::error!(
                     episode = %stored, workspace = %ws,
                     "workspace attribution failed, so this pulse will read as \
-                     non-workspace work: {e}"
+                     non-workspace work"
                 );
             }
         } else {
@@ -614,13 +620,12 @@ mod workspace_tests {
             eprintln!("skipped: could not connect");
             return;
         };
-        if let Err(e) = sqlx::query(
-            "UPDATE episodes SET workspace_id = $1 WHERE episode_id = $2 AND false",
-        )
-        .bind(uuid::Uuid::nil())
-        .bind(uuid::Uuid::nil())
-        .execute(&pool)
-        .await
+        if let Err(e) =
+            sqlx::query("UPDATE episodes SET workspace_id = $1 WHERE episode_id = $2 AND false")
+                .bind(uuid::Uuid::nil())
+                .bind(uuid::Uuid::nil())
+                .execute(&pool)
+                .await
         {
             panic!(
                 "the boundary cannot attribute a pulse to a workspace: {e}\n\n\

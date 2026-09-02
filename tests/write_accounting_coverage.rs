@@ -45,7 +45,17 @@ use fermi::write_accounting::SINKS;
 /// Measured after the first instrumentation pass, not guessed. The first run of
 /// this test rejected a guessed baseline of 6/2/1 as too generous and named the
 /// real figures — which is the ratchet doing its job before anyone relied on it.
-const BASELINE: &[(&str, usize)] = &[("episodes", 2), ("semantic_rules", 1)];
+/// `episodes` 2 → 1. Three sites instrumented after the ratchet caught them at
+/// 4: the workspace attribution in `episode_boundary` (logged with
+/// `tracing::error!` and counted nowhere, on the very column added to stop
+/// pulses being invisible), the episode-history copy in `workflows::fork`
+/// (`.ok()`, so a fork whose history did not copy still reported success), and
+/// the outcome annotation in `handlers::forecasts` (`let _ =`, which silently
+/// drops an episode out of every future calibration).
+///
+/// The 1 that remains is a live-database probe in `episode_boundary`'s own
+/// tests, whose `UPDATE … AND false` writes nothing by construction.
+const BASELINE: &[(&str, usize)] = &[("episodes", 1), ("semantic_rules", 1)];
 
 fn rust_sources(root: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(root) else {

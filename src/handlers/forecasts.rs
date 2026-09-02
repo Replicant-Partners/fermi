@@ -1549,12 +1549,22 @@ pub async fn resolve_forecast_handler(
                         );
                     }
 
-                    // Write the annotated context back
-                    let _ = sqlx::query("UPDATE episodes SET context = $1 WHERE episode_id = $2")
-                        .bind(&ctx)
-                        .bind(episode_id)
-                        .execute(&pool_annotate)
-                        .await;
+                    // Write the annotated context back.
+                    //
+                    // Was `let _ =`. The annotation is what lets an episode be
+                    // scored against its outcome later, so a lost write here
+                    // does not fail anything now and quietly removes the
+                    // episode from every future calibration.
+                    let annotated =
+                        sqlx::query("UPDATE episodes SET context = $1 WHERE episode_id = $2")
+                            .bind(&ctx)
+                            .bind(episode_id)
+                            .execute(&pool_annotate)
+                            .await;
+                    fermi::write_accounting::observe(
+                        fermi::write_accounting::Sink::Episodes,
+                        annotated,
+                    );
                 }
             }
 

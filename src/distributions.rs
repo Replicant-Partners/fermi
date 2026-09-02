@@ -63,6 +63,9 @@ pub fn sample_triangular<R: Rng>(rng: &mut R, p5: f64, p50: f64, p95: f64) -> f6
 /// # Examples
 ///
 /// ```
+/// use fermi::distributions::*;
+/// use rand::SeedableRng;
+/// let mut rng = rand::rngs::StdRng::seed_from_u64(42);
 /// // Growth rate with mean 0.25 (25%) and stddev 0.05 (5%)
 /// let rate = sample_normal(&mut rng, 0.25, 0.05);
 /// ```
@@ -90,6 +93,9 @@ pub fn sample_normal<R: Rng>(rng: &mut R, mean: f64, stddev: f64) -> f64 {
 /// # Examples
 ///
 /// ```
+/// use fermi::distributions::*;
+/// use rand::SeedableRng;
+/// let mut rng = rand::rngs::StdRng::seed_from_u64(42);
 /// // Market size with median $1B and high uncertainty (sigma=1.0)
 /// let market_size = sample_lognormal(&mut rng, 1_000_000_000.0, 1.0);
 /// ```
@@ -118,6 +124,9 @@ pub fn sample_lognormal<R: Rng>(rng: &mut R, median: f64, sigma: f64) -> f64 {
 /// # Examples
 ///
 /// ```
+/// use fermi::distributions::*;
+/// use rand::SeedableRng;
+/// let mut rng = rand::rngs::StdRng::seed_from_u64(42);
 /// // Random factor between 0.8 and 1.2
 /// let factor = sample_uniform(&mut rng, 0.8, 1.2);
 /// ```
@@ -150,6 +159,9 @@ pub fn sample_uniform<R: Rng>(rng: &mut R, low: f64, high: f64) -> f64 {
 /// # Examples
 ///
 /// ```
+/// use fermi::distributions::*;
+/// use rand::SeedableRng;
+/// let mut rng = rand::rngs::StdRng::seed_from_u64(42);
 /// // Success probability with moderate confidence
 /// // Beta(2, 2) on [0, 1] gives symmetric bell shape
 /// let prob = sample_beta(&mut rng, 2.0, 2.0, 0.0, 1.0);
