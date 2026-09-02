@@ -1,0 +1,63 @@
+{
+  "domain": "supply-chain",
+  "produces_schema": "scro/bom_response",
+  "title": "Supply chain BOM pricing response",
+  "synthesis": "pipeline",
+  "calibration": {
+    "signal": "market_price_check",
+    "comparison": "predicted_vs_spot",
+    "resolution_delay": "quarterly"
+  },
+
+  "blocks": [
+    {
+      "name": "items",
+      "source": {
+        "status": "sourced",
+        "tool": "web_search",
+        "response_field": "price, supplier, region, availability",
+        "coverage": "partial"
+      },
+      "why": "web_search retrieves current mid-market prices, supplier geography, and availability for process materials. Coverage is partial because web_search returns useful data for widely-traded ingredients but has no source for obscure, novel, or proprietary materials — in those cases unit_cost must be null and a note is required. The partial stamp admits unavailable_no_tool_source as a valid provenance verdict, which is exactly what happens when an ingredient is not traceable to a public market. cost_low, cost_high, and source_region are sourced from the same search; scro_class is not sourced — see the risks block.",
+      "fields": {
+        "name": "string",
+        "scro_class": "string?",
+        "unit_cost": "number?",
+        "unit": "string",
+        "cost_low": "number?",
+        "cost_high": "number?",
+        "currency": "string",
+        "source_region": "string?",
+        "notes": "string?",
+        "risk_flags": "enum:single_source|seasonal|quality_variable|supply_tight|substitution_risk|geopolitical|regulatory|long_lead_time[]"
+      }
+    },
+    {
+      "name": "risks",
+      "source": {
+        "status": "inferred",
+        "from": "items + domain knowledge of supply chain geography, seasonality, and adulteration patterns"
+      },
+      "why": "Risk assessment is model inference over the items block, grounded in domain knowledge about supplier geography (single_source, geopolitical), harvest windows (seasonal), batch variation (quality_variable), current supply constraints (supply_tight), and adulteration patterns (substitution_risk). No tool lookup supplies risk flags — they are the agent's reasoned judgement about each item's supply chain disposition. scro_class is also inferred here: the agent classifies each item into the closest SCRO continuant class (BiologicalMaterial, IndustrialChemical, etc.) from training knowledge of SCRO, not from a retrieval. Stamped model_inference so no run can present a reasoned risk assessment as a retrieved fact.",
+      "fields": {
+        "item": "string",
+        "flag": "enum:single_source|seasonal|quality_variable|supply_tight|substitution_risk|geopolitical|regulatory|long_lead_time",
+        "severity": "enum:low|medium|high",
+        "description": "string"
+      }
+    },
+    {
+      "name": "summary",
+      "source": {
+        "status": "inferred",
+        "from": "items (arithmetic) + oracle synthesis"
+      },
+      "why": "total_bom_cost is arithmetic over the items block — it multiplies each item's unit_cost by its requested quantity (from the BomQuery) and sums. This is a computation the agent does over retrieved values, not a retrieval itself. oracle_note is the agent's single most important supply chain observation synthesised across the full BoM — it is the one place where a cross-item pattern (portfolio-level risk, dominant cost driver, substitution opportunity) that no individual item block captures can be surfaced. Both fields are model judgements.",
+      "fields": {
+        "total_bom_cost": "number?",
+        "currency": "string",
+        "oracle_note": "string"
+      }
+    }
+  ]
+}

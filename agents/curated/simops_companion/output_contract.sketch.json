@@ -1,0 +1,20 @@
+{
+  "domain": "process-optimisation",
+  "produces_schema": "kask_simops/action_block",
+  "title": "SimOps companion action block",
+  "synthesis": "pipeline",
+  "calibration": {
+    "signal": "sosa_observation",
+    "comparison": "predicted_vs_measured",
+    "resolution_delay": "process_dependent"
+  },
+
+  "blocks": [
+    {
+      "name": "action",
+      "source": { "status": "narrative" },
+      "why": "The companion produces prose plus __ACTION__...__END_ACTION__ delimited blocks parsed by the kask client. From the platform envelope's perspective this is narrative text: the companion is invoked via the workspace-message path (not the delegation hop), so envelope::build never runs and Gate::OutputSchema is never asked. The action block contract is enforced at the kask client layer using the kask-simops/2 app schema — six typed action types with JSON Schema validation on each. This sketch satisfies the Admission gate and records the domain and calibration signal for Loop 5; the authoritative typed contract for individual action blocks lives in apps/kask_simops.json.",
+      "value": "string"
+    }
+  ]
+}

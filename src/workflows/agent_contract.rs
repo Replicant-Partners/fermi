@@ -245,7 +245,6 @@ pub const TYPED_TIER_EXEMPT: &[&str] = &[
     "sidestream_miner",
     "simops_advisor",
     "simops_cascade",
-    "simops_companion",
     "simops_dynamics_runner",
     "simops_narrator",
     "simops_narrator_local",
@@ -254,7 +253,6 @@ pub const TYPED_TIER_EXEMPT: &[&str] = &[
     "social_media_studio",
     "specimen_minter",
     "style_transfer",
-    "supply_chain_oracle",
     "swarm_host",
     "swarm_telemetry_analyst",
     "trend_scout",
@@ -459,7 +457,14 @@ mod tests {
         // hand-written ones; the two that narrow drop the human-settlement ladder
         // from `ratings` and `squad_value`, which let the agent stamp its own
         // output as human-verified.
-        const BASELINE: usize = 79;
+        // 79 → 78: `supply_chain_oracle` migrated. Its output_contract is
+        // compiled from `agents/curated/supply_chain_oracle/output_contract.sketch.json`
+        // (domain: supply-chain, produces_schema: scro/bom_response). First agent
+        // typed with SCRO ontology grounding. A2A first contract: companion → oracle.
+        // 78 → 77: `simops_companion` migrated. Coordinator agent: one narrative
+        // block reflecting that the action block contract lives in the kask-simops/2
+        // app schema (enforced at the kask client layer). First met-agent typed.
+        const BASELINE: usize = 77;
         assert!(
             TYPED_TIER_EXEMPT.len() <= BASELINE,
             "the typed-tier exemption list grew from {BASELINE} to {}. A new agent \

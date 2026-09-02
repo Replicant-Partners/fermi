@@ -441,7 +441,7 @@
   },
   "simops_companion": {
     "class": "Strategia",
-    "order": "Narrativales",
+    "order": "Operationales",
     "phylum": "Instrumenta",
     "species": "simops_companion"
   },
@@ -512,7 +512,7 @@
   },
   "supply_chain_oracle": {
     "class": "Researchia",
-    "order": "Diagnosticales",
+    "order": "Narrativales",
     "phylum": "Instrumenta",
     "species": "supply_chain_oracle"
   },
