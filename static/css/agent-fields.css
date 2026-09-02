@@ -63,3 +63,39 @@
    a key the struct does not have cannot be typed here. */
 .af-obj { border-left: 2px solid var(--bg3); padding-left: 9px; margin-top: 2px; }
 .af-sub { padding: 4px 0; }
+
+/* ── A value you drag ──────────────────────────────────────────────────
+   `temperature` in a free-text box invites 1.7 on an agent under a field
+   contract. A track makes the range visible without refusing anything. */
+.af-slide { display: flex; gap: 9px; align-items: center; }
+.af-slide input[type="range"] { flex: 1; accent-color: var(--yellow); }
+.af-val { font-size: 0.72rem; color: var(--fg2); min-width: 2.6em; text-align: right;
+          font-variant-numeric: tabular-nums; }
+
+/* ── The affect plane ──────────────────────────────────────────────────
+   Arousal against valence — the circumplex. Two number boxes are two numbers;
+   a plane is a personality you can point at. The quadrant words are what people
+   actually call the result, and they are the reason this is legible at a
+   glance rather than a pair of decimals to interpret. */
+.af-pad { margin: 4px 0 6px; }
+.af-pad-face { position: relative; height: 132px; background: var(--bg0-hard);
+               border: 1px solid var(--bg3); cursor: crosshair; overflow: hidden; }
+.af-pad-face:focus { outline: none; border-color: var(--aqua); }
+.af-axis { position: absolute; background: var(--bg2); }
+.af-axis-x { left: 0; right: 0; top: 50%; height: 1px; }
+.af-axis-y { top: 0; bottom: 0; left: 50%; width: 1px; }
+.af-q { position: absolute; font-size: 0.57rem; color: var(--bg4, #7c6f64);
+        text-transform: uppercase; letter-spacing: 0.07em; pointer-events: none; }
+.af-q-tl { top: 5px; left: 7px; }
+.af-q-tr { top: 5px; right: 7px; }
+.af-q-bl { bottom: 5px; left: 7px; }
+.af-q-br { bottom: 5px; right: 7px; }
+/* The agent, sitting where its personality is. */
+.af-dot { position: absolute; width: 11px; height: 11px; margin: 0 0 -5.5px -5.5px;
+          border-radius: 50%; background: var(--yellow);
+          box-shadow: 0 0 0 3px rgba(250, 189, 47, 0.18); pointer-events: none; }
+.af-pad-read { display: flex; gap: 12px; font-size: 0.63rem; color: var(--fg4);
+               margin-top: 4px; flex-wrap: wrap; }
+.af-pad-read b { color: var(--fg2); font-weight: normal;
+                 font-variant-numeric: tabular-nums; }
+.af-q-now { color: var(--yellow); text-transform: uppercase; letter-spacing: 0.07em; }

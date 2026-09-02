@@ -178,6 +178,28 @@
   .cmp-chip.c-error{border-color:var(--red,#fb4934);}
   .cmp-chip.c-resolved{border-color:var(--green);}
   .cmp-chip.c-pending{border-color:var(--aqua);}
+  /* The parts of a living thing, not a settings screen. A glyph per part, so the
+     shelf reads as an anatomy rather than a form. */
+  .drawer h3 .g-mark{color:var(--yellow);margin-right:7px;font-size:0.8rem;}
+  /* One line of context per part, where a paragraph used to be. */
+  .af-meta{font-size:0.63rem;color:var(--fg4);margin:-2px 0 7px;}
+  /* Three rungs, one save. Bracketed rather than told three times. */
+  .rung.grouped{border-left:2px solid var(--bg3);padding-left:7px;}
+  .rung.grouped.next{border-left-color:var(--yellow);}
+
+  /* The bank account. Four measurements, none of them a setting. */
+  .bank{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--bg2);
+        border:1px solid var(--bg2);}
+  .bank-cell{background:var(--bg0);padding:7px 8px;}
+  .bank-n{display:block;font-size:0.82rem;color:var(--fg2);
+          font-variant-numeric:tabular-nums;}
+  .bank-l{display:block;font-size:0.58rem;color:var(--fg4);text-transform:uppercase;
+          letter-spacing:0.06em;margin-top:2px;}
+  /* Out of credits is not a neutral zero: the agent keeps answering and stops
+     learning, which is the quietest way for a loop to die. */
+  .bank-cell.dry .bank-n{color:var(--yellow);}
+  @media (max-width:620px){ .bank{grid-template-columns:repeat(2,1fr);} }
+
   .shelf-mount{margin-top:10px;}
   .shelf-mount:empty{display:none;}
   /* ── A pulse row is a door, and it has to look like one ──────────────────
@@ -506,19 +528,18 @@
     const d = D.declaration || {};
     const rungs = d.rungs || [];
     if (!rungs.length) {
-      return `<div class="block"><h3>Declaration</h3>
+      return `<div class="block"><h3><span class="g-mark">\u25c8</span>What it can be trusted about</h3>
         <div class="note">The ladder did not load, so nothing is claimed about what
         this agent has declared \u2014 which is different from it having declared
         nothing.</div></div>`;
     }
-    return `<div class="block"><h3>Declaration</h3>
+    return `<div class="block"><h3><span class="g-mark">\u25c8</span>What it can be trusted about</h3>
       <div class="shelf-count"><b>${d.declared} of ${d.total}</b> rungs declared${
         d.next ? ` \u00b7 cheapest next: <b>${esc(d.next)}</b>` : " \u00b7 nothing left to declare"}</div>
-      <div class="note">What the platform can check about this agent's pulses, and what
-        it cannot until each rung exists. Three of the four are one save: the contract
-        editor writes the type name, the schema and the grounding together.</div>
+
       ${compileBlock(d)}
       ${rungs.map(r => `<div class="rung ${r.present ? "on" : "off"}${
+        CONTRACT_RUNGS.includes(r.rung) ? " grouped" : ""}${
         r.rung === d.next ? " next" : ""}">
         <div class="rung-mark">${r.present ? "\u25c9" : "\u25cb"}</div>
         <div>
@@ -529,13 +550,48 @@
             ? `<b>Unlocks:</b> ${esc(r.unlocks)}`
             : `<b>Without it:</b> ${esc(r.without_it)}`}</div>
           ${r.present ? "" : `<div class="rung-own">declared in ${esc(r.owner)}</div>`}
-          ${CONTRACT_RUNGS.includes(r.rung) ? `<span class="rung-own2">closed by the
-            contract editor${r.rung === CONTRACT_RUNGS[0] ? "" : ", with the rung above"}</span>` : ""}
+          ${r.rung === CONTRACT_RUNGS[0] ? `<span class="rung-own2">these three are
+            one save \u2014 the contract editor writes all of them</span>` : ""}
           ${r.rung === CONTRACT_RUNGS[CONTRACT_RUNGS.length - 1] ? `<button class="rung-act"
             data-open-contract="1">${r.present ? "edit the contract" : "build it"} \u2192</button>` : ""}
         </div>
       </div>`).join("")}
       <div id="shelf-contract" class="shelf-mount"></div></div>`;
+  }
+
+  // The bank account.
+  //
+  // An agent that pulses spends money doing it, and the shelf could tell you
+  // what model it runs on but not what that costs. Read-only: every figure is a
+  // measurement, and the two that ARE settings \u2014 fork price, dreaming budget \u2014
+  // are not editable yet and do not pretend to be.
+  function bankBlock(r, p) {
+    const money = (n) => (n == null ? "\u2014" : "$" + Number(n).toFixed(Number(n) < 1 ? 4 : 2));
+    // Absent is not zero.
+    //
+    // `(undefined ?? 0) - (undefined ?? 0)` is 0, which is `<= 0`, which told an
+    // agent whose record had not loaded that it was out of dream credits and its
+    // learning had stopped. That is a false claim about the platform, made by the
+    // arithmetic, on the surface an owner opens \u2014 and it is the exact rule this
+    // project keeps re-learning: absent must look different from bad.
+    const known = r.dream_budget != null;
+    const dreamLeft = known ? r.dream_budget - (r.dream_used ?? 0) : null;
+    return `<div class="block"><h3><span class="g-mark">\u25f7</span>Bank account</h3>
+      <div class="af-meta">what it has spent, and what it has left to think with</div>
+      <div class="bank">
+        <div class="bank-cell"><span class="bank-n">${money(r.cost_usd)}</span>
+          <span class="bank-l">spent, all time</span></div>
+        <div class="bank-cell"><span class="bank-n">${money(r.cost_per_run)}</span>
+          <span class="bank-l">per pulse</span></div>
+        <div class="bank-cell"><span class="bank-n">${r.runs ?? 0}</span>
+          <span class="bank-l">pulses</span></div>
+        <div class="bank-cell ${known && dreamLeft <= 0 ? "dry" : ""}">
+          <span class="bank-n">${known ? dreamLeft : "\u2014"}</span>
+          <span class="bank-l">dream credits left</span></div>
+      </div>
+      ${known && dreamLeft <= 0 ? `<div class="af-note">Out of dream credits, so Loop 1
+        cannot run for this agent \u2014 it will keep answering and stop learning.</div>` : ""}
+    </div>`;
   }
 
   function drawer() {
@@ -545,23 +601,19 @@
       <button class="close" id="close-drawer">\u2715</button>
       <h2>Configure</h2>
       <div class="sub">${esc(p.label)}</div>
-      <div class="note">
-        Editing is a mode, not a tab: it is a different activity from reading, and
-        mixing them is how a page grows eight tabs. The subject stays on screen \u2014
-        drag the left edge if you need more room.
-      </div>
+
       ${declarationPanel()}
-      <div class="block"><h3>Intelligence</h3>
-        <div class="note">What the agent runs on. The persona version on every pulse
-          records which prompt produced it, so changing this does not rewrite history
-          \u2014 it starts a new version.
-          ${(p.substrate || {}).executor ? `Executor <b>${esc((p.substrate).executor)}</b>,
-            persona <b>v${(p.substrate).persona_version ?? 1}</b>, neither editable here.` : ""}
-        </div>
+      <div class="block"><h3><span class="g-mark">\u25d1</span>Brain</h3>
+        <div class="af-meta">${esc((p.substrate || {}).executor || "no executor")}
+          \u00b7 persona v${(p.substrate || {}).persona_version ?? 1}</div>
         <div id="af-intelligence"></div></div>
-      <div class="block"><h3>Manage</h3>
-        <div class="note">Identity and reach. ${p.fork_count ?? 0} fork(s)${
-          p.forked_from ? `, itself forked from <b>${esc(p.forked_from)}</b>` : ""}.</div>
+      <div class="block"><h3><span class="g-mark">\u25c9</span>Personality</h3>
+        <div class="af-meta">how it reads, and how far that is from its teammates</div>
+        <div id="af-personality"></div></div>
+      ${bankBlock(D.record || {}, p)}
+      <div class="block"><h3><span class="g-mark">\u25ce</span>Identity and reach</h3>
+        <div class="af-meta">${p.fork_count ?? 0} fork(s)${
+          p.forked_from ? ` \u00b7 from ${esc(p.forked_from)}` : ""}</div>
         <div id="af-manage"></div>
         <a href="/agent/${encodeURIComponent(p.agent_name)}#manage">The old page, for
           what has not moved yet \u2192</a></div>`;
@@ -573,7 +625,7 @@
     // does the model live" — which is the mistake that made the old page render
     // thirteen metrics twice under different names.
     if (typeof AgentFields !== "undefined") {
-      ["intelligence", "manage"].forEach(group => {
+      ["intelligence", "personality", "manage"].forEach(group => {
         const host = document.getElementById("af-" + group);
         if (!host) return;
         AgentFields.mount({
@@ -588,7 +640,7 @@
         });
       });
     } else {
-      ["intelligence", "manage"].forEach(group => {
+      ["intelligence", "personality", "manage"].forEach(group => {
         const host = document.getElementById("af-" + group);
         if (host) {
           host.innerHTML = `<div class="note">The field editor did not load, so this

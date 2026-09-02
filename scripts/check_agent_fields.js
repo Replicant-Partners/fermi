@@ -267,14 +267,20 @@ for (const f of AF.FIELDS) {
              profile: PROFILE });
   // ── 6b. valence is four fields, not a JSON box ───────────────────────
   const val = AF.FIELDS.find((f) => f.key === "valence");
-  ok(!!val, "valence is missing from the manage group entirely");
+  ok(!!val, "valence is missing entirely");
   ok(val.kind === "object" && Array.isArray(val.members),
     "valence is not a structured field, so it is a JSON box somebody can put the " +
     "wrong shape into");
-  ok(val.members.map((m) => m.key).sort().join(",") ===
-     "arousal,personality_traits,primary_affect,valence",
-    `valence's members are ${val.members.map((m) => m.key).join(",")} — the struct is ` +
-    `AgentValence { primary_affect, arousal, valence, personality_traits }`);
+  // Two axes on a pad plus two plain members — still exactly the four the struct
+  // has, because the pad is an interface and not a change to the data.
+  const covered = [val.pad.x.key, val.pad.y.key]
+    .concat(val.members.map((m) => m.key)).sort().join(",");
+  ok(covered === "arousal,personality_traits,primary_affect,valence",
+    `valence covers ${covered} — the struct is AgentValence { primary_affect, ` +
+    `arousal, valence, personality_traits }`);
+  ok(val.pad && val.pad.kind === "pad" && val.pad.quadrants.length === 4,
+    "arousal and valence are not on one plane. They are the affect circumplex and " +
+    "only mean anything together; as two number boxes they are two numbers");
 
   ok(/af-life/.test(host3.html), "the manage group has no lifecycle block");
   ok(/publish pipeline/.test(host3.html),
@@ -301,12 +307,16 @@ for (const f of AF.FIELDS) {
 
   // ── 6c. editing one valence member sends the whole object, once ───────
   const hostV = makeEl("div");
-  AF.mount({ container: hostV, agentId: "x", group: "manage",
+  AF.mount({ container: hostV, agentId: "x", group: "personality",
              profile: { ...PROFILE, valence: { primary_affect: "curious", arousal: 0.4,
                                                valence: 0.6, personality_traits: ["dry"] } } });
+  ok(/af-pad/.test(hostV.html), "personality has no affect plane");
+  ok(/af-q-tl|af-q-br/.test(hostV.html),
+    "the plane has no quadrant words, so it is a scatter plot of two decimals");
+  // The pad writes through hidden inputs, so the save path is unchanged.
   const arousal = hostV.querySelectorAll("[data-field]")
     .find((i) => i.dataset.field === "valence.arousal");
-  ok(!!arousal, "valence.arousal has no control");
+  ok(!!arousal, "the plane does not write arousal through an input");
   arousal.value = "0.9"; arousal.fire("input");
   LAST_FETCH = null;
   hostV.querySelector("[data-af-save]").fire("click");

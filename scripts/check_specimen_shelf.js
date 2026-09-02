@@ -105,7 +105,7 @@ let h = S.declarationPanel();
 ok((h.match(/do this next/g) || []).length === 1,
   `${(h.match(/do this next/g) || []).length} rungs are recommended; a recommendation ` +
   `pointing at more than one thing is a list`);
-ok(/class="rung on"/.test(h) && /class="rung off"/.test(h),
+ok(/class="rung on\b/.test(h) && /class="rung off\b/.test(h),
   "declared and absent rungs are not distinguished");
 ok(h.includes("2 of 4"), "the count is missing, so there is no sense of progress");
 
@@ -204,10 +204,48 @@ S.D = { profile: PROFILE,
         declaration: { rungs: RUNGS, declared: 2, total: 4, next: "output_schema" } };
 S.drawer();
 const shelf = el("drawer").html;
-for (const group of ["Declaration", "Intelligence", "Manage"]) {
-  ok(shelf.includes(`<h3>${group}</h3>`), `the ${group} group is missing from the shelf`);
+// The parts of a living thing. The shelf is an anatomy, not a settings screen:
+// a brain it thinks with, a personality it reads as, a bank account it spends
+// from, and what it can be trusted about.
+for (const part of ["trusted about", "Brain", "Personality", "Bank account",
+                    "Identity and reach"]) {
+  ok(shelf.includes(part), `the shelf has no "${part}" part`);
 }
+for (const g of ["intelligence", "personality", "manage"]) {
+  ok(shelf.includes(`id="af-${g}"`), `the ${g} group has no mount point`);
+}
+// Prose budget. The shelf grew a paragraph per group and they were the first
+// thing on screen every time it opened.
+const paras = (shelf.match(/class="note"/g) || []).length;
+ok(paras <= 1, `${paras} paragraphs above the controls; the shelf is a workbench`);
 ok(shelf.includes('id="shelf-grip"'), "there is no drag handle");
+
+// ── 4c. an unloaded bank account is not a broke one ──────────────────────
+//
+// `(undefined ?? 0) - (undefined ?? 0)` is 0, which is `<= 0`, which told an
+// agent whose record had not loaded that it was out of dream credits and its
+// learning had stopped. Absent must look different from bad, and this one was
+// written by the arithmetic rather than by a decision.
+ok(!/Out of dream credits/.test(shelf),
+  "an agent whose record has not loaded is being told it is out of dream credits");
+ok(/dream credits left/.test(shelf), "the bank does not report dream credits at all");
+
+S.D = { profile: PROFILE,
+        declaration: { rungs: RUNGS, declared: 2, total: 4, next: "output_schema" },
+        record: { runs: 218, cost_usd: 74.2184, cost_per_run: 0.34045,
+                  dream_budget: 10, dream_used: 10 } };
+S.drawer();
+ok(/Out of dream credits/.test(el("drawer").html),
+  "an agent that has actually spent its budget is not warned");
+ok(el("drawer").html.includes("$74.22") && el("drawer").html.includes("218"),
+  "the bank does not show what the agent has spent or how many pulses it took");
+
+S.D = { profile: PROFILE,
+        declaration: { rungs: RUNGS, declared: 2, total: 4, next: "output_schema" },
+        record: { runs: 5, dream_budget: 10, dream_used: 2 } };
+S.drawer();
+ok(!/Out of dream credits/.test(el("drawer").html),
+  "an agent with credits remaining is warned anyway");
 
 // ── 4b. the recommended rung has the control that closes it ─────────────
 //
@@ -230,10 +268,15 @@ ok(/contract-builder\.js/.test(HTML),
 // which implied the other two needed a separate editor that does not exist.
 ok((shelf.match(/data-open-contract/g) || []).length === 1,
   "more than one rung carries the contract editor");
-ok((shelf.match(/closed by the\s+contract editor/g) || []).length === 3,
-  `${(shelf.match(/closed by the\s+contract editor/g) || []).length} rungs say the ` +
-  `contract editor closes them; it writes produces_schema, schema and grounding, ` +
-  `so it is three`);
+// Said ONCE for the group, not once per rung. Three identical sentences down
+// three consecutive rows is the wall this project keeps rebuilding.
+const saidOnce = (shelf.match(/these three are\s+one save/g) || []).length;
+ok(saidOnce === 1,
+  `"these three are one save" appears ${saidOnce} times; the reason belongs to the ` +
+  `group and the rows are bracketed to show it`);
+ok((shelf.match(/class="rung [^"]*grouped/g) || []).length === 3,
+  "the three contract rungs are not bracketed together, so nothing shows which " +
+  "ones the single sentence is about");
 // `ports` is the one rung the contract editor does NOT close — and only half of
 // it, because the compiler derives `produces` from `produces_schema`.
 const portsRow = shelf.slice(shelf.indexOf("ports"), shelf.indexOf("output_type"));

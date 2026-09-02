@@ -81,16 +81,32 @@ window.AgentFields = (function () {
     // Not decoration. Composition dreaming audits the valence distribution
     // across a workspace and flags homophily when arousal or valence spread
     // falls below 0.25, which is a real proposal about the team's membership.
-    { group: "manage", key: "valence", path: "valence", label: "valence", kind: "object",
-      help: "The agent's affective signature. Dreaming audits the spread of these " +
-            "across a workspace and proposes membership changes when it collapses " +
-            "\u2014 an all-alike team is a team that agrees too easily.",
+    // Personality, as a plane rather than two numbers.
+    //
+    // `AgentValence { primary_affect, arousal, valence, personality_traits }`.
+    // Arousal and valence are the affect circumplex and only mean anything
+    // together — calm/excited against negative/positive — so they get one pad
+    // with the quadrant words people actually use, and two hidden inputs keep
+    // the save path exactly as it was.
+    //
+    // Not decoration: `propose_composition_change` audits the spread of these
+    // across a workspace and flags homophily below 0.25. An all-alike team is a
+    // team that agrees too easily.
+    { group: "personality", key: "valence", path: "valence", label: "affect", kind: "object",
+      help: "Where this agent sits, and how far that is from its teammates.",
       members: [
-        { key: "primary_affect", label: "primary affect", kind: "text" },
-        { key: "arousal", label: "arousal", kind: "number", step: "0.05", min: "0", max: "1" },
-        { key: "valence", label: "valence", kind: "number", step: "0.05", min: "-1", max: "1" },
+        { key: "primary_affect", label: "in a word", kind: "text" },
         { key: "personality_traits", label: "traits", kind: "tags" },
-      ] },
+      ],
+      pad: {
+        key: "valence", label: "affect", kind: "pad",
+        x: { key: "valence", label: "valence", min: "-1", max: "1" },
+        y: { key: "arousal", label: "arousal", min: "0", max: "1" },
+        quadrants: [
+          { at: "tl", word: "tense" }, { at: "tr", word: "eager" },
+          { at: "bl", word: "flat" }, { at: "br", word: "calm" },
+        ],
+      } },
   ];
 
   /// The four cognition tiers, in resolution order. A caller asks at a tier and
@@ -108,7 +124,8 @@ window.AgentFields = (function () {
       // the object. Sub-controls are the members the struct actually has, so a
       // key it does not have cannot be typed.
       const obj = value && typeof value === "object" ? value : {};
-      return `<div class="af-obj" data-object="${f.key}">${f.members.map(m =>
+      const pad = f.pad ? control({ ...f.pad, key: f.key }, obj) : "";
+      return `<div class="af-obj" data-object="${f.key}">${pad}${f.members.map(m =>
         `<div class="af-sub">
           <label class="af-sublabel">${esc(m.label)}</label>
           ${control({ ...m, key: `${f.key}.${m.key}` }, obj[m.key])}
@@ -116,6 +133,45 @@ window.AgentFields = (function () {
     }
     if (f.kind === "textarea") {
       return `<textarea ${common} rows="7">${esc(v)}</textarea>`;
+    }
+    if (f.kind === "slider") {
+      // A number you drag, with the value beside it. `temperature` is the case:
+      // a free-text box invites 1.7 on an agent under a field contract, and a
+      // track with a marked range makes the sane band visible without refusing
+      // anything.
+      return `<div class="af-slide">
+        <input ${common} type="range" step="${f.step || "0.05"}"
+               min="${f.min}" max="${f.max}" value="${esc(v === "" ? f.mid ?? f.min : v)}"/>
+        <output class="af-val">${esc(v === "" ? "\u2014" : v)}</output>
+      </div>`;
+    }
+    if (f.kind === "pad") {
+      // Two dimensions that only mean anything together.
+      //
+      // Arousal and valence are the affect circumplex: calm/excited against
+      // negative/positive. As two number boxes they are two numbers; as a plane
+      // they are a personality you can point at, and the quadrant names are the
+      // words people actually use for the result.
+      const x = Number(v && v[f.x.key] != null ? v[f.x.key] : 0);
+      const y = Number(v && v[f.y.key] != null ? v[f.y.key] : 0.5);
+      return `<div class="af-pad" data-pad="${f.key}"
+                   data-xkey="${f.x.key}" data-ykey="${f.y.key}"
+                   data-xmin="${f.x.min}" data-xmax="${f.x.max}"
+                   data-ymin="${f.y.min}" data-ymax="${f.y.max}">
+        <div class="af-pad-face" tabindex="0" role="slider"
+             aria-label="${esc(f.label)}">
+          ${f.quadrants.map(q => `<span class="af-q af-q-${q.at}">${esc(q.word)}</span>`).join("")}
+          <span class="af-axis af-axis-x"></span><span class="af-axis af-axis-y"></span>
+          <span class="af-dot"></span>
+        </div>
+        <div class="af-pad-read">
+          <span>${esc(f.x.label)} <b data-pad-x>${x.toFixed(2)}</b></span>
+          <span>${esc(f.y.label)} <b data-pad-y>${y.toFixed(2)}</b></span>
+          <span class="af-q-now" data-pad-word></span>
+        </div>
+        <input type="hidden" data-field="${f.key}.${f.x.key}" data-kind="number" value="${x}"/>
+        <input type="hidden" data-field="${f.key}.${f.y.key}" data-kind="number" value="${y}"/>
+      </div>`;
     }
     if (f.kind === "number") {
       return `<input ${common} type="number" step="${f.step || "any"}"${
@@ -258,12 +314,16 @@ window.AgentFields = (function () {
     const assemble = (f, inputs) => {
       const out = {};
       let any = false;
-      f.members.forEach((m) => {
-        const el = inputs.find((i) => i.dataset.field === `${f.key}.${m.key}`);
+      // The pad's two axes are members too — they just have one control between
+      // them. Listed first so a valence written by hand keeps its key order.
+      const keys = (f.pad ? [f.pad.x.key, f.pad.y.key] : [])
+        .concat(f.members.map((m) => m.key));
+      keys.forEach((k) => {
+        const el = inputs.find((i) => i.dataset.field === `${f.key}.${k}`);
         if (!el) return;
         const v = read(el);
         if (v !== null && !(Array.isArray(v) && v.length === 0)) any = true;
-        out[m.key] = v;
+        out[k] = v;
       });
       // Every member emptied means the author cleared it, which is `null` and
       // not an object of nulls.
@@ -284,6 +344,84 @@ window.AgentFields = (function () {
       </div>`;
 
     const inputs = [...el.querySelectorAll("[data-field]")];
+
+    // ── the affect pad ───────────────────────────────────────────────
+    //
+    // Pointer-driven, and it writes through the two hidden inputs so the diff,
+    // the save and every check downstream see exactly what a pair of number
+    // boxes would have produced. The plane is the interface; the data is
+    // unchanged.
+    el.querySelectorAll("[data-pad]").forEach((pad) => {
+      const face = pad.querySelector(".af-pad-face");
+      const dot = pad.querySelector(".af-dot");
+      const xIn = pad.querySelector(`[data-field="${pad.dataset.pad}.${pad.dataset.xkey}"]`);
+      const yIn = pad.querySelector(`[data-field="${pad.dataset.pad}.${pad.dataset.ykey}"]`);
+      if (!face || !dot || !xIn || !yIn) return;
+      const xr = [Number(pad.dataset.xmin), Number(pad.dataset.xmax)];
+      const yr = [Number(pad.dataset.ymin), Number(pad.dataset.ymax)];
+      const words = [...pad.querySelectorAll(".af-q")].map((q) => ({
+        at: [...q.classList].find((c) => c.startsWith("af-q-")).slice(5),
+        word: q.textContent,
+      }));
+
+      const paint = () => {
+        const x = Number(xIn.value), y = Number(yIn.value);
+        const fx = (x - xr[0]) / (xr[1] - xr[0]);
+        const fy = (y - yr[0]) / (yr[1] - yr[0]);
+        dot.style.left = `${(fx * 100).toFixed(1)}%`;
+        dot.style.bottom = `${(fy * 100).toFixed(1)}%`;
+        const rx = pad.querySelector("[data-pad-x]"), ry = pad.querySelector("[data-pad-y]");
+        if (rx) rx.textContent = x.toFixed(2);
+        if (ry) ry.textContent = y.toFixed(2);
+        const at = (fy >= 0.5 ? "t" : "b") + (fx >= 0.5 ? "r" : "l");
+        const w = pad.querySelector("[data-pad-word]");
+        const found = words.find((q) => q.at === at);
+        if (w && found) w.textContent = found.word;
+      };
+
+      const round = (n) => Math.round(n * 20) / 20;
+      const set = (clientX, clientY) => {
+        const r = face.getBoundingClientRect();
+        const fx = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
+        const fy = Math.min(1, Math.max(0, 1 - (clientY - r.top) / r.height));
+        xIn.value = String(round(xr[0] + fx * (xr[1] - xr[0])));
+        yIn.value = String(round(yr[0] + fy * (yr[1] - yr[0])));
+        paint();
+        refresh();
+      };
+
+      face.addEventListener("pointerdown", (ev) => {
+        ev.preventDefault();
+        face.setPointerCapture(ev.pointerId);
+        set(ev.clientX, ev.clientY);
+        const move = (e) => set(e.clientX, e.clientY);
+        const up = () => {
+          face.removeEventListener("pointermove", move);
+          face.removeEventListener("pointerup", up);
+        };
+        face.addEventListener("pointermove", move);
+        face.addEventListener("pointerup", up);
+      });
+      // Reachable without a pointer. A personality you can only set by dragging
+      // is a personality some people cannot set.
+      face.addEventListener("keydown", (ev) => {
+        const step = { ArrowLeft: [-0.05, 0], ArrowRight: [0.05, 0],
+                       ArrowDown: [0, -0.05], ArrowUp: [0, 0.05] }[ev.key];
+        if (!step) return;
+        ev.preventDefault();
+        xIn.value = String(round(Math.min(xr[1], Math.max(xr[0], Number(xIn.value) + step[0]))));
+        yIn.value = String(round(Math.min(yr[1], Math.max(yr[0], Number(yIn.value) + step[1]))));
+        paint();
+        refresh();
+      });
+      paint();
+    });
+
+    // Sliders show their value as they move.
+    el.querySelectorAll('[data-kind="slider"]').forEach((sl) => {
+      const outEl = sl.parentNode && sl.parentNode.querySelector(".af-val");
+      if (outEl) sl.addEventListener("input", () => { outEl.textContent = sl.value; });
+    });
     const saveBtn = el.querySelector("[data-af-save]");
     const out = el.querySelector("[data-af-out]");
 
