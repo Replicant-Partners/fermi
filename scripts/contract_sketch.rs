@@ -182,20 +182,37 @@ fn run(id: &str, check: bool) -> Result<String, String> {
                     .collect()
             })
             .unwrap_or_default();
-        if produces != compiled.produces {
+        // Merged, not replaced. `produces` carries the declared type AND the
+        // author's port labels; comparing against the bare type demanded that
+        // every label be deleted, which is what deleted six of
+        // `football_analyst`'s. See `Compiled::merge_produces`.
+        let expected = compiled.merge_produces(&produces);
+        if produces != expected {
             return Err(format!(
-                "  the card's `produces` is {produces:?} but the declared type is \
-                 {:?}. Every port must be the type name, or a downstream agent \
-                 matching on it is matching a string that happens to look familiar.\n",
-                compiled.produces
+                "  the card's `produces` is {produces:?} but should be {expected:?}: \
+                 the declared type first, then the port labels the author wrote. \
+                 A namespaced label that is not the current type is dropped, \
+                 because it names a type this agent no longer emits.\n"
             ));
         }
         return Ok(String::new());
     }
 
+    // The printed `produces` is the MERGE with whatever the card already has,
+    // so the splice snippet in this file's header stays a straight assignment
+    // and cannot be the thing that drops a label.
+    let existing: Vec<String> = card
+        .get("produces")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
     serde_json::to_string_pretty(&serde_json::json!({
         "output_contract": compiled.output_contract,
-        "produces": compiled.produces,
+        "produces": compiled.merge_produces(&existing),
         "generated_properties": compiled.generated_properties,
     }))
     .map_err(|e| e.to_string())

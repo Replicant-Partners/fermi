@@ -37,6 +37,16 @@ pub struct CompileRequest {
     /// vocabulary the agent already uses.
     #[serde(default)]
     pub ontology: Option<Value>,
+    /// The card's current `produces`, so the returned one is the MERGE rather
+    /// than the bare declared type.
+    ///
+    /// `ContractBuilder.saveTo` PUTs `produces` straight from this response.
+    /// Without this the builder saved one label over a card that had seven,
+    /// deleting six that other agents match on — the defect measured in
+    /// `docs/plans/AGENT_COMPILE_AND_TOOL_REGISTRY.md` §6.8. Absent means
+    /// "nothing to preserve", which is right for a card being created.
+    #[serde(default)]
+    pub existing_produces: Vec<String>,
 }
 
 /// `POST /api/contracts/compile`
@@ -73,12 +83,26 @@ pub async fn compile_handler(
     let body = fermi::contract_sketch::execute_build_tool(&input)
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
-    let parsed: Value = serde_json::from_str(&body).map_err(|e| {
+    let mut parsed: Value = serde_json::from_str(&body).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("compiler emitted unparseable output: {e}"),
         )
     })?;
+
+    // Merge the port labels back in before the builder ever sees them, so the
+    // save path needs no rule of its own. Two implementations of "which labels
+    // survive a compile" is how one of them ends up deleting the other's.
+    if let Some(arr) = parsed.get("produces").and_then(|v| v.as_array()) {
+        let compiled: Vec<String> = arr
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect();
+        parsed["produces"] = serde_json::json!(fermi::contract_sketch::merge_produces(
+            &compiled,
+            &req.existing_produces
+        ));
+    }
 
     Ok(Json(parsed))
 }

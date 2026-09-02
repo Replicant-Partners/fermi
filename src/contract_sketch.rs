@@ -607,11 +607,84 @@ pub struct Sketch {
 pub struct Compiled {
     /// Goes at `capabilities.output_contract`.
     pub output_contract: Value,
-    /// Replaces the card's `produces`. One entry, the declared type.
+    /// The declared type, as one entry.
+    ///
+    /// **Not the card's `produces` on its own** — use
+    /// [`Compiled::merge_produces`]. This used to be written straight over the
+    /// card and that was a defect: `agents.produces` is also the port label
+    /// set, so a recompile deleted labels other agents match on. Six of them
+    /// on `football_analyst`, measured.
     pub produces: Vec<String>,
     /// Properties the compiler added that the author did not write. Returned
     /// so the expansion is inspectable rather than magic.
     pub generated_properties: Vec<String>,
+}
+
+impl Compiled {
+    /// The card's `produces` after a compile: the declared type first, then
+    /// everything the card already had.
+    ///
+    /// # The decision this settles
+    ///
+    /// `agents.produces` carries two things that were never separated: **the
+    /// type this agent emits**, and **the labels it can be matched on**. The
+    /// compiler replaced the whole column with the type, which deleted the
+    /// labels; leaving the column alone means a typed agent never advertises
+    /// its type. Recorded as a decision in
+    /// `docs/plans/AGENT_COMPILE_AND_TOOL_REGISTRY.md` §6.8, which asked for
+    /// "a rule for which labels are the contract's to remove".
+    ///
+    /// # The rule: none of them
+    ///
+    /// **A compile ADDS the declared type at the front and removes nothing.**
+    ///
+    /// The first version of this was cleverer and wrong. It treated any label
+    /// containing `/` as a type reference the compiler owned, on the grounds
+    /// that `card_contract` *enforces* a namespaced `produces_schema` while
+    /// port nouns are conventionally bare — measured over the fleet as 314
+    /// labels, 14 namespaced and every one its own card's declared type, 300
+    /// bare, no exceptions.
+    ///
+    /// The test written to pin that measurement failed on the first run
+    /// against a card committed while it was being written:
+    /// `simops_companion` declares `kask_simops/action_block` AND
+    /// `kask_simops/prose_response`. Two namespaced output types, both real —
+    /// it answers with an action block or with prose. The clever rule would
+    /// have silently deleted the second.
+    ///
+    /// So: additive. The cost is that a stale type name lingers after a
+    /// `produces_schema` rename, which is a deliberate act whose leftover an
+    /// author can delete by hand. The alternative cost was deleting a
+    /// declared output type nobody was asked about. For a column that is also
+    /// a match surface, "never loses a label" is the property worth having,
+    /// and it makes the merge trivially idempotent.
+    ///
+    /// Whether `produces` should carry both meanings at all is still §6.8's
+    /// question. This makes the compiler stop damaging it while that is
+    /// decided.
+    pub fn merge_produces(&self, existing: &[String]) -> Vec<String> {
+        merge_produces(&self.produces, existing)
+    }
+}
+
+/// [`Compiled::merge_produces`] as a free function, for callers holding the
+/// compiler's JSON rather than a `Compiled` — the `/api/contracts/compile`
+/// handler, which post-processes what `execute_build_tool` returned.
+///
+/// One implementation, three callers (the binary, the corpus test, the HTTP
+/// endpoint). A second spelling of this rule is a second answer to "which
+/// labels are the contract's to remove", which is the question §6.8 was open
+/// on — and the whole reason it needed deciding once.
+pub fn merge_produces(compiled: &[String], existing: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = compiled.to_vec();
+    for label in existing {
+        // Everything the card had, in the order it had it. Deduplicated only
+        // so a card already naming its type does not name it twice.
+        if !out.iter().any(|k| k == label) {
+            out.push(label.clone());
+        }
+    }
+    out
 }
 
 impl Sketch {
@@ -2086,6 +2159,167 @@ mod tests {
             checked >= 5,
             "only round-tripped {checked} card(s) — the corpus walk is \
              probably broken, which would make this test vacuously pass"
+        );
+    }
+
+    /// The §6.8 rule: a compile advertises the type and keeps the labels.
+    ///
+    /// `Compiled.produces` used to be written straight over the card's, and
+    /// `agents.produces` is not the type — it is also the port label set the
+    /// seam census matches on. Recompiling `football_analyst` deleted six
+    /// labels, one of which (`evidence`) is named by eight other cards.
+    #[test]
+    fn compiling_advertises_the_type_and_keeps_the_authors_port_labels() {
+        let c = Compiled {
+            output_contract: json!({}),
+            produces: vec!["fermi/football_evidence".into()],
+            generated_properties: vec![],
+        };
+
+        let card = [
+            "fermi/football_evidence",
+            "evidence",
+            "win-probability",
+            "elo-analysis",
+            "match-prediction",
+            "form-analysis",
+            "league-analysis",
+        ]
+        .map(String::from);
+
+        assert_eq!(
+            c.merge_produces(&card),
+            card.to_vec(),
+            "the real `football_analyst` card must survive a compile unchanged. \
+             This is the case that was measured as losing six labels."
+        );
+
+        // The type is added when the card never had it, and goes first so the
+        // agent's primary identity is unambiguous. `condition_forecaster`:
+        // three labels, none of them its declared type.
+        let cf = Compiled {
+            output_contract: json!({}),
+            produces: vec!["kask_wild/condition_forecast".into()],
+            generated_properties: vec![],
+        };
+        assert_eq!(
+            cf.merge_produces(
+                &["condition_forecast", "species_probability", "brier_forecast"].map(String::from)
+            ),
+            vec![
+                "kask_wild/condition_forecast",
+                "condition_forecast",
+                "species_probability",
+                "brier_forecast"
+            ],
+            "a card whose labels do not include its type must GAIN the type and \
+             keep all three, not be replaced by it"
+        );
+
+        // A SECOND namespaced type survives. `simops_companion` declares
+        // `kask_simops/action_block` and `kask_simops/prose_response` -- it
+        // answers with an action block or with prose, and both are real. An
+        // earlier version of this rule treated every namespaced label as the
+        // compiler's to remove and would have deleted the second one.
+        let sc = Compiled {
+            output_contract: json!({}),
+            produces: vec!["kask_simops/action_block".into()],
+            generated_properties: vec![],
+        };
+        assert_eq!(
+            sc.merge_produces(
+                &["kask_simops/action_block", "kask_simops/prose_response"].map(String::from)
+            ),
+            vec!["kask_simops/action_block", "kask_simops/prose_response"],
+            "a second declared output type must survive a compile"
+        );
+
+        // Idempotent, or a second compile churns the card and the corpus test
+        // that compares them oscillates.
+        let once = c.merge_produces(&card);
+        assert_eq!(c.merge_produces(&once), once, "merge_produces is not idempotent");
+
+        // A card with nothing to preserve gets exactly the type.
+        assert_eq!(c.merge_produces(&[]), vec!["fermi/football_evidence"]);
+    }
+
+    /// A compile must never shrink a card's `produces`.
+    ///
+    /// The property, over the whole corpus, in the direction that matters:
+    /// every label a card declares today is still there after a recompile.
+    /// `agents.produces` is a match surface -- `panel_absence` counts 289
+    /// distinct labels across the fleet -- so a compiler that drops one
+    /// unbinds a belt nobody was asked about. Six labels on
+    /// `football_analyst`, measured, which is what opened section 6.8.
+    ///
+    /// This replaced a test asserting that no card declares a namespaced
+    /// label other than its own type. That premise was measured true over 314
+    /// labels and was false within the day: `simops_companion` declares two
+    /// namespaced types on purpose. The rule became additive instead, and
+    /// this is the assertion that survives being wrong about the corpus.
+    #[test]
+    fn a_recompile_never_drops_a_produces_label() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("agents/curated");
+        let mut checked = 0usize;
+        let mut labels = 0usize;
+
+        for e in std::fs::read_dir(&root).expect("read agents/curated").flatten() {
+            let p = e.path().join("agent_card.json");
+            let Ok(raw) = std::fs::read_to_string(&p) else {
+                continue;
+            };
+            let Ok(card) = serde_json::from_str::<Value>(&raw) else {
+                continue;
+            };
+            let Some(declared) = card
+                .pointer("/capabilities/output_contract/produces_schema")
+                .and_then(|v| v.as_str())
+            else {
+                continue;
+            };
+            let produces: Vec<String> = card
+                .get("produces")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let c = Compiled {
+                output_contract: json!({}),
+                produces: vec![declared.to_string()],
+                generated_properties: vec![],
+            };
+            let merged = c.merge_produces(&produces);
+            let name = e.file_name().to_string_lossy().into_owned();
+
+            for l in &produces {
+                labels += 1;
+                assert!(
+                    merged.contains(l),
+                    "{name}: recompiling would drop the `produces` label `{l}`. That \
+                     column is a match surface, so dropping one unbinds a belt silently."
+                );
+            }
+            assert!(
+                merged.contains(&declared.to_string()),
+                "{name}: the declared type `{declared}` is missing from the merged \
+                 `produces`, so a typed agent would not advertise its own type."
+            );
+            assert_eq!(
+                c.merge_produces(&merged),
+                merged,
+                "{name}: merge_produces is not idempotent, so two compiles churn the card"
+            );
+            checked += 1;
+        }
+
+        assert!(
+            checked >= 10 && labels >= 10,
+            "only checked {checked} typed card(s) / {labels} label(s); the corpus walk \
+             is broken and this test would pass by finding nothing"
         );
     }
 

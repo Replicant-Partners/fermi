@@ -12,7 +12,7 @@ and making them twice would be worse than making them late.
 | ⏸ | does `mcp_tools` grant? | §0, §2 — the registry refactor decides |
 | ⏸ | generate the card list from `FIELD_CONTRACTS`? | §0.1 |
 | ⏸ | should the trace's per-field reconciliation emit a gate decision? | the prize — see the ordering section |
-| 🚫 | `football_analyst` has no grounding map | §3 — **written, compiles, blocked on one column.** See below |
+| ✅ | `football_analyst` has no grounding map | §3 — **migrated.** Grounding 0 → 19. Needed two compiler additions first |
 
 Found while loading `football_analyst` in the contract builder. Nothing here is
 a builder bug — the builder reported all of it accurately. It is what the
@@ -214,30 +214,35 @@ The schema is real and enforced; the *sourcing* of its values is undeclared.
 `grounding_trust::enforce` resolves from the Rust const `FIELD_CONTRACTS`, so
 for this agent the hop checks document shape and not value provenance.
 
-**Attempted, and it is blocked — on one column, not on the registry.**
+**Migrated**, and it took two compiler additions to do it without a regression.
 
-The sketch is written and compiles, parked at
-`agents/curated/football_analyst/output_contract.sketch.blocked.json`
-(deliberately misnamed: the corpus test and the `contract-sketch` binary both
-match the exact filename `output_contract.sketch.json`). Diffed stamp-for-stamp
-against the live contract: **7 of 9 provenance stamps byte-identical, no schema
-property added or removed, `required` unchanged, grounding 0 → 19.**
+`agents/curated/football_analyst/output_contract.sketch.json` is now the source
+of truth. Diffed stamp-for-stamp against the hand-written contract before
+splicing: **7 of 9 provenance stamps byte-identical, no schema property added or
+removed, `required` unchanged, `produces` byte-identical, grounding 0 → 19.**
+Delisted from `TYPED_TIER_EXEMPT`; `BASELINE` and `xaman_ek`'s stated count both
+lowered in the same commit.
 
-What stops it is `Compiled.produces`, which **replaces** the card's `produces`
-— but that column is also the port label set the seam census matches on.
-Landing this cuts football_analyst from 7 labels to 1, deleting `evidence`
-(named in 8 other cards), `win-probability` and `elo-analysis` (1 each), and
-three with no consumers.
+What it needed first, because neither was expressible:
 
-That is an open decision recorded the same day by the other session in
-`docs/plans/AGENT_COMPILE_AND_TOOL_REGISTRY.md` §6.8: *does `produces` mean the
-type I emit, or the labels I can be matched on?* Forcing it from here would
-settle it in the direction that loses labels, so it is not forced. The
-measurement above is now in §6.8.1 so whoever decides has the cost in front of
-them.
+1. **`Coverage::PartialDeferred`.** Every sourced block here is `deferred`, not
+   `complete` — the hand-written stamps all admitted `pending_tool_check` and
+   were right to, because the trace grades contracted fields `never asked` while
+   the run made seven other calls. `advanced_metrics` needed partial *and*
+   deferred: `xg` is retrievable but often unrequested, `ppda` is Opta event
+   data API-Football will never carry. Dropping either collapses a distinction
+   the trace view exists to draw. The decompiler also read a four-verdict stamp
+   back as three, which would have narrowed this card on its first recompile.
 
-One language gap did come out of writing it and is fixed:
-`Coverage::PartialDeferred`. See §6.8.2.
+2. **`Compiled::merge_produces`.** The compiler replaced the card's `produces`,
+   which would have deleted six port labels other agents match on. That was
+   §6.8's open decision, now settled additive — see §6.8.0 for why the first,
+   cleverer rule was wrong and what falsified it.
+
+The two stamps that narrow do so on purpose: `ratings` and `squad_value` drop
+the human-settlement ladder from their **document** stamps, which had let the
+agent record in its own output that a person verified an Elo it recalled from
+training data.
 
 ---
 

@@ -298,6 +298,12 @@ const ContractBuilder = (() => {
   let cbTimer = null;
   let cbAvailableTools = [];
   let cbShapes = {};   // tool -> declared response shape
+  // The card's current `produces`, so a compile returns the MERGE of the
+  // declared type and the author's port labels rather than the type alone.
+  // `saveTo` PUTs `produces` straight through, and without this it saved one
+  // label over a card that had seven — six of them matched on by other
+  // agents. Empty for a card being created, which is correct: nothing to keep.
+  let cbExistingProduces = [];
   let cbProposals = [];
   let cbTypes = [];
   let cbOpen = new Set();
@@ -1383,6 +1389,7 @@ Rules, each enforced by the platform:
           sketch,
           tool_names: cbToolNames(),
           ontology,
+          existing_produces: cbExistingProduces,
         }),
       });
       if (!res.ok) {
@@ -1620,6 +1627,7 @@ Rules, each enforced by the platform:
     // Set before the fetch, so a contract compiled after a failed load still
     // carries the right title rather than an empty one.
     cbTitleFor = agentId;
+    cbExistingProduces = [];
     let data;
     try {
       const res = await fetch(
@@ -1638,6 +1646,8 @@ Rules, each enforced by the platform:
     document.getElementById("cb-tools").value = (data.tool_names || []).join(
       ", ",
     );
+    // Captured so every later compile preserves them.
+    cbExistingProduces = data.produces || [];
 
     if (!data.sketch) {
       // No contract, or one too rich to read back. Either way the tools are

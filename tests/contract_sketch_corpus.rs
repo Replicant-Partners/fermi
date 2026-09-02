@@ -105,9 +105,15 @@ fn every_sketch_compiles_and_the_card_matches_it() {
                     .collect()
             })
             .unwrap_or_default();
+        // The declared type PLUS the author's port labels, not the type
+        // alone. Asserting equality with the bare type is what required a
+        // migration to delete `football_analyst`'s six labels, which other
+        // agents match on. See `Compiled::merge_produces`.
         assert_eq!(
-            produces, compiled.produces,
-            "{}: ports must reference the declared type",
+            produces,
+            compiled.merge_produces(&produces),
+            "{}: `produces` must be the declared type first, then the port labels \
+             the author wrote. Recompile and splice.",
             s.id
         );
     }

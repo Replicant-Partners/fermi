@@ -314,7 +314,50 @@ Worth stating because the shelf got it wrong first:
 So **one save closes three rungs and half of a fourth**, and the only declaration
 with no editor at all is `accepts`.
 
-### 6.8.1 It is now blocking a migration, and here is the cost measured
+### 6.8.0 DECIDED: the compile is additive
+
+**`Compiled::merge_produces` — a compile adds the declared type at the front and
+removes nothing.**
+
+§6.8 asked for "a rule for which labels are the contract's to remove". The
+answer is *none of them*, and the route to it is worth keeping because the first
+answer was cleverer and wrong.
+
+The clever version: `card_contract` **enforces** a namespaced `produces_schema`,
+so a type name always contains `/`, while port nouns are conventionally bare.
+That gives a syntactic rule needing no similarity matching — the compiler owns
+namespaced labels, the author owns bare ones. `port_census.py::port_resolution`
+already draws the same line from the other end (`registered` vs `unresolved`).
+Measured over the fleet: **314 labels, 14 namespaced and every one its own
+card's declared type, 300 bare, zero exceptions.**
+
+The test written to pin that measurement **failed on its first run**, against a
+card committed while it was being written: `simops_companion` declares
+`kask_simops/action_block` *and* `kask_simops/prose_response`. Two namespaced
+output types, both real — it answers with an action block or with prose. The
+clever rule would have deleted the second, silently, which is the same defect
+§6.8 opened on.
+
+So: additive. The cost is a stale type name lingering after a `produces_schema`
+rename — a deliberate act whose leftover an author can delete by hand. The cost
+avoided was deleting a declared output type nobody was asked about. For a column
+that is also a match surface, *never loses a label* is the property worth having,
+and it makes the merge trivially idempotent.
+
+One implementation, three callers — the `contract-sketch` binary, the corpus
+test, and `POST /api/contracts/compile` (which now takes `existing_produces`,
+so `ContractBuilder.saveTo` needs no rule of its own). A second spelling of this
+rule would be a second answer to the question §6.8 was open on.
+
+`a_recompile_never_drops_a_produces_label` asserts the property over the whole
+corpus. It replaced the test that asserted the clever rule's premise — kept as a
+note there, because a premise that was measured true and was false within the
+day is worth remembering.
+
+**Still open:** whether `produces` should carry both meanings at all. This stops
+the compiler damaging it while that is decided, and unblocks the migration below.
+
+### 6.8.1 What it was blocking, and the cost measured
 
 *(added from the contract-authoring side, same day.)*
 
@@ -323,13 +366,11 @@ with no editor at all is `accepts`.
 before the compiler existed and has **no `grounding` map at all**, so the hop
 checks its document's shape and nothing about where its values came from.
 
-The sketch is written and compiles. It is parked at
-`agents/curated/football_analyst/output_contract.sketch.blocked.json` —
-deliberately misnamed, because both the corpus test and the `contract-sketch`
-binary match the exact filename `output_contract.sketch.json`. Rename, splice
-and delist in one commit the moment this is decided.
+**Landed** once §6.8.0 settled the rule. `produces` came out byte-identical to
+what the card already had, all seven labels, so there was no taxonomy rank churn
+either.
 
-Diffed stamp-for-stamp against the live hand-written contract:
+Diffed stamp-for-stamp against the live hand-written contract before splicing:
 
 | | |
 |---|---|
@@ -337,7 +378,7 @@ Diffed stamp-for-stamp against the live hand-written contract:
 | schema properties added or removed | **none**; `required` identical |
 | grounding entries | **0 → 19** — the entire point |
 | stamps narrowed on purpose | 2 — `ratings`, `squad_value` (see below) |
-| **`produces` labels lost** | **6 of 7** — this, and only this, is the blocker |
+| **`produces` labels lost** | **0 of 7** under §6.8.0 — was 6 of 7, and was the blocker |
 
 Which labels, and who would notice:
 

@@ -219,7 +219,6 @@ pub const TYPED_TIER_EXEMPT: &[&str] = &[
     "fixture_context_agent",
     "flavor_profiler",
     "flight_coordinator",
-    "football_analyst",
     "football_institution_agent",
     "forage_scout",
     "harvest_advisor",
@@ -453,7 +452,14 @@ mod tests {
         // `macro_data_agent` was never on this list and gained a contract in
         // the same commit, so it stopped failing the gate rather than
         // stopping being excused from it.
-        const BASELINE: usize = 80;
+        // 80 → 79: `football_analyst` migrated. One of the three cards typed by
+        // hand before the compiler existed, and the one with NO grounding map at
+        // all — so the hop checked its document's shape and nothing about where
+        // its values came from. 7 of 9 provenance stamps are byte-identical to the
+        // hand-written ones; the two that narrow drop the human-settlement ladder
+        // from `ratings` and `squad_value`, which let the agent stamp its own
+        // output as human-verified.
+        const BASELINE: usize = 79;
         assert!(
             TYPED_TIER_EXEMPT.len() <= BASELINE,
             "the typed-tier exemption list grew from {BASELINE} to {}. A new agent \
