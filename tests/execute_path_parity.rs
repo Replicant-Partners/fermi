@@ -50,7 +50,10 @@ const EXECUTE_ROUTES: &[(&str, &[&str])] = &[
         "agent-to-agent delegation (envelope::build)",
         &[
             "src/agent_backend/envelope.rs",
-            "src/agent_backend/tools_legacy.rs",
+            // `tools_legacy.rs` until the tool registry migration split it by
+            // domain. `execute_agent` — the delegation hop that calls
+            // `envelope::build` — landed in the platform domain.
+            "src/agent_backend/tools/domains/platform.rs",
         ],
     ),
     (

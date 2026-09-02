@@ -112,6 +112,84 @@ fn every_inline_script_in_every_template_parses() {
     );
 }
 
+/// **The falsifier.** Put the original bug in front of the linter.
+///
+/// The check this replaced was a non-greedy regex over `<script>`…`</script>`.
+/// It reported OK for a page that did not load, because it stopped at the first
+/// `</script>` — which was inside a string. So "the linter runs and is quiet"
+/// proves nothing on its own; what needs proving is that it goes red on the
+/// exact shape that shipped a blank page:
+///
+/// ```text
+///   el.innerHTML = `
+///     <!-- POSITION IS LOAD-BEARING: `Tabs.init` pairs by index -->
+///   `;
+/// ```
+///
+/// Registered in `tests/falsification_registry.rs::SCANS`, which is what
+/// noticed this file had no such proof.
+#[test]
+fn the_linter_sees_a_backtick_inside_a_comment_inside_a_template_literal() {
+    if !have_node() {
+        eprintln!(
+            "SKIPPED: `node` is not on PATH, so the linter's falsifier did not run. \
+             This is an absence of a check, not a passing one."
+        );
+        return;
+    }
+
+    let dir = std::env::temp_dir().join(format!("fermi-lintfals-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let bad = dir.join("bad.html");
+
+    // A raw string with `@@` standing in for a backtick.
+    //
+    // Two reasons, and the second cost an hour. This file is itself scanned by
+    // the suite above, so a literal stray backtick here would be the bug
+    // rather than a fixture for it. And the first version used `\` line
+    // continuations, which in a Rust string literal strip the newline AND the
+    // next line's leading whitespace — the fixture came out four characters
+    // shorter and parsed cleanly, so the falsifier reported the linter blind
+    // when the linter was fine. A fixture that has to reproduce a syntax error
+    // exactly must not be assembled by anything that rewrites whitespace.
+    let src = r#"<html><body><script>
+const el = document.createElement('div');
+el.innerHTML = @@
+  <!-- POSITION IS LOAD-BEARING: @@Tabs.init@@ pairs by index -->
+  <div>hi</div>
+@@;
+</script></body></html>
+"#
+    .replace("@@", "`");
+    std::fs::write(&bad, &src).expect("write the bad template");
+
+    let out = Command::new("python3")
+        .arg("scripts/lint-inline-js.py")
+        .arg(&bad)
+        .current_dir(repo())
+        .output()
+        .expect("run the linter");
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert!(
+        !out.status.success(),
+        "the linter accepted a template whose inline script cannot parse. That is \
+         the exact failure mode of the regex version it replaced — quiet about a \
+         page that does not load.\n\n{combined}"
+    );
+    assert!(
+        combined.contains("bad.html"),
+        "the linter failed but did not name the file, so a real failure would not \
+         say where to look.\n\n{combined}"
+    );
+}
+
 /// The specific comment that broke the page, pinned.
 ///
 /// Narrower than the syntax check and it survives without `node`: the comment

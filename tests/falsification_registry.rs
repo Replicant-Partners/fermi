@@ -2302,6 +2302,10 @@ enum Proof {
 /// should leave; a new file that walks it must arrive with a named proof.
 const SCANS: &[(&str, Proof)] = &[
     (
+        "tests/inline_js_syntax.rs",
+        Proof::Falsifier("the_linter_sees_a_backtick_inside_a_comment_inside_a_template_literal"),
+    ),
+    (
         "tests/write_accounting_coverage.rs",
         Proof::Falsifier("the_scan_sees_the_shape_that_caused_every_finding"),
     ),

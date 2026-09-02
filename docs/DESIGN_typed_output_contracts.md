@@ -390,7 +390,14 @@ deliberately.
    card's `output_contract.grounding` into `enforce`, the test tells them to
    update the claim.
 
-2. **12 of ~140 tools have a declared response shape.**
+2. **12 of 101 tools have a declared response shape — 12%.**
+
+   Counted from `agent_backend::tools::platform_tool_names()` after the tool
+   registry migration: **101 platform tools, 99 of them LLM-visible, 12 with a
+   declared shape.** Two earlier figures in this document and in
+   `ISSUES_tool_declaration_gap.md` were guesses ("~140", then "91" from a
+   regex over the old `tools_legacy.rs`) and both were wrong; this one is from
+   the function.
    `src/tool_response_shapes.rs` is what makes the builder's field picker a
    choice among keys that exist, and the reverse lookup (field name → which
    tools return it) gets strictly better with each one added. Absence is

@@ -110,7 +110,7 @@ pub const TOOL_RESPONSES: &[ToolResponse] = &[
     ToolResponse {
         tool: "gbif_species_search",
         evidence: Evidence::Constructed {
-            at: "tools_legacy::execute_gbif_species_search — the `species` \
+            at: "agent_backend::tools::domains::biology::execute_gbif_species_search — the `species` \
                  projection, which selects a fixed set of keys from GBIF's \
                  response rather than passing it through",
         },
@@ -217,7 +217,7 @@ pub const TOOL_RESPONSES: &[ToolResponse] = &[
     ToolResponse {
         tool: "gbif_taxonomy_tree",
         evidence: Evidence::Constructed {
-            at: "tools_legacy::execute_gbif_taxonomy_tree",
+            at: "agent_backend::tools::domains::biology::execute_gbif_taxonomy_tree",
         },
         fields: &[
             ResponseField {
@@ -699,6 +699,119 @@ pub fn coverage<'a>(tool: &str, block_fields: &[&'a str]) -> Option<(Vec<&'a str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A `Constructed` citation must name code that exists, **where it says**.
+    ///
+    /// [`Evidence::Constructed`] is the *stronger* of the two claims: it says a
+    /// reviewer can open the named function and check the declaration in thirty
+    /// seconds. That is the whole reason a `constructed` shape outranks a
+    /// `vendor` one in the builder.
+    ///
+    /// It was free text checked only for non-emptiness, and it rotted exactly
+    /// as predicted: the tool registry migration deleted
+    /// `src/agent_backend/tools_legacy.rs` and split it by domain, two
+    /// citations went on naming it, and nothing failed.
+    ///
+    /// So the module segment is checked, not just the function name. The first
+    /// version of this test only looked for `fn <name>` anywhere under `src/`
+    /// and **would not have caught the rot it was written for** — the functions
+    /// still existed, one directory along. Verified by re-introducing the stale
+    /// citation, which passed. A guard that cannot see the failure that
+    /// motivated it is the kind this codebase keeps finding.
+    #[test]
+    fn every_constructed_citation_names_a_function_where_it_says_it_is() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files: Vec<(String, String)> = Vec::new();
+        collect_rs(&root, &mut files);
+        assert!(
+            files.len() > 50,
+            "only walked {} file(s) under src/; the walk is broken and this test \
+             would pass by finding nothing to contradict it",
+            files.len()
+        );
+
+        let mut bad = Vec::new();
+        let mut checked = 0;
+        for t in TOOL_RESPONSES {
+            let Evidence::Constructed { at } = t.evidence else {
+                continue;
+            };
+            // `module::path::function` up to the first space or em-dash; the
+            // rest of the string is prose about what the function does.
+            let sym = at
+                .split(|c: char| c.is_whitespace() || c == '—')
+                .next()
+                .unwrap_or("")
+                .trim_end_matches(',');
+            let mut segs = sym.rsplit("::");
+            let func = segs.next().unwrap_or("");
+            // The module the citation says the function lives in. Only the
+            // last segment: `agent_backend::tools::domains::biology` and a
+            // re-export path both end at the file that defines it.
+            let module = segs.next().unwrap_or("");
+            assert!(
+                !func.is_empty() && !module.is_empty(),
+                "`{}` has a Constructed citation that is not `module::function`: {at:?}",
+                t.tool
+            );
+
+            let needle = format!("fn {func}");
+            let defined_in: Vec<&str> = files
+                .iter()
+                .filter(|(_, body)| body.contains(&needle))
+                .map(|(path, _)| path.as_str())
+                .collect();
+
+            if defined_in.is_empty() {
+                bad.push(format!("{}: cites `{sym}` — no `fn {func}` in src/", t.tool));
+            } else if !defined_in
+                .iter()
+                .any(|p| p.ends_with(&format!("/{module}.rs")) || p.ends_with(&format!("{module}/mod.rs")))
+            {
+                bad.push(format!(
+                    "{}: cites `{sym}`, but `fn {func}` is defined in {defined_in:?} \
+                     and in no `{module}.rs`",
+                    t.tool
+                ));
+            }
+            checked += 1;
+        }
+
+        assert!(
+            checked >= 5,
+            "only {checked} Constructed citation(s) checked; the table is empty or \
+             the walk is broken"
+        );
+        assert!(
+            bad.is_empty(),
+            "{} response-shape citation(s) point somewhere the code is not:\n  {}\n\n\
+             `Evidence::Constructed` claims a reviewer can open the named function \
+             and verify the declaration in thirty seconds. A citation that resolves \
+             to nothing, or to a different module, makes the stronger of the two \
+             evidence kinds the less trustworthy one.\n\n\
+             Repoint it, or downgrade the entry to `Evidence::Vendor` if the shape \
+             is no longer built in this repo.",
+            bad.len(),
+            bad.join("\n  ")
+        );
+    }
+
+    /// Every `.rs` under a directory as `(path, contents)`.
+    fn collect_rs(dir: &std::path::Path, out: &mut Vec<(String, String)>) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                collect_rs(&p, out);
+            } else if p.extension().and_then(|s| s.to_str()) == Some("rs") {
+                if let Ok(s) = std::fs::read_to_string(&p) {
+                    out.push((p.to_string_lossy().replace('\\', "/"), s));
+                }
+            }
+        }
+    }
 
     /// A declaration for a tool that does not dispatch describes nothing.
     #[test]

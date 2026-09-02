@@ -79,6 +79,9 @@ async fn report_why_every_panel_is_empty() {
     println!("\n  Panel absences, live\n");
     for a in &absences {
         let glyph = match a.reading {
+            // Added by the agent-compile work: a reading with a subject,
+            // "positively functions", as distinct from "no fault found".
+            Reading::Working => "✓",
             Reading::Idle => "·",
             Reading::Fault => "✕",
             Reading::Unknown => "⊘",
@@ -206,6 +209,9 @@ async fn report_scoped_absences_for_a_real_agent() {
         }
         let a = resolve_for_subject(&pool, p, agent_id, &o).await;
         let glyph = match a.reading {
+            // Added by the agent-compile work: a reading with a subject,
+            // "positively functions", as distinct from "no fault found".
+            Reading::Working => "✓",
             Reading::Idle => "·",
             Reading::Fault => "✕",
             Reading::Unknown => "⊘",

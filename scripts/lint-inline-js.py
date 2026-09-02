@@ -42,7 +42,7 @@ Exits non-zero on the first syntax error. Requires `node` on PATH; a caller
 that cannot guarantee node should skip rather than assume a pass.
 """
 
-import sys, subprocess
+import os, shutil, subprocess, sys, tempfile
 from html.parser import HTMLParser
 
 class Scripts(HTMLParser):
@@ -60,15 +60,28 @@ class Scripts(HTMLParser):
         if self._in and data.strip(): self.out.append((self.getpos()[0], data))
 
 bad = 0
+# A private temp directory per run.
+#
+# This wrote every script to a fixed `/tmp/_chk.js`, so two concurrent
+# invocations checked each other's file. Found when a second test started
+# calling this linter: `cargo test` runs tests in a binary in parallel, one
+# suite lints `templates/` while the other lints a deliberately broken fixture,
+# and the broken one came back OK. The linter was fine and its report was not,
+# which is the failure mode this script exists to remove.
+work = tempfile.mkdtemp(prefix="lint-inline-js-")
+chk = os.path.join(work, "_chk.js")
+
 for path in sys.argv[1:]:
     p = Scripts(); p.feed(open(path, encoding="utf-8").read())
     for line, body in p.out:
-        open("/tmp/_chk.js","w",encoding="utf-8").write(body)
-        r = subprocess.run(["node","--check","/tmp/_chk.js"], capture_output=True, text=True)
+        open(chk,"w",encoding="utf-8").write(body)
+        r = subprocess.run(["node","--check",chk], capture_output=True, text=True)
         status = "OK" if r.returncode == 0 else "SYNTAX ERROR"
         print(f"{status:12} {path} inline script starting line {line} ({len(body)} chars)")
         if r.returncode:
             bad += 1
             for l in r.stderr.splitlines()[:6]:
                 print("             ", l)
+
+shutil.rmtree(work, ignore_errors=True)
 sys.exit(1 if bad else 0)

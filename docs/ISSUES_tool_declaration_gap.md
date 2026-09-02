@@ -254,13 +254,21 @@ Typing it into the Tool box produced no field picker, only:
 > Field names here are unchecked, and the `response_field` claim cannot be
 > verified against the tool's actual output.
 
-Correct behaviour: `tool_response_shapes::TOOL_RESPONSES` declares **12** tools.
-A crude scan of `tools_legacy.rs` finds **91** builtin `name:` literals
-(`platform_tool_names()` is authoritative — and note the "~140" I wrote into
-`DESIGN_typed_output_contracts.md` §9 is unverified and probably wrong; it
-should be corrected to the real figure).
+Correct behaviour, and now counted properly. Straight from
+`platform_tool_names()` after the registry migration:
 
-So ~87% of tools fall back to extracting nouns from a description and marking
+```
+platform tools          101
+LLM-visible              99
+declared response shapes 12   (12%)
+```
+
+Both earlier figures here were guesses and both were wrong: "~140" was invented,
+and "91" came from a regex over `tools_legacy.rs`, a file the migration has
+since deleted. Neither should have been written down without running the
+function — which is a small instance of this document's own subject.
+
+So 88% of tools fall back to extracting nouns from a description and marking
 them `unconfirmed`. The system is honest about it — `coverage()` returns `None`
 for an unread tool, never "covered" — but the affordance that makes the builder
 worth using is missing for almost every tool.

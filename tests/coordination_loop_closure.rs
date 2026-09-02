@@ -303,7 +303,7 @@ fn stage_0_leads_with_soliciting_rather_than_inferring() {
 /// and about whom; it does not need to be told.
 #[test]
 fn intention_provenance_is_derived_from_the_caller() {
-    let src = code_of("src/agent_backend/tools_legacy.rs");
+    let src = code_of("src/agent_backend/tools/domains/coordination.rs");
 
     assert!(
         src.contains("Some(caller) if caller == agent_id => crate::intentions::IntentionSource::SelfDeclared"),
@@ -314,14 +314,16 @@ fn intention_provenance_is_derived_from_the_caller() {
     // The declared schema must not offer a `source` property. Checked on the
     // tool definition rather than the handler, because an accepted-and-ignored
     // argument still tells the model the claim is available to make.
-    let defs = fermi::agent_backend::tools::platform_tools();
+    // `platform_tools()` became `all_tools()` returning trait objects in the
+    // registry migration; the assertion is unchanged.
+    let defs = fermi::agent_backend::tools::all_tools();
     for name in ["declare_intention", "solicit_agent_plan"] {
         let def = defs
             .iter()
-            .find(|d| d.name == name)
+            .find(|d| d.name() == name)
             .unwrap_or_else(|| panic!("{name} must be a platform tool"));
         assert!(
-            def.input_schema.pointer("/properties/source").is_none(),
+            def.input_schema().pointer("/properties/source").is_none(),
             "`{name}` exposes a `source` property; provenance a caller can set \
              is not provenance"
         );
@@ -336,18 +338,18 @@ fn intention_provenance_is_derived_from_the_caller() {
 /// that: the child receives it and the recursion guard does not know.
 #[test]
 fn soliciting_is_marked_as_delegation() {
-    let def = fermi::agent_backend::tools::platform_tools()
+    let def = fermi::agent_backend::tools::all_tools()
         .into_iter()
-        .find(|d| d.name == "solicit_agent_plan")
+        .find(|d| d.name() == "solicit_agent_plan")
         .expect("solicit_agent_plan must be a platform tool");
     assert!(
-        def.is_delegation,
+        def.is_delegation(),
         "`solicit_agent_plan` runs another agent and spends against the \
          caller's credentials. Unmarked, it survives into the no-delegation \
          tool set and reopens the recursion `execute_agent` is stripped to close."
     );
     assert!(
-        def.requires_workspace,
+        def.requires_workspace(),
         "the intention map is workspace state; the tool must require one"
     );
 }
@@ -467,7 +469,7 @@ fn the_floor_is_bounded_by_a_cap_and_a_freshness_window() {
 /// on the one field whose entire purpose is that it cannot be forged.
 #[test]
 fn both_solicitation_paths_share_one_intention_writer() {
-    let tool = code_of("src/agent_backend/tools_legacy.rs");
+    let tool = code_of("src/agent_backend/tools/domains/coordination.rs");
     let module = code_of("src/plan_solicitation.rs");
 
     assert!(
