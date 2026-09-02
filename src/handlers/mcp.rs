@@ -43,7 +43,7 @@ use serde_json::{json, Value};
 use fermi::agent_backend::{
     executor::AgentExecutor,
     tool_executor::ToolAwareExecutor,
-    tools::{ToolContext, ToolRegistry},
+    tools::{PlatformToolRegistry, ToolContext},
     ExecutionContext,
 };
 use fermi::ast;
@@ -331,7 +331,7 @@ pub async fn mcp_agent_rpc(
 
             // with_workspace: a card that declares a workspace tool should
             // be able to serve it. `standard()` silently filtered those out.
-            let registry = ToolRegistry::with_workspace();
+            let registry = PlatformToolRegistry::all();
             match registry.execute(&tool_name, &arguments, &tool_ctx).await {
                 Ok(result_str) => {
                     // Try to parse as JSON for a cleaner response; fall back to text
@@ -446,7 +446,7 @@ async fn run_llm_execute(
 
     let tool_executor = ToolAwareExecutor::new(
         state.registry.executor_arc(),
-        ToolRegistry::standard(),
+        PlatformToolRegistry::standard(),
         tool_ctx,
     );
 

@@ -631,6 +631,7 @@ pub fn tally(views: &[LoopView]) -> LoopTally {
             t.turning += 1;
         } else {
             match v.reading {
+                Reading::Working => t.turning += 1, // working agent in a stopped loop
                 Reading::Fault => t.stalled_by_fault += 1,
                 Reading::Idle => t.stalled_idle += 1,
                 Reading::Unknown => t.no_reading += 1,

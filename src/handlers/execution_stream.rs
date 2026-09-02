@@ -27,7 +27,7 @@ use std::time::Instant;
 use fermi::agent_backend::executor::{AgentExecutor, AgentStatus};
 use fermi::agent_backend::kg_context::enrich_with_kg_context;
 use fermi::agent_backend::tool_executor::ToolAwareExecutor;
-use fermi::agent_backend::tools::{ToolContext, ToolRegistry};
+use fermi::agent_backend::tools::{PlatformToolRegistry, ToolContext};
 use fermi::agent_backend::ExecutionContext;
 use fermi::ast;
 use fermi::gas::{charge_execution_with_royalty, charge_gas, check_low_balance};
@@ -199,7 +199,7 @@ pub async fn execute_agent_stream_handler(
         });
         Arc::new(ToolAwareExecutor::new(
             state.registry.executor_arc(),
-            ToolRegistry::standard(),
+            PlatformToolRegistry::standard(),
             tool_context,
         ))
     };

@@ -119,14 +119,18 @@ pub struct Stamp {
 ///
 /// | reading | treatment | why |
 /// |---|---|---|
+/// | [`Reading::Working`] | [`Treatment::Verified`] | *"confirmed to function"* — the only path to `Verified` from an absence surface |
 /// | [`Reading::Idle`] | [`Treatment::NoMatch`] | *"consulted, and had nothing for this subject"* — the same claim |
 /// | [`Reading::Fault`] | [`Treatment::Rejected`] | *"checked, and found wrong"* — something should have been here |
 /// | [`Reading::Unknown`] | [`Treatment::Unavailable`] | *"nothing could supply it"* — no contract can say |
 ///
-/// [`Treatment::Verified`] is deliberately unreachable from an absence. It is
-/// the unmarked, trustworthy case, and an empty panel is never that.
+/// [`Treatment::Verified`] is the unmarked, trustworthy case. The only reading
+/// that reaches it is [`Reading::Working`] — earned, not defaulted.
+///
+/// [`Reading::Working`]: crate::panel_absence::Reading::Working
 pub fn treatment_for(reading: Reading) -> Treatment {
     match reading {
+        Reading::Working => Treatment::Verified,
         Reading::Idle => Treatment::NoMatch,
         Reading::Fault => Treatment::Rejected,
         Reading::Unknown => Treatment::Unavailable,
@@ -344,12 +348,23 @@ mod tests {
         );
     }
 
-    /// An absence may never render as the trustworthy unmarked case.
+    /// Only `Reading::Working` reaches `Treatment::Verified`.
     ///
-    /// `Verified` carries no marker by design. If an absence could reach it, an
-    /// empty panel would be indistinguishable from a sourced value — which is
-    /// the presentation-layer version of the `genome_profiler` incident that
-    /// `hud_contract` was written for.
+    /// The other three readings all map to treatments that carry a marker.
+    /// `Working` reaches `Verified` because the platform is asserting the
+    /// agent functions — the first reading that is a positive statement
+    /// rather than an explanation of an absence.
+    #[test]
+    fn only_working_reaches_verified() {
+        assert_eq!(treatment_for(Reading::Working), Treatment::Verified);
+        for r in [Reading::Idle, Reading::Fault, Reading::Unknown] {
+            let t = treatment_for(r);
+            assert_ne!(t, Treatment::Verified, "{r:?} reached the unmarked case");
+            assert!(!t.marker().is_empty(), "{r:?} has no marker");
+        }
+    }
+
+    // Legacy alias so the test history is legible.
     #[test]
     fn an_absence_is_never_unmarked() {
         for r in [Reading::Idle, Reading::Fault, Reading::Unknown] {

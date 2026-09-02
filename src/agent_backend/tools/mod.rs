@@ -46,74 +46,37 @@
 //!
 //! # Extensibility
 //!
-//! - Add a platform tool: add to `builtin_tools()` in `tools_legacy.rs` +
-//!   match arm in `execute()`.
-//! - Add an MCP integration: add to `execute()` match + declare on agent card.
+//! - Add a platform tool: implement `PlatformTool` in the appropriate domain
+//!   module under `tools/domains/`, add to that module's `tools()` vec.
+//! - Add an MCP integration: declare on the agent card; dispatch happens via
+//!   `ctx.remote_mcp` in `PlatformToolRegistry::execute()`.
 //! - Add a skill: `impl Skill` + register in `SkillRegistry::all()`.
 //!   No touching the other categories.
 //!
-//! # File layout
+//! # File layout (Phase 4 complete)
 //!
 //! ```text
 //! tools/
-//! ├── mod.rs          This file — interfaces, Skill trait, SkillRegistry, ToolRegistry
-//! └── (implementations live in ../tools_legacy.rs during migration;
-//!      will be split into platform/, mcp/, skills/ in the fermi-fpl PR)
+//! ├── mod.rs          This file — Skill trait, SkillRegistry, utility functions
+//! ├── context.rs      ToolContext and EvalTrigger
+//! ├── helpers.rs      Shared helpers (resolve_agent_id, parse_uuid_field)
+//! ├── platform_tool.rs  PlatformTool trait, ToolCategory, ToolCatalogueEntry
+//! ├── registry.rs     PlatformToolRegistry (the dispatch path since Phase 3)
+//! └── domains/        One module per tool domain (101 tools across 17 modules)
 //! ```
 //!
-//! See: `docs/AGENT_MODEL.md`, `docs/architecture/LEARNING_MECHANICS_SIMPLIFICATION.md`,
-//!      `docs/STATE_OF_PROJECT.md §3`
+//! `tools_legacy.rs` has been deleted (Phase 4). Adding a new tool means:
+//! 1. Create a zero-size struct in the appropriate domain module
+//! 2. `impl PlatformTool` for it
+//! 3. Add it to that module's `tools()` vec
+//! No other file needs to change.
+//!
+//! See: `docs/AGENT_MODEL.md`, `docs/plans/TOOL_REGISTRY_REFACTOR.md`
 
-// Pull all legacy implementations into scope.
-// TODO(fermi-tools-split): move implementations into platform/, mcp/, skills/
-// subdirectories in a dedicated PR once the fermi-fpl extraction is complete.
-// The interfaces below (Skill, SkillRegistry, ToolRegistry, validate_card_skills)
-// are already correct and stable.
-#[path = "../tools_legacy.rs"]
-mod legacy;
-
-// Re-export everything the rest of the codebase uses from the legacy module.
-pub use legacy::{
-    // Tool-declaration validation. Names in `capabilities.mcp_tools` must
-    // resolve to a dispatch arm in `ToolRegistry::execute`, or they become
-    // phantom tools: advertised to the model and over `/mcp/agents/:id`,
-    // then answered with `Unknown tool: X`.
-    // Name + description for every builtin, so the contract builder can turn
-    // a declared tool into a candidate evidence block. The description is
-    // real evidence about document shape in a way a port label is not.
-    builtin_tool_catalogue,
-    dispatchable_tool_names,
-    // The same reasoning as the two above, generalised. A field contract names
-    // the tool that could settle a field, and until now a surface could print
-    // that name and not run it. `execute_context_free` is the narrow door for
-    // the tools that need no `ToolContext`. `is_context_free` is what a surface
-    // must ask before offering a button — not the array, which is only part of
-    // the answer — and `field_probe` asserts the two agree, so a button is never
-    // refused after the click.
-    execute_context_free,
-    // Two keyless HTTP tools, re-exported so a handler that already holds a name
-    // can ground it without standing up a full `ToolContext`. Neither takes
-    // `ctx`, so requiring a memory store, an embedder and an agent registry to
-    // reach them would push callers toward re-implementing the lookup — and a
-    // second copy of a lookup is a second answer to the same question.
-    execute_gbif_species_search,
-    execute_mycobank_lookup,
-    invalid_tool_declarations,
-    is_context_free,
-    platform_tool_names,
-    platform_tools,
-    // Whether a tool's input takes an `endpoint`. A field contract's hint reads
-    // like a path whether or not the tool has paths, so a surface composing a
-    // probe query has to ask the schema rather than the prose — or it prefills
-    // an endpoint into a tool that has none and calls it the contract's.
-    tool_takes_endpoint,
-    BuiltinToolDef,
-    EvalTrigger,
-    ToolContext,
-    ToolDeclarationError,
-    ToolRegistry,
-    CONTEXT_FREE_TOOLS,
-};
+// Phase 4 complete: tools_legacy.rs has been deleted.
+// All tool implementations now live in domain modules under tools/domains/.
+// Tool execution goes through PlatformToolRegistry (tools/registry.rs).
+// ToolContext and EvalTrigger are in tools/context.rs.
 
 // The one place a `workspace_intentions` row is written, re-exported for
 // `crate::plan_solicitation`.
@@ -125,11 +88,240 @@ pub use legacy::{
 // path its own INSERT would be a second answer to "what is an intention row" —
 // the duplication §3.4 exists to forbid, on the field whose whole purpose is
 // that it cannot be forged.
-pub(crate) use legacy::write_intention;
+pub(crate) use domains::coordination::write_intention;
+
+// ─── Platform tool registry (new) ──────────────────────────────────────────
+//
+// Phase 0 / Phase 1 of the tool-registry migration.
+// See docs/plans/TOOL_REGISTRY_REFACTOR.md for the full plan.
+//
+// The new types live alongside the legacy ones throughout the migration.
+
+pub mod context;
+mod domains;
+pub(crate) mod helpers;
+pub mod platform_tool;
+pub mod registry;
+
+use std::sync::Arc;
+
+pub use context::{EvalTrigger, ToolContext};
+pub use platform_tool::{PlatformTool, ToolCatalogueEntry, ToolCategory};
+pub use registry::PlatformToolRegistry;
+
+/// All migrated platform tools, in registration order.
+///
+/// Phase 1: returns an empty vec. Grows in Phase 2 as domain modules are added.
+/// The `platform_tool_names_are_unique` test enforces the uniqueness invariant
+/// across the full set on every `cargo test` run.
+pub fn all_tools() -> Vec<Arc<dyn PlatformTool>> {
+    domains::all_tools()
+}
+
+/// Metadata struct for a builtin tool declaration.
+///
+/// Used by `weather_tools::tool_defs()` to self-describe weather tool schemas
+/// for backward compatibility. New tools use `PlatformTool` impls instead.
+/// See `docs/plans/TOOL_REGISTRY_REFACTOR.md`.
+pub struct BuiltinToolDef {
+    pub name: &'static str,
+    pub description: &'static str,
+    pub input_schema: serde_json::Value,
+    pub requires_workspace: bool,
+    pub is_delegation: bool,
+}
+
+impl Default for BuiltinToolDef {
+    fn default() -> Self {
+        Self {
+            name: "",
+            description: "",
+            input_schema: serde_json::Value::Object(Default::default()),
+            requires_workspace: false,
+            is_delegation: false,
+        }
+    }
+}
+
+// ─── Phase 4 replacements — PlatformRegistry-backed ────────────────────────
+//
+// These functions provide the same API as the legacy re-exports they replaced
+// but are backed by PlatformToolRegistry / all_tools(). The legacy re-exports
+// for these items have been removed above. Once tools_legacy.rs is deleted,
+// these become the sole implementations.
+
+/// All registered platform tool names, sorted for card validation.
+///
+/// Replaces `legacy::platform_tool_names()`.
+pub fn platform_tool_names() -> Vec<&'static str> {
+    let mut names = PlatformToolRegistry::all().tool_names();
+    names.sort_unstable();
+    names
+}
+
+/// All registered tool names the runtime can actually dispatch.
+///
+/// Use this to answer "will this call succeed". Distinct from
+/// `platform_tool_names` which is used for card validation.
+pub fn dispatchable_tool_names() -> Vec<&'static str> {
+    platform_tool_names()
+}
+
+/// All tool names and descriptions — for the contract builder.
+///
+/// Returns `(name, description)` pairs.
+/// Replaces `legacy::builtin_tool_catalogue()`.
+pub fn builtin_tool_catalogue() -> Vec<(&'static str, &'static str)> {
+    all_tools()
+        .into_iter()
+        .map(|t| (t.name(), t.description()))
+        .collect()
+}
+
+// ─── Card validation ─────────────────────────────────────────────────────────
+
+/// Why a declared tool name can't be published.
+///
+/// Moved from `tools_legacy.rs` in Phase 4.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolDeclarationError {
+    /// No dispatch arm and no declared remote server owns the namespace.
+    NotDispatchable,
+    /// Namespaced like a remote MCP tool, but the agent declares no server
+    /// by that name — so nothing would resolve it.
+    UnknownRemoteServer { server: String },
+}
+
+impl std::fmt::Display for ToolDeclarationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotDispatchable => write!(
+                f,
+                "no platform tool by this name (would be advertised to the model and then fail \
+                 with 'Unknown tool')"
+            ),
+            Self::UnknownRemoteServer { server } => write!(
+                f,
+                "looks like a remote MCP tool, but this agent declares no server named '{server}'"
+            ),
+        }
+    }
+}
+
+/// Validate the tool names an agent wants to publish against the registry.
+///
+/// A name is publishable if it is either a registered platform tool, or a
+/// remote MCP tool (`server__tool`) belonging to a server the agent declares.
+/// Returns the names that would be phantom tools, each with a reason.
+///
+/// From `docs/plans/TOOL_REGISTRY_REFACTOR.md §2.6`.
+pub fn validate_card_tools(
+    declared: &[String],
+    declared_servers: &[crate::agent_backend::mcp_client::RemoteMcpServer],
+) -> Vec<(String, ToolDeclarationError)> {
+    let registry = PlatformToolRegistry::all();
+    declared
+        .iter()
+        .filter_map(|name| {
+            if registry.tool(name).is_some() {
+                return None; // known platform tool
+            }
+            match name.split_once(crate::agent_backend::mcp_client::NS_SEP) {
+                Some((ns, _)) if !ns.is_empty() => {
+                    let known = declared_servers.iter().any(|s| s.namespace() == ns);
+                    if known {
+                        None
+                    } else {
+                        Some((
+                            name.clone(),
+                            ToolDeclarationError::UnknownRemoteServer {
+                                server: ns.to_string(),
+                            },
+                        ))
+                    }
+                }
+                _ => Some((name.clone(), ToolDeclarationError::NotDispatchable)),
+            }
+        })
+        .collect()
+}
+
+/// Validate tool names — backward-compat alias for `validate_card_tools`.
+///
+/// Call sites that used `invalid_tool_declarations` continue to work unchanged.
+pub fn invalid_tool_declarations(
+    declared: &[String],
+    declared_servers: &[crate::agent_backend::mcp_client::RemoteMcpServer],
+) -> Vec<(String, ToolDeclarationError)> {
+    validate_card_tools(declared, declared_servers)
+}
+
+/// Whether a tool's input schema accepts an `endpoint` parameter.
+///
+/// Replaces `legacy::tool_takes_endpoint()`.
+pub fn tool_takes_endpoint(tool: &str) -> bool {
+    PlatformToolRegistry::all()
+        .tool(tool)
+        .map(|t| {
+            t.input_schema()
+                .get("properties")
+                .and_then(|p| p.get("endpoint"))
+                .is_some()
+        })
+        .unwrap_or(false)
+}
+
+/// Tools that can be executed without a `ToolContext`.
+///
+/// Replaces `legacy::CONTEXT_FREE_TOOLS`.
+pub const CONTEXT_FREE_TOOLS: &[&str] = &[
+    "call_football_api",
+    "gbif_species_search",
+    "gbif_taxonomy_tree",
+    "inat_observations",
+    "mycobank_lookup",
+    "ncbi_genome_search",
+    "web_search",
+];
+
+/// Whether `execute_context_free` can dispatch this tool.
+///
+/// Replaces `legacy::is_context_free()`.
+pub fn is_context_free(tool: &str) -> bool {
+    CONTEXT_FREE_TOOLS.contains(&tool) || crate::agent_backend::weather_tools::handles(tool)
+}
+
+/// Dispatch a context-free tool call.
+///
+/// Context-free tools make HTTP calls or pure computations — they don't
+/// need a `ToolContext`. Replaces `legacy::execute_context_free()`.
+pub async fn execute_context_free(tool: &str, input: &serde_json::Value) -> Result<String, String> {
+    match tool {
+        "call_football_api" => domains::sports::execute_call_football_api(input).await,
+        "ncbi_genome_search" => {
+            crate::agent_backend::ncbi_tools::execute_ncbi_genome_search(input).await
+        }
+        "web_search" => domains::platform::execute_web_search(input).await,
+        "gbif_species_search" => domains::biology::execute_gbif_species_search(input).await,
+        "gbif_taxonomy_tree" => domains::biology::execute_gbif_taxonomy_tree(input).await,
+        "inat_observations" => domains::biology::execute_inat_observations(input).await,
+        "mycobank_lookup" => domains::biology::execute_mycobank_lookup(input).await,
+        name if crate::agent_backend::weather_tools::handles(name) => {
+            crate::agent_backend::weather_tools::dispatch(name, input)
+                .await
+                .unwrap_or_else(|| Err(format!("Unknown weather tool: {name}")))
+        }
+        _ => Err(format!("Not a context-free tool: {tool}")),
+    }
+}
 
 use crate::agent_backend::agent_card::AgentCard;
 use ::dynamics;
 use async_trait::async_trait;
+/// Re-export biology's gbif_species_search for handlers that use it directly.
+/// Re-exported for handlers that call these tools directly without a ToolContext.
+pub use domains::biology::execute_gbif_species_search;
+pub use domains::biology::execute_mycobank_lookup;
 use serde_json::json;
 
 // ─── Skill trait ─────────────────────────────────────────────────────────────
@@ -254,7 +446,7 @@ impl Skill for H3Resolve {
         input: &serde_json::Value,
         ctx: &ToolContext,
     ) -> Result<String, String> {
-        legacy::ToolRegistry::standard()
+        PlatformToolRegistry::standard()
             .execute("h3_resolve", input, ctx)
             .await
     }
@@ -278,7 +470,7 @@ impl Skill for Geocode {
         input: &serde_json::Value,
         ctx: &ToolContext,
     ) -> Result<String, String> {
-        legacy::ToolRegistry::standard()
+        PlatformToolRegistry::standard()
             .execute("geocode", input, ctx)
             .await
     }
@@ -302,7 +494,7 @@ impl Skill for RunMonteCarlo {
         input: &serde_json::Value,
         ctx: &ToolContext,
     ) -> Result<String, String> {
-        legacy::ToolRegistry::standard()
+        PlatformToolRegistry::standard()
             .execute("run_monte_carlo", input, ctx)
             .await
     }
@@ -326,7 +518,7 @@ impl Skill for RunSensitivityAnalysis {
         input: &serde_json::Value,
         ctx: &ToolContext,
     ) -> Result<String, String> {
-        legacy::ToolRegistry::standard()
+        PlatformToolRegistry::standard()
             .execute("run_sensitivity_analysis", input, ctx)
             .await
     }
@@ -350,7 +542,7 @@ impl Skill for GbifTaxonomyTree {
         input: &serde_json::Value,
         ctx: &ToolContext,
     ) -> Result<String, String> {
-        legacy::ToolRegistry::standard()
+        PlatformToolRegistry::standard()
             .execute("gbif_taxonomy_tree", input, ctx)
             .await
     }
@@ -377,7 +569,7 @@ impl Skill for SegmentCreatureWings {
         input: &serde_json::Value,
         ctx: &ToolContext,
     ) -> Result<String, String> {
-        legacy::ToolRegistry::standard()
+        PlatformToolRegistry::standard()
             .execute("segment_creature_wings", input, ctx)
             .await
     }
@@ -401,7 +593,7 @@ impl Skill for ActivateFormation {
         input: &serde_json::Value,
         ctx: &ToolContext,
     ) -> Result<String, String> {
-        legacy::ToolRegistry::standard()
+        PlatformToolRegistry::standard()
             .execute("activate_formation", input, ctx)
             .await
     }
@@ -428,7 +620,7 @@ impl Skill for ScanNearbyCreatures {
         input: &serde_json::Value,
         ctx: &ToolContext,
     ) -> Result<String, String> {
-        legacy::ToolRegistry::standard()
+        PlatformToolRegistry::standard()
             .execute("scan_nearby_creatures", input, ctx)
             .await
     }
@@ -442,7 +634,7 @@ macro_rules! simops_skill {
             fn category(&self) -> SkillCategory { SkillCategory::ProcessOptimization }
             fn input_schema(&self) -> serde_json::Value { json!({"type":"object","properties":{"process_name":{"type":"string"},"process_json":{"type":"object"}}}) }
             async fn execute(&self, input: &serde_json::Value, ctx: &ToolContext) -> Result<String, String> {
-                legacy::ToolRegistry::standard().execute($name, input, ctx).await
+                PlatformToolRegistry::standard().execute($name, input, ctx).await
             }
         }
     }
@@ -682,4 +874,128 @@ pub fn validate_card_skills(card: &AgentCard) -> Vec<String> {
         .filter(|label| registered.contains(label.as_str()))
         .cloned()
         .collect()
+}
+
+// ─── Phase 1 invariant tests ──────────────────────────────────────────────────
+//
+// These tests enforce structural correctness across the full registered set.
+// They run on every `cargo test` and grow to cover the real tool count once
+// Phase 2 domain modules are added.
+
+#[cfg(test)]
+mod platform_registry_tests {
+    use super::*;
+
+    /// Every name returned by all_tools() is unique.
+    ///
+    /// A duplicate would cause one tool to shadow another in the registry
+    /// HashMap with no error at runtime. This catches it at test time.
+    #[test]
+    fn platform_tool_names_are_unique() {
+        let tools = all_tools();
+        let mut seen = std::collections::HashSet::new();
+        for tool in &tools {
+            assert!(
+                seen.insert(tool.name()),
+                "Duplicate tool name: {}",
+                tool.name()
+            );
+        }
+    }
+
+    /// The three registry constructors all build from the same tool set,
+    /// filtered. In Phase 1 all three are empty; the test confirms the
+    /// constructors compile and run without panicking.
+    #[test]
+    fn registry_constructors_are_coherent() {
+        let all = PlatformToolRegistry::all();
+        let std_ = PlatformToolRegistry::standard();
+        let wnd = PlatformToolRegistry::workspace_no_delegation();
+
+        // Standard ⊆ workspace_no_delegation ⊆ all  (by name set)
+        for name in std_.tool_names() {
+            assert!(
+                all.tool(name).is_some(),
+                "standard tool '{name}' missing from all-registry"
+            );
+        }
+        for name in wnd.tool_names() {
+            assert!(
+                all.tool(name).is_some(),
+                "workspace_no_delegation tool '{name}' missing from all-registry"
+            );
+        }
+    }
+
+    /// catalogue() returns one entry per registered tool.
+    #[test]
+    fn catalogue_entry_count_matches_tool_count() {
+        assert_eq!(
+            PlatformToolRegistry::all_tools_catalogue().len(),
+            all_tools().len(),
+            "catalogue entry count does not match all_tools() count"
+        );
+    }
+
+    /// Phase 3 dispatch invariant: every tool name registered in
+    /// `PlatformToolRegistry::all()` can be looked up by name.
+    ///
+    /// This is the static side of the integration test from
+    /// docs/plans/TOOL_REGISTRY_REFACTOR.md §3 (Phase 3). The async
+    /// dispatch path (that every registered tool returns Ok or a
+    /// credential/workspace error rather than "Unknown tool") requires
+    /// a live execution context and is tested by the dispatch delegate
+    /// in each domain module's `execute()` body.
+    #[test]
+    fn registry_dispatches_every_registered_tool_name() {
+        let registry = PlatformToolRegistry::all();
+        for tool in all_tools() {
+            assert!(
+                registry.tool(tool.name()).is_some(),
+                "PlatformToolRegistry::all() could not look up registered tool: {}",
+                tool.name()
+            );
+        }
+    }
+
+    /// Delegation tools (execute_agent, delegate_to_agent, solicit_agent_plan)
+    /// must be present in all() but absent from workspace_no_delegation().
+    #[test]
+    fn delegation_tools_excluded_from_no_delegation_registry() {
+        let all = PlatformToolRegistry::all();
+        let wnd = PlatformToolRegistry::workspace_no_delegation();
+        let delegation_tools = ["execute_agent", "delegate_to_agent", "solicit_agent_plan"];
+        for name in delegation_tools {
+            assert!(
+                all.tool(name).is_some(),
+                "Expected delegation tool '{name}' in all() registry"
+            );
+            assert!(
+                wnd.tool(name).is_none(),
+                "Delegation tool '{name}' must not appear in workspace_no_delegation()"
+            );
+        }
+    }
+
+    /// Workspace-only tools must not appear in the standard() registry.
+    /// Standard registry is for single-turn agents without workspace context.
+    #[test]
+    fn workspace_tools_excluded_from_standard_registry() {
+        let std_ = PlatformToolRegistry::standard();
+        let workspace_tools = [
+            "write_workspace_file",
+            "read_workspace_file",
+            "get_workspace_messages",
+            "list_workspace_agents",
+            "evaluate_coherence",
+            "coherence_snapshot",
+            "delegate_to_agent",
+        ];
+        for name in workspace_tools {
+            assert!(
+                std_.tool(name).is_none(),
+                "Workspace tool '{name}' must not appear in standard() registry"
+            );
+        }
+    }
 }

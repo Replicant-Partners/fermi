@@ -115,32 +115,65 @@ pub async fn compile_handler(
 ///
 /// Same list `invalid_tool_declarations` checks against, for the same
 /// no-second-implementation reason as above.
+///
+/// ## Phase 5 — grouped catalogue
+///
+/// Also returns `categories` (tools grouped by `ToolCategory`) and `total`.
+/// This is the Phase 5 deliverable from `docs/plans/TOOL_REGISTRY_REFACTOR.md
+/// §3` — the backend half of the card-editor UI update. The UI receives tools
+/// already organised by domain and with `required_credential` surfaced, so it
+/// can show “Financial (9 tools, requires FMP_API_KEY)” without needing to
+/// know individual tool names from memory.
+///
+/// The original `tools` and `response_shapes` keys are unchanged so callers
+/// that only consume those continue to work without modification.
 pub async fn tool_names_handler(_principal: AuthPrincipal) -> Json<Value> {
     let mut names = fermi::agent_backend::tools::platform_tool_names();
     names.sort_unstable();
 
-    // Each tool's declared response shape, where anyone has read it. This is
-    // what turns the field picker from a text box into a choice among fields
-    // that exist: pick one and you get its name AND its type, having guessed
-    // neither.
-    //
-    // `evidence` travels with it because a `vendor` shape is a weaker claim
-    // than a `constructed` one, and the UI should not present them
-    // identically. A tool absent from the table has simply not been read, and
-    // the builder falls back to extracting candidates from its description
-    // and marking them unconfirmed.
-    //
-    // Serialised by the table's own module, not here, so the headless check of
-    // the builder can be handed the same bytes the browser gets rather than a
-    // fixture that drifts.
+    // Each tool's declared response shape, where anyone has read it.
+    // Serialised by the table's own module so headless checks get the same
+    // bytes the browser receives.
     let shapes: Vec<Value> = fermi::tool_response_shapes::declared_shapes_json();
 
+    // Phase 5: grouped catalogue for the card editor UI.
+    // Sorted alphabetically within each category for deterministic rendering.
+    let catalogue = fermi::agent_backend::tools::PlatformToolRegistry::all_tools_catalogue();
+    let total = catalogue.len();
+    let mut categories: std::collections::BTreeMap<&'static str, Vec<Value>> =
+        std::collections::BTreeMap::new();
+    for entry in &catalogue {
+        categories
+            .entry(entry.category.label())
+            .or_default()
+            .push(json!({
+                "name": entry.name,
+                "description": entry.description,
+                "requires_workspace": entry.requires_workspace,
+                "is_llm_visible": entry.is_llm_visible,
+                "required_credential": entry.required_credential,
+            }));
+    }
+    // Sort within each category by name for stable ordering.
+    for tools in categories.values_mut() {
+        tools.sort_by(|a, b| {
+            a["name"]
+                .as_str()
+                .unwrap_or("")
+                .cmp(b["name"].as_str().unwrap_or(""))
+        });
+    }
+
     Json(json!({
+        // Existing keys — unchanged for backward compatibility.
         "tools": names,
         "response_shapes": shapes,
         "note": "`response_shapes` covers the tools someone has read. A tool \
                  absent from it has an unknown response, which is not the same \
                  as an empty one.",
+        // Phase 5 additions.
+        "categories": categories,
+        "total": total,
     }))
 }
 

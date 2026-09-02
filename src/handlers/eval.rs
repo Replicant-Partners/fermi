@@ -54,7 +54,7 @@ use fermi::agent_backend::AgentStatus;
 
 use fermi::agent_backend::executor::AgentExecutor;
 use fermi::agent_backend::tool_executor::ToolAwareExecutor;
-use fermi::agent_backend::tools::{ToolContext, ToolRegistry};
+use fermi::agent_backend::tools::{PlatformToolRegistry, ToolContext};
 use fermi::agent_backend::ExecutionContext;
 use fermi::ast;
 
@@ -574,7 +574,7 @@ pub async fn run_eval_cases(
         });
         let tool_executor = ToolAwareExecutor::new(
             state.registry.executor_arc(),
-            ToolRegistry::standard(),
+            PlatformToolRegistry::standard(),
             tool_context,
         );
 

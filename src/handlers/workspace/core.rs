@@ -25,7 +25,7 @@ use coherence_observer::ConversationObserver;
 
 use fermi::agent_backend::executor::AgentExecutor;
 use fermi::agent_backend::tool_executor::ToolAwareExecutor;
-use fermi::agent_backend::tools::{ToolContext, ToolRegistry};
+use fermi::agent_backend::tools::ToolContext;
 use fermi::agent_backend::ExecutionContext;
 use fermi::ast;
 

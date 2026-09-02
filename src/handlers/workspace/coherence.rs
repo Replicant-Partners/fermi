@@ -26,7 +26,7 @@ use coherence_observer::ConversationObserver;
 use fermi::agent_backend::executor::AgentExecutor;
 use fermi::agent_backend::kg_context::enrich_with_kg_context;
 use fermi::agent_backend::tool_executor::ToolAwareExecutor;
-use fermi::agent_backend::tools::{ToolContext, ToolRegistry};
+use fermi::agent_backend::tools::{PlatformToolRegistry, ToolContext};
 use fermi::agent_backend::ExecutionContext;
 use fermi::ast;
 
@@ -656,7 +656,7 @@ pub async fn evaluate_coherence_handler(
                 });
                 let tool_executor = ToolAwareExecutor::new(
                     state.registry.executor_arc(),
-                    ToolRegistry::with_workspace(),
+                    PlatformToolRegistry::all(),
                     tool_context,
                 );
                 match tool_executor.execute(&agent_stmt, &context).await {

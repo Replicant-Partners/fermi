@@ -17,7 +17,7 @@ use crate::agent_backend::llm_executor::{
     MessageContent,
 };
 use crate::agent_backend::multi_model_executor::{OpenAIMessage, OpenAIRequest, OpenAIResponse};
-use crate::agent_backend::tools::{ToolContext, ToolRegistry};
+use crate::agent_backend::tools::{PlatformToolRegistry, ToolContext};
 use crate::ast::{AgentStmt, EvidenceStmt};
 use async_trait::async_trait;
 use chrono::Utc;
@@ -53,7 +53,7 @@ pub(crate) fn prompt_demands_structured_output(prompt: &str) -> bool {
 /// Executor that wraps an inner executor with tool-calling capability
 pub struct ToolAwareExecutor {
     inner: Arc<dyn AgentExecutor>,
-    tool_registry: ToolRegistry,
+    tool_registry: PlatformToolRegistry,
     tool_context: Arc<ToolContext>,
     client: reqwest::Client,
 }
@@ -61,7 +61,7 @@ pub struct ToolAwareExecutor {
 impl ToolAwareExecutor {
     pub fn new(
         inner: Arc<dyn AgentExecutor>,
-        tool_registry: ToolRegistry,
+        tool_registry: PlatformToolRegistry,
         tool_context: Arc<ToolContext>,
     ) -> Self {
         Self {
@@ -797,7 +797,7 @@ impl AgentExecutor for ToolAwareExecutor {
         let provider = &context.agent_card.capabilities.provider;
 
         // Check if tools are available — if not, delegate to inner (single turn)
-        let has_tools = !self.tool_registry.to_claude_tools().is_empty();
+        let has_tools = !self.tool_registry.tool_names().is_empty();
         if !has_tools {
             return self.inner.execute(agent, context).await;
         }

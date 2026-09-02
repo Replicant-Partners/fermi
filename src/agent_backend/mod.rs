@@ -60,4 +60,4 @@ pub use llm_executor::*;
 pub use multi_model_executor::*;
 pub use registry::*;
 pub use tool_executor::ToolAwareExecutor;
-pub use tools::{validate_card_skills, SkillRegistry, ToolContext, ToolRegistry};
+pub use tools::{validate_card_skills, SkillRegistry, ToolContext};

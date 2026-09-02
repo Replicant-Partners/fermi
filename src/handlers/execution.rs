@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use fermi::agent_backend::executor::AgentExecutor;
 use fermi::agent_backend::tool_executor::ToolAwareExecutor;
-use fermi::agent_backend::tools::{ToolContext, ToolRegistry};
+use fermi::agent_backend::tools::{PlatformToolRegistry, ToolContext};
 use fermi::agent_backend::ExecutionContext;
 use fermi::ast;
 
@@ -305,7 +305,7 @@ pub async fn execute_agent_handler(
     let tool_context_for_hook = tool_context.clone();
     let tool_executor = ToolAwareExecutor::new(
         state.registry.executor_arc(),
-        ToolRegistry::standard(),
+        PlatformToolRegistry::standard(),
         tool_context,
     );
     let output = tool_executor

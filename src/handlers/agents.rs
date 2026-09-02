@@ -3675,16 +3675,16 @@ pub async fn get_agent_published_tools_handler(
         .collect();
 
     // Everything the compile-time dispatcher can run.
-    let platform: Vec<Value> = fermi::agent_backend::tools::platform_tools()
+    let platform: Vec<Value> = fermi::agent_backend::tools::all_tools()
         .into_iter()
         .map(|t| {
             json!({
-                "name": t.name,
-                "description": t.description,
-                "input_schema": t.input_schema,
-                "requires_workspace": t.requires_workspace,
-                "is_delegation": t.is_delegation,
-                "published": published.iter().any(|p| p == t.name),
+                "name": t.name(),
+                "description": t.description(),
+                "input_schema": t.input_schema(),
+                "requires_workspace": t.requires_workspace(),
+                "is_delegation": t.is_delegation(),
+                "published": published.iter().any(|p| p == t.name()),
                 "kind": "platform",
             })
         })

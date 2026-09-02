@@ -16,7 +16,7 @@ use fermi::agent_backend::agent_card::CognitionTier;
 use fermi::agent_backend::executor::AgentExecutor;
 use fermi::agent_backend::kg_context::enrich_with_kg_context;
 use fermi::agent_backend::tool_executor::ToolAwareExecutor;
-use fermi::agent_backend::tools::{ToolContext, ToolRegistry};
+use fermi::agent_backend::tools::{PlatformToolRegistry, ToolContext};
 use fermi::agent_backend::ExecutionContext;
 use fermi::ast;
 use fermi::gas::{charge_and_distribute, charge_gas, get_workspace_agent_ids};
@@ -325,7 +325,7 @@ pub async fn dispatch_rabble_action(
     // Execute with tool-aware executor
     let tool_executor = ToolAwareExecutor::new(
         state.registry.executor_arc(),
-        ToolRegistry::with_workspace(),
+        PlatformToolRegistry::all(),
         tool_context,
     );
     let output = tool_executor

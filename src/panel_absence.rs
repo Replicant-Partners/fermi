@@ -172,11 +172,37 @@ pub struct Panel {
 
 /// What a renderer branches on.
 ///
-/// Three, not the eight-plus tokens beneath them. The specific token travels in
-/// [`Absence::token`] for a reader who wants it.
+/// Four readings — three that explain an absence, one that asserts presence.
+/// The specific token travels in [`Absence::token`] for a reader who wants it.
+///
+/// | Reading | Meaning | Earned |
+/// |---|---|---|
+/// | [`Working`] | **Positively functions.** | Yes — requires resolved declarations, sourced fields with named evidence, and pulses that carried grades. |
+/// | [`Idle`] | Correctly empty. Nothing that should have happened has happened. | No — the default when nothing is wrong. |
+/// | [`Unknown`] | No contract can say. Neither idle nor fault is available. | No. |
+/// | [`Fault`] | Something should have happened and did not. A finding. | No. |
+///
+/// `Idle` is not `Working`. `Idle` means an agent has had no occasion —
+/// empty because nothing was asked, not because something failed. `Working` is
+/// earned from evidence; `Idle` is the absence of any contrary evidence.
+///
+/// [`Working`]: Reading::Working
+/// [`Idle`]: Reading::Idle
+/// [`Unknown`]: Reading::Unknown
+/// [`Fault`]: Reading::Fault
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Reading {
+    /// **Positively functions.** Earned: resolved declarations, sourced fields
+    /// with named evidence, and pulses that carried grades.
+    ///
+    /// This is not "no fault found" — it is a statement with a subject.
+    /// An agent reaches this reading only when the platform can assert it works,
+    /// not merely that it has not been shown to fail.
+    ///
+    /// Added in Phase 1 of the agent-compile work.
+    /// See: `docs/plans/AGENT_COMPILE_AND_TOOL_REGISTRY.md §6.1`.
+    Working,
     /// Correctly empty. Nothing that should have happened has happened.
     Idle,
     /// Something should have happened and did not. A finding.
@@ -190,10 +216,21 @@ pub enum Reading {
 impl Reading {
     pub fn label(self) -> &'static str {
         match self {
+            Reading::Working => "working",
             Reading::Idle => "idle",
             Reading::Fault => "fault",
             Reading::Unknown => "unknown",
         }
+    }
+
+    /// Returns true if this reading is positive (the thing actively functions).
+    pub fn is_positive(self) -> bool {
+        matches!(self, Reading::Working)
+    }
+
+    /// Returns true if this reading is a finding that the author should act on.
+    pub fn is_fault(self) -> bool {
+        matches!(self, Reading::Fault)
     }
 }
 
