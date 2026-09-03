@@ -3044,6 +3044,105 @@ fn values_agree(a: &Value, b: &Value) -> bool {
     }
 }
 
+// ── Platform derivations ───────────────────────────────────────
+//
+// `Grounding::Derived` is the only variant that makes a claim about the
+// **platform's** work rather than the agent's: *this value is computed,
+// reproducibly, from a field the agent did source.* Every other variant
+// describes something the agent does or must not do.
+//
+// That is a promise, and for the life of the variant there was nothing keeping
+// it. `phylogeny.superorder` declared `Derived`, its doc comment said "once
+// platform code applies the table it is reproducible", the table
+// (`ncbi_tools::superorder_of`) was written and unit-tested — and **nothing
+// ever called it**. A grep found the definition, its own tests, and no
+// production caller. The prompt correctly told the model to leave the field
+// null because the platform would fill it; the platform never did; the field
+// was null in every document this agent ever produced.
+//
+// It was invisible from every direction. The shelf counted it as a healthy
+// `derived` field. The trace could not say the platform owed it, so it blamed
+// the agent (`tool unused`). And `Derived` sorts ABOVE `Inferred` in
+// `strength`, so an unkept promise outranked an honest judgement.
+//
+// So the transform is registered here, applied in `enforce`, and
+// `every_derived_field_has_a_derivation` refuses to let a `Derived` field exist
+// without one. A promise the platform cannot keep is now a failing test rather
+// than a permanent null.
+
+/// A platform transform: read the document, return the derived value.
+///
+/// `None` means *not derivable from this document* — an order the table does
+/// not know, or a source field the agent did not fill. It is not an error, and
+/// it must not become a guess.
+pub type Derivation = fn(&Value) -> Option<Value>;
+
+/// `(agent_id, path, transform)` for derivations computable from the document.
+pub const DERIVATIONS: &[(&str, &str, Derivation)] =
+    &[("genome_profiler", "phylogeny.superorder", derive_superorder)];
+
+/// `Derived` fields the platform keeps its promise about **somewhere else**,
+/// and where.
+///
+/// Writing the guard turned up that `Derived` was carrying two different
+/// claims under one name:
+///
+///   * *the platform computes this* — `superorder`, `card`, `safety`,
+///     `capture.modality`. Some are computable from the document and live in
+///     [`DERIVATIONS`]; the rest need something the document does not contain
+///     (the request envelope) or are written by the handler that produces the
+///     document in the first place.
+///   * *the agent computes this and we can check it* — `advanced_metrics.xgd`,
+///     which is `xg - xga` and carries the platform's only cross-check that
+///     needs no external source of truth: it compares the document against
+///     itself.
+///
+/// The second is why the guard does not simply demand a derivation. Computing
+/// `xgd` here would make that cross-check true by construction and destroy the
+/// only affordable falsifiable signal `football_analyst` has — three
+/// mutually-consistent numbers are evidence the agent computed them from each
+/// other, and three numbers we made consistent are evidence of nothing.
+///
+/// So the rule is: a `Derived` field must be **computed by us or checked by
+/// us**. Never merely asserted. An entry here has to say which file keeps the
+/// promise, so a reader can go and look.
+const DERIVED_ELSEWHERE: &[(&str, &str, &str)] = &[
+    (
+        "forage_identify",
+        "safety",
+        "src/handlers/wild.rs builds the whole block in Rust before the model is \
+         ever consulted — `determination_basis`, the directive and the next \
+         steps are constants. A model-authored caution can be softened on any \
+         given call, and the call where it is dropped looks exactly like the \
+         ones where it is not.",
+    ),
+    (
+        "hud_field_scout",
+        "capture.modality",
+        "read off the MCP request envelope (an image part yields `voice+image`), \
+         which is not in the response document — so it cannot be a `Derivation`, \
+         whose whole input is the document. Written by the request handler.",
+    ),
+    (
+        "hud_field_scout",
+        "card",
+        "src/hud_contract.rs `enforce` computes it from the provenance verdicts \
+         of every other block: subject conditioning, then `floor()` for \
+         `confidence_display` and `treatment()` per line.",
+    ),
+];
+
+/// `taxonomy.order` → superorder, through the closed insect-order table.
+///
+/// Reads the order GBIF supplied rather than anything the model wrote about
+/// the superorder itself: the whole point of `Derived` is that the output is a
+/// function of a *sourced* input, so taking the model's own guess as input
+/// would launder a recollection into a derivation.
+fn derive_superorder(doc: &Value) -> Option<Value> {
+    let order = get_path(doc, "taxonomy.order")?.as_str()?;
+    crate::agent_backend::ncbi_tools::superorder_of(order).map(|s| Value::String(s.to_string()))
+}
+
 /// Write `value` at a dotted path, returning whether the slot existed.
 fn set_path(doc: &mut Value, path: &str, value: Value) -> bool {
     let segs: Vec<&str> = path.split('.').collect();
@@ -3259,6 +3358,57 @@ pub fn enforce(agent_id: &str, doc: &mut Value) -> Report {
                     removed,
                     kind: ViolationKind::UngroundedField,
                 });
+            }
+        }
+    }
+
+    // 1b. Apply the platform's own derivations.
+    //
+    // Before the sourced-content census below, because a derived value is a
+    // legitimate part of its block and the census should see the document as a
+    // consumer will.
+    //
+    // Both directions, and the second is the one with teeth:
+    //
+    //   * derivable  — write it, overwriting whatever the model put there. The
+    //     transform is authoritative by construction; if the model guessed and
+    //     happened to agree, nothing is lost, and if it guessed wrong the guess
+    //     must not survive.
+    //   * not derivable — the field must be null. Nothing else can supply it:
+    //     no tool returns a superorder, so a value the platform cannot derive
+    //     came from the model's memory. That is the `Unsourced` case wearing a
+    //     different label, and it is reported as one.
+    //
+    // A pre-contract document is skipped entirely. Those are archived, known-bad
+    // records, and writing fresh platform values into them would make an old
+    // document look partly verified by today's code.
+    if !pre_contract {
+        for (agent, path, derive) in DERIVATIONS {
+            if *agent != agent_id {
+                continue;
+            }
+            // Only for a path this agent's contract actually declares derived,
+            // so a stale registry entry cannot start writing fields.
+            if !contracts
+                .iter()
+                .any(|c| c.path == *path && matches!(c.grounding, Grounding::Derived { .. }))
+            {
+                continue;
+            }
+            match derive(doc) {
+                Some(v) => {
+                    set_path(doc, path, v);
+                }
+                None => {
+                    if path_has_claim(doc, path) {
+                        let removed = null_path(doc, path).unwrap_or(Value::Null);
+                        report.violations.push(Violation {
+                            path: path.to_string(),
+                            removed,
+                            kind: ViolationKind::UngroundedField,
+                        });
+                    }
+                }
             }
         }
     }
@@ -5319,6 +5469,163 @@ mod tests {
         assert_eq!(response_floor("weather_oracle", ""), Some(PROV_UNAVAILABLE));
     }
 
+    /// **`Derived` is a promise about the platform's own work, and this is what
+    /// keeps it.**
+    ///
+    /// `phylogeny.superorder` declared `Derived` and its table
+    /// (`ncbi_tools::superorder_of`) had no production caller — definition,
+    /// unit tests, nothing else. The prompt correctly told the model to leave
+    /// the field null because the platform would fill it. The platform never
+    /// did. Every document this agent ever produced carried a null there, and no
+    /// surface could see it: the shelf counted a healthy `derived` field, and
+    /// `Derived` outranks `Inferred` in `strength`, so the unkept promise scored
+    /// higher than an honest judgement.
+    ///
+    /// **The rule: computed by us, or checked by us. Never merely asserted.**
+    ///
+    /// A registry entry, a cross-check, or an entry in `DERIVED_ELSEWHERE`
+    /// naming the file that keeps the promise. Adding a `Derived` field with
+    /// none of the three fails here rather than shipping a permanent null.
+    #[test]
+    fn every_derived_field_is_computed_or_checked() {
+        let mut bare = Vec::new();
+        let mut derived = 0usize;
+        for c in FIELD_CONTRACTS {
+            if !matches!(c.grounding, Grounding::Derived { .. }) {
+                continue;
+            }
+            derived += 1;
+            let computed = DERIVATIONS
+                .iter()
+                .any(|(a, p, _)| *a == c.agent_id && *p == c.path);
+            let checked = c.cross_check_sql.is_some();
+            let elsewhere = DERIVED_ELSEWHERE
+                .iter()
+                .any(|(a, p, _)| *a == c.agent_id && *p == c.path);
+            if !computed && !checked && !elsewhere {
+                bare.push(format!("{}.{}", c.agent_id, c.path));
+            }
+        }
+        assert!(
+            derived >= 5,
+            "only {derived} `Derived` field(s) found — the scan has stopped \
+             matching and this guard is going vacuous"
+        );
+        assert!(
+            bare.is_empty(),
+            "declared `Derived` and neither computed nor checked: {bare:?}.\n\n\
+             `Derived` asserts the value is reproducible. With nothing computing \
+             it and nothing checking it, the claim is unbacked and the field is \
+             null for ever — which is what `phylogeny.superorder` was. Register a \
+             transform in DERIVATIONS, give it a `cross_check_sql`, or add it to \
+             DERIVED_ELSEWHERE naming the file that fills it."
+        );
+
+        // Nothing may be registered that no contract declares, or the registry
+        // starts writing fields nobody asked for.
+        for (agent, path, _) in DERIVATIONS {
+            assert!(
+                FIELD_CONTRACTS.iter().any(|c| c.agent_id == *agent
+                    && c.path == *path
+                    && matches!(c.grounding, Grounding::Derived { .. })),
+                "`{agent}.{path}` has a derivation and is not declared `Derived`"
+            );
+        }
+        // And a stale exemption hides the next field that takes its place.
+        for (agent, path, where_) in DERIVED_ELSEWHERE {
+            assert!(
+                FIELD_CONTRACTS.iter().any(|c| c.agent_id == *agent
+                    && c.path == *path
+                    && matches!(c.grounding, Grounding::Derived { .. })),
+                "`{agent}.{path}` is exempted and is no longer declared `Derived`. \
+                 Remove the entry."
+            );
+            assert!(
+                where_.len() > 80,
+                "`{agent}.{path}`: an exemption that does not say WHERE the \
+                 promise is kept is a permanent one"
+            );
+        }
+    }
+
+    /// The derivation actually runs, in both directions.
+    #[test]
+    fn the_platform_fills_superorder_and_refuses_to_guess_it() {
+        // Derivable: GBIF gave an order the table knows.
+        let mut doc = json!({
+            "taxonomy": { "order": "Lepidoptera" },
+            "genome": {},
+            "phylogeny": { "sister_taxa": ["Actias artemis"], "superorder": null },
+            "conservation": {},
+            "summary": "A saturniid moth."
+        });
+        let report = enforce("genome_profiler", &mut doc);
+        assert_eq!(
+            doc.pointer("/phylogeny/superorder"),
+            Some(&json!("Holometabola")),
+            "the platform declared it would compute this and did not"
+        );
+        assert!(
+            report.violations.is_empty(),
+            "filling a derived field is not a violation: {:?}",
+            report.violations
+        );
+
+        // A model guess at a derived field is overwritten, not trusted.
+        let mut wrong = json!({
+            "taxonomy": { "order": "Lepidoptera" },
+            "genome": {},
+            "phylogeny": { "sister_taxa": [], "superorder": "Palaeoptera" },
+            "conservation": {},
+            "summary": "x"
+        });
+        enforce("genome_profiler", &mut wrong);
+        assert_eq!(
+            wrong.pointer("/phylogeny/superorder"),
+            Some(&json!("Holometabola")),
+            "a derived field is a function of a sourced input; the model's own \
+             guess must not survive as though it were the derivation"
+        );
+
+        // Not derivable, and the model filled it anyway: that value came from
+        // memory, because no tool returns a superorder. Nulled and reported.
+        let mut guessed = json!({
+            "taxonomy": { "order": "Nonexistoptera" },
+            "genome": {},
+            "phylogeny": { "sister_taxa": [], "superorder": "Holometabola" },
+            "conservation": {},
+            "summary": "x"
+        });
+        let r = enforce("genome_profiler", &mut guessed);
+        assert_eq!(
+            guessed.pointer("/phylogeny/superorder"),
+            Some(&Value::Null),
+            "an unknown order must yield no superorder rather than a plausible one"
+        );
+        assert!(
+            r.violations
+                .iter()
+                .any(|v| v.path == "phylogeny.superorder"),
+            "the strip must be reported: {:?}",
+            r.violations
+        );
+
+        // Nothing to derive from, nothing written, nothing to report.
+        let mut bare = json!({
+            "taxonomy": {},
+            "genome": {},
+            "phylogeny": { "sister_taxa": [], "superorder": null },
+            "conservation": {},
+            "summary": "x"
+        });
+        let r2 = enforce("genome_profiler", &mut bare);
+        assert_eq!(bare.pointer("/phylogeny/superorder"), Some(&Value::Null));
+        assert!(r2
+            .violations
+            .iter()
+            .all(|v| v.path != "phylogeny.superorder"));
+    }
+
     /// **A card grounding map must never weaken an agent that has field-level
     /// contracts.**
     ///
@@ -5338,12 +5645,11 @@ mod tests {
     /// that replaces a composite it only partly owns.
     #[test]
     fn a_card_grounding_map_does_not_override_a_field_level_contract() {
-        let card: Value = match std::fs::read_to_string(
-            "agents/curated/genome_profiler/agent_card.json",
-        ) {
-            Ok(raw) => serde_json::from_str(&raw).unwrap(),
-            Err(_) => return,
-        };
+        let card: Value =
+            match std::fs::read_to_string("agents/curated/genome_profiler/agent_card.json") {
+                Ok(raw) => serde_json::from_str(&raw).unwrap(),
+                Err(_) => return,
+            };
         let oc = card.pointer("/capabilities/output_contract");
         assert!(
             oc.and_then(|o| o.get("grounding")).is_some(),
@@ -5395,7 +5701,11 @@ mod tests {
                 .iter()
                 .any(|v| v.path == "conservation.iucn_status"),
             "the removal must be reported per field: {:?}",
-            report.violations.iter().map(|v| &v.path).collect::<Vec<_>>()
+            report
+                .violations
+                .iter()
+                .map(|v| &v.path)
+                .collect::<Vec<_>>()
         );
     }
 }

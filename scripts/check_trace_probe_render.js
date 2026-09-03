@@ -133,6 +133,12 @@ const FIELDS = [
   // `inferred`: nothing settles it, so an endorsement is terminal.
   F({ name: "assessment", kind: "inferred", settleable: false, produced: true,
       value: "Liverpool look strong", grade: "model_asserted" }),
+  // `derived` AND EMPTY. The case that had no correct rendering: the platform
+  // promised to compute it and did not, and the row said `tool unused` — "the
+  // contract names a tool the agent did not call". No tool is named, and the
+  // agent was instructed to leave it null. `phylogeny.superorder` for real.
+  F({ name: "advanced_metrics.xgd", kind: "derived", settleable: false,
+      produced: false, value: null, grade: "platform_derived", strength: 2 }),
 ];
 const CALL = (endpoint, out, params) => ({
   tool: "call_football_api",
@@ -312,6 +318,7 @@ new Function(
   "module",
   SCRIPT + "\n;module.exports = { render: () => render(LAST_TRACE), boot," +
     " probeForm, probeVerdict, runProbe, askedFor, hintEndpoint," +
+    " questions, emptiness, annotate," +
     " get LENSES() { return LENSES; }, setLens: v => { LENS = v; }," +
     " get LAST_TRACE() { return LAST_TRACE; }, get FIELD_BY_PATH() { return FIELD_BY_PATH; }," +
     " get TOOL_CALLS() { return TOOL_CALLS; } };",
@@ -534,6 +541,61 @@ const P = mod.exports;
   ok(/Could not reach the platform: offline/.test(out.text),
     "a dead network no longer reads as a dead network: " + out.text);
   globalThis.fetch = savedFetch;
+
+  // ── The verdicts, and what they must not call a failure ────────────────
+  //
+  // The shelf and this page reported opposite verdicts on the same fifteen
+  // fields. `genome_profiler` scored `9 of 29 empty` in red while its
+  // configuration shelf said "nothing unresolvable" — and eight of the nine
+  // nulls were the contract being obeyed. A headline that says nine cannot
+  // point at the one that is real.
+  const e = P.emptiness(P.LAST_TRACE.fields);
+  ok(e.excused > 0,
+    "no absence was excused, so the fixture no longer contains a field whose " +
+    "emptiness the contract requires and this check is vacuous");
+  ok(e.total + e.excused > e.total,
+    "excused values are being counted in the denominator again");
+  // `ratings.elo_current` is unsourced+null and `advanced_metrics.xgd` is
+  // derived+null. Neither is the agent's to answer.
+  ok(e.excused === 2,
+    `${e.excused} absence(s) excused; expected the unsourced and the derived one`);
+
+  const qs = P.questions(P.LAST_TRACE);
+  const strip = typeof qs === "string" ? qs : JSON.stringify(qs);
+  ok(/contract requires/.test(strip),
+    "question three does not say that some absences are required, so a " +
+    "compliant agent still reads as having skipped the work");
+
+  // Question four: strength 0 is CORRECT for a field nothing can source. Red
+  // for that alone painted three compliant `conservation` fields as a fault.
+  // What is a fault is a `sourced` field with no retrieval behind it — which
+  // this fixture has, so the tone must still be bad and must say why.
+  ok(/claim retrieval and have none/.test(strip),
+    "question four does not distinguish a retrieval claim with nothing behind " +
+    "it from a field the contract says nothing can source");
+
+  // ── The derived row ───────────────────────────────────────────
+  const xgd = P.FIELD_BY_PATH["advanced_metrics.xgd"];
+  ok(!!xgd, "the derived fixture field did not reach FIELD_BY_PATH");
+  // `annotate` reads the field out of FIELD_BY_PATH rather than taking it, so
+  // a variant has to be swapped in there.
+  const a = P.annotate("advanced_metrics.xgd");
+  const token = a && a.condition ? a.condition.text : "";
+  ok(token === "platform-computed",
+    `an empty derived field reads \`${token}\`. It is the platform's own unkept ` +
+    "promise, and `tool unused` blames the agent for it — the contract names no " +
+    "tool and the agent was told to leave it null");
+
+  // And a field with no tool named that the AGENT owed must not read as a tool
+  // it declined to call either. Same conflation, other direction.
+  P.FIELD_BY_PATH["advanced_metrics.xgd"] = Object.assign({}, xgd, { kind: "inferred" });
+  const ia = P.annotate("advanced_metrics.xgd");
+  const itok = ia && ia.condition ? ia.condition.text : "";
+  P.FIELD_BY_PATH["advanced_metrics.xgd"] = xgd;
+  ok(itok === "agent wrote nothing",
+    `an empty inferred field reads \`${itok}\`. \`askedFor\` returns "unused" ` +
+    "both when a named tool went uncalled and when the contract names no tool " +
+    "at all, and one token said the first about both");
 
   if (FAIL.length) {
     console.error(`\n${FAIL.length} failure(s):`);

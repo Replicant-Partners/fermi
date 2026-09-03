@@ -786,17 +786,37 @@
   // Question three is the one nothing asked: grounding checks whether a tool
   // COULD have supplied a field, never whether the agent DID produce one, so a
   // null inherits its block's provenance and reads as `tool_verified`.
+  //
+  // **It must not count an absence the contract requires.** It did, and the
+  // result was the shelf and this page reporting opposite verdicts on the same
+  // fifteen fields: `genome_profiler` scored `9 of 29 empty` in red while its
+  // configuration shelf said "nothing unresolvable", and eight of those nine
+  // nulls were the contract being obeyed — seven `unsourced` fields with no
+  // tool behind them and one `derived` field the platform owes. One null was a
+  // real finding. A headline that says nine cannot point at the one.
+  //
+  // Same rule the shelf already follows: green means zero ERRORS, not zero
+  // pending. `required` is what the agent was actually asked to fill.
   function emptiness(fs) {
-    let total = 0, empty = 0;
-    const walk = v => {
-      if (v === null || v === undefined) { total++; empty++; return; }
-      if (Array.isArray(v)) { if (!v.length) { total++; } else v.forEach(walk); return; }
-      if (typeof v === "object") { Object.values(v).forEach(walk); return; }
-      total++;
-      if (v === "") empty++;
+    let total = 0, empty = 0, excused = 0;
+    const walk = (v, into) => {
+      const bump = n => { if (into) { total += n; } else { excused += n; } };
+      if (v === null || v === undefined) { bump(1); if (into) empty++; return; }
+      if (Array.isArray(v)) {
+        if (!v.length) { bump(1); } else v.forEach(x => walk(x, into));
+        return;
+      }
+      if (typeof v === "object") { Object.values(v).forEach(x => walk(x, into)); return; }
+      bump(1);
+      if (into && v === "") empty++;
     };
-    (fs || []).forEach(f => walk(f.value));
-    return { total, empty };
+    (fs || []).forEach(f => {
+      // `unsourced` must be null and `derived` is ours to fill, so neither
+      // absence is the agent's. Everything else the agent was asked for.
+      const required = f.kind !== "unsourced" && f.kind !== "derived";
+      walk(f.value, required);
+    });
+    return { total, empty, excused };
   }
 
   // Which checkpoint answers a question, and whether it could act on the answer.
@@ -876,6 +896,11 @@ declare it">${esc(id)}</span>`;
     const fs = d.fields || [];
     const e = emptiness(fs);
     const byStrength = s => fs.filter(f => (f.strength ?? 0) === s).length;
+    // A retrieval claim with no retrieval behind it — the only way this question
+    // is somebody's fault. `advanced_metrics.xg` is the case: `sourced`, and the
+    // block it sits in graded `unavailable_no_tool_source`.
+    const weakSourced = fs.filter(
+      f => f.kind === "sourced" && (f.strength ?? 0) === 0).length;
 
     const ran = a.by.credit || a.by.rate_limit;
     const got = a.by.attachment || a.by.input_binding;
@@ -900,6 +925,10 @@ declare it">${esc(id)}</span>`;
         q: "Did it get what it needed?",
         g: ["attachment", "input_binding"] },
 
+      // Counted over the values the agent was ASKED to fill. The rest are
+      // reported alongside rather than folded in: an `unsourced` null is the
+      // contract working and a `derived` null is ours, and adding them to this
+      // number is how a compliant agent scored `9 of 29 empty` in red.
       { short: "did the work",
         tok: e.total === 0
           ? "nothing examined"
@@ -908,10 +937,16 @@ declare it">${esc(id)}</span>`;
             : `${e.empty} of ${e.total} empty`,
         ans: e.total === 0
           ? "Nothing it returned was examined."
-          : e.empty === 0
-            ? `Yes — all ${e.total} values came back filled in.`
-            : `<b>No — ${e.empty} of ${e.total} values came back empty.</b> The agent \
-               produced the shape of an answer without the content.`,
+          : (e.empty === 0
+              ? `Yes — all ${e.total} value(s) it was asked for came back filled in.`
+              : `<b>No — ${e.empty} of ${e.total} value(s) it was asked for came back \
+                 empty.</b> The agent produced the shape of an answer without the \
+                 content.`)
+            + (e.excused
+                ? ` A further ${e.excused} are absent because the contract requires \
+                   it — no tool exists for them, or the platform fills them — and \
+                   those are not this agent's to answer.`
+                : ""),
         tone: e.total === 0 ? "na" : e.empty === 0 ? "ok" : "bad",
         q: "Did it actually do the work?",
         g: [] },
@@ -930,8 +965,20 @@ declare it">${esc(id)}</span>`;
         ans: fs.length === 0
           ? "Nothing was checked, so there is nothing to say."
           : `${byStrength(2)} from a tool or citation, ${byStrength(1)} from the model's \
-             own judgement, ${byStrength(0)} from nothing that could be checked.`,
-        tone: fs.length === 0 ? "na" : byStrength(0) > 0 ? "bad" : byStrength(1) > 0 ? "warn" : "ok",
+             own judgement, ${byStrength(0)} from nothing that could be checked`
+             + (weakSourced
+                 ? `. <b>${weakSourced} of those claim retrieval and have none</b>, which \
+                    is the finding here.`
+                 : ` — and none of those claims to be retrieved, so nothing is \
+                    overstating itself.`),
+        // Strength 0 is CORRECT for a field the contract says nothing can
+        // source: there is nothing to rely on and the contract says so. Red for
+        // that alone painted three compliant `conservation` fields and a prose
+        // summary as a fault. What is a fault is a `sourced` field sitting at
+        // zero — a retrieval claim with no retrieval behind it.
+        tone: fs.length === 0 ? "na"
+          : weakSourced > 0 ? "bad"
+          : byStrength(1) > 0 ? "warn" : "ok",
         q: "Where did the numbers come from?",
         g: ["grounding"] },
 
@@ -1192,7 +1239,28 @@ declare it">${esc(id)}</span>`;
     // disagreements are OUR bug; `narrative` is prose. Collapsing them on the
     // strength of one boolean labelled a platform-computed field "a judgement",
     // which is the same shape of error as the collapse this whole change undoes.
-    if (!f.settleable && f.produced !== false) {
+    // Branch on the KIND, and do it whether or not a value came back.
+    //
+    // This used to require `f.produced !== false`, and an empty `derived` field
+    // therefore fell past it into the absence branch below, where
+    // `settleable_by: None` yields `tool unused` — "the contract names a tool
+    // the agent did not call at all during this run". False twice over:
+    // `phylogeny.superorder` names no tool, and the prompt tells the agent to
+    // leave it null because the PLATFORM fills it. The one row on the page that
+    // was the platform's own unkept promise was the row that blamed the agent.
+    //
+    // Extended to `derived` only, and that limit is the point. Three kinds are
+    // unsettleable and an empty one means three different things:
+    //
+    //   derived    ours, and possibly not derivable at all — not the agent's
+    //   inferred   the agent skipped the judgement it was commissioned to make
+    //   narrative  the agent wrote no prose
+    //
+    // Only the first is nobody's fault, so only the first reads the same empty
+    // as full. The other two fall through to the absence branch, which now
+    // distinguishes "a tool was named and not called" from "no tool was ever
+    // named" — they were one token, and the token said the first.
+    if (!f.settleable && (f.produced !== false || f.kind === "derived")) {
       const aid0 = ASSERTION_BY_PATH[dotted];
       const st0 = aid0 ? CLAIMS[aid0] : null;
       const open0 = !!st0 && String(st0.verdict || "").startsWith("pending_");
@@ -1259,7 +1327,13 @@ declare it">${esc(id)}</span>`;
             fact: got ? `${got.toLocaleString()} B back` : "nothing back" }
         : asked === "unasked"
           ? { cls: "r-unasked", token: "never asked", fact: "" }
-          : { cls: "r-unasked", token: "tool unused", fact: "" };
+          // `askedFor` returns "unused" both when a named tool went uncalled and
+          // when the contract names no tool at all — `settleable_by` is null.
+          // One token said the first about both, so a field the agent simply
+          // did not write was reported as a tool it declined to call.
+          : f.settleable_by
+            ? { cls: "r-unasked", token: "tool unused", fact: "" }
+            : { cls: "r-unasked", token: "agent wrote nothing", fact: "" };
       return {
         cls: state.cls,
         condition: { text: state.token,
@@ -1595,6 +1669,9 @@ declare it">${esc(id)}</span>`;
        nothing" is not what happened.` },
     "tool unused": { close: true, why:
       `The contract names a tool the agent did not call at all during this run.` },
+    "agent wrote nothing": { close: false, why:
+      `The contract names no tool for this — it is the agent's own judgement or
+       prose, and none came back. Nothing to retrieve; the fix is the agent.` },
     "awaiting a verdict": { close: false, why:
       `Queued, and nobody has ruled. Until someone does, "nobody checked" and "checked and
        fine" are the same state.` },

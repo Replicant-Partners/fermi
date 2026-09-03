@@ -771,10 +771,33 @@ pub async fn episode_trace_handler(
         Some(doc) => fermi::grounding_trust::enforce(&agent_name, doc),
         None => fermi::grounding_trust::Report::default(),
     };
-    let graded = match claimed_doc.as_ref() {
+    let mut graded = match claimed_doc.as_ref() {
         Some(doc) => fermi::grounding_trust::graded_fields(&agent_name, doc, &report),
         None => Vec::new(),
     };
+
+    // A `Derived` field's value is the PLATFORM's, so show the platform's.
+    //
+    // Everywhere else the claimed value is the right one and the rule above says
+    // why: a nulled field has no evidence in it. `Derived` is the one exception,
+    // because the contract forbids the model from filling it at all — the prompt
+    // tells it to leave `phylogeny.superorder` null and let the platform compute
+    // it. So the claimed value is a mandatory absence carrying no information,
+    // and rendering it would show `platform-computed` over an empty cell — the
+    // reader unable to tell a derivation that ran from one that never did, which
+    // is precisely the confusion `phylogeny.superorder` caused for the life of
+    // the variant.
+    if let Some(enforced_doc) = enforced.as_ref() {
+        for g in graded.iter_mut() {
+            if g.kind != fermi::grounding_trust::GroundingKind::Derived {
+                continue;
+            }
+            if let Some(v) = enforced_doc.pointer(&format!("/{}", g.path.replace('.', "/"))) {
+                g.value = v.clone();
+            }
+        }
+    }
+
     let (fields, floor) = fermi::artifact_trace::fields(&agent_name, &graded);
 
     // What this agent has declared, so the empty case has a sourced cause rather
