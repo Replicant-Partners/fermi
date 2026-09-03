@@ -425,7 +425,26 @@ mod tests {
         assert!(!r.is_valid());
     }
 
-    /// The real card, the real document, end to end.
+    /// The real card, the real document, end to end — and the stamps are
+    /// **written by the platform rather than typed here.**
+    ///
+    /// They used to be typed here, and one of them was a value the runtime
+    /// cannot produce. The fixture asserted `phylogeny_provenance:
+    /// "platform_derived"`, which `grounding_trust::enforce` only ever writes
+    /// for a block with no `Sourced` field — and `phylogeny.sister_taxa` is
+    /// sourced, so this document could not have come out of this agent. The
+    /// card's schema declared the value too, so the two agreed with each other
+    /// and neither agreed with the platform, and the test stayed green for the
+    /// whole time.
+    ///
+    /// A fixture is a specification. This one specified a document the platform
+    /// never emits, which is the same class of defect as the `"480"` genome
+    /// size in `tool_executor`'s corpus: the test data had normalised something
+    /// that does not happen.
+    ///
+    /// So the model's half is written below and the platform's half is
+    /// computed. If the two ever disagree again, this fails instead of
+    /// enshrining it.
     #[test]
     fn the_pilot_agents_declared_schema_validates_its_own_output() {
         let card: Value = serde_json::from_str(
@@ -435,23 +454,29 @@ mod tests {
         let schema = &card["capabilities"]["output_contract"]["schema"];
         assert!(schema.is_object(), "the pilot must declare a real schema");
 
-        let good = json!({
+        // What a well-behaved run hands back: GBIF answered, NCBI answered, and
+        // everything with no source is null. No `_provenance` keys — those are
+        // the platform's to write.
+        let mut good = json!({
             "taxonomy": { "kingdom": "Animalia", "phylum": "Arthropoda", "class": "Insecta",
                           "order": "Lepidoptera", "family": "Nymphalidae",
                           "genus": "Apatura", "species": "Apatura iris" },
-            "taxonomy_provenance": "tool_verified",
             "genome": { "estimated_size_mb": 245.2, "chromosome_count": 30,
                         "assembly_name": "MEX_DaPlex", "assembly_accession": "GCA_018135715.1",
                         "notable_genes": null, "ploidy": null },
-            "genome_provenance": "tool_verified",
             "phylogeny": { "sister_taxa": ["Apatura ilia"], "superorder": "Holometabola",
                            "divergence_mya": null, "defining_traits": null },
-            "phylogeny_provenance": "platform_derived",
             "conservation": { "iucn_status": null, "population_trend": null,
                               "genetic_diversity_notes": null },
-            "conservation_provenance": "unavailable_no_tool_source",
             "summary": "GBIF places Apatura iris in Nymphalidae."
         });
+        let report = crate::grounding_trust::enforce("genome_profiler", &mut good);
+        assert!(
+            report.violations.is_empty(),
+            "this fixture is meant to be a CLEAN run; grounding stripped {:?}",
+            report.violations
+        );
+
         let r = validate(schema, &good);
         assert!(r.is_valid(), "the pilot's own output must validate: {r:?}");
     }

@@ -203,6 +203,20 @@
   /* What the prompt does to execution. Three facts in the compile's vocabulary,
      and `error` is reserved for the contradiction: a contract naming tools and a
      prompt that removed the loop which could call them. */
+  /* The one verdict about the agent, said once and at the top. Everything
+     below it reports a fact and names its own subject; nothing below it
+     repeats the word `compile`. */
+  .verdict{margin:10px 0 14px;padding:9px 11px;border-left:2px solid var(--bg3);
+           background:var(--bg1);}
+  .verdict b{font-size:0.78rem;}
+  .verdict.ok{border-left-color:var(--green);}
+  .verdict.ok b{color:var(--green);}
+  .verdict.bad{border-left-color:var(--red,#fb4934);}
+  .verdict.bad b{color:var(--red,#fb4934);}
+  .verdict-w{font-size:0.64rem;color:var(--fg4);line-height:1.5;margin-top:4px;}
+  .verdict-f{display:block;}
+  .verdict-f i{color:var(--fg3);font-style:normal;text-transform:uppercase;
+               letter-spacing:0.05em;font-size:0.58rem;margin-right:6px;}
   .pchk{margin-bottom:9px;}
   .pchk-row{display:grid;grid-template-columns:74px 1fr;gap:8px;align-items:baseline;
             padding:4px 0;border-top:1px solid var(--bg2);}
@@ -506,16 +520,21 @@
     const counts = d.counts || {};
     const errors = counts.error || 0;
     const present = COMPILE_ORDER.filter(k => counts[k]);
+    // No verdict word here. This block is about the STORED contract's fields,
+    // which is one input to the agent's verdict at the top of the shelf and not
+    // the verdict itself — it used to say "Compiles." three inches above an
+    // editor saying "Not compiled" about a different subject.
     return `<div class="cmp">
-      <div class="cmp-head ${errors ? "bad" : "ok"}">${errors
-        ? `<b>${errors} field(s) cannot be settled by anything.</b> This does not compile.`
-        : `<b>Compiles.</b> ${fields.length} declared field(s), nothing unresolvable.`}</div>
+      <div class="cmp-head ${errors ? "bad" : "ok"}">The contract as stored:
+        <b>${fields.length} declared field(s)</b>${errors
+          ? `, and <b>${errors}</b> that nothing can settle.`
+          : `, nothing unresolvable.`}</div>
       <div class="cmp-tally">${present.map(k =>
         `<span class="cmp-chip c-${k}"><b>${counts[k]}</b> ${esc(k)}</span>`).join("")}</div>
       ${counts.pending ? `<div class="af-note">Green means zero <b>errors</b>. The
-        ${counts.pending} pending field(s) are declared gaps with no source yet \u2014 the
-        agent compiles, and pruning them to reach green would delete the ambition the
-        contract exists to record.</div>` : ""}
+        ${counts.pending} pending field(s) are declared gaps with no source yet \u2014 each
+        one a standing request for an integration, and pruning them to reach green would
+        delete the ambition the contract exists to record.</div>` : ""}
       ${present.map(k => `<div class="cmp-leg">
         <span class="cmp-n">${counts[k]}</span>
         <span class="cmp-t c-${k}">${esc(k)}</span>
@@ -563,6 +582,8 @@
             one save \u2014 the contract editor writes all of them</span>` : ""}
           ${r.rung === CONTRACT_RUNGS[CONTRACT_RUNGS.length - 1] ? `<button class="rung-act"
             data-open-contract="1">${r.present ? "edit the contract" : "build it"} \u2192</button>` : ""}
+          ${r.rung === "ports" ? `<div id="af-ports"></div>
+          <span class="rung-own2">Produces is set by the contract compiler.</span>` : ""}
         </div>
       </div>`).join("")}
       <div id="shelf-contract" class="shelf-mount"></div></div>`;
@@ -613,8 +634,8 @@
   // Three facts, in the compile's own vocabulary. `error` is reserved for the one
   // that is a contradiction the platform authored: a contract naming tools for N
   // fields, and a prompt that removed the loop which could call them.
-  function promptCheck(c) {
-    if (!c) return "";
+  function promptRows(c) {
+    if (!c) return [];
     const rows = [];
 
     if (c.contradicts_contract) {
@@ -645,11 +666,67 @@
          declares.`]);
     }
 
+    return rows;
+  }
+
+  function promptCheck(c) {
+    const rows = promptRows(c);
+    if (!rows.length) return "";
     return `<div class="pchk">${rows.map(([state, token, why]) => `<div class="pchk-row">
       <span class="cmp-t c-${state}">${esc(state)}</span>
       <span class="pchk-t">${esc(token)}</span>
       <div class="pchk-w">${why}</div>
     </div>`).join("")}</div>`;
+  }
+
+  // ── One verdict, and it is about the AGENT ───────────────────────────────
+  //
+  // Three headlines used to disagree on one screen, and all three were right:
+  //
+  //   the prompt panel   "2 errors"      — about the prompt against the contract
+  //   the compile block  "Compiles."     — about the STORED contract's fields
+  //   the builder        "Not compiled"  — about the DRAFT in the editor
+  //
+  // One word, three subjects, no way for a reader to tell which. "Does this
+  // agent work?" had no answer on a page that answered it three times.
+  //
+  // So: `compile` is a verb with exactly one subject now — the agent — and it
+  // is said once, at the top, over every check the shelf runs. The panels below
+  // keep their detail and lose their verdicts: the compile block names its own
+  // subject (the stored contract) and the editor's chip talks about a draft and
+  // says `saveable`, never `compiled`.
+  //
+  // Green means zero ERRORS, not zero pending — the same rule the compile block
+  // already followed, now applied to the thing a reader was asking about.
+  function agentVerdict() {
+    const p = D.profile || {};
+    const d = D.declaration || {};
+    const faults = [];
+
+    promptRows(p.prompt_check).forEach(([state, token]) => {
+      if (state === "error") faults.push(["what it says", token]);
+    });
+    const fieldErrors = (d.counts || {}).error || 0;
+    if (fieldErrors) {
+      faults.push(["its contract",
+        `${fieldErrors} field(s) nothing can settle`]);
+    }
+
+    const pending = (d.counts || {}).pending || 0;
+    if (!faults.length) {
+      return `<div class="verdict ok">
+        <b>This agent compiles.</b>
+        <div class="verdict-w">Its prompt and its contract agree, and nothing it
+          declares is unsettleable.${pending ? ` ${pending} field(s) are pending —
+          declared gaps with no source yet, which is a standing request rather than
+          a fault.` : ""}</div>
+      </div>`;
+    }
+    return `<div class="verdict bad">
+      <b>This agent does not compile — ${faults.length} error(s).</b>
+      <div class="verdict-w">${faults.map(([where, what]) =>
+        `<span class="verdict-f"><i>${esc(where)}</i> ${esc(what)}</span>`).join("")}</div>
+    </div>`;
   }
 
   function drawer() {
@@ -659,6 +736,7 @@
       <button class="close" id="close-drawer">\u2715</button>
       <h2>Configure</h2>
       <div class="sub">${esc(p.label)}</div>
+      ${agentVerdict()}
 
       <div class="block"><h3><span class="g-mark">\u25a4</span>What it says</h3>
         <div class="af-meta">the prompt is an input to how the agent runs, not a note
@@ -688,7 +766,7 @@
     // does the model live" — which is the mistake that made the old page render
     // thirteen metrics twice under different names.
     if (typeof AgentFields !== "undefined") {
-      ["prompt", "intelligence", "personality", "manage"].forEach(group => {
+      ["prompt", "intelligence", "personality", "manage", "ports"].forEach(group => {
         const host = document.getElementById("af-" + group);
         if (!host) return;
         AgentFields.mount({
@@ -703,7 +781,7 @@
         });
       });
     } else {
-      ["prompt", "intelligence", "personality", "manage"].forEach(group => {
+      ["prompt", "intelligence", "personality", "manage", "ports"].forEach(group => {
         const host = document.getElementById("af-" + group);
         if (host) {
           host.innerHTML = `<div class="note">The field editor did not load, so this

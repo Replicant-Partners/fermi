@@ -1,0 +1,157 @@
+{
+  "_README": [
+    "Source of truth for capabilities.output_contract.",
+    "tests/contract_sketch_corpus.rs asserts the card still matches this file.",
+    "",
+    "WHY THIS FILE EXISTS AT ALL",
+    "",
+    "genome_profiler is the agent the whole grounding contract was built for,",
+    "and it was the last one still declaring its field contract in two places.",
+    "The Rust table `grounding_trust::FIELD_CONTRACTS` held fifteen entries for",
+    "it; the card held a schema and NO `grounding` block. Both were real, and",
+    "the shelf read one while the editor edited the other:",
+    "",
+    "  - `declaration_ladder::has_field_contract` checks BOTH paths, so the",
+    "    ladder showed the rung declared.",
+    "  - `ContractBuilder` decompiles the CARD, found no grounding, and came",
+    "    back with five blocks carrying no `why` \u2014 so the draft could not",
+    "    recompile, and the agent could not be saved from its own editor.",
+    "",
+    "This file is the card's half, authored. The Rust table stays: it carries",
+    "the per-field granularity and the SQL cross-checks, which the card's",
+    "block-level vocabulary cannot express (DESIGN_a2a_contracting.md \u00a77.6).",
+    "The two now agree rather than substituting for one another.",
+    "",
+    "NOTHING WAS PRUNED",
+    "",
+    "All fifteen fields survive, including the seven with no source. Every",
+    "unsourced field is either pinned to `null` (a value there is a contract",
+    "violation) or declared in a partial block whose stamp can say",
+    "`unavailable_no_tool_source`. Deleting them to reach a green tick would",
+    "delete the ambition the contract exists to record.",
+    "",
+    "ONE CORRECTION, AND IT DELETES NO FIELD",
+    "",
+    "`phylogeny_provenance` declared `platform_derived`, a verdict the runtime",
+    "can never emit for this block: `grounding_trust::enforce` only reaches",
+    "`PROV_DERIVED` when a block has NO sourced field, and `sister_taxa` is",
+    "sourced. Partial coverage replaces it with `unavailable_no_tool_source`,",
+    "which the runtime does emit (the pre-contract path) and which is the",
+    "honest reading of `divergence_mya` and `defining_traits`."
+  ],
+
+  "domain": "phylogenetics",
+  "produces_schema": "rabble/phylogenetic_profile",
+  "title": "Phylogenetic profile",
+  "description": "Where a creature sits in the tree of life, split by what can be looked up and what cannot. Two of the four data blocks have tools behind them and two do not, and the split is the document's main claim: a reader can tell a retrieved rank ladder from a recalled conservation status without trusting the agent to have been careful.",
+
+  "blocks": [
+    {
+      "name": "taxonomy",
+      "description": "The rank ladder, as GBIF holds it.",
+      "source": {
+        "status": "sourced",
+        "tool": "gbif_taxonomy_tree",
+        "response_field": "hierarchy (kingdom, phylum, class, order, family, genus, species) with GBIF keys",
+        "coverage": "complete"
+      },
+      "why": "The one block with a real tool behind every field. GBIF either matches the queried name and returns the full ladder, or it does not match and returns nothing \u2014 the only two outcomes, which is why this stamp admits exactly two verdicts while `genome`'s admits three. It is also the only block on this agent carrying a live SQL cross-check: `creature_conditions.genome_profile.taxonomy` is compared row by row against `creatures.taxonomy`, which is the check that would have caught *Antaxius beieri*, a bush-cricket profiled as a cerambycid beetle, without a human noticing it.",
+      "fields": {
+        "kingdom": "string?",
+        "phylum": "string?",
+        "class": "string?",
+        "order": "string?",
+        "family": "string?",
+        "genus": "string?",
+        "species": "string?"
+      }
+    },
+
+    {
+      "name": "genome",
+      "description": "Assembly statistics, where an assembly exists.",
+      "source": {
+        "status": "sourced",
+        "tool": "ncbi_genome_search",
+        "response_field": "estimated_size_mb (assembly total_length), assembled_chromosome_count, assembly_name, assembly_accession",
+        "coverage": "partial"
+      },
+      "why": "Partial, and the partiality is the whole content of this block: NCBI Assembly supplies four of these six fields and nothing supplies the other two. `assembly_name` and `assembly_accession` are not decoration \u2014 they name WHICH release produced the size and the chromosome count, so a figure is traceable to something re-queryable rather than to \"NCBI\", and without them the numbers are unfalsifiable even when correct. Coverage is roughly two in six for the species actually in `creature_conditions`, so `tool_no_match` stays the common outcome, which is a fact about the world and not a gap in the platform. What this block replaces was not merely unsourced but wrong: the old prompt asserted ~400-500Mb as typical for Lepidoptera and the monarch is 245Mb.",
+      "fields": {
+        "estimated_size_mb": {
+          "type": "number?",
+          "description": "Assembly total_length in megabases. Null means NCBI was asked and had no assembly for this species, which is the common answer for insects."
+        },
+        "chromosome_count": {
+          "type": "integer?",
+          "description": "Assembled chromosome-level replicons, not a cytological karyotype. For Danaus plexippus NCBI returns 30 and the published karyotype is n=30; that agreement is a coincidence of this species and not a licence to relabel the field."
+        },
+        "notable_genes": {
+          "type": "string[]?",
+          "description": "No tool returns species-level gene-family claims. Nullable rather than pinned to null because a gene-annotation source is a plausible integration, and the day one is wired the stamp changes rather than the shape."
+        },
+        "ploidy": {
+          "type": "string?",
+          "description": "Stays unsourced even though NCBI is wired up, and this is the instructive one. NCBI returns `assemblytype: haploid` for the monarch, which is very tempting to map here and would be FALSE: that field describes how the ASSEMBLY represents the genome, not the organism. A monarch is diploid. A plausible, convenient, wrong mapping is exactly the class of error this contract exists to stop."
+        },
+        "assembly_name": "string?",
+        "assembly_accession": {
+          "type": "string?",
+          "description": "The stable identifier a replay cross-check would use: given an accession, NCBI can be re-queried and the size compared. It is therefore the field that makes the other two verifiable later."
+        }
+      }
+    },
+
+    {
+      "name": "phylogeny",
+      "description": "Relatives and placement. One field retrieved, one computed, two with no source.",
+      "source": {
+        "status": "sourced",
+        "tool": "gbif_taxonomy_tree",
+        "response_field": "sibling taxa at each rank",
+        "coverage": "partial"
+      },
+      "why": "`sister_taxa` is real and retrievable \u2014 the tool's own description promises sibling taxa at each rank for phylogenetic context \u2014 and it is notably the ONE phylogeny field that is, so stripping it along with its neighbours would be a check that overreaches, and an overreaching check gets switched off. `superorder` is not retrieved and is not guessed either: the platform computes it from `taxonomy.order` through `ncbi_tools::superorder_of`, a closed table over the ~30 insect orders that returns nothing for an order it does not know. `divergence_mya` needs a dated phylogeny such as TimeTree and `defining_traits` is order-level narration from parametric memory, so both are pinned to null rather than made nullable: a value in those two is a contract violation, not a missing measurement. This stamp previously declared `platform_derived`, which the runtime can never emit for this block, because `enforce` only reaches that verdict for a block with no sourced field at all.",
+      "fields": {
+        "sister_taxa": {
+          "type": "string[]",
+          "description": "Empty array when GBIF returned no siblings. Not nullable: [] says the tool answered and there were none, which is a measurement."
+        },
+        "superorder": {
+          "type": "string?",
+          "description": "Written by the platform from `taxonomy.order`, never by the model. The model leaves it null."
+        },
+        "divergence_mya": "null",
+        "defining_traits": "null"
+      }
+    },
+
+    {
+      "name": "conservation",
+      "description": "Red List status. Nothing this agent can call returns any of it.",
+      "source": {
+        "status": "unavailable",
+        "would_need": "the IUCN Red List API for `iucn_status` and `population_trend`; a literature-mining step for `genetic_diversity_notes`"
+      },
+      "why": "All three fields are pinned to null rather than made nullable, because there is no tool behind any of them and a value would therefore be unverifiable by construction. `iucn_status` is the most dangerous field in this contract: \"Not Evaluated\" is a REAL Red List value, so a fabricated \"Not Evaluated (presumed Least Concern)\" is indistinguishable from a successful lookup, and it manufactures the appearance of having queried something. `population_trend` was being reported as \"stable\" for species that have never been assessed, which reads as a measurement of a population nobody has counted. When a Red List tool is wired up this block needs its own provenance value before it is unpinned \u2014 a queried NE is data and an invented one is not, and the current vocabulary cannot tell them apart.",
+      "fields": {
+        "iucn_status": "null",
+        "population_trend": "null",
+        "genetic_diversity_notes": "null"
+      }
+    },
+
+    {
+      "name": "summary",
+      "source": { "status": "narrative" },
+      "why": "Prose, and the channel `parse_evidence_text` lifts verbatim into the episode digest \u2014 so it is the part a reader actually sees, and the highest-risk field here. It is where a fabrication moves once the structured fields are constrained, which is precisely what happened on this agent: a genome size correctly nulled out of `genome.estimated_size_mb` came back as \"~480 Mb, typical for Lepidoptera\" in a sentence. `grounding_trust::NARRATIVE_LEAKS` scans it for megabases, chromosome counts, ploidy, karyotypes, divergence dates and conservation status, and nulls the whole paragraph when it names a block that was not sourced on this run \u2014 nulled rather than flagged, because a validator cannot rewrite prose into honesty. A number moved out of a null field and into a sentence is still a fabrication.",
+      "value": "string"
+    }
+  ],
+
+  "calibration": {
+    "signal": "gbif_verified_taxonomy",
+    "comparison": "reported_rank_ladder_vs_gbif_response",
+    "resolution_delay": "immediate"
+  }
+}

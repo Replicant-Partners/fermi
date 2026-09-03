@@ -26,6 +26,10 @@
 /// executions, past a grace period, never curated or system tier).
 pub use fermi::declaration_ladder::is_test_cruft;
 
+/// Compiling an output-contract sketch for the create wizard — the same
+/// A2A provider — agent card discovery and (future) task execution.
+/// Design: docs/DESIGN_a2a_provider.md
+pub mod a2a;
 pub mod admin;
 pub mod admin_rbac;
 pub mod agent_funding;
@@ -47,7 +51,6 @@ pub mod collab;
 pub mod composition;
 pub mod composition_evolution;
 pub mod consolidation;
-/// Compiling an output-contract sketch for the create wizard — the same
 /// code path the publish gate uses, so the two cannot give different
 /// answers. See `src/contract_sketch.rs`.
 pub mod contracts;

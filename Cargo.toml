@@ -231,6 +231,13 @@ path = "scripts/initialize_workspace.rs"
 name = "contract-sketch"
 path = "scripts/contract_sketch.rs"
 
+[[bin]]
+# Compile an agent's `input_contract.sketch.json` into the typed input
+# contract for splicing into the agent card, or check the card agrees.
+# Print-only by design — same philosophy as contract-sketch.
+name = "input-contract-sketch"
+path = "scripts/input_contract_sketch.rs"
+
 [lib]
 name = "fermi"
 path = "src/lib.rs"

@@ -139,14 +139,32 @@ pub fn build(
 
     // Enforce the producer's grounding contract at the hop. This is the
     // protection that delegation never had.
+    //
+    // `enforce_from_output_contract` is the general path: it reads the
+    // compiled `grounding` map from `output_contract` on the card and
+    // applies enforcement for every agent that has one — no per-agent
+    // code change required. Falls back to `FIELD_CONTRACTS` for agents
+    // not yet migrated.
     let report = match payload.as_mut() {
-        Some(doc) => crate::grounding_trust::enforce(agent_name, doc),
+        Some(doc) => {
+            crate::grounding_trust::enforce_from_output_contract(agent_name, output_contract, doc)
+        }
         None => crate::grounding_trust::Report::default(),
     };
 
-    let has_contract = crate::grounding_trust::contracts_for(agent_name)
-        .next()
-        .is_some();
+    // `has_contract` is true if either the compiled output_contract carries a
+    // grounding map (new path) or a FIELD_CONTRACTS entry exists (legacy path).
+    // Both count: the envelope must not report `grounding_enforced: false` for
+    // an agent that has a contract on either path.
+    let has_contract = output_contract
+        .and_then(|oc| oc.get("grounding"))
+        .and_then(|g| g.as_object())
+        .map(|g| !g.is_empty())
+        .unwrap_or_else(|| {
+            crate::grounding_trust::contracts_for(agent_name)
+                .next()
+                .is_some()
+        });
 
     // Validate the enforced payload against the producer's declared schema.
     //
@@ -311,6 +329,95 @@ fn payload_status(output: &AgentOutput) -> &'static str {
         // than a failure.
         Some(_) => "prose_only",
     }
+}
+
+/// Report from validating a caller's query against a callee's input_contract.
+///
+/// Parallel to the envelope the output side produces, but much smaller: input
+/// contracts carry no provenance map (there is no claim to make about where
+/// the *caller* sourced their data). The report is used to populate the trace
+/// and to record the `Gate::InputSchema` decision.
+#[derive(Debug, Clone)]
+pub struct InputValidationReport {
+    /// Validation outcome — same vocabulary as the output side:
+    ///   `valid`                      checked and conforming
+    ///   `invalid`                    the query contradicts the schema
+    ///   `unverified_no_schema`        callee declared no input_contract.schema
+    ///   `unverified_no_json_in_query` the query is plain prose, not JSON
+    ///   `unverified_unsupported_schema` schema keywords the validator cannot evaluate
+    pub status: &'static str,
+    /// JSON-path violations (non-empty only when `status == "invalid"`).
+    pub violations: Vec<Value>,
+}
+
+/// Validate a caller's query against the callee's declared `input_contract`.
+///
+/// Called in `execute_execute_agent` BEFORE dispatch — symmetric to
+/// `envelope::build` (which validates the OUTPUT after dispatch). Like its
+/// counterpart, an invalid input does NOT halt execution; it records a
+/// `Gate::InputSchema` decision and returns the report for inclusion in the
+/// trace.
+///
+/// Three outcomes, keeping the same semantics as output validation:
+///
+/// | status                          | gate decision  | meaning                       |
+/// |----------------------------------|----------------|-------------------------------|
+/// | `valid`                          | Approved       | checked, conforming           |
+/// | `invalid`                        | Refused        | contradicts declared schema   |
+/// | `unverified_*`                   | Undetermined   | no schema, prose, or keywords |
+///
+/// `Undetermined` is the common case — almost no agent declares an
+/// `input_contract` yet. It must never fold into `Approved`.
+pub fn validate_input(
+    agent_name: &str,
+    input_contract: Option<&Value>,
+    query: &str,
+) -> InputValidationReport {
+    let schema = input_contract
+        .and_then(|ic| ic.get("schema"))
+        .filter(|s| s.is_object());
+
+    let payload = extract_json(query);
+
+    let (status, violations) = match (schema, payload.as_ref()) {
+        (Some(sch), Some(doc)) => {
+            let r = crate::schema_validate::validate(sch, doc);
+            let st = if r.is_valid() {
+                "valid"
+            } else if r.is_contradiction() {
+                "invalid"
+            } else {
+                "unverified_unsupported_schema"
+            };
+            (
+                st,
+                r.violations
+                    .iter()
+                    .map(|v| json!({ "path": v.path, "message": v.message }))
+                    .collect::<Vec<_>>(),
+            )
+        }
+        (None, _) => ("unverified_no_schema", vec![]),
+        (Some(_), None) => ("unverified_no_json_in_query", vec![]),
+    };
+
+    let decision = decision_for(status);
+    let reason = match (&decision, violations.first()) {
+        (crate::gate_trust::Decision::Refused, Some(v)) => format!(
+            "{agent_name}: input {} at {}",
+            v.get("message").and_then(|m| m.as_str()).unwrap_or("query"),
+            v.get("path").and_then(|p| p.as_str()).unwrap_or("<root>")
+        ),
+        _ => format!("{agent_name}: {status}"),
+    };
+    crate::gate_trust::decided_about(
+        crate::gate_trust::Gate::InputSchema,
+        decision,
+        Some(&reason),
+        Some(agent_name),
+    );
+
+    InputValidationReport { status, violations }
 }
 
 #[cfg(test)]
@@ -550,22 +657,28 @@ mod tests {
         assert_eq!(env["type"], json!("fermi/equity_evidence"));
         assert_eq!(env["payload_status"], json!("document"));
 
-        // Honest about what is still missing. The card now types the
-        // document, but nobody has written a `grounding_trust` contract for
-        // this producer, so the hop checks shape and not sourcing. Asserted
-        // rather than left implicit: `grounding_enforced: false` is exactly
-        // the reading that must not be mistaken for a pass, and pinning it
-        // here means the day someone writes the contract this test tells
-        // them to update the claim.
-        assert_eq!(env["provenance"]["grounding_enforced"], json!(false));
+        // The compiled output_contract carries a grounding map, so enforcement
+        // is now applied via `enforce_from_output_contract` — the general path.
+        // grounding_enforced is `true` because the grounding map exists in the
+        // card's output_contract. No FIELD_CONTRACTS entry is needed.
+        // This is the state the whole contract migration is working toward:
+        // every agent with a compiled sketch gets enforcement automatically.
+        assert_eq!(env["provenance"]["grounding_enforced"], json!(true));
     }
 
-    /// A judgement stamped as a retrieval is refused at the hop. This is the
-    /// composition-path protection: the value is caught crossing the seam,
-    /// which is where a coordinator would otherwise have weighted it as
-    /// measured data.
+    /// A judgement block that the model stamps as a retrieval is corrected by
+    /// enforcement before the schema runs. This is the general-path protection:
+    /// `enforce_from_output_contract` reads the compiled output_contract, sees
+    /// that `assessment` has status `inferred`, and overwrites the model's
+    /// `tool_verified` claim with `model_inference` — the platform's verdict is
+    /// authoritative. The model cannot raise its own grounding strength.
+    ///
+    /// The document is still invalid (required fields are missing), but the
+    /// specific protection — provenance overwrite — happens in enforcement, not
+    /// in schema validation. Separating them is correct: schema catches shape,
+    /// enforcement catches sourcing.
     #[test]
-    fn a_reasoned_block_claiming_to_be_retrieved_is_refused_at_the_hop() {
+    fn a_reasoned_block_claiming_to_be_retrieved_is_corrected_by_enforcement() {
         let oc = contract_for("equity_analyst");
         let raw = r#"{"assessment_provenance":"tool_verified","summary":"s"}"#;
         let env = build(
@@ -574,11 +687,15 @@ mod tests {
             &output_with(Some(raw)),
             Uuid::new_v4(),
         );
+        // The overall document is invalid: required blocks are missing.
         assert_eq!(env["validation"]["status"], json!("invalid"));
-        let v = env["validation"]["violations"].as_array().unwrap();
-        assert!(
-            v.iter().any(|x| x["path"] == "assessment_provenance"),
-            "{v:?}"
+        // But enforcement already corrected the provenance claim before schema
+        // validation ran. The payload carries model_inference, not tool_verified.
+        // This is the protection: the platform overwrites whatever the model said.
+        assert_eq!(
+            env["payload"]["assessment_provenance"],
+            json!("model_inference"),
+            "enforcement must overwrite tool_verified with model_inference"
         );
     }
 

@@ -198,16 +198,16 @@ pub const LADDER: &[Declaration] = &[
 /// Which rungs `agents` can answer with one query, in the order [`LADDER`]
 /// declares them.
 ///
-/// `field_contract` is deliberately absent: it is owned by a Rust const and no
-/// SQL can see it. A caller measures the three here and asks
-/// [`has_field_contract`] for the fourth — which is stated as a limitation
-/// rather than papered over, because a third party publishing over the API
-/// **cannot** add a line to a compiled const, and that is the ceiling on this
-/// rung until field contracts move into the card (`card_contract` exists for
-/// exactly this reason and is the migration path).
-pub const SQL_MEASURABLE_RUNGS: &[&str] = &["ports", "output_type", "output_schema"];
+/// `field_contract` is now SQL-measurable. The FIELD_CONTRACTS Rust const was
+/// the original source of truth, but `output_contract.grounding` (compiled from
+/// sketches by `contract-sketch`) carries the same information in the card's
+/// JSONB column — which SQL can see. Both paths count: a FIELD_CONTRACTS entry
+/// (legacy) or a non-empty `output_contract.grounding` object (new general
+/// path). `has_grounding_contract` covers both.
+pub const SQL_MEASURABLE_RUNGS: &[&str] =
+    &["ports", "output_type", "output_schema", "field_contract"];
 
-/// Presence of the three card-borne rungs, and the name, for one agent.
+/// Presence of the four card-borne rungs, and the name, for one agent.
 ///
 /// Read from `agents` by the caller. `$1` is nothing — this is the whole-fleet
 /// census, because every consumer so far wants the distribution rather than one
@@ -218,16 +218,40 @@ pub const CENSUS_SQL: &str = "SELECT a.agent_name, \
                                        AS ports, \
                                      a.output_contract ? 'produces_schema' AS output_type, \
                                      jsonb_typeof(a.output_contract -> 'schema') = 'object' \
-                                       AS output_schema \
+                                       AS output_schema, \
+                                     jsonb_typeof(a.output_contract -> 'grounding') = 'object' \
+                                       AND (a.output_contract -> 'grounding') != '{}' \
+                                       AS field_contract \
                                 FROM agents a \
                                WHERE EXISTS (SELECT 1 FROM episodes e \
                                               WHERE e.agent_id = a.agent_id)";
 
-/// Does this agent have a field contract?
+/// Does this agent have a grounding contract on either path?
 ///
-/// The fourth rung, answered from `grounding_trust` because that is where it
-/// lives. Not duplicated into SQL: a second answer to this question is the §3.4
-/// violation, and the const is the authority.
+/// Two paths count equally:
+/// 1. `output_contract.grounding` in the card JSONB (new general path —
+///    compiled from a sketch, no Rust edit per agent)
+/// 2. A `FIELD_CONTRACTS` entry in `grounding_trust` (legacy path — Rust const,
+///    used by agents predating the sketch compiler)
+///
+/// The SQL column `field_contract` in CENSUS_SQL covers path 1 directly.
+/// This function covers both, for callers that need a runtime answer.
+pub fn has_grounding_contract(
+    agent_name: &str,
+    output_contract: Option<&serde_json::Value>,
+) -> bool {
+    // New path: output_contract.grounding in the card.
+    let has_card_grounding = output_contract
+        .and_then(|oc| oc.get("grounding"))
+        .and_then(|g| g.as_object())
+        .map(|g| !g.is_empty())
+        .unwrap_or(false);
+    // Legacy path: FIELD_CONTRACTS Rust const.
+    has_card_grounding || grounding_trust::contracts_for(agent_name).next().is_some()
+}
+
+/// Legacy alias — checks FIELD_CONTRACTS only. Prefer `has_grounding_contract`
+/// for new callers that have the output_contract available.
 pub fn has_field_contract(agent_name: &str) -> bool {
     grounding_trust::contracts_for(agent_name).next().is_some()
 }

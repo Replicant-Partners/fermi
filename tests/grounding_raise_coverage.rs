@@ -76,12 +76,17 @@ const NO_RAISE: &[(&str, &str)] = &[
          than `enforce`; the exemption is about the raise, not about which \
          entry point supplies the contract.",
     ),
-    (
-        "src/agent_backend/tool_executor.rs",
-        "enforces on a cached genome profile read inside the tool loop, where \
-         no `MemoryStore` is in scope. The generating path in \
-         `creatures::agent_modules` raises for the same agent and contract.",
-    ),
+    // `src/agent_backend/tool_executor.rs` was here, and the entry was stale.
+    // It claimed the file "enforces on a cached genome profile read inside the
+    // tool loop, where no `MemoryStore` is in scope" — and there is no such
+    // call. Its only `enforce` is in `the_genome_profiler_fixture_is_itself_grounded`,
+    // inside `#[cfg(test)]`. The production path is the one the reason already
+    // named, `creatures::agent_modules`, which raises.
+    //
+    // Surfaced by teaching the scan to skip test modules: an exemption held in
+    // place by a unit test is invisible while the scan counts unit tests, which
+    // is precisely how a list that "may only shrink" quietly stops describing
+    // anything.
     (
         "src/handlers/loops.rs",
         "the artifact trace re-runs the contract over a RETAINED response to \
@@ -139,13 +144,32 @@ const ENFORCE_CALLS: &[&str] = &[
 ];
 
 /// Does this file run the grounding contract as a control?
+/// Everything above the file's first top-level `#[cfg(test)]`.
+///
+/// A unit test that runs the contract over a fixture is not an enforcement
+/// path: it corrects nothing anybody reads, there is no episode to attribute an
+/// anomaly to, and no `MemoryStore` in scope to raise with. Counting one made
+/// this check demand a `spawn_raise` inside a `#[test]`, whose only satisfying
+/// answers are a fake raise or a `NO_RAISE` entry — and an exemption list that
+/// accumulates test files stops being a list of production gaps, which is the
+/// only thing it is for. "An exemption without a reason is a permanent one"
+/// cuts both ways.
+///
+/// Truncates rather than parses. `mod tests` is conventionally last in this
+/// codebase, and the failure mode of being wrong is that production code below
+/// a test module stops being scanned — so the floor assertion in the walk is
+/// what makes this safe, and it is checked below.
+fn production_only(body: &str) -> &str {
+    body.find("\n#[cfg(test)]").map_or(body, |i| &body[..i + 1])
+}
+
 fn enforces(body: &str) -> bool {
-    code_lines(body).any(|l| ENFORCE_CALLS.iter().any(|c| l.contains(c)))
+    code_lines(production_only(body)).any(|l| ENFORCE_CALLS.iter().any(|c| l.contains(c)))
 }
 
 /// Does it tell Loop 2 about what it found?
 fn raises(body: &str) -> bool {
-    code_lines(body).any(|l| l.contains("grounding_anomaly::"))
+    code_lines(production_only(body)).any(|l| l.contains("grounding_anomaly::"))
 }
 
 /// The detector must see an enforcing path that reports nothing.
@@ -237,6 +261,41 @@ fn the_scan_sees_an_enforcing_path_that_does_not_raise() {
         "    // fermi::grounding_anomaly::spawn_raise would go here, but there \
          is no store in scope"
     ));
+    // A test module is not an enforcement path, and the truncation must be
+    // exact about which side of the boundary a call sits on. Both halves
+    // asserted: dropping the second would let `production_only` return "" and
+    // silently excuse the whole repository.
+    let test_only = "\
+pub fn render(doc: &Value) -> String {
+    format!(\"{doc}\")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_fixture_is_grounded() {
+        let report = crate::grounding_trust::enforce(\"genome_profiler\", &mut doc);
+        assert!(report.is_clean());
+    }
+}
+";
+    assert!(
+        !enforces(test_only),
+        "a unit test running the contract over a fixture reads as a production \
+         enforcement path, so writing a test for the contract makes this check \
+         demand a raise from inside a `#[test]`"
+    );
+    let prod_and_test = test_only.replace(
+        "    format!(\"{doc}\")",
+        "    grounding_trust::enforce(slug, doc);",
+    );
+    assert!(
+        enforces(&prod_and_test),
+        "the truncation ate production code: a file that enforces above its test \
+         module must still be scanned, or every control in the repo can be \
+         hidden by putting a `#[cfg(test)]` near the top"
+    );
+
     assert!(!enforces(
         "    // grounding_trust::enforce( is discussed here and not called"
     ));
@@ -291,10 +350,15 @@ fn every_path_that_enforces_grounding_also_raises() {
     // points were named, so the count is seven on either side of the edit. If
     // it falls, either a control was deleted or a spelling escaped
     // `ENFORCE_CALLS`, and the second is the one that looks like nothing.
+    // Seven until the scan learned to skip `#[cfg(test)]`. Six of the seven are
+    // real production paths; the seventh was `tool_executor.rs`, counted only
+    // for an `enforce` call inside a unit test. Lowered deliberately and in the
+    // same edit that removed its exemption — the floor is meant to catch a
+    // control going missing, and nothing went missing here.
     assert!(
-        enforcing.len() >= 7,
+        enforcing.len() >= 6,
         "only {} file(s) appear to enforce grounding, which is fewer than the \
-         audit counted (7). Either the scan stopped matching, or call sites were \
+         audit counted (6). Either the scan stopped matching, or call sites were \
          removed — both need a look before this passes. A call site that changed \
          which `grounding_trust` entry point it uses reads as the second and is \
          the first: see `ENFORCE_CALLS`.",

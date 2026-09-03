@@ -206,6 +206,116 @@ prevent.
 
 ## 6. The measurement to keep
 
-Three typed agents bypass their own tool loop. That number should go to zero, and
-it should go to zero by somebody *deciding* what those agents should do — not by
-the check being relaxed. `supply_chain_oracle` has 83 pulses behind it.
+~~Three~~ **Two** typed agents bypass their own tool loop. That number should go
+to zero, and it should go to zero by somebody *deciding* what those agents should
+do — not by the check being relaxed. `supply_chain_oracle` has 83 pulses behind
+it.
+
+`genome_profiler` is off the list. It is now guarded per-card rather than by a
+string in a test file:
+`tool_executor::trigger_tests::no_typed_card_removes_the_tool_loop_its_own_contract_needs`
+reads every card, and `KNOWN` holds the remaining two and may only shrink.
+
+---
+
+## 7. What fixing `genome_profiler` turned up
+
+### 7.1 The two homes — resolved
+
+Its field contract lived in **`grounding_trust::FIELD_CONTRACTS` (Rust)** and its
+card had **no `grounding` block**. Both were real, and each was authoritative for
+a different reader:
+
+* `declaration_ladder::has_field_contract` checks **both**, so the ladder showed
+  the rung declared;
+* `ContractBuilder` decompiles the **card**, found nothing, and produced five
+  blocks with an empty `why` — which by design does not compile, **so the agent
+  could not be saved from its own editor**.
+
+The shelf read one home; the editor edited the other. Every symptom followed.
+
+Fixed by authoring `agents/curated/genome_profiler/output_contract.sketch.json`
+and splicing the compiled result. Decompile → recompile is now a fixpoint. No
+field was pruned: all 15 survive, all 7 `Unsourced` among them.
+
+### 7.2 The episode that "worked" was a hallucination
+
+The reference pulse `16d6439e` was read as evidence that `genome_profiler` did
+call its tools. It did not. The model **wrote `<function_calls>` blocks into its
+own prose**, wrote *"Based on the tool responses:"*, and invented the rank ladder
+and the three sister taxa. `self.inner` is `LLMExecutor`/`MultiModelExecutor`,
+both of which send `tools: None` — so the bypass really does remove tools.
+
+**12 of its 68 pulses did this, and it was the only agent on the fleet doing it:**
+
+```sql
+SELECT a.agent_name,
+       count(*) FILTER (WHERE e.response_text ILIKE '%<function_calls>%') AS faked,
+       count(*) AS total
+  FROM episodes e JOIN agents a ON a.agent_id = e.agent_id
+ GROUP BY 1 HAVING count(*) FILTER (WHERE e.response_text ILIKE '%<function_calls>%') > 0;
+--  genome_profiler | 12 | 68
+```
+
+The grounding gate passed every one, because it checks whether a `Sourced` field
+is *populated*, not whether the tool it names was ever *reached*. **A fabricated
+tool call is invisible to a contract that only inspects the document.** That is a
+gap in the model, not in this card, and it is worth its own work item.
+
+### 7.3 ⚠️ Adding a card grounding map can *weaken* enforcement — unresolved
+
+The in-flight `grounding_trust::enforce_from_output_contract` (uncommitted,
+parallel session) **prefers `output_contract.grounding` and falls back to
+`FIELD_CONTRACTS`**. So giving an agent a card map silently moves it off the
+field-level path onto the block-level one.
+
+The card vocabulary is per-**block**; `FIELD_CONTRACTS` is per-**field**. Four of
+`genome_profiler`'s five blocks are *mixed* — `genome` is `sourced` as a block
+while `genome.ploidy` and `genome.notable_genes` have no source at all.
+
+Measured, same document down both paths:
+
+| | field path (today) | block path (in flight) |
+|---|---|---|
+| `genome.ploidy: "diploid"` | nulled | **survives** |
+| `genome.notable_genes: [...]` | nulled | **survives** |
+| `phylogeny.divergence_mya: 45.0` | nulled | **survives** |
+| `phylogeny.defining_traits: "…"` | nulled | **survives** |
+| `conservation` | object of nulls | **`null`** — its own schema forbids this |
+| `summary` leak scan | `NARRATIVE_LEAKS` runs | **not ported** (their TODO) |
+
+Four recalled values surviving in retrieved blocks is the original defect, inside
+the mechanism built to prevent it. This is the repo's characteristic bug again: *a
+writer that replaces a composite it only partly owns.*
+
+**Nothing is broken today** — that function is not committed and
+`Pulse::grade`/`enforce` still take the field path. Pinned by
+`contract_sketch::tests::the_field_level_contract_still_nulls_every_unsourced_value`,
+which goes red if `genome_profiler` is dropped from `FIELD_CONTRACTS` on the
+reasonable-sounding grounds that the card declares it now.
+
+**The decision needed** (parallel session's call, it is their function): either
+run both and take the stricter verdict, make the block path field-aware, or keep
+`FIELD_CONTRACTS` as an override rather than a fallback. The last is smallest and
+matches §7.6 of `DESIGN_a2a_contracting.md`, which already says the Rust table is
+permanent for cross-checks.
+
+Separately and regardless of `genome_profiler`: the block path emitting `null`
+for a required object block produces documents that fail the agent's own schema.
+
+### 7.4 One verdict, three subjects — resolved
+
+`compile` now has exactly one subject: **the agent**. Said once, at the top of the
+shelf, summing prompt faults and contract faults. Below it, panels report facts
+and name their own subject:
+
+| surface | subject | says |
+|---|---|---|
+| shelf headline | the agent | *This agent compiles.* / *…does not compile — N error(s)*, each fault naming where |
+| compile block | the **stored** contract | *The contract as stored: N declared field(s)…* — no verdict word |
+| contract builder | the **draft** | *Draft is ready to save* / *Draft: N to fix before it can be saved* |
+
+Green still means zero **errors**: the healthy headline carries the pending count
+rather than hiding it. Held by `scripts/check_specimen_shelf.js` §2c, including
+the rule that the word `compile` may not reappear as a verdict in the block
+below.

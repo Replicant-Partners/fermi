@@ -76,6 +76,12 @@ window.AgentFields = (function () {
     { group: "manage", key: "min_tier", path: "min_tier",
       label: "minimum tier", kind: "text",
       help: "The lowest tier of caller allowed to invoke this agent." },
+    // ── ports ─────────────────────────────────────────────────────────────
+    { group: "ports", key: "accepts", path: "accepts",
+      label: "accepts", kind: "tags",
+      help: "Labels this agent declares it can consume. A stud connects where " +
+            "another agent's `produces` carries a matching label. Bare nouns " +
+            "and schema IDs (e.g. fermi/forecast_request) are both valid." },
     // Valence is a structured object and was missing entirely, because the spec
     // had no kind for one. A raw JSON box is how somebody writes valid JSON of
     // the wrong shape, so the four members it actually has get four controls:

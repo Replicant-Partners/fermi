@@ -3066,8 +3066,168 @@ fn set_path(doc: &mut Value, path: &str, value: Value) -> bool {
     }
 }
 
+/// General enforcement entry point — reads the grounding contract from the
+/// compiled `output_contract` on the agent's card.
+///
+/// **This is the one path.** Any agent with a compiled `output_contract` (i.e.
+/// a sketch that has been run through `contract-sketch`) gets enforcement
+/// automatically. No `FIELD_CONTRACTS` entry is needed. The compiled
+/// `grounding` map already contains the status (sourced / inferred /
+/// unavailable / narrative) and the tool name for each block — everything
+/// `enforce` needs to null ungrounded fields and stamp provenance.
+///
+/// ## Precedence: `FIELD_CONTRACTS` wins where it exists
+///
+/// The card's map is per-**block**; `FIELD_CONTRACTS` is per-**field**. Ten
+/// agents have Rust entries, and several of them have *mixed* blocks — a block
+/// that is `sourced` as a whole while individual fields under it have no source
+/// at all. `genome_profiler.genome` is `sourced` from `ncbi_genome_search`
+/// while `genome.ploidy` and `genome.notable_genes` are `Unsourced`.
+///
+/// So the card map cannot express what those ten already declare, and preferring
+/// it *loses* enforcement rather than gaining it. Measured on `genome_profiler`
+/// the moment its card gained a grounding map: `ploidy: "diploid"`,
+/// `notable_genes`, `divergence_mya: 45.0` and `defining_traits` all survived
+/// the hop, and `conservation` was replaced wholesale by `null` — which its own
+/// schema forbids, since the block is a required object.
+///
+/// `grounding_is_enforced_at_the_hop` caught it, and is worth reading for how
+/// nearly it did not: its first assertion,
+/// `payload.conservation.iucn_status.is_null()`, passed **vacuously**, because
+/// indexing a deleted parent also yields null. Only the second assertion — that
+/// the strip is *reported*, at `conservation.iucn_status` — could tell a nulled
+/// field from a nulled block. Absent and bad, wearing the same value again.
+///
+/// This is the narrow, behaviour-preserving choice: the ten keep exactly the
+/// enforcement they had, and every other agent gets the card path automatically
+/// with no Rust entry. It is deliberately *not* the final answer. Either the
+/// card vocabulary grows a per-field form, or this runs both and takes the
+/// stricter verdict. Until then a card map is additive for the ten rather than
+/// authoritative, which is also what `DESIGN_a2a_contracting.md` §7.6 already
+/// says about the table being permanent for cross-checks.
+///
+/// Called by `envelope::build` at every delegation hop.
+pub fn enforce_from_output_contract(
+    agent_id: &str,
+    output_contract: Option<&Value>,
+    doc: &mut Value,
+) -> Report {
+    // The finer-grained contract wins. See the precedence note above: this is
+    // the opposite of what it looks like it should be, and reversing it silently
+    // un-enforces seven fields on the agent this whole subsystem was built for.
+    if contracts_for(agent_id).next().is_some() {
+        return enforce(agent_id, doc);
+    }
+
+    let grounding = output_contract
+        .and_then(|oc| oc.get("grounding"))
+        .and_then(|g| g.as_object())
+        .filter(|g| !g.is_empty());
+
+    if let Some(grounding) = grounding {
+        return enforce_from_grounding_map(grounding, doc);
+    }
+
+    // Neither home has anything to say about this agent.
+    enforce(agent_id, doc)
+}
+
+/// Drive enforcement from the `grounding` object already compiled into the
+/// agent's `output_contract`. Block-level: one entry per top-level response
+/// block (items, risks, summary, taxonomy, genome, …).
+///
+/// Rules:
+///   unavailable → null the block if the model filled it in; stamp
+///                 `unavailable_no_tool_source`
+///   sourced     → stamp `tool_verified` if the block has content, else
+///                 `tool_no_match` (proxy for "tool was asked")
+///   inferred    → stamp `model_inference` (constant — no tool, deliberate
+///                 judgement)
+///   narrative   → no provenance stamp; scan for leaks (TODO: port
+///                 NARRATIVE_LEAKS scanning to this path)
+///
+/// The platform's verdict overwrites any `_provenance` value the model may
+/// have emitted — the model cannot set its own grounding strength higher than
+/// the contract allows.
+fn enforce_from_grounding_map(
+    grounding: &serde_json::Map<String, Value>,
+    doc: &mut Value,
+) -> Report {
+    if !doc.is_object() {
+        return Report::default();
+    }
+
+    let mut report = Report::default();
+    let pre_contract = doc.get(PRE_CONTRACT_MARKER).is_some();
+
+    for (block_name, block_grounding) in grounding {
+        // Skip the generated `_provenance` siblings — this function stamps
+        // them; they are not authored grounding declarations.
+        if block_name.ends_with("_provenance") {
+            continue;
+        }
+
+        let status = block_grounding
+            .get("status")
+            .and_then(|s| s.as_str())
+            .unwrap_or("narrative");
+
+        // 1. Null blocks the model filled in when no tool can supply them.
+        if status == "unavailable" {
+            if path_has_claim(doc, block_name) {
+                if let Some(removed) = null_path(doc, block_name) {
+                    report.violations.push(Violation {
+                        path: block_name.clone(),
+                        removed,
+                        kind: ViolationKind::UngroundedField,
+                    });
+                }
+            }
+        }
+
+        // Narrative blocks get no provenance stamp — a retrieval verdict on
+        // a prose field is a category error. TODO: port NARRATIVE_LEAKS
+        // scanning here once the block name → leak rules mapping exists.
+        if status == "narrative" {
+            continue;
+        }
+
+        // 2. Stamp `<block>_provenance`. The platform's verdict is
+        // authoritative; overwrite whatever the model emitted.
+        let verdict = if pre_contract {
+            PROV_UNAVAILABLE
+        } else {
+            match status {
+                "sourced" => {
+                    // Content present ≈ tool returned data. Same proxy the
+                    // FIELD_CONTRACTS path uses; see enforce() step 2.
+                    if path_has_claim(doc, block_name) {
+                        PROV_TOOL
+                    } else {
+                        PROV_NO_MATCH
+                    }
+                }
+                "inferred" => PROV_INFERRED,
+                _ => PROV_UNAVAILABLE, // "unavailable" + anything unrecognised
+            }
+        };
+
+        let provenance_key = format!("{block_name}_provenance");
+        if let Some(obj) = doc.as_object_mut() {
+            obj.insert(provenance_key, Value::String(verdict.to_string()));
+        }
+        report.provenance.push((block_name.clone(), verdict));
+    }
+
+    report
+}
+
 /// Strip ungrounded values from `doc`, stamp provenance, and report what
 /// was wrong.
+///
+/// Legacy path — reads from `FIELD_CONTRACTS`. Called by
+/// `enforce_from_output_contract` when no compiled `output_contract` is
+/// present. Will shrink as agents compile their contracts.
 ///
 /// A no-op for agents with no declared contract: silence must not read as a
 /// verdict. `port_census.py` is what reports the absence of a contract;
@@ -5157,5 +5317,85 @@ mod tests {
         // computed from an empty string must not read as a finding.
         assert_eq!(response_floor("enemy_sensor", ""), Some(PROV_UNAVAILABLE));
         assert_eq!(response_floor("weather_oracle", ""), Some(PROV_UNAVAILABLE));
+    }
+
+    /// **A card grounding map must never weaken an agent that has field-level
+    /// contracts.**
+    ///
+    /// The card vocabulary is per-block and `FIELD_CONTRACTS` is per-field, and
+    /// four of `genome_profiler`'s five blocks are *mixed*: `genome` is
+    /// `sourced` from `ncbi_genome_search` while `genome.ploidy` and
+    /// `genome.notable_genes` have no source at all. Route that document down
+    /// the block path and the recalled values survive, because the block they
+    /// sit in is legitimately sourced.
+    ///
+    /// This is not hypothetical: it fired the day `genome_profiler`'s card
+    /// gained its grounding map, and `envelope::grounding_is_enforced_at_the_hop`
+    /// went red. Four fabricated values crossed the seam and `conservation` was
+    /// replaced by a bare `null` that the agent's own schema forbids.
+    ///
+    /// It is the characteristic bug of this codebase in a new place: a writer
+    /// that replaces a composite it only partly owns.
+    #[test]
+    fn a_card_grounding_map_does_not_override_a_field_level_contract() {
+        let card: Value = match std::fs::read_to_string(
+            "agents/curated/genome_profiler/agent_card.json",
+        ) {
+            Ok(raw) => serde_json::from_str(&raw).unwrap(),
+            Err(_) => return,
+        };
+        let oc = card.pointer("/capabilities/output_contract");
+        assert!(
+            oc.and_then(|o| o.get("grounding")).is_some(),
+            "this test is about an agent that has BOTH homes. If the card's map \
+             was removed, the shelf's contract editor can no longer save it — \
+             see contract_sketch::genome_profiler_round_trips_through_its_own_editor"
+        );
+
+        let mut doc = json!({
+            "taxonomy": { "order": "Lepidoptera" },
+            "genome": { "estimated_size_mb": 245, "ploidy": "diploid",
+                        "notable_genes": ["cyp6b"] },
+            "phylogeny": { "sister_taxa": ["Danaus gilippus"],
+                           "divergence_mya": 45.0, "defining_traits": "scaled wings" },
+            "conservation": { "iucn_status": "Least Concern" },
+            "summary": "A nymphalid."
+        });
+        let report = enforce_from_output_contract("genome_profiler", oc, &mut doc);
+
+        // The four that the block path lets through.
+        for path in [
+            "/genome/ploidy",
+            "/genome/notable_genes",
+            "/phylogeny/divergence_mya",
+            "/phylogeny/defining_traits",
+        ] {
+            assert_eq!(
+                doc.pointer(path),
+                Some(&Value::Null),
+                "`{path}` crossed the hop. The card's block-level map cannot see \
+                 it, so `FIELD_CONTRACTS` has to take precedence."
+            );
+        }
+
+        // A nulled FIELD, not a deleted block. Indexing a deleted parent also
+        // yields null, which is how the hop test nearly passed while wrong.
+        assert!(
+            doc.get("conservation").is_some_and(Value::is_object),
+            "`conservation` became {:?}. The schema requires an object, and a \
+             bare null makes the agent fail its own validation.",
+            doc.get("conservation")
+        );
+
+        // And the strip is reported at the FIELD, so a reader can tell which
+        // claim was removed rather than only that the block was touched.
+        assert!(
+            report
+                .violations
+                .iter()
+                .any(|v| v.path == "conservation.iucn_status"),
+            "the removal must be reported per field: {:?}",
+            report.violations.iter().map(|v| &v.path).collect::<Vec<_>>()
+        );
     }
 }

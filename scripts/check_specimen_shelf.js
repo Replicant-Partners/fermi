@@ -66,6 +66,7 @@ globalThis.fetch = () => Promise.reject(new Error("no net"));
 const mod = { exports: {} };
 new Function("module", blocks[0] +
   "\n;module.exports = { drawer, declarationPanel, setShelfWidth, wireGrip," +
+  " agentVerdict, promptCheck," +
   " set D(v) { D = v; }, get D() { return D; } };")(mod);
 const S = mod.exports;
 
@@ -140,8 +141,12 @@ const GP = {
 };
 S.D = { profile: PROFILE, declaration: GP };
 let c = S.declarationPanel();
-ok(/Compiles\./.test(c),
-  "an agent with seven pending fields and no errors does not read as compiling");
+ok(/The contract as stored/.test(c) && /15 declared field\(s\)|4 declared field\(s\)/.test(c),
+  "the compile block does not name its own subject, so its headline competes " +
+  "with the agent's");
+ok(!/\bcompiles?\b/i.test(c.replace(/does not compile/g, "")),
+  "the compile block is still passing a verdict. `compile` has exactly one " +
+  "subject now — the agent — and it is said once, at the top of the shelf");
 ok(/Green means zero <b>errors<\/b>/.test(c),
   "the page does not say green means zero errors, so pending reads as failure");
 ok(/c-pending/.test(c), "pending fields carry no state class");
@@ -171,7 +176,8 @@ S.D = { profile: PROFILE, declaration: { ...GP, compiles: false,
            { path: "b", state: "error", tool: "ghost_tool" },
            { path: "c", state: "pending", tool: null }] } };
 c = S.declarationPanel();
-ok(/does not compile/.test(c), "two unsettleable fields still read as compiling");
+ok(/2<\/b> that nothing can settle/.test(c),
+  "two unsettleable fields are not reported by the stored-contract block");
 ok(/ghost_tool/.test(c), "the error does not name the tool nobody can dispatch");
 // Even then, pending must not be swept into the failure.
 ok(/standing request/.test(c),
@@ -181,9 +187,71 @@ ok(/standing request/.test(c),
 S.D = { profile: PROFILE, declaration: { rungs: RUNGS, declared: 2, total: 4,
                                          next: "output_schema" } };
 c = S.declarationPanel();
-ok(!/Compiles\./.test(c),
-  "an agent with no declared fields claims to compile, which asserts something " +
-  "about a contract that does not exist");
+ok(!/The contract as stored/.test(c),
+  "an agent with no declared fields is reporting on a stored contract, which " +
+  "asserts something about a contract that does not exist");
+
+// ── 2c. ONE verdict, and it is about the agent ───────────────────────────
+//
+// Three headlines used to disagree on one screen, each about a different
+// subject and all three correct:
+//
+//   prompt panel      "2 errors"       the prompt against the contract
+//   compile block     "Compiles."      the STORED contract's fields
+//   contract builder  "Not compiled"   the DRAFT in the editor
+//
+// A reader asking "does this agent work?" got three answers to three questions
+// they had not asked. So the verb has one subject, said once and first; the
+// panels below report facts and name their own subjects.
+const TOOLED = { ...PROFILE, prompt_check: {
+  gets_tools: true, trigger: null, sourced_fields: 6,
+  contradicts_contract: false, produces_schema: "rabble/phylogenetic_profile",
+  names_its_type: true } };
+
+S.D = { profile: TOOLED, declaration: GP };
+let v = S.agentVerdict();
+ok(/This agent compiles\./.test(v),
+  "an agent whose prompt and contract agree, with no unsettleable field, does " +
+  "not read as compiling");
+ok(/7 field\(s\) are pending/.test(v),
+  "the verdict swallowed the pending count. Green means zero ERRORS, and the " +
+  "seven standing requests still have to be visible in the headline that " +
+  "declares the agent healthy");
+
+// The contradiction the platform can author itself: a contract naming tools
+// for six fields, and a prompt that removed the loop which could call them.
+// This is genome_profiler's state for its first 68 pulses.
+const BYPASSED = { ...PROFILE, prompt_check: {
+  gets_tools: false, trigger: "ONLY", sourced_fields: 6,
+  contradicts_contract: true, produces_schema: "rabble/phylogenetic_profile",
+  names_its_type: false } };
+S.D = { profile: BYPASSED, declaration: GP };
+v = S.agentVerdict();
+ok(/does not compile — 2 error\(s\)/.test(v),
+  "the two prompt errors do not reach the agent's verdict, so the shelf can " +
+  "say `Compiles.` about an agent that cannot call any of its tools");
+ok(/what it says/.test(v),
+  "the verdict does not say WHERE the fault is, so it is a grade rather than " +
+  "a direction");
+
+// Faults from both halves add up into one number, rather than two panels each
+// reporting their own.
+S.D = { profile: BYPASSED, declaration: { ...GP,
+  counts: { resolved: 1, error: 2, pending: 7 } } };
+v = S.agentVerdict();
+ok(/3 error\(s\)/.test(v),
+  "prompt faults and contract faults are not summed, so the headline is about " +
+  "a panel rather than about the agent");
+ok(/its contract/.test(v) && /what it says/.test(v),
+  "the verdict names only one of the two places that are wrong");
+
+// Absent is not bad: an agent with no prompt check and no contract cannot
+// contradict anything, and must not be reported as broken.
+S.D = { profile: PROFILE, declaration: { rungs: RUNGS, declared: 2, total: 4 } };
+v = S.agentVerdict();
+ok(/This agent compiles\./.test(v) && !/error/.test(v),
+  "an unconfigured agent is being called broken. Absent must look different " +
+  "from bad.");
 
 // ── 3. nothing left to declare, and a ladder that did not load ──────────
 S.D = { profile: PROFILE,
@@ -344,6 +412,9 @@ ok((shelf.match(/class="rung [^"]*grouped/g) || []).length === 3,
 const portsRow = shelf.slice(shelf.indexOf("ports"), shelf.indexOf("output_type"));
 ok(!/closed by the/.test(portsRow),
   "the ports rung claims the contract editor closes it; `accepts` is nobody else's");
+// The ports rung now has an editor for `accepts`.
+ok(shelf.includes('id="af-ports"'),
+  "the ports rung has no mount point for the accepts editor");
 // The two groups mount the shared field editor rather than printing a <dl>.
 // A read-only summary where an editor belongs is how the old page grew eight
 // tabs, and a second hand-written form is how they drifted.

@@ -1425,4 +1425,160 @@ mod trigger_tests {
              while instructing the agent to fill sourced blocks from tools"
         );
     }
+
+    /// **Asserted against the real cards, not against a string in this file.**
+    ///
+    /// `creature_agent_prompts_do_not_bypass_tool_loop` above checks a sentence
+    /// somebody typed here. That sentence stayed green for the whole time
+    /// `genome_profiler`'s actual card said *"report where it sits in the tree
+    /// of life USING ONLY DATA YOUR TOOLS RETURN"* — a phrase whose plain
+    /// meaning is the opposite of what it did, because the substring `ONLY`
+    /// made `ToolAwareExecutor` return `self.inner.execute(..)` and the inner
+    /// executors send `tools: None`.
+    ///
+    /// The agent therefore had no tools at all, and it did not fail loudly. It
+    /// wrote `<function_calls>` blocks into its own prose, wrote "Based on the
+    /// tool responses:", and continued with a rank ladder and a list of sister
+    /// taxa from memory. **12 of its 68 pulses did this**, measured in
+    /// production, and it was the only agent on the fleet doing it. The
+    /// documents were correctly shaped, the nulls were in the right places, and
+    /// the grounding gate passed them — because the gate checks whether a
+    /// `Sourced` field is populated, not whether the tool it names was ever
+    /// reached.
+    ///
+    /// So the fixture was the bug again, one level up: a test asserting the
+    /// wording somebody meant to ship instead of the wording that shipped.
+    ///
+    /// The baseline is the count that must go to zero, and it may only fall.
+    #[test]
+    fn no_typed_card_removes_the_tool_loop_its_own_contract_needs() {
+        // Typed agents whose prompt still bypasses. Falling is the point; each
+        // removal is somebody deciding what that agent should do, never the
+        // check being relaxed. `supply_chain_oracle` has 83 pulses behind it.
+        const KNOWN: &[&str] = &["supply_chain_oracle", "video_analyst"];
+
+        let mut bypassing: Vec<(String, &'static str)> = Vec::new();
+        let mut typed = 0usize;
+
+        for tier in std::fs::read_dir("agents").expect("agents/").flatten() {
+            if !tier.path().is_dir() {
+                continue;
+            }
+            for agent in std::fs::read_dir(tier.path()).expect("tier").flatten() {
+                let dir = agent.path();
+                let card_path = dir.join("agent_card.json");
+                if !card_path.exists() {
+                    continue;
+                }
+                let raw = std::fs::read_to_string(&card_path).expect("read card");
+                let card: serde_json::Value = serde_json::from_str(&raw)
+                    .unwrap_or_else(|e| panic!("{}: {e}", card_path.display()));
+
+                // Only typed agents can have this contradiction: an untyped
+                // agent declares no sourced field, so a prompt with no tool
+                // loop is a choice rather than a disagreement. Absent must not
+                // look like bad.
+                let has_sourced = card
+                    .pointer("/capabilities/output_contract/grounding")
+                    .and_then(|g| g.as_object())
+                    .is_some_and(|g| {
+                        g.values().any(|e| {
+                            e.get("status").and_then(|s| s.as_str()) == Some("sourced")
+                        })
+                    });
+                if !has_sourced {
+                    continue;
+                }
+                typed += 1;
+
+                let name = dir
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let prompt = card.get("system_prompt").and_then(|p| p.as_str());
+                if let Some(t) = prompt.and_then(structured_output_trigger) {
+                    bypassing.push((name, t));
+                }
+            }
+        }
+
+        assert!(
+            typed >= 8,
+            "only {typed} cards declare a sourced block — this guard is nearly \
+             inert and is probably reading the wrong directory"
+        );
+
+        for (name, trigger) in &bypassing {
+            assert!(
+                KNOWN.contains(&name.as_str()),
+                "`{name}`'s contract names a tool for at least one block, and its \
+                 prompt contains `{trigger}` — which makes `ToolAwareExecutor` \
+                 skip the tool loop, so the agent runs with no tools and those \
+                 blocks can only ever be filled from memory. Reword the prompt \
+                 (the meaning of ONLY survives as \"using no data other than what \
+                 your tools return\"), or regrade the blocks."
+            );
+        }
+        assert!(
+            bypassing.len() <= KNOWN.len(),
+            "the count went up: {bypassing:?}"
+        );
+        if bypassing.len() < KNOWN.len() {
+            panic!(
+                "{} of {} known bypassers left — remove the fixed one(s) from \
+                 KNOWN so the improvement is locked in. Still bypassing: {:?}",
+                bypassing.len(),
+                KNOWN.len(),
+                bypassing.iter().map(|(n, _)| n).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// `genome_profiler` is the worked example, so its card is asserted
+    /// directly rather than only through the fleet baseline above.
+    ///
+    /// Two facts, both invisible on every surface until the shelf's prompt
+    /// panel existed: the prompt must not remove the tool loop its six sourced
+    /// fields depend on, and it must name the type it is required to emit. A
+    /// prompt that names no type leaves nothing telling the agent what document
+    /// to produce, which is how a correctly-shaped hallucination gets written.
+    #[test]
+    fn the_genome_profiler_prompt_agrees_with_its_contract() {
+        let path = "agents/curated/genome_profiler/agent_card.json";
+        let Ok(raw) = std::fs::read_to_string(path) else {
+            return;
+        };
+        let card: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let prompt = card
+            .get("system_prompt")
+            .and_then(|p| p.as_str())
+            .expect("genome_profiler has a system prompt");
+
+        assert_eq!(
+            structured_output_trigger(prompt),
+            None,
+            "the prompt removes the tool loop again. It said `USING ONLY DATA \
+             YOUR TOOLS RETURN` for 68 pulses and meant the opposite of what it \
+             did; the phrasing that keeps the meaning is \"using no data other \
+             than what your tools return\"."
+        );
+
+        let produces = card
+            .pointer("/capabilities/output_contract/produces_schema")
+            .and_then(|v| v.as_str())
+            .expect("it declares a type");
+        assert!(
+            prompt.contains(produces),
+            "the contract declares `{produces}` and the prompt never names it"
+        );
+
+        // The trap that produced the fabrications, named in the prompt so the
+        // model is told the specific thing it did wrong.
+        assert!(
+            prompt.contains("<function_calls>"),
+            "12 of 68 pulses wrote a `<function_calls>` block into their prose \
+             and then narrated its imaginary result. The prompt has to say that \
+             a written-out tool call is not a tool call."
+        );
+    }
 }

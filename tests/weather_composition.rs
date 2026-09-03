@@ -358,7 +358,10 @@ fn all_four_are_typed_ungrandfathered_and_actually_asked_for_it() {
              about it whatever its card says"
         );
 
-        let prompt = c.get("system_prompt").and_then(|p| p.as_str()).unwrap_or("");
+        let prompt = c
+            .get("system_prompt")
+            .and_then(|p| p.as_str())
+            .unwrap_or("");
         for prop in schema(agent)
             .get("properties")
             .and_then(|p| p.as_object())
@@ -393,10 +396,8 @@ fn every_hop_in_this_composition_is_now_checkable() {
 
         // And the schema must be one the validator can actually evaluate,
         // or every document reports `unverified_unsupported_schema` instead.
-        let report = fermi::schema_validate::validate(
-            oc.get("schema").unwrap(),
-            &serde_json::json!({}),
-        );
+        let report =
+            fermi::schema_validate::validate(oc.get("schema").unwrap(), &serde_json::json!({}));
         assert!(
             report.unsupported.is_empty(),
             "`{member}`'s schema uses keywords src/schema_validate.rs cannot \

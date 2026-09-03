@@ -1,0 +1,21 @@
+{
+  "accepts_schema": "abw/coordination-request/1",
+  "title": "Workspace coordination request",
+  "fields": [
+    {
+      "name": "task",
+      "type": "string",
+      "note": "The coordination task, question, or trigger. Append '[COMPOSITION DREAMING — TENSION AUDIT]' to activate Stage 4 (valence audit, structural composition proposals, cascade RSI writes)."
+    },
+    {
+      "name": "workspace_id",
+      "type": "string?",
+      "note": "Target workspace ID. If omitted, resolved from the execution context."
+    },
+    {
+      "name": "focus_agent",
+      "type": "string?",
+      "note": "If provided, Stage 0 solicits a plan from only this agent rather than the whole roster. Used to target a single member's intentions rather than running a full team pre-flight."
+    }
+  ]
+}

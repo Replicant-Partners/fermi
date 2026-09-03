@@ -264,15 +264,39 @@
     "input_contract": {
       "accepts_schema": "scro/bom-query/1",
       "title": "BOM pricing request",
-      "note": "Typed query for BoM pricing. Caller must send a BomQuery. See sketch: agents/curated/supply_chain_oracle/input_contract.sketch.json once authored.",
-      "required_fields": [
+      "required": [
         "task",
         "bom_items"
       ],
-      "task_discriminator": "task",
-      "task_values": [
-        "resolve_bom"
-      ]
+      "schema": {
+        "$id": "scro/bom-query/1",
+        "title": "BOM pricing request",
+        "type": "object",
+        "required": [
+          "task",
+          "bom_items"
+        ],
+        "properties": {
+          "task": {
+            "type": "string",
+            "description": "Discriminator \u2014 always 'resolve_bom'. Any other value is not a valid BomQuery."
+          },
+          "bom_items": {
+            "type": "array",
+            "description": "Items to price. Each item: name (string, the ingredient or material), qty (number, quantity required), unit (string, e.g. kg/L/g/unit), role (string, e.g. substrate/solvent/packaging). Optional per-item: stage_id, cas_number, inci_name.",
+            "items": {}
+          },
+          "process_context": {
+            "type": "object",
+            "description": "Optional process context. Fields: process_name (string), production_scale (string: small_batch | pilot | industrial). Absence is treated as production_scale=small_batch."
+          },
+          "currency": {
+            "type": "string",
+            "description": "ISO 4217 currency code for pricing output (default EUR). If the oracle cannot price in the requested currency it prices in EUR and notes the deviation."
+          }
+        },
+        "additionalProperties": true
+      }
     }
   },
   "performance": {

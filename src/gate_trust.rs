@@ -112,6 +112,11 @@ pub enum Gate {
     Attachment = 6,
     /// A delegated document that contradicts its producer's own declared type.
     OutputSchema = 7,
+    /// A caller's query that does not conform to the callee's declared input_contract.schema.
+    ///
+    /// Advisory (non-blocking) — recorded as a counter, never halts execution.
+    /// Symmetric to OutputSchema. Absence means no input_contract was declared.
+    InputSchema = 8,
 }
 
 /// One gate's declaration.
@@ -298,6 +303,27 @@ pub const GATES: &[GateSpec] = &[
                            and all three are the absence of a check rather than \
                            the passing of one.",
     },
+    GateSpec {
+        gate: Gate::InputSchema,
+        id: "input_schema",
+        // Fires before dispatch — the caller can be told of a mismatch
+        // without spending tokens. But advisory (non-blocking) so untyped
+        // callers are not broken.
+        decides_before_the_artifact: true,
+        clock: Clock::Invocation,
+        retention: Retention::Counted,
+        site: "agent_backend::envelope::validate_input, called from \
+               execute_execute_agent before every delegation hop",
+        refuses: "a caller query that does not conform to the callee's declared \
+                  input_contract.schema — detected before dispatch, never fatal",
+        if_never_refuses: "Most agents do not declare an input_contract, so \
+                           no validation runs — the common case and correct. \
+                           When an agent does declare one, a gate that never \
+                           refuses means either every caller sends valid queries \
+                           or the schema is permissive (additionalProperties: \
+                           true, so extra fields pass). Check `undetermined` \
+                           before believing `approved`.",
+    },
 ];
 
 impl Gate {
@@ -356,6 +382,7 @@ pub const GATE_IDS: &[&str] = &[
     "rate_limit",
     "attachment",
     "output_schema",
+    "input_schema",
 ];
 
 const N: usize = GATES.len();

@@ -911,6 +911,7 @@ pub async fn create_agent_handler(
         model_params: serde_json::Value::Object(serde_json::Map::new()),
         valence: None,
         output_contract: req.output_contract.filter(|v| v.is_object()),
+        input_contract: None,
         taxonomy: Some(derived_taxonomy),
     };
 
@@ -1260,6 +1261,10 @@ pub async fn import_agent_handler(
         output_contract: card
             .get("capabilities")
             .and_then(|c| c.get("output_contract"))
+            .cloned(),
+        input_contract: card
+            .get("capabilities")
+            .and_then(|c| c.get("input_contract"))
             .cloned(),
         taxonomy,
     };
@@ -3874,6 +3879,7 @@ mod tests {
             model_params: json!({}),
             valence: None,
             output_contract: None,
+            input_contract: None,
             taxonomy: None,
         }
     }
@@ -3964,6 +3970,7 @@ mod tests {
             model_params: Some(json!({})),
             valence: Some(json!({})),
             output_contract: Some(json!({})),
+            input_contract: Some(json!({})),
             version: Some("1.0.0".into()),
             taxonomy: Some(json!({})),
         };

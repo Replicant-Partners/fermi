@@ -19,7 +19,7 @@
   html,body{margin:0;padding:0;background:var(--ink);color:var(--schematic);
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
     -webkit-tap-highlight-color:transparent;overflow-x:clip;}
-  .app{max-width:1300px;margin:0 auto;padding:14px 14px 28px;
+  .app{max-width:1380px;margin:0 auto;padding:14px 14px 28px;
     background:linear-gradient(var(--line) 1px, transparent 1px) 0 0/100% 22px,
       linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0/22px 100%, var(--ink);
     background-blend-mode:overlay;min-height:100vh;}
@@ -51,6 +51,12 @@
       grid-template-areas:"ctrl inst read";align-items:start;}
     .colInst{position:sticky;top:12px;}
     .colRead .log{height:180px;}
+  }
+  @media (min-width:1440px){
+    .grid{grid-template-columns:310px minmax(420px,1fr) 360px;}
+  }
+  @media (min-width:1920px){
+    .grid{grid-template-columns:340px minmax(520px,1fr) 420px;}
   }
   .eyebrow{font-family:"Courier New",monospace;font-size:11px;letter-spacing:.16em;
     color:var(--brass);text-transform:uppercase;margin-bottom:4px;}
@@ -304,33 +310,92 @@
   .legend i{width:8px;height:8px;border-radius:50%;display:inline-block;flex:0 0 auto;}
   ::-webkit-scrollbar{height:4px;width:4px;}
   ::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px;}
+
+  /* ---- large-screen scaling ---- */
+  @media (min-width:1440px){
+    .app{max-width:1600px;padding:18px 28px 40px;}
+    h1{font-size:26px;}
+    .sub{font-size:14px;}
+    .colRead .log{height:220px;}
+    .stage{min-height:340px;}
+    .ctl{font-size:11px;padding:6px 12px;}
+    .loopChip{font-size:10px;}
+    .modeChip{font-size:11px;}
+    .panel .ptext{font-size:12px;}
+  }
+  @media (min-width:1920px){
+    .app{max-width:none;padding:24px 56px 56px;}
+    h1{font-size:34px;letter-spacing:.03em;}
+    .sub{font-size:15px;}
+    .hint{font-size:12.5px;}
+    .sectionLbl{font-size:10px;margin:16px 0 8px;}
+    .clockRow{gap:10px;margin-bottom:14px;}
+    .clock{padding:10px 8px;}
+    .clock .cname{font-size:11px;letter-spacing:.08em;}
+    .clock .cblocks{font-size:9px;}
+    .checkCell .name{font-size:11px;}
+    .checkCell .tag{font-size:9px;}
+    .meterName{font-size:10.5px;width:92px;}
+    .meterNum{font-size:11px;}
+    .colRead .log{height:280px;}
+    .stage{min-height:420px;}
+    .ctl{font-size:12px;padding:7px 14px;}
+    .loopChip{font-size:11px;padding:5px 9px;}
+    .modeChip{font-size:12px;padding:6px 10px;}
+    .panel .ptext{font-size:13px;line-height:1.6;}
+    .panel .plabel{font-size:11px;}
+    .qrow{font-size:11px;}
+    .log{font-size:11px;}
+    .assembleBtn,.runTaskBtn{font-size:11px;}
+    .ctl.tour{font-size:13px;padding:10px 20px;letter-spacing:.04em;}
+  }
+
+  /* ---- concept row (orientation for non-experts) ---- */
+  .conceptRow{display:flex;gap:8px;margin:12px 0 16px;flex-wrap:wrap;}
+  .concept{flex:1;min-width:180px;background:var(--panel);border:1px solid var(--line);
+    border-radius:5px;padding:9px 12px;font-size:11.5px;line-height:1.55;
+    color:var(--schematic-dim);}
+  .concept .ckey{display:block;font-family:"Courier New",monospace;font-size:8.6px;
+    letter-spacing:.14em;text-transform:uppercase;color:var(--brass);margin-bottom:4px;}
+  @media (min-width:1920px){
+    .conceptRow{gap:12px;margin:16px 0 22px;}
+    .concept{font-size:13px;padding:12px 15px;}
+    .concept .ckey{font-size:10px;}
+  }
 </style>
 </head>
 <body>
 <div class="app">
   <header>
-    <div class="eyebrow">Axolotl Partners — ABW, playable</div>
-    <h1>The loops and their gates</h1>
-    <p class="sub">Three agents that have to work together. Five ways the system is allowed to change itself — and a <b>gate on every one of them</b>. Turn the gates off and nothing looks different. That's the whole problem.</p>
+    <div class="eyebrow">Fermi · Grounded Agent Platform · Interactive</div>
+    <h1>Grounded agents — the pulse, the loops, and their gates</h1>
+    <p class="sub">Three AI agents sharing a biodiversity task. Five ways the system improves itself — with a <b>gate on every one</b>. A <b>grounded agent</b> is one whose claims can be traced to a verifiable source. The <b>pulse</b> is the gap between what an agent declares about its own accuracy and what the verification record has actually measured. Switch the gates off and nothing looks different. That is the whole problem.</p>
   </header>
 
   <div class="ctlRow">
-    <button class="ctl tour" id="tourBtn">▶ Show me what goes wrong</button>
+    <button class="ctl tour" id="tourBtn" title="Guided walkthrough: 8 steps, ~3 minutes">▶ Show me what goes wrong</button>
+  </div>
+
+  <div class="conceptRow">
+    <div class="concept"><span class="ckey">Grounded</span>A claim is grounded when it traces to a tool call, a citation, or a resolved outcome — not to the model’s own confidence. Grounding rises only by adding verified evidence; deletion cannot raise it.</div>
+    <div class="concept"><span class="ckey">Pulse</span>Each agent shows two bars beneath its gear. The top bar is its self-reported calibration. Once claims have been checked, a second bar appears showing the actual rejection rate. Watching both together is the design — the gap between them is the pulse.</div>
+    <div class="concept"><span class="ckey">Gate</span>A checkpoint on a feedback loop. Without it the loop still runs — it just rewrites faster than anything can verify. Toggle the gate switch above to see what changes. (Nothing visible does.)</div>
+    <div class="concept"><span class="ckey">Loop</span>One of five ways the system modifies itself: distilling lessons from episodes, accepting corrections, measuring coherence across the team, reshaping who is on the team, and calibrating confidence against real outcomes. Each has a rule about when it may fire.</div>
   </div>
 
   <div class="grid">
   <!-- ============ CENTRE: the live instrument cluster ============ -->
   <div class="colInst">
-  <div class="sectionLbl">Three clocks<em>only two of them block anything</em></div>
+  <div class="sectionLbl">Three heartbeats<em>only two can block anything — which is the problem</em></div>
   <div class="clockRow">
     <div class="clock" id="clock-admission">
-      <div class="cname">Admission</div><div class="cblocks">blocks publish</div>
+      <div class="cname">Admission</div><div class="cblocks">gates new connections</div>
     </div>
     <div class="clock" id="clock-invocation">
-      <div class="cname">Invocation</div><div class="cblocks">blocks the answer</div>
+      <div class="cname">Invocation</div><div class="cblocks">marks what the answer contains</div>
     </div>
     <div class="clock nogate" id="clock-sweep">
-      <div class="cname">Sweep</div><div class="cblocks">blocks nothing</div>
+      <div class="cname">Sweep</div><div class="cblocks">async — nothing waits on it</div>
     </div>
   </div>
 
@@ -349,7 +414,7 @@
     </svg>
   </div>
 
-  <div class="sectionLbl">The ladder<em>A = admission · I = invocation · S = sweep</em></div>
+  <div class="sectionLbl">Five checks — the ladder<em>A·admission · I·invocation · S·sweep show which clock can see each check</em></div>
   <div class="checkRow" id="checkRow">
     <div class="checkCell" data-check="presence"><div class="name">Presence</div><div class="tag">A·S</div><div class="dot"></div></div>
     <div class="checkCell" data-check="liveness"><div class="name">Liveness</div><div class="tag">S</div><div class="dot"></div></div>
@@ -362,7 +427,7 @@
 
   <!-- ============ LEFT: everything you can press ============ -->
   <div class="colCtrl">
-  <div class="sectionLbl">Scoreboard<em>deletion cannot raise the first one</em></div>
+  <div class="sectionLbl">System health<em>grounded rises only by adding — deletion cannot raise it</em></div>
   <div class="metersBlock">
     <div class="meterRow">
       <div class="meterName fit">Grounded</div>
@@ -380,13 +445,13 @@
   <div class="ctlRow">
     <button class="ctl on" id="gateToggle">Gates: On</button>
     <button class="ctl sweep" id="sweepBtn">Run sweep</button>
-    <button class="ctl honest" id="honestBtn">What ran?</button>
+    <button class="ctl honest" id="honestBtn">Show what actually ran</button>
   </div>
 
   <button class="assembleBtn" id="assembleBtn">Assemble a team — the strategist proposes</button>
   <button class="runTaskBtn" id="runTaskBtn">Run a task through the team</button>
 
-  <p class="hint">Tap a <b>port</b>, then a port <b>of the same colour</b> on another agent. Same colour means the two labels resolve to the same registered type — that's a seam. Different colours are two strings that only look like they match.</p>
+  <p class="hint">To wire a connection: tap a <b>coloured dot</b> on one agent, then a dot <b>of the same colour</b> on another. Matching colour means the two port types are registered as the same kind of signal — that is a valid seam. Mismatched colours look joinable but aren’t. The admission gate runs immediately on every wiring attempt and may refuse.</p>
 
   <div class="legend">
     <span><i style="background:#4FD6D0"></i>Perception</span>
@@ -401,7 +466,7 @@
     <span><i style="background:#E1476B"></i>built on a fabrication</span>
   </div>
 
-  <div class="sectionLbl">Who is coordinating<em>real strategist agents</em></div>
+  <div class="sectionLbl">Coordination pattern<em>same agents, different strategist — swap to see the same seams re-arranged</em></div>
   <div class="modeChips">
     <div class="modeChip" data-mode="router">Router<span class="mid">moe_router</span></div>
     <div class="modeChip active" data-mode="pipeline">Pipeline<span class="mid">pipeline_strat</span></div>
@@ -409,27 +474,27 @@
     <div class="modeChip" data-mode="debate">Debate<span class="mid">debate_strat</span></div>
   </div>
 
-  <div class="sectionLbl">Five feedback loops<em>each has a gate — bar the last</em></div>
+  <div class="sectionLbl">Five improvement loops<em>tap to fire — select an agent first for loops 1, 2, 5</em></div>
   <div class="loopRow" id="loopRow">
-    <div class="loopChip" data-loop="learn">1 Learn<span class="gate">ceiling</span></div>
-    <div class="loopChip" data-loop="correct">2 Correct<span class="gate">Γ(C) ≥ .5</span></div>
-    <div class="loopChip" data-loop="coherence">3 Cohere<span class="gate">split type</span></div>
-    <div class="loopChip" data-loop="team">4 Evolve<span class="gate">owner</span></div>
-    <div class="loopChip" data-loop="calibrate">5a Calib<span class="gate">outcome</span></div>
-    <div class="loopChip" data-loop="fit">5b Fit<span class="gate">none ⚠</span></div>
+    <div class="loopChip" data-loop="learn">Learn<span class="gate">ceiling: inference only</span></div>
+    <div class="loopChip" data-loop="correct">Correct<span class="gate">coherence ≥ 0.5</span></div>
+    <div class="loopChip" data-loop="coherence">Cohere<span class="gate">classify tension</span></div>
+    <div class="loopChip" data-loop="team">Evolve team<span class="gate">owner sign-off</span></div>
+    <div class="loopChip" data-loop="calibrate">Calibrate<span class="gate">outcome first</span></div>
+    <div class="loopChip" data-loop="fit">Fit curve<span class="gate">no gate ⚠</span></div>
   </div>
   <button class="reset" id="resetBtn">Reset everything</button>
   </div><!-- /colCtrl -->
 
   <!-- ============ RIGHT: what just happened, and what is owed ============ -->
   <div class="colRead">
-  <div class="sectionLbl">Readout<em>what the system will say about itself</em></div>
+  <div class="sectionLbl">What just happened<em>the system’s account of itself</em></div>
   <div class="panel" id="actionPanel">
     <div class="plabel">Status</div>
-    <div class="ptext" id="actionText">Three agents, no team yet. Press <b>Show me what goes wrong</b> for the guided version, or assemble a team and start wiring.</div>
+    <div class="ptext" id="actionText">Three agents — no team yet. The calibration bar under each agent is self-reported. The second bar that appears once claims are checked is what the verification record actually shows. The gap between them is the <b>pulse</b>. Press <b>Show me what goes wrong</b> for the guided tour, or tap an agent to read its card.</div>
   </div>
 
-  <div class="sectionLbl">Unverified work queue<em>routed, not deleted</em></div>
+  <div class="sectionLbl">Verification queue<em>unverified claims land here — not deleted</em></div>
   <div class="queueBox" id="queueBox"></div>
 
   <div class="log" id="log"></div>
@@ -2102,8 +2167,8 @@
     tourBtn.disabled = true;
     tourBtn.textContent = '… running';
 
-    await say('1 · Three agents',
-      `One <b>looks things up</b> (species_resolver). One <b>declares four kinds of data and has a tool for one</b> (genome_profiler) — that agent is real, and it served thirteen invented profiles to real users before any of this existed. One is <b>allowed to guess</b> (enemy_sensor): it rates predation risk, which no database holds.<br><br>Telling the second from the third is the hard part. A checker that flags both is indistinguishable from a broken one.`, 5200);
+    await say('1 · What is a grounded agent?',
+      `A grounded agent is one whose output can be traced to a source: a tool call, a citation, a measured outcome. Not the model’s confidence. The source.<br><br>Here are three. One <b>looks things up</b> (species_resolver — almost everything it says has a record behind it). One <b>declares four kinds of data and has a tool for one</b> (genome_profiler) — that agent is real, and it served thirteen invented profiles to real users before any of this existed. One is <b>allowed to guess</b> (enemy_sensor): it rates predation risk, which no database holds — the rating was commissioned, not fabricated.<br><br>Telling the second from the third is the hard part. A checker that flags both is indistinguishable from a broken one.`, 6000);
 
     await say('2 · Admission — the gate that can say no',
       'Wiring a seam is a publish decision. Watch the top row: the admission clock fires, three rungs run, and at least one seam is going to be refused before it exists.', 3400);
@@ -2122,15 +2187,16 @@
     await runTask();
     await wait(2600);
 
-    await say('4 · The rung nobody ran',
-      `Look at the ladder. Presence, liveness and truth are showing green.<br><br>They have <b>never executed</b>. Not once. Nothing on this page has run them, and nothing on this page changed to tell you so.<br><br>Press the red button.`, 5000);
+    await say('4 · The check nobody ran',
+      `Look at the ladder. Presence, liveness and truth are showing green.<br><br>They have <b>never executed</b>. Not once. Nothing on this page has run them, and nothing changed to say so. A check that reports healthy because it never ran looks identical to one that passed.<br><br>Press <b>Show what actually ran</b>.`, 5000);
     honestBtn.style.boxShadow = '0 0 12px var(--crimson)';
+    honestBtn.title = 'Click to show what actually ran';
     await wait(2400);
     honestMode = true; honestEverUsed = true;
     honestBtn.classList.add('on');
     honestBtn.textContent = 'Showing';
     paintSweepRungs();
-    await say('4 · The rung nobody ran',
+    await say('4 · The check nobody ran',
       `Now they read <b>inert</b>.<br><br>Nothing about the system changed — only the display. Which is the finding: a gate that reports green because it never ran looks exactly like a gate that passed, and it is worse than no gate, because it absorbs the attention that would otherwise have noticed.<br><br>This was the cheapest rung to build and the last one we added.`, 6000);
     honestBtn.style.boxShadow = '';
 
@@ -2163,11 +2229,13 @@
 
     setPanel('Tour complete',
       `You now have everything the two papers argue, in the order they argue it:<br><br>` +
+      `• a <b>grounded agent</b> is one whose claims trace to a source, not to confidence<br>` +
+      `• the <b>pulse</b> is the gap between self-reported calibration and the measured rejection rate — both bars visible, always<br>` +
       `• a <b>ladder</b> of five checks, each blind to the one below<br>` +
-      `• on <b>three clocks</b>, only two of which can block anything<br>` +
-      `• unverified work <b>routed rather than deleted</b> — the queue below<br>` +
-      `• a <b>ceiling</b>: an agent's own conclusions never become facts<br>` +
-      `• and five <b>loops</b>, each with a gate, because a system that can rewrite itself without one is not adaptive, it is unmoored.<br><br>` +
+      `• on <b>three heartbeats</b>, only two of which can block anything<br>` +
+      `• unverified work <b>routed rather than deleted</b> — the queue to the right<br>` +
+      `• a <b>ceiling</b>: an agent’s own conclusions never become facts<br>` +
+      `• and five <b>improvement loops</b>, each with a gate, because a system that rewrites itself without one is not adaptive — it is unmoored.<br><br>` +
       `Everything is still live. Keep playing.`);
     log('Tour complete. Everything is still interactive.', 'tour');
     tourBtn.disabled = false;
@@ -2184,19 +2252,19 @@
   honestBtn.addEventListener('click', ()=>{
     honestMode = !honestMode;
     honestBtn.classList.toggle('on', honestMode);
-    honestBtn.textContent = honestMode ? 'Showing' : 'What ran?';
+    honestBtn.textContent = honestMode ? 'Showing' : 'Show what actually ran';
     paintSweepRungs();
     if(honestMode && !honestEverUsed){
       honestEverUsed = true;
       if(sweepRuns === 0){
-        setPanel('Show what ran',
-          `Three rungs just changed from green to <b>inert</b>. Nothing about the system changed — only whether the board was willing to say so.<br><br>` +
-          `An inert check and a passing check are indistinguishable from outside, and the inert one is worse than nothing: it consumes the attention that would otherwise notice.`);
-        log('Honest mode: three rungs have never executed.', 'bad');
+        setPanel('Show what actually ran',
+          `Three checks just changed from green to <b>inert</b>. Nothing about the system changed — only whether the board was willing to say so.<br><br>` +
+          `An inert check and a passing check are indistinguishable from outside. The inert one is worse than nothing: it absorbs the attention that would otherwise notice.`);
+        log('Show what ran: three checks have never executed — those greens were not earned.', 'bad');
       } else {
-        setPanel('Show what ran',
-          `Nothing changed — and this time that is correct. The sweep has run, so those three rungs are showing verdicts they actually earned.<br><br>` +
-          `The button only has anything to reveal when a check has never executed. Press <b>Reset</b> and try it before running the sweep to see what it is for.`);
+        setPanel('Show what actually ran',
+          `Nothing changed — and this time that is correct. The sweep has run, so those three checks are showing verdicts they actually earned.<br><br>` +
+          `This button only has anything to reveal when a check has never executed. Press <b>Reset</b> and try it before running the sweep to see what it is for.`);
       }
     }
     render();
@@ -2265,7 +2333,7 @@
     gateBusy = false; routingBusy = false; busy = false;
     hiddenDebt = 0; sweepRuns = 0;
     honestMode = false; honestEverUsed = false;
-    honestBtn.classList.remove('on'); honestBtn.textContent = 'What ran?';
+    honestBtn.classList.remove('on'); honestBtn.textContent = 'Show what actually ran';
     gateOn = true; gateToggle.textContent = 'Gates: On'; gateToggle.className = 'ctl on';
     tokenLayer.innerHTML = ''; routeLayer.innerHTML = ''; logEl.innerHTML = '';
     applyView('pipeline');
@@ -2282,8 +2350,8 @@
   ladderReset();
   paintSweepRungs();
   render();
-  log('Ready. Three agents, no team yet.', null);
-  log('Note the ladder: three rungs are already green. Nothing has run.', 'warn');
+  log('Ready — three agents, no team yet. Press ▶ Show me what goes wrong to begin.', null);
+  log('Note the ladder: three checks already show green. The sweep has never run — nothing earned those greens.', 'warn');
 })();
 </script>
 </body>

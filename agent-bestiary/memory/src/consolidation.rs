@@ -2077,6 +2077,7 @@ mod tests {
             persona_version: 1,
             fermi_contract: None,
             output_contract: None,
+            input_contract: None,
             model_params: serde_json::Value::Object(serde_json::Map::new()),
             valence: None,
         };

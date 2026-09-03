@@ -183,6 +183,36 @@
     "capability_gates": {
       "composition_dreaming": "premium",
       "cascade_rsi": "standard"
+    },
+    "input_contract": {
+      "accepts_schema": "abw/coordination-request/1",
+      "title": "Workspace coordination request",
+      "required": [
+        "task"
+      ],
+      "schema": {
+        "$id": "abw/coordination-request/1",
+        "title": "Workspace coordination request",
+        "type": "object",
+        "required": [
+          "task"
+        ],
+        "properties": {
+          "task": {
+            "type": "string",
+            "description": "The coordination task, question, or trigger. Append '[COMPOSITION DREAMING \u2014 TENSION AUDIT]' to activate Stage 4 (valence audit, structural composition proposals, cascade RSI writes)."
+          },
+          "workspace_id": {
+            "type": "string",
+            "description": "Target workspace ID. If omitted, resolved from the execution context."
+          },
+          "focus_agent": {
+            "type": "string",
+            "description": "If provided, Stage 0 solicits a plan from only this agent rather than the whole roster. Used to target a single member's intentions rather than running a full team pre-flight."
+          }
+        },
+        "additionalProperties": true
+      }
     }
   },
   "performance": {
@@ -266,6 +296,7 @@
     }
   },
   "accepts": [
+    "abw/coordination-request/1",
     "workspace-state",
     "coherence-scores",
     "intention-signal",

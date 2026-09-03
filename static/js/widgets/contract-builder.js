@@ -957,6 +957,16 @@ const ContractBuilder = (() => {
           </div>`;
         }
 
+        // An empty tool box must not show another agent's tool. It read as
+        // leaked data on `genome_profiler` — a taxonomy block ghosting
+        // `fmp_ratios` and `priceToEarningsRatio`, an equity API this agent
+        // cannot call and would be refused for naming. Placeholders come from
+        // the agent's OWN declared tools, and when it has none the box says so
+        // rather than suggesting something.
+        const declared = cbToolNames();
+        const toolHint = declared.length
+          ? declared[0]
+          : "declare a tool above first";
         const src =
           b.status === "sourced"
             ? `<div class="row">
@@ -964,13 +974,25 @@ const ContractBuilder = (() => {
                    <label>Tool</label>
                    <input list="cb-tool-list" value="${esc(b.tool)}"
                           oninput="cbSet(${i},'tool',this.value)"
-                          placeholder="fmp_ratios" />
+                          placeholder="${esc(toolHint)}" />
+                   ${
+                     !b.tool.trim() && declared.length
+                       ? `<div class="hint">${declared
+                           .map(
+                             (t) =>
+                               `<button type="button" class="cb-pick"
+                                  onclick="cbSet(${i},'tool','${esc(t)}'); cbRenderAll()"
+                                  >${esc(t)}</button>`,
+                           )
+                           .join(" ")}</div>`
+                       : ""
+                   }
                  </div>
                  <div class="form-group">
                    <label>Response field</label>
                    <input value="${esc(b.response_field)}"
                           oninput="cbSet(${i},'response_field',this.value)"
-                          placeholder="priceToEarningsRatio, priceToBookRatio" />
+                          placeholder="which key(s) of the response carry this" />
                  </div>
                </div>
                ${cbFieldPicker(i, b)}
@@ -1409,11 +1431,12 @@ Rules, each enforced by the platform:
     if (!data.compiles) {
       cbCompiled = null;
       const n = (data.findings || []).length;
-      cbSetStatusChip(`${n} to fix`, "bad");
+      cbSetStatusChip(`Draft: ${n} to fix before it can be saved`, "bad");
       out.innerHTML =
-        `<div class="hint" style="margin:10px 0 6px">Not compiled. Nothing
-         partial is emitted — a contract that is almost complete reads
-         exactly like one that is.</div>` +
+        `<div class="hint" style="margin:10px 0 6px">This draft cannot be saved
+         yet. Nothing partial is emitted — a contract that is almost complete
+         reads exactly like one that is. This is about the draft in this editor,
+         not about the contract the agent is running on.</div>` +
         (data.findings || [])
           .map(
             (f) =>
@@ -1425,7 +1448,7 @@ Rules, each enforced by the platform:
     }
 
     cbCompiled = data;
-    cbSetStatusChip("Compiles — would publish", "ok");
+    cbSetStatusChip("Draft is ready to save", "ok");
     cbRenderOutput();
     cbRenderPromptSnippet();
   }
@@ -1443,7 +1466,7 @@ Rules, each enforced by the platform:
 
     out.innerHTML = `
       <div class="cb-result">
-        <h4>&#10003; Compiles — the publish gate accepts this</h4>
+        <h4>&#10003; This draft is saveable — the publish gate accepts it</h4>
         <div class="cb-gen">
           Type <code>${esc(oc.produces_schema)}</code> ·
           ${Object.keys(oc.schema.properties).length} properties ·
@@ -1690,7 +1713,7 @@ Rules, each enforced by the platform:
   // publish.
   async function saveTo(agentId) {
     if (!cbCompiled) {
-      cbSetStatusChip("Nothing to save — it does not compile yet", "bad");
+      cbSetStatusChip("Nothing to save — the draft is not saveable yet", "bad");
       return false;
     }
     cbSetStatusChip("Saving…", "busy");

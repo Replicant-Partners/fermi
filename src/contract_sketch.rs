@@ -2204,7 +2204,12 @@ mod tests {
         };
         assert_eq!(
             cf.merge_produces(
-                &["condition_forecast", "species_probability", "brier_forecast"].map(String::from)
+                &[
+                    "condition_forecast",
+                    "species_probability",
+                    "brier_forecast"
+                ]
+                .map(String::from)
             ),
             vec![
                 "kask_wild/condition_forecast",
@@ -2237,7 +2242,11 @@ mod tests {
         // Idempotent, or a second compile churns the card and the corpus test
         // that compares them oscillates.
         let once = c.merge_produces(&card);
-        assert_eq!(c.merge_produces(&once), once, "merge_produces is not idempotent");
+        assert_eq!(
+            c.merge_produces(&once),
+            once,
+            "merge_produces is not idempotent"
+        );
 
         // A card with nothing to preserve gets exactly the type.
         assert_eq!(c.merge_produces(&[]), vec!["fermi/football_evidence"]);
@@ -2263,7 +2272,10 @@ mod tests {
         let mut checked = 0usize;
         let mut labels = 0usize;
 
-        for e in std::fs::read_dir(&root).expect("read agents/curated").flatten() {
+        for e in std::fs::read_dir(&root)
+            .expect("read agents/curated")
+            .flatten()
+        {
             let p = e.path().join("agent_card.json");
             let Ok(raw) = std::fs::read_to_string(&p) else {
                 continue;
@@ -2390,14 +2402,36 @@ mod tests {
     }
 
     /// `genome_profiler` is the reason this whole line of work exists, and it
-    /// is still not fixed: it declares a schema and **no grounding map**, so it
-    /// fails `card_contract::validate` to this day.
+    /// is now the worked example: the round trip is a **fixpoint**.
     ///
-    /// Decompiling it must (a) recover the shape so nobody retypes 250 lines,
-    /// (b) classify each block from its provenance stamp, and (c) refuse to
-    /// compile, naming the missing whys. Asserted against the real card.
+    /// This test used to assert the opposite. It read
+    /// `oc.get("grounding").is_none()` and checked that the card refused to
+    /// compile, naming four missing `why`s — and it carried an instruction to
+    /// rewrite rather than delete it if a grounding map ever appeared. One has.
+    ///
+    /// ## What was wrong, and why no surface could see it
+    ///
+    /// The field contract lived in **two homes**. `FIELD_CONTRACTS` in
+    /// `grounding_trust.rs` held fifteen entries for this agent; the card held
+    /// a schema and no `grounding` block at all. Both were real and each was
+    /// authoritative for a different reader:
+    ///
+    /// * `declaration_ladder::has_field_contract` checks **both** paths, so the
+    ///   shelf's ladder showed the `field_contract` rung declared;
+    /// * `ContractBuilder` decompiles the **card**, found no grounding, and
+    ///   produced five blocks with an empty `why` — which by design does not
+    ///   compile, so the agent could not be saved from its own editor.
+    ///
+    /// The shelf read one home and the editor edited the other, and neither was
+    /// lying. Every symptom followed from that.
+    ///
+    /// The Rust table stays. It carries per-**field** granularity and the SQL
+    /// cross-checks, which the card's per-**block** vocabulary cannot express
+    /// (`DESIGN_a2a_contracting.md` §7.6). The two now agree instead of
+    /// substituting for one another, which is what
+    /// [`no_declared_field_was_pruned_from_genome_profiler`] holds true.
     #[test]
-    fn genome_profiler_decompiles_to_exactly_what_it_is_missing() {
+    fn genome_profiler_round_trips_through_its_own_editor() {
         let path = "agents/curated/genome_profiler/agent_card.json";
         let Ok(raw) = std::fs::read_to_string(path) else {
             return;
@@ -2407,15 +2441,14 @@ mod tests {
             .pointer("/capabilities/output_contract")
             .expect("genome_profiler declares a contract");
         assert!(
-            oc.get("grounding").is_none(),
-            "this test documents the state of a card that has NO grounding \
-             map. If someone has since added one, rewrite the test rather \
-             than deleting it."
+            oc.get("grounding").is_some(),
+            "the card's grounding map is what unblocks the editor. If it has \
+             been removed, the shelf can render this agent and cannot save it."
         );
 
         let sketch = sketch_from_contract(oc).expect("decompiles");
 
-        // (a) the shape came back
+        // (a) the shape came back, in the author's order
         let names: Vec<&str> = sketch.blocks.iter().map(|b| b.name.as_str()).collect();
         assert_eq!(
             names,
@@ -2423,37 +2456,37 @@ mod tests {
             "block order should follow `required`, not the alphabet"
         );
 
-        // (b) classified from the stamps, which are real evidence
-        let by = |n: &str| {
-            sketch
-                .blocks
-                .iter()
-                .find(|b| b.name == n)
-                .map(|b| b.source.status())
-                .unwrap()
-        };
-        assert_eq!(by("taxonomy"), "sourced", "its stamp admits tool_verified");
-        assert_eq!(by("genome"), "sourced");
-        assert_eq!(by("summary"), "narrative", "prose carries no stamp");
+        // (b) every block now carries a recovered `why`. This is the one that
+        // was empty, and emptiness here is what blocked the save.
+        for b in &sketch.blocks {
+            assert!(
+                b.why.trim().len() >= card_contract::MIN_WHY,
+                "block `{}` decompiled with no usable `why`, so the draft in \
+                 the editor cannot recompile and the agent cannot be saved",
+                b.name
+            );
+        }
 
         // The genome block's stamp admits `unavailable_no_tool_source`, so its
-        // coverage is partial — which is precisely the honest reading of the
-        // original bug: the tool answered and the field had no source.
+        // coverage is partial — precisely the honest reading of the original
+        // bug: the tool answered and the field had no source. And unlike
+        // before, the grounding map can now say WHICH tool.
         let genome = sketch.blocks.iter().find(|b| b.name == "genome").unwrap();
         match &genome.source {
             Source::Sourced { coverage, tool, .. } => {
                 assert_eq!(*coverage, Coverage::Partial);
-                assert!(
-                    tool.is_empty(),
-                    "a stamp cannot say WHICH tool supplied a block, so this \
-                     must come back empty and be refused until an author names \
-                     one"
+                assert_eq!(
+                    tool, "ncbi_genome_search",
+                    "a stamp alone cannot say which tool supplied a block; the \
+                     grounding map is the only place that fact can live"
                 );
             }
             other => panic!("expected sourced, got {other:?}"),
         }
 
-        // (c) it must not compile, and the findings must be the to-do list
+        // (c) and the round trip is a FIXPOINT. Decompile, recompile, and the
+        // contract is byte-identical — which is the property the shelf's save
+        // button depends on and the property this card did not have.
         let tools: Vec<String> = card
             .pointer("/capabilities/mcp_tools")
             .and_then(|v| v.as_array())
@@ -2463,13 +2496,207 @@ mod tests {
                     .collect()
             })
             .unwrap_or_default();
-        let errs = sketch
+        let recompiled = sketch
             .compile(&tools)
-            .expect_err("a card with no grounding map must not compile");
+            .unwrap_or_else(|errs| panic!("the card no longer recompiles:\n{errs:#?}"));
+        assert_eq!(
+            &recompiled.output_contract, oc,
+            "decompile -> recompile must be a fixpoint. It is not, so opening \
+             the contract editor and pressing save would silently change the \
+             contract."
+        );
+    }
+
+    /// The migration must not have bought its green tick by deleting ambition.
+    ///
+    /// Seven of `genome_profiler`'s fifteen fields are `Unsourced`, and that is
+    /// the deliberate content of the contract rather than a backlog: each one
+    /// is a standing request for an integration, and pruning them would make
+    /// the card claim the agent was never trying to report them.
+    ///
+    /// So: every path the Rust table declares must still resolve against the
+    /// card's schema. `FIELD_CONTRACTS` is the per-field home and this is the
+    /// join between the two homes, asserted rather than assumed.
+    #[test]
+    fn no_declared_field_was_pruned_from_genome_profiler() {
+        let path = "agents/curated/genome_profiler/agent_card.json";
+        let Ok(raw) = std::fs::read_to_string(path) else {
+            return;
+        };
+        let card: Value = serde_json::from_str(&raw).unwrap();
+        let props = card
+            .pointer("/capabilities/output_contract/schema/properties")
+            .expect("a typed card has schema properties");
+
+        let mut declared = 0usize;
+        let mut unsourced = 0usize;
+        let mut missing: Vec<&str> = Vec::new();
+        for fc in crate::grounding_trust::contracts_for("genome_profiler") {
+            declared += 1;
+            if fc.grounding == crate::grounding_trust::Grounding::Unsourced {
+                unsourced += 1;
+            }
+            // `a.b` in the Rust table is `/a/properties/b` in the schema.
+            let ptr = format!("/{}", fc.path.replace('.', "/properties/"));
+            if props.pointer(&ptr).is_none() {
+                missing.push(fc.path);
+            }
+        }
+
         assert!(
-            errs.iter().filter(|e| e.check == "sketch_why").count() >= 4,
-            "every block should be reported as missing its `why` — that is \
-             the information the card never had:\n{errs:#?}"
+            missing.is_empty(),
+            "the card's schema no longer carries {missing:?}. A field the Rust \
+             table declares and the schema does not is unenforceable: `enforce` \
+             will null a path the document has no place for."
+        );
+        assert_eq!(
+            declared, 15,
+            "the two homes disagree on how many fields exist"
+        );
+        assert_eq!(
+            declared, 15,
+            "the two homes disagree on how many fields exist"
+        );
+        assert_eq!(
+            unsourced, 7,
+            "seven fields have no source and that is the contract's content. If \
+             this number FELL, check that a tool was really wired up rather \
+             than a field quietly deleted to reach a green tick."
+        );
+    }
+
+    /// **The card's grounding map must not be mistaken for a replacement.**
+    ///
+    /// This is the hazard the migration arms, and it is this codebase's
+    /// characteristic bug: *a writer that replaces a composite it only partly
+    /// owns.* The card's vocabulary is per-**block**; `FIELD_CONTRACTS` is
+    /// per-**field**. `genome_profiler` needs both, because four of its blocks
+    /// are mixed — `genome` is `sourced` as a block while `genome.ploidy` and
+    /// `genome.notable_genes` have no source at all.
+    ///
+    /// Measured against the in-flight `enforce_from_output_contract`, which
+    /// prefers the card's map and falls back to `FIELD_CONTRACTS`: routed down
+    /// the block path, this document keeps `ploidy: "diploid"`,
+    /// `notable_genes: [...]`, `divergence_mya: 45.0` and
+    /// `defining_traits: "scaled wings"` — four recalled values in retrieved
+    /// blocks, which is the original defect exactly. It also nulls the whole
+    /// `conservation` block to `null`, which the card's own schema forbids
+    /// (`conservation` is a required object), and skips `NARRATIVE_LEAKS`
+    /// entirely so the summary keeps its megabases and its Red List status.
+    ///
+    /// So this test pins what the field path does. If somebody deletes
+    /// `genome_profiler` from `FIELD_CONTRACTS` on the reasonable-sounding
+    /// grounds that "the card declares it now", seven protections disappear
+    /// silently and this goes red instead.
+    #[test]
+    fn the_field_level_contract_still_nulls_every_unsourced_value() {
+        let mut doc = json!({
+            "taxonomy": { "order": "Lepidoptera", "species": "Danaus plexippus" },
+            "genome": {
+                "estimated_size_mb": 245, "chromosome_count": 30,
+                "notable_genes": ["cyp6b"], "ploidy": "diploid",
+                "assembly_name": "Dplex_v4", "assembly_accession": "GCF_009731565.1"
+            },
+            "phylogeny": {
+                "sister_taxa": ["Danaus gilippus"], "superorder": null,
+                "divergence_mya": 45.0, "defining_traits": "scaled wings"
+            },
+            "conservation": {
+                "iucn_status": "Not Evaluated", "population_trend": "stable",
+                "genetic_diversity_notes": "high"
+            },
+            "summary": "A monarch, placed in Nymphalidae beside Danaus gilippus."
+        });
+        crate::grounding_trust::enforce("genome_profiler", &mut doc);
+
+        for path in [
+            "/genome/notable_genes",
+            "/genome/ploidy",
+            "/phylogeny/divergence_mya",
+            "/phylogeny/defining_traits",
+            "/conservation/iucn_status",
+            "/conservation/population_trend",
+            "/conservation/genetic_diversity_notes",
+        ] {
+            assert_eq!(
+                doc.pointer(path),
+                Some(&Value::Null),
+                "`{path}` survived enforcement. Every one of these is a value \
+                 no tool can supply, and a plausible value in a retrieved block \
+                 is indistinguishable from a measured one."
+            );
+        }
+
+        // The four that ARE sourced must survive, or the contract is just a
+        // filter and nobody will keep it.
+        assert_eq!(doc.pointer("/genome/estimated_size_mb"), Some(&json!(245)));
+        assert_eq!(doc.pointer("/genome/chromosome_count"), Some(&json!(30)));
+        assert_eq!(
+            doc.pointer("/phylogeny/sister_taxa"),
+            Some(&json!(["Danaus gilippus"]))
+        );
+        // And `conservation` stays an OBJECT of nulls. The schema requires an
+        // object; a bare `null` here would fail the agent's own validation.
+        assert!(
+            doc.pointer("/conservation").is_some_and(Value::is_object),
+            "`conservation` must stay an object of nulls, not become null"
+        );
+    }
+
+    /// The one value the migration DID change, and why that is a correction.
+    ///
+    /// `genome_profiler`'s `phylogeny_provenance` declared
+    /// `[tool_verified, tool_no_match, platform_derived]`. The third is
+    /// unreachable: `grounding_trust::enforce` only stamps `platform_derived`
+    /// when `block_is_sourced` returns `None` — that is, when the block has no
+    /// `Sourced` field at all — and `phylogeny.sister_taxa` is `Sourced`. So
+    /// the card was declaring a verdict its own runtime could never write,
+    /// which is the `gbif_verified` drift in a new place.
+    ///
+    /// `no_card_declares_a_provenance_value_the_runtime_cannot_emit` does not
+    /// catch this, and correctly so: it checks membership in the global
+    /// `PROVENANCE_VALUES` set, and `platform_derived` is a real value — just
+    /// not a reachable one *for this block*. Reachability is per-block and
+    /// needs the runtime run against it, which is what this does.
+    ///
+    /// Partial coverage replaces it with `unavailable_no_tool_source`, which
+    /// the runtime does emit here (the pre-contract path) and which is the
+    /// honest reading of `divergence_mya` and `defining_traits`.
+    #[test]
+    fn phylogeny_can_never_be_stamped_platform_derived() {
+        // Both branches of `block_is_sourced`: the tool returned siblings, and
+        // the tool was asked and returned none.
+        for sisters in [json!(["Danaus gilippus"]), json!([])] {
+            let mut doc = json!({
+                "taxonomy": { "order": "Lepidoptera" },
+                "genome": {},
+                "phylogeny": { "sister_taxa": sisters, "superorder": null },
+                "conservation": {},
+                "summary": "GBIF places it in Nymphalidae."
+            });
+            crate::grounding_trust::enforce("genome_profiler", &mut doc);
+            let stamp = doc
+                .get("phylogeny_provenance")
+                .and_then(|v| v.as_str())
+                .expect("a block with a sourced field is always stamped");
+            assert_ne!(
+                stamp, "platform_derived",
+                "if the runtime can now emit this here, the schema should \
+                 declare it again and `Coverage` needs a variant that can"
+            );
+        }
+
+        // And the schema admits exactly what the runtime can write.
+        let path = "agents/curated/genome_profiler/agent_card.json";
+        let Ok(raw) = std::fs::read_to_string(path) else {
+            return;
+        };
+        let card: Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(
+            card.pointer(
+                "/capabilities/output_contract/schema/properties/phylogeny_provenance/enum"
+            ),
+            Some(&json!([PROV_TOOL, PROV_NO_MATCH, PROV_UNAVAILABLE])),
         );
     }
 

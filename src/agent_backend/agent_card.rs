@@ -344,6 +344,39 @@ pub struct AgentCapabilities {
     #[serde(default)]
     pub output_contract: Option<serde_json::Value>,
 
+    /// Input contract — what callers must send to invoke this agent.
+    ///
+    /// Symmetric to `output_contract`. Compiled from `input_contract.sketch.json`
+    /// by the `input-contract-sketch` binary. Shape:
+    ///
+    /// ```json
+    /// {
+    ///   "accepts_schema": "scro/bom-query/1",
+    ///   "title": "BOM pricing request",
+    ///   "required": ["task", "bom_items"],
+    ///   "schema": {
+    ///     "$id": "scro/bom-query/1",
+    ///     "type": "object",
+    ///     "required": ["task", "bom_items"],
+    ///     "properties": { ... }
+    ///   }
+    /// }
+    /// ```
+    ///
+    /// Unlike `output_contract`, no grounding map is needed — there is no
+    /// provenance claim to make about where the *caller* sourced their data.
+    ///
+    /// Enforcement: a symmetric `envelope::validate_input` call (Phase C) checks
+    /// the caller's query against this schema before dispatch. Absence means no
+    /// input validation — a soft warning, not a hard block — preserving backward
+    /// compatibility with untyped callers.
+    ///
+    /// Discovery: `list_workspace_agents` returns `input_schema_id` (the
+    /// `accepts_schema` value) so strategist agents can route by schema ID
+    /// rather than description heuristics.
+    #[serde(default)]
+    pub input_contract: Option<serde_json::Value>,
+
     /// Provider-agnostic sampling configuration. Keys override the legacy
     /// `temperature` field and add provider-specific params (top_p, top_k,
     /// extended_thinking, thinking_budget_tokens, frequency_penalty, etc.).
@@ -620,6 +653,7 @@ impl AgentCard {
                 min_provider_class: MinProviderClass::default(),
                 fermi_contract: None,
                 output_contract: None,
+                input_contract: None,
                 model_params: serde_json::Value::Object(serde_json::Map::new()),
             },
             performance: AgentPerformance {

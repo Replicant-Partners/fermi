@@ -66,6 +66,10 @@ use std::time::Instant;
 #[path = "handlers/mod.rs"]
 mod handlers;
 
+// A2A webhook delivery — HTTP POST to caller-registered webhook URLs.
+// Binary-only (uses reqwest which is not in the lib crate).
+mod a2a_webhook;
+
 // v0.11.0: schema trust contract — boot-time drift check against the DB.
 // See src/schema_trust.rs for the manifest and the check logic.
 //
@@ -1326,6 +1330,10 @@ async fn run_migrations(db: &PgPool) {
         // and every column describes consolidation, so the declared Loop 3 ->
         // Loop 1 hop is unfalsifiable even when it fires.
         "migrations/223_semantic_rule_origin.sql",
+        // 224 — a2a_push_configs: webhook delivery records for A2A push
+        // notifications (Phase 4). task_id is NOT a foreign key because
+        // push configs may be registered before the task episode row exists.
+        "migrations/224_a2a_push_configs.sql",
         // 225 — `contradicted`: the agent left a contracted field empty and a
         // tool run shows its own declared tool can fill it. The mirror of
         // `grounding`, which is the same contract catching fabrication.
@@ -1337,6 +1345,12 @@ async fn run_migrations(db: &PgPool) {
         // existed were 10 of 5,657 `workspace_messages.episode_id` and 70
         // context blobs whose values included workspace NAMES.
         "migrations/226_episode_workspace.sql",
+        // 227 — `agents.input_contract` (jsonb, nullable). Stores the compiled
+        // input_contract from capabilities.input_contract on the agent card,
+        // symmetric to `output_contract` (mig 117). Enables
+        // `list_workspace_agents` to serve `accepts_schema` for typed A2A
+        // routing. NULL = no input contract declared.
+        "migrations/227_agent_input_contract.sql",
     ];
 
     // Bootstrap the ledger before anything is recorded into it.
@@ -2675,6 +2689,42 @@ async fn main() {
             get(handlers::mcp::mcp_agent_manifest),
         )
         .route("/mcp/agents/:agent_id", post(handlers::mcp::mcp_agent_rpc))
+        // ── A2A Provider ───────────────────────────────────────
+        // Design: docs/DESIGN_a2a_provider.md
+        // Phase 1 — Discovery (public, no auth, CORS *)
+        .route(
+            "/a2a/:slug/agent-card.json",
+            get(handlers::a2a::agent_card_handler),
+        )
+        // Phase 2 — Execution (requires Bearer API key with a2a:invoke scope)
+        .route(
+            "/a2a/:slug/message:send",
+            post(handlers::a2a::send_message_handler),
+        )
+        .route(
+            "/a2a/:slug/tasks/:episode_id",
+            get(handlers::a2a::get_task_handler),
+        )
+        // Phase 3 — SSE streaming
+        .route(
+            "/a2a/:slug/message:stream",
+            post(handlers::a2a::stream_message_handler),
+        )
+        // Phase 4 — Discovery directory + push notification configs
+        .route(
+            "/.well-known/agent-directory.json",
+            get(handlers::a2a::agent_directory_handler),
+        )
+        .route(
+            "/a2a/:slug/tasks/:episode_id/pushNotificationConfigs",
+            post(handlers::a2a::create_push_config_handler)
+                .get(handlers::a2a::list_push_configs_handler),
+        )
+        .route(
+            "/a2a/:slug/tasks/:episode_id/pushNotificationConfigs/:config_id",
+            get(handlers::a2a::get_push_config_handler)
+                .delete(handlers::a2a::delete_push_config_handler),
+        )
         .route("/api/agents", get(handlers::agents::list_agents))
         // Single-agent fetch. Optional auth so anonymous visitors can
         // read published+public agents, while owners and admins see
@@ -5586,6 +5636,7 @@ async fn seed_agents_to_database(
                 .as_ref()
                 .and_then(|v| serde_json::to_value(v).ok()),
             output_contract: card.capabilities.output_contract.clone(),
+            input_contract: card.capabilities.input_contract.clone(),
             // SPEC_30 / mig-186 — carry the card's taxonomy into the DB so the
             // Ecology lens can group DB rows without reading the filesystem.
             //
@@ -6342,6 +6393,7 @@ pub(crate) fn agent_card_from_db(agent: &Agent) -> AgentCard {
                 .as_ref()
                 .and_then(|v| serde_json::from_value(v.clone()).ok()),
             output_contract: agent.output_contract.clone(),
+            input_contract: agent.input_contract.clone(),
             model_params: agent.model_params.clone(),
         },
         performance: AgentPerformance {

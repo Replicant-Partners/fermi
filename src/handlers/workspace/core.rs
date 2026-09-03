@@ -438,6 +438,7 @@ pub async fn create_workspace_agent_handler(
         model_params: serde_json::Value::Object(serde_json::Map::new()),
         valence: None,
         output_contract: None,
+        input_contract: None,
         taxonomy: Some(derived_taxonomy),
     };
 

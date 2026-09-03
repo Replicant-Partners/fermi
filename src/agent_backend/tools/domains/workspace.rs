@@ -497,7 +497,7 @@ async fn execute_list_workspace_agents(ctx: &ToolContext) -> Result<String, Stri
                 a.accepts,
                 a.produces,
                 a.output_contract->>'produces_schema' AS output_schema_id,
-                a.output_contract->'input_contract'->>'accepts_schema' AS input_schema_id
+                a.input_contract->>'accepts_schema'    AS input_schema_id
          FROM workspace_agents wa
          JOIN agents a ON wa.agent_id = a.id
          WHERE wa.workspace_id = $1",

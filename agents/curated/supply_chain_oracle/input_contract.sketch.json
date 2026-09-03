@@ -1,0 +1,26 @@
+{
+  "accepts_schema": "scro/bom-query/1",
+  "title": "BOM pricing request",
+  "fields": [
+    {
+      "name": "task",
+      "type": "string",
+      "note": "Discriminator — always 'resolve_bom'. Any other value is not a valid BomQuery."
+    },
+    {
+      "name": "bom_items",
+      "type": "array",
+      "note": "Items to price. Each item: name (string, the ingredient or material), qty (number, quantity required), unit (string, e.g. kg/L/g/unit), role (string, e.g. substrate/solvent/packaging). Optional per-item: stage_id, cas_number, inci_name."
+    },
+    {
+      "name": "process_context",
+      "type": "object?",
+      "note": "Optional process context. Fields: process_name (string), production_scale (string: small_batch | pilot | industrial). Absence is treated as production_scale=small_batch."
+    },
+    {
+      "name": "currency",
+      "type": "string?",
+      "note": "ISO 4217 currency code for pricing output (default EUR). If the oracle cannot price in the requested currency it prices in EUR and notes the deviation."
+    }
+  ]
+}

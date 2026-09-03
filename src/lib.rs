@@ -521,6 +521,12 @@ pub mod plan_solicitation;
 // data nobody had pointed it at. See docs/specs/35_BAYESOPS_PLATFORM_LAYER.md.
 pub mod feeds;
 
+// A2A provider — pure mapping and task-building logic (no async, no AppState).
+// Handler glue lives in api_server's handlers::a2a.
+// Design: docs/DESIGN_a2a_provider.md
+pub mod a2a_card;
+pub mod a2a_task;
+
 // Re-export main types
 pub use ast::*;
 pub use evaluator::{evaluate, EvalError, EvaluationContext};

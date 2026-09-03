@@ -357,6 +357,16 @@ async fn execute_execute_agent(
     // alive for it would be wrong.
     let declared_output_contract = card.capabilities.output_contract.clone();
 
+    // Phase C: validate the caller's query against the callee's declared
+    // input schema BEFORE dispatch. Non-blocking — records Gate::InputSchema
+    // but never halts execution (backward compat with untyped callers).
+    // Symmetric to envelope::build, which validates the output afterward.
+    let _input_report = crate::agent_backend::envelope::validate_input(
+        agent_name,
+        card.capabilities.input_contract.as_ref(),
+        query,
+    );
+
     let context = ExecutionContext {
         program: crate::ast::Program { statements: vec![] },
         agent_card: card,

@@ -614,7 +614,7 @@
   "supply_chain_oracle": {
     "binding": "declared",
     "labels": [
-      "free_text_ingredient_query"
+      "scro/bom-query/1"
     ]
   },
   "swarm_coordinator": {

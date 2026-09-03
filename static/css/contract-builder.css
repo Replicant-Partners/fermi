@@ -284,6 +284,22 @@
         color: var(--orange);
         font-size: 0.68rem;
       }
+      /* The agent's own declared tools, offered as controls rather than as
+         placeholder prose. If the platform can name what closes the gap, the
+         name is the control. */
+      .cb-pick {
+        background: none;
+        border: 1px solid var(--bg3);
+        color: var(--yellow);
+        font: inherit;
+        font-size: 0.66rem;
+        padding: 1px 6px;
+        margin-right: 4px;
+        cursor: pointer;
+      }
+      .cb-pick:hover {
+        border-color: var(--yellow);
+      }
       .cb-ok {
         color: var(--green);
         font-size: 0.68rem;
