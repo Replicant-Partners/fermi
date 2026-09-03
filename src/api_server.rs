@@ -2696,19 +2696,23 @@ async fn main() {
             "/a2a/:slug/agent-card.json",
             get(handlers::a2a::agent_card_handler),
         )
-        // Phase 2 — Execution (requires Bearer API key with a2a:invoke scope)
+        // Phase 2/3 — Execution and SSE streaming. Requires a Bearer API key
+        // with the `a2a:invoke` scope.
+        //
+        // ONE route for both methods, and it must stay that way. `matchit` 0.7
+        // (axum 0.7) opens a path parameter at a `:` ANYWHERE in a segment, so
+        // `message:send` and `message:stream` are not literals — they are the
+        // static text `message` followed by parameters named `send` and
+        // `stream`. Registering both panicked the process at boot. See
+        // `handlers::a2a::method_dispatch_handler` for the full account, and
+        // `the_router_builds` for the test that would have caught it.
         .route(
-            "/a2a/:slug/message:send",
-            post(handlers::a2a::send_message_handler),
+            "/a2a/:slug/:method",
+            post(handlers::a2a::method_dispatch_handler),
         )
         .route(
             "/a2a/:slug/tasks/:episode_id",
             get(handlers::a2a::get_task_handler),
-        )
-        // Phase 3 — SSE streaming
-        .route(
-            "/a2a/:slug/message:stream",
-            post(handlers::a2a::stream_message_handler),
         )
         // Phase 4 — Discovery directory + push notification configs
         .route(

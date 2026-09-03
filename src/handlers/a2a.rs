@@ -161,6 +161,62 @@ pub async fn agent_card_handler(
 /// Blocking (default): runs the agent, returns a COMPLETED Task.
 /// Non-blocking (`returnImmediately: true`): reserves an episode, returns
 /// a SUBMITTED Task, caller polls via `GET /a2a/:slug/tasks/:episode_id`.
+/// Dispatch `POST /a2a/:slug/:method` to the right handler.
+///
+/// ## Why this exists rather than two routes
+///
+/// The A2A REST transport names its custom methods AIP-136 style, with a colon:
+/// `message:send`, `message:stream`. Those were registered as two literal axum
+/// routes and the process **panicked at boot**:
+///
+/// ```text
+/// Invalid route "/a2a/:slug/message:stream": insertion failed due to
+/// conflict with previously registered route: /a2a/:slug/message:send
+/// ```
+///
+/// axum 0.7 routes through `matchit` 0.7, where `:` opens a path parameter
+/// **anywhere in a segment**, not only at its start. So `message:send` was never
+/// a literal: it parsed as the static text `message` followed by a parameter
+/// named `send`. `message:stream` parsed as the same static text followed by a
+/// parameter named `stream`, two differently-named parameters in one slot, which
+/// is a conflict. Had only one of them existed there would have been no panic
+/// and the route would have quietly matched `/a2a/x/messageANYTHING`.
+///
+/// matchit 0.7 has no escape for a literal colon — the `{brace}` syntax that
+/// would allow one arrives with axum 0.8. So the segment is captured whole and
+/// compared here, which keeps the URLs exactly as the spec writes them.
+///
+/// Unknown methods answer 404 in the A2A error envelope rather than falling
+/// through to the SPA fallback, because a client that misspells a method should
+/// be told so in the protocol it is speaking.
+pub async fn method_dispatch_handler(
+    State(state): State<AppState>,
+    Path((slug, method)): Path<(String, String)>,
+    headers: HeaderMap,
+    body: Json<SendMessageRequest>,
+) -> Response {
+    match method.as_str() {
+        "message:send" => send_message_handler(State(state), Path(slug), headers, body)
+            .await
+            .into_response(),
+        "message:stream" => stream_message_handler(State(state), Path(slug), headers, body)
+            .await
+            .into_response(),
+        other => (
+            StatusCode::NOT_FOUND,
+            Json(a2a_error_body(
+                404,
+                &format!(
+                    "unknown A2A method `{other}`. This endpoint serves \
+                     `message:send` and `message:stream`."
+                ),
+                "METHOD_NOT_FOUND",
+            )),
+        )
+            .into_response(),
+    }
+}
+
 pub async fn send_message_handler(
     State(state): State<AppState>,
     Path(slug): Path<String>,
