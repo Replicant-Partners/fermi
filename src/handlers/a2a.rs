@@ -189,31 +189,64 @@ pub async fn agent_card_handler(
 /// Unknown methods answer 404 in the A2A error envelope rather than falling
 /// through to the SPA fallback, because a client that misspells a method should
 /// be told so in the protocol it is speaking.
+///
+/// ## Why the body arrives as `Value`
+///
+/// Taking `Json<SendMessageRequest>` here made the 404 above **unreachable**.
+/// axum runs every extractor before the handler body, so a request to
+/// `message:nonsense` with an unparseable payload was rejected by the body
+/// extractor first and answered `422` with axum's own plain-text error — no
+/// method check, and nothing shaped like the protocol. Measured against the
+/// live deployment: `message:nonsense` and an unauthenticated `message:send`
+/// both returned 422.
+///
+/// So the method is checked first and the payload is deserialised by hand, which
+/// also means a malformed body gets an A2A error envelope naming the field that
+/// failed instead of a bare status.
 pub async fn method_dispatch_handler(
     State(state): State<AppState>,
     Path((slug, method)): Path<(String, String)>,
     headers: HeaderMap,
-    body: Json<SendMessageRequest>,
+    Json(raw): Json<Value>,
 ) -> Response {
-    match method.as_str() {
-        "message:send" => send_message_handler(State(state), Path(slug), headers, body)
-            .await
-            .into_response(),
-        "message:stream" => stream_message_handler(State(state), Path(slug), headers, body)
-            .await
-            .into_response(),
-        other => (
+    if method != "message:send" && method != "message:stream" {
+        return (
             StatusCode::NOT_FOUND,
             Json(a2a_error_body(
                 404,
                 &format!(
-                    "unknown A2A method `{other}`. This endpoint serves \
+                    "unknown A2A method `{method}`. This endpoint serves \
                      `message:send` and `message:stream`."
                 ),
                 "METHOD_NOT_FOUND",
             )),
         )
-            .into_response(),
+            .into_response();
+    }
+
+    let req: SendMessageRequest = match serde_json::from_value(raw) {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(a2a_error_body(
+                    400,
+                    &format!("could not read the request body: {e}"),
+                    "INVALID_ARGUMENT",
+                )),
+            )
+                .into_response()
+        }
+    };
+
+    if method == "message:send" {
+        send_message_handler(State(state), Path(slug), headers, Json(req))
+            .await
+            .into_response()
+    } else {
+        stream_message_handler(State(state), Path(slug), headers, Json(req))
+            .await
+            .into_response()
     }
 }
 
