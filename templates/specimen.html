@@ -200,6 +200,15 @@
   .bank-cell.dry .bank-n{color:var(--yellow);}
   @media (max-width:620px){ .bank{grid-template-columns:repeat(2,1fr);} }
 
+  /* What the prompt does to execution. Three facts in the compile's vocabulary,
+     and `error` is reserved for the contradiction: a contract naming tools and a
+     prompt that removed the loop which could call them. */
+  .pchk{margin-bottom:9px;}
+  .pchk-row{display:grid;grid-template-columns:74px 1fr;gap:8px;align-items:baseline;
+            padding:4px 0;border-top:1px solid var(--bg2);}
+  .pchk-t{font-size:0.68rem;color:var(--fg2);}
+  .pchk-w{grid-column:2;font-size:0.64rem;color:var(--fg4);line-height:1.5;margin-top:2px;}
+  .pchk-w code{color:var(--yellow);font-family:inherit;}
   .shelf-mount{margin-top:10px;}
   .shelf-mount:empty{display:none;}
   /* ── A pulse row is a door, and it has to look like one ──────────────────
@@ -594,6 +603,55 @@
     </div>`;
   }
 
+  // What the prompt does to execution, and whether that agrees with the contract.
+  //
+  // The first thing an author needs, and until now no surface said any of it.
+  // `prompt_demands_structured_output` substring-matches the system prompt and a
+  // match makes `ToolAwareExecutor` skip the tool loop entirely \u2014 so the prompt
+  // is not documentation, it is an input to how the agent runs.
+  //
+  // Three facts, in the compile's own vocabulary. `error` is reserved for the one
+  // that is a contradiction the platform authored: a contract naming tools for N
+  // fields, and a prompt that removed the loop which could call them.
+  function promptCheck(c) {
+    if (!c) return "";
+    const rows = [];
+
+    if (c.contradicts_contract) {
+      rows.push(["error", "no tools, but the contract needs them",
+        `The prompt contains <code>${esc(c.trigger)}</code>, which makes the executor
+         skip the tool loop \u2014 and ${c.sourced_fields} contracted field(s) name a tool
+         to source them from. Those fields can never be filled. Remove the phrase, or
+         regrade the fields.`]);
+    } else if (!c.gets_tools) {
+      rows.push(["pending", "no tool loop",
+        `The prompt contains <code>${esc(c.trigger)}</code>, so the executor returns the
+         model's answer directly instead of running tools. Correct for an agent that
+         reasons over what it is given; a problem the moment a field needs sourcing.`]);
+    } else {
+      rows.push(["resolved", "tools available",
+        `Nothing in the prompt trips <code>prompt_demands_structured_output</code>, so
+         the tool loop runs.`]);
+    }
+
+    if (c.names_its_type === false) {
+      rows.push(["error", "does not name its type",
+        `The contract declares <code>${esc(c.produces_schema)}</code> and the prompt
+         never mentions it, so nothing tells the agent what document to emit. The
+         contract editor generates the exact wording.`]);
+    } else if (c.names_its_type === true) {
+      rows.push(["resolved", "names its type",
+        `The prompt names <code>${esc(c.produces_schema)}</code>, the type the contract
+         declares.`]);
+    }
+
+    return `<div class="pchk">${rows.map(([state, token, why]) => `<div class="pchk-row">
+      <span class="cmp-t c-${state}">${esc(state)}</span>
+      <span class="pchk-t">${esc(token)}</span>
+      <div class="pchk-w">${why}</div>
+    </div>`).join("")}</div>`;
+  }
+
   function drawer() {
     const p = D.profile;
     document.getElementById("drawer").innerHTML = `
@@ -602,6 +660,11 @@
       <h2>Configure</h2>
       <div class="sub">${esc(p.label)}</div>
 
+      <div class="block"><h3><span class="g-mark">\u25a4</span>What it says</h3>
+        <div class="af-meta">the prompt is an input to how the agent runs, not a note
+          about it</div>
+        ${promptCheck((D.profile || {}).prompt_check)}
+        <div id="af-prompt"></div></div>
       ${declarationPanel()}
       <div class="block"><h3><span class="g-mark">\u25d1</span>Brain</h3>
         <div class="af-meta">${esc((p.substrate || {}).executor || "no executor")}
@@ -625,7 +688,7 @@
     // does the model live" — which is the mistake that made the old page render
     // thirteen metrics twice under different names.
     if (typeof AgentFields !== "undefined") {
-      ["intelligence", "personality", "manage"].forEach(group => {
+      ["prompt", "intelligence", "personality", "manage"].forEach(group => {
         const host = document.getElementById("af-" + group);
         if (!host) return;
         AgentFields.mount({
@@ -640,7 +703,7 @@
         });
       });
     } else {
-      ["intelligence", "personality", "manage"].forEach(group => {
+      ["prompt", "intelligence", "personality", "manage"].forEach(group => {
         const host = document.getElementById("af-" + group);
         if (host) {
           host.innerHTML = `<div class="note">The field editor did not load, so this

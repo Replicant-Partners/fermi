@@ -37,6 +37,29 @@ const MAX_ITERATIONS: u32 = 5;
 /// Conservative on purpose: matches verbatim phrases used in real curated
 /// agent cards. Adding a new JSON-contract agent requires either reusing
 /// one of these phrases or wiring the agent through `LLMExecutor` directly.
+/// Which phrase made [`prompt_demands_structured_output`] true, if one did.
+///
+/// `pub` and separate from the predicate because a surface has to be able to say
+/// **why**. "Your prompt removes the tool loop" is a verdict; "…because it
+/// contains `output valid JSON only`" is something an author can act on.
+///
+/// The patterns live here once. A copy in a template would be a second
+/// implementation of a decision that changes how the agent executes, and the two
+/// would drift — which is the failure this repo keeps finding in a new place.
+pub fn structured_output_trigger(prompt: &str) -> Option<&'static str> {
+    const PATTERNS: &[&str] = &[
+        "ONLY",
+        "raw JSON",
+        "Return a valid JSON",
+        "return a valid JSON",
+        "no prose outside",
+        "JSON object — no prose",
+        "output valid JSON only",
+        "Return JSON:",
+    ];
+    PATTERNS.iter().copied().find(|p| prompt.contains(p))
+}
+
 pub(crate) fn prompt_demands_structured_output(prompt: &str) -> bool {
     prompt.contains("ONLY")
         || prompt.contains("raw JSON")
@@ -1339,6 +1362,67 @@ mod tests {
         assert!(
             !r.contains("Here is the threat"),
             "reasoning must not contain the prose"
+        );
+    }
+}
+
+#[cfg(test)]
+mod trigger_tests {
+    use super::{prompt_demands_structured_output, structured_output_trigger};
+
+    /// The reporter and the decider must never disagree.
+    ///
+    /// `structured_output_trigger` exists so a surface can say WHICH phrase
+    /// removed the tool loop. If it ever answers differently from the predicate
+    /// that actually gates execution, the shelf would be explaining a decision
+    /// the executor did not make — which is worse than explaining nothing.
+    #[test]
+    fn the_trigger_agrees_with_the_predicate_that_gates_execution() {
+        let cases = [
+            "Return JSON: one object",
+            "output valid JSON only",
+            "respond with raw JSON",
+            "Return a valid JSON document",
+            "no prose outside the fence",
+            "ONLY the document",
+            "You are a helpful analyst. Explain your reasoning.",
+            "End every response with one JSON document in a ```json fence, \
+             conforming exactly to type demo/doc. Only fill a sourced block \
+             from that block's own tool.",
+            "",
+        ];
+        for p in cases {
+            assert_eq!(
+                structured_output_trigger(p).is_some(),
+                prompt_demands_structured_output(p),
+                "the two disagree on: {p:?}"
+            );
+        }
+    }
+
+    /// The contract builder's own generated block must not remove the tool loop.
+    ///
+    /// It instructs the agent to fill sourced blocks *from their own tools*, so a
+    /// prompt carrying it and losing its tools is a contradiction the platform
+    /// would have authored itself. `contains` is case-sensitive and the block's
+    /// "Only fill a sourced block" is not "ONLY" — this test is what keeps that
+    /// true if either side is reworded.
+    #[test]
+    fn the_generated_prompt_block_keeps_the_tool_loop() {
+        let generated = "End every response with one JSON document in a ```json \
+             fence, conforming exactly to type fermi/football_evidence:\n\n\
+             Rules, each enforced by the platform:\n\
+             1. Every key is required, including the nulls.\n\
+             2. No extra keys. The document is closed at every level.\n\
+             3. Never write a *_provenance value outside its declared set.\n\
+             4. Only fill a sourced block from that block's own tool. If you did \
+             not call it, the block is null and its stamp says tool_no_match.\n\
+             5. Reasoned blocks are stamped model_inference always.";
+        assert_eq!(
+            structured_output_trigger(generated),
+            None,
+            "the block the platform tells authors to paste removes the tool loop, \
+             while instructing the agent to fill sourced blocks from tools"
         );
     }
 }

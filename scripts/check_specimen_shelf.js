@@ -207,11 +207,11 @@ const shelf = el("drawer").html;
 // The parts of a living thing. The shelf is an anatomy, not a settings screen:
 // a brain it thinks with, a personality it reads as, a bank account it spends
 // from, and what it can be trusted about.
-for (const part of ["trusted about", "Brain", "Personality", "Bank account",
-                    "Identity and reach"]) {
+for (const part of ["What it says", "trusted about", "Brain", "Personality",
+                    "Bank account", "Identity and reach"]) {
   ok(shelf.includes(part), `the shelf has no "${part}" part`);
 }
-for (const g of ["intelligence", "personality", "manage"]) {
+for (const g of ["prompt", "intelligence", "personality", "manage"]) {
   ok(shelf.includes(`id="af-${g}"`), `the ${g} group has no mount point`);
 }
 // Prose budget. The shelf grew a paragraph per group and they were the first
@@ -219,6 +219,68 @@ for (const g of ["intelligence", "personality", "manage"]) {
 const paras = (shelf.match(/class="note"/g) || []).length;
 ok(paras <= 1, `${paras} paragraphs above the controls; the shelf is a workbench`);
 ok(shelf.includes('id="shelf-grip"'), "there is no drag handle");
+
+// ── 4b. the prompt against the contract ─────────────────────────────────
+//
+// `prompt_demands_structured_output` substring-matches the system prompt, and a
+// match makes ToolAwareExecutor skip the tool loop. So a prompt saying "output
+// valid JSON only" plus a contract with Sourced fields is a contradiction the
+// platform authored and never displayed. Three typed agents are in that state.
+//
+// The prompt panel comes FIRST, because it is the first thing an author needs
+// and it was three panels down inside Brain.
+ok(shelf.indexOf("What it says") < shelf.indexOf("trusted about"),
+  "the prompt is not the first part of the shelf");
+
+const CHK = (o) => {
+  S.D = { profile: { ...PROFILE, prompt_check: o },
+          declaration: { rungs: RUNGS, declared: 2, total: 4, next: "output_schema" },
+          record: { runs: 1, dream_budget: 10, dream_used: 1 } };
+  S.drawer();
+  return el("drawer").html;
+};
+
+// The contradiction: an error, and it names the phrase and the count.
+let h2 = CHK({ gets_tools: false, trigger: "output valid JSON only",
+               sourced_fields: 6, contradicts_contract: true,
+               produces_schema: "rabble/phylogenetic_profile", names_its_type: true });
+ok(/c-error/.test(h2), "a prompt that removes the tool loop its contract needs is not an error");
+ok(/output valid JSON only/.test(h2),
+  "the trigger phrase is not named, so the author is told a verdict and not a cause");
+ok(/6 contracted field/.test(h2), "the number of unfillable fields is not stated");
+
+// No tool loop and no sourced fields: a reading, not a fault.
+h2 = CHK({ gets_tools: false, trigger: "Return JSON:", sourced_fields: 0,
+           contradicts_contract: false, produces_schema: null, names_its_type: null });
+ok(!/c-error/.test(h2),
+  "an agent with no sourced fields is faulted for having no tool loop, which is " +
+  "correct behaviour for one that reasons over what it is given");
+ok(/c-pending/.test(h2), "no tool loop is not reported at all");
+
+// Tools available, type named: two resolved and nothing red.
+h2 = CHK({ gets_tools: true, trigger: null, sourced_fields: 6,
+           contradicts_contract: false, produces_schema: "fermi/x", names_its_type: true });
+ok(!/c-error/.test(h2), "a healthy prompt is being faulted");
+ok((h2.match(/c-resolved/g) || []).length >= 2, "neither fact reads as resolved");
+
+// Typed and unnamed: an error, because nothing tells the agent what to emit.
+h2 = CHK({ gets_tools: true, trigger: null, sourced_fields: 0,
+           contradicts_contract: false, produces_schema: "fermi/x", names_its_type: false });
+ok(/c-error/.test(h2) && /never mentions it/.test(h2),
+  "a prompt that never names the type its contract declares is not flagged");
+
+// Absent is not bad: no contract means nothing to contradict.
+h2 = CHK({ gets_tools: true, trigger: null, sourced_fields: 0,
+           contradicts_contract: false, produces_schema: null, names_its_type: null });
+ok(!/c-error/.test(h2) && !/names its type/.test(h2),
+  "an agent with no contract is being judged against one");
+
+// And no check served at all must render nothing rather than guessing.
+S.D = { profile: PROFILE, declaration: { rungs: RUNGS, declared: 2, total: 4 },
+        record: { runs: 1, dream_budget: 10, dream_used: 1 } };
+S.drawer();
+ok(!/pchk-row/.test(el("drawer").html),
+  "the panel invents a verdict when the platform served no check");
 
 // ── 4c. an unloaded bank account is not a broke one ──────────────────────
 //

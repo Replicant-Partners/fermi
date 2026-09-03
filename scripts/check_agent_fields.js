@@ -177,9 +177,12 @@ for (const f of AF.FIELDS) {
   };
   const api = AF.mount({ container: host, agentId: "football_analyst",
                          group: "intelligence", profile: PROFILE });
+  const hostP0 = makeEl("div");
+  AF.mount({ container: hostP0, agentId: "football_analyst", group: "prompt",
+             profile: PROFILE });
   ok(/af-row/.test(host.html), "the intelligence group rendered nothing");
   ok(host.html.includes("claude-opus-4"), "the served model was not loaded into the control");
-  ok(host.html.includes("You analyse football."), "the system prompt was not loaded");
+  ok(hostP0.html.includes("You analyse football."), "the system prompt was not loaded");
 
   // ── 4b. the ladder decides which model runs, so it must be visible ────
   //
@@ -250,13 +253,21 @@ for (const f of AF.FIELDS) {
   const inputs2 = host2.querySelectorAll("[data-field]");
   const temp = inputs2.find((i) => i.dataset.field === "temperature");
   temp.value = "0.2"; temp.fire("input");
-  const prompt = inputs2.find((i) => i.dataset.field === "system_prompt");
+  // The prompt has its own group now, so the emptied-field case is driven there.
+  const hostP = makeEl("div");
+  AF.mount({ container: hostP, agentId: "x", group: "prompt", profile: PROFILE });
+  const prompt = hostP.querySelectorAll("[data-field]")
+    .find((i) => i.dataset.field === "system_prompt");
+  ok(!!prompt, "the prompt has no control in its own group");
   prompt.value = "   "; prompt.fire("input");
   LAST_FETCH = null;
   host2.querySelector("[data-af-save]").fire("click");
   await new Promise((r) => setTimeout(r, 0));
   ok(LAST_FETCH.body.temperature === 0.2,
     `temperature travelled as ${JSON.stringify(LAST_FETCH.body.temperature)}, not a number`);
+  LAST_FETCH = null;
+  hostP.querySelector("[data-af-save]").fire("click");
+  await new Promise((r) => setTimeout(r, 0));
   ok(LAST_FETCH.body.system_prompt === null,
     `an emptied field travelled as ${JSON.stringify(LAST_FETCH.body.system_prompt)}; ` +
     `an empty string is a value the agent would carry`);

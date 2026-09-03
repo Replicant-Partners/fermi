@@ -58,11 +58,14 @@ window.AgentFields = (function () {
       help: "Higher is more varied. An agent under a field contract is being " +
             "asked for retrievable facts, and variance there is noise rather " +
             "than creativity." },
-    { group: "intelligence", key: "system_prompt", path: "system_prompt",
-      label: "system prompt", kind: "textarea",
-      help: "The agent's standing instruction. It is versioned — the persona " +
-            "version on every pulse says which text produced it, so a trace " +
-            "read next month still resolves to the prompt that ran." },
+    // Its own group, and first. The prompt is not documentation: a substring in
+    // it decides whether the agent gets a tool loop at all, so it is the first
+    // thing an author needs and it was three panels down inside `Brain`.
+    { group: "prompt", key: "system_prompt", path: "system_prompt",
+      label: "system prompt", kind: "textarea", rows: 14,
+      help: "Versioned \u2014 the persona version on every pulse records which text " +
+            "produced it, so a trace read next month still resolves to the prompt " +
+            "that ran." },
     // ── manage ────────────────────────────────────────────────────────
     { group: "manage", key: "display_alias", path: "label",
       label: "display name", kind: "text",
@@ -132,7 +135,7 @@ window.AgentFields = (function () {
         </div>`).join("")}</div>`;
     }
     if (f.kind === "textarea") {
-      return `<textarea ${common} rows="7">${esc(v)}</textarea>`;
+      return `<textarea ${common} rows="${f.rows || 7}">${esc(v)}</textarea>`;
     }
     if (f.kind === "slider") {
       // A number you drag, with the value beside it. `temperature` is the case:

@@ -792,6 +792,12 @@ pub async fn specimen_handler(
                 -- surface presenting them as THE model is wrong for every agent
                 -- that has a ladder.
                 a.model_ladder, a.valence, a.system_prompt,
+                -- The contract itself, not only the booleans derived from it.
+                -- `produces_schema` is what the prompt has to name, and reading
+                -- it through `try_get` on an unselected column returns None
+                -- silently, which would have answered NO for every agent on
+                -- the question of whether its prompt names its own type.
+                a.output_contract,
                 a.status, a.visibility, a.tags, a.accepts, a.produces,
                 a.taxonomy, a.fork_count, a.forked_from, a.persona_version,
                 a.system_prompt, a.sample_queries, a.mcp_tools,
@@ -1043,6 +1049,42 @@ pub async fn specimen_handler(
         })
         .collect();
 
+    // ── The prompt, checked against the contract ─────────────────────────
+    //
+    // The first thing an author needs and the last thing any surface showed. The
+    // system prompt is not documentation: `prompt_demands_structured_output`
+    // substring-matches it and, when it matches, `ToolAwareExecutor::execute`
+    // returns `self.inner.execute(..)` — **the agent gets no tool loop**.
+    //
+    // So a prompt saying "output valid JSON only" and a contract with `Sourced`
+    // fields are a contradiction the platform can detect and has never
+    // displayed. Three typed agents are in that state today: genome_profiler,
+    // supply_chain_oracle and video_analyst.
+    //
+    // The trigger phrase travels, not just the boolean. "Your prompt removes the
+    // tool loop" is a verdict; naming the phrase is something an author can act
+    // on. Computed from the one Rust implementation rather than re-matched on a
+    // client, because two copies of a decision that changes execution is the
+    // drift this repo keeps finding.
+    let system_prompt: Option<String> = row.try_get("system_prompt").ok().flatten();
+    let trigger = system_prompt
+        .as_deref()
+        .and_then(fermi::agent_backend::tool_executor::structured_output_trigger);
+    let sourced_fields = fermi::grounding_trust::contracts_for(&agent_name)
+        .filter(|c| matches!(c.grounding, fermi::grounding_trust::Grounding::Sourced { .. }))
+        .count();
+    let produces_schema: Option<String> = row
+        .try_get::<Option<Value>, _>("output_contract")
+        .ok()
+        .flatten()
+        .and_then(|oc| oc.get("produces_schema").and_then(|v| v.as_str()).map(str::to_string));
+    // Absent is not bad: an agent with no prompt is unconfigured, and one with no
+    // type name cannot fail to mention it.
+    let names_its_type = match (&system_prompt, &produces_schema) {
+        (Some(p), Some(t)) => Some(p.contains(t.as_str())),
+        _ => None,
+    };
+
     let taxonomy: Option<Value> = row.try_get("taxonomy").ok().flatten();
     let succeeded: i64 = rec.try_get("succeeded").unwrap_or(0);
 
@@ -1085,7 +1127,23 @@ pub async fn specimen_handler(
             // personality_traits. Served so the shelf can edit the four fields it
             // actually has rather than offering a JSON box.
             "valence": row.try_get::<Option<Value>, _>("valence").ok().flatten(),
-            "system_prompt": row.try_get::<Option<String>, _>("system_prompt").ok().flatten(),
+            "system_prompt": system_prompt.clone(),
+            // What the prompt does to execution, and whether that agrees with
+            // what the contract promises.
+            "prompt_check": {
+                "gets_tools": trigger.is_none(),
+                "trigger": trigger,
+                "sourced_fields": sourced_fields,
+                // The one state that is an ERROR rather than a reading: the
+                // contract names tools for N fields and the prompt has removed
+                // the loop that could call them.
+                "contradicts_contract": trigger.is_some() && sourced_fields > 0,
+                "produces_schema": produces_schema,
+                "names_its_type": names_its_type,
+                "why": "`prompt_demands_structured_output` substring-matches the \
+                        system prompt, and a match makes `ToolAwareExecutor` skip \
+                        the tool loop entirely. The prompt is not documentation.",
+            },
         },
         "record": {
             "runs": runs,
