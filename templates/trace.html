@@ -714,9 +714,20 @@
     const couldRefuse = belt.filter(b => b.enforcement === "control");
     const inspectedContents = g ? !!rc : false;
     const contentsGuarded = !!(g && g.enforcement === "control");
+    // A third state, and the platform only gained the word for it once the
+    // route gained the behaviour. `amend` cannot refuse the run — a field's
+    // grounding is unknowable until the model has written it — but the
+    // ungrounded value does not reach the caller: the body carries the enforced
+    // document and `grounding.stripped` names what was removed.
+    //
+    // Rendering that as `records only` was true of the code and false of the
+    // consequence, and it is why question five was red on every artifact this
+    // platform has ever produced.
+    const contentsAmended = !!(g && g.enforcement === "amend");
 
     return { by, refused, approved, held, settled, graded, violations,
-             couldRefuse, inspectedContents, contentsGuarded, grounding: g };
+             couldRefuse, inspectedContents, contentsGuarded, contentsAmended,
+             grounding: g };
   }
 
   function verdict(d) {
@@ -726,6 +737,10 @@
     let line, tone;
     if (a.refused.length) {
       line = "This artifact was refused."; tone = "dirty";
+    } else if (a.violations > 0 && a.contentsAmended) {
+      line = `This artifact was repaired before it left: ${a.violations} unsourced \
+              claim(s) were removed and the rest was delivered.`;
+      tone = "clean";
     } else if (a.violations > 0 && !a.contentsGuarded) {
       line = "Nothing stopped this artifact, and it carries unsourced claims.";
       tone = "dirty";
@@ -749,6 +764,13 @@
     // The ceiling is the honest limit on any claim about this artifact.
     const ceiling = a.contentsGuarded
       ? `<b>Contents were inspected by a checkpoint that could refuse.</b>`
+      : a.contentsAmended
+        ? `<b>Contents were inspected by a checkpoint that repairs.</b>
+           <code>grounding</code> graded ${a.graded} claim(s) and strips any the
+           contract cannot support before the response leaves. It cannot refuse the
+           run — a field's grounding is unknowable until the model has written it —
+           so the ceiling here is that the bad part does not travel, not that it was
+           never produced.`
       : a.inspectedContents
         ? `Deepest checkpoint that could have refused: <b>the envelope only</b>.
            <code>grounding</code> read the contents and graded ${a.graded} claim(s), but on this
@@ -984,14 +1006,23 @@ declare it">${esc(id)}</span>`;
 
       { short: "anything could stop it",
         tok: a.contentsGuarded ? "can refuse"
-                               : a.inspectedContents ? "records only" : "nothing looked",
+           : a.contentsAmended ? "strips and records"
+           : a.inspectedContents ? "records only" : "nothing looked",
         ans: a.contentsGuarded
           ? "Yes — a checkpoint read the contents and can refuse."
-          : a.inspectedContents
-            ? "<b>No.</b> A checkpoint read the contents and only records — whatever it \
-               found, the answer was returned anyway."
-            : "<b>No.</b> Nothing opened the answer to look inside it.",
-        tone: a.contentsGuarded ? "ok" : "bad",
+          : a.contentsAmended
+            ? "<b>The bad part cannot travel.</b> A checkpoint reads the contents and \
+               strips any claim the contract cannot support before the response \
+               leaves. It cannot refuse the run itself — nothing can know a field is \
+               ungrounded until the model has written it — so this is the honest \
+               ceiling for a check that happens afterwards."
+            : a.inspectedContents
+              ? "<b>No.</b> A checkpoint read the contents and only records — whatever it \
+                 found, the answer was returned anyway."
+              : "<b>No.</b> Nothing opened the answer to look inside it.",
+        // An amend is not a failure. Red here said "uncontrolled" about the one
+        // gate on the page that actually changes what the caller receives.
+        tone: a.contentsGuarded || a.contentsAmended ? "ok" : "bad",
         q: "Could anything have stopped it?",
         g: null },
     ];

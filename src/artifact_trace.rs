@@ -244,8 +244,13 @@ pub fn belt(command_id: &str) -> Vec<Rung> {
             Rung {
                 rung: gate_id(g.gate),
                 clock: spec.map(|s| clock_word(s.clock)).unwrap_or("unknown"),
+                // Three words, because there are three behaviours. Collapsing
+                // `Amend` into `metric` would tell a reader that grounding on
+                // the execute route changes nothing they receive, which is the
+                // opposite of what it now does.
                 enforcement: match g.enforcement {
                     Enforcement::Control => "control",
+                    Enforcement::Amend => "amend",
                     _ => "metric",
                 },
                 why_not_control: g.why_not_control,
@@ -781,9 +786,14 @@ mod tests {
     ///
     /// The `enforcement` field is the one a diagram most easily hides: a
     /// checkpoint drawn identically whether or not it can stop anything is a
-    /// diagram that lies about the platform's safety properties. Grounding on
-    /// `/execute` is the live case — `command_registry` declares it a `metric`
-    /// with the reason attached.
+    /// diagram that lies about the platform's safety properties.
+    ///
+    /// Three words, not two. Grounding on `/execute` is now an `amend` — it
+    /// cannot refuse the run and it does change what the caller receives, and
+    /// collapsing that into `metric` would tell a reader the gate is invisible
+    /// to them when it is the reason a fabricated field is missing from their
+    /// document. `metric` on the streaming sibling still means exactly what it
+    /// says.
     #[test]
     fn every_rung_says_whether_it_can_actually_refuse() {
         for id in EXECUTE_COMMANDS {
@@ -791,12 +801,14 @@ mod tests {
             assert!(!b.is_empty(), "`{id}` declares no gates");
             for r in &b {
                 assert!(
-                    matches!(r.enforcement, "control" | "metric"),
+                    matches!(r.enforcement, "control" | "amend" | "metric"),
                     "{}: enforcement is `{}`",
                     r.rung,
                     r.enforcement
                 );
-                if r.enforcement == "metric" {
+                // An amend is a demotion from control too, and owes the same
+                // sentence: it says what it cannot do, which is refuse.
+                if r.enforcement == "metric" || r.enforcement == "amend" {
                     assert!(
                         r.why_not_control.is_some_and(|w| w.len() > 40),
                         "`{}` on `{id}` is a metric and does not say why. A gate \

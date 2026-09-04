@@ -66,16 +66,29 @@ use uuid::Uuid;
 /// that one lives in the binary and cannot be called from the library. The
 /// convergence is to have it call this. Tracked rather than left silent.
 pub fn extract_json(text: &str) -> Option<Value> {
+    document_span(text).map(|(_, _, v)| v)
+}
+
+/// The same scan, returning **where** the document sits as well as what it is.
+///
+/// One implementation, because [`amend_document`] has to replace exactly the
+/// span [`extract_json`] read. Two scans of the same text is how a surface ends
+/// up amending one document and reporting on another — and the two would agree
+/// on almost every input, which is the kind of drift that surfaces once, in
+/// production, on the one response shaped differently from the fixtures.
+///
+/// Byte offsets are into the **trimmed** text, returned alongside it.
+fn document_span(text: &str) -> Option<(&str, std::ops::Range<usize>, Value)> {
     let t = text.trim();
     if let Ok(v) = serde_json::from_str::<Value>(t) {
         if v.is_object() {
-            return Some(v);
+            return Some((t, 0..t.len(), v));
         }
     }
     // Balanced brace scan — take the largest object, which for a document
     // wrapped in prose is the document rather than a nested fragment.
     let bytes = t.as_bytes();
-    let mut best: Option<Value> = None;
+    let mut best: Option<(std::ops::Range<usize>, Value)> = None;
     let mut best_len = 0usize;
     let mut depth = 0i32;
     let mut start = 0usize;
@@ -95,7 +108,7 @@ pub fn extract_json(text: &str) -> Option<Value> {
                         if let Ok(v) = serde_json::from_str::<Value>(span) {
                             if v.is_object() {
                                 best_len = span.len();
-                                best = Some(v);
+                                best = Some((start..i + 1, v));
                             }
                         }
                     }
@@ -104,7 +117,52 @@ pub fn extract_json(text: &str) -> Option<Value> {
             _ => {}
         }
     }
-    best
+    best.map(|(r, v)| (t, r, v))
+}
+
+/// Put the **enforced** document back into the text the caller reads.
+///
+/// ## Why this exists
+///
+/// `Pulse::grade` produces two documents: `claimed`, and `enforced` with every
+/// ungrounded field nulled. On the delegation hop `envelope::build` hands back
+/// the enforced one, so an agent receiving a delegated result never sees a
+/// value the contract forbade.
+///
+/// On `POST /api/agents/:id/execute` it did not. `graded.enforced` was used for
+/// exactly one thing — validating the declared schema — and the body returned
+/// to the caller was the raw model text, fabrication included. The gate
+/// registry said so in its own words, as the reason grounding is a `Metric`
+/// there: *"the endpoint a third party calls reports fabrication rather than
+/// preventing it."*
+///
+/// So agent-to-agent was protected and person-to-API was not, and the trace
+/// drew the same belt for both.
+///
+/// ## What it does and does not do
+///
+/// It replaces the document span, and **nothing else**. The prose around it is
+/// the model's and is left alone — amending prose is not something a function
+/// can do honestly, which is why `grounding_trust::NARRATIVE_LEAKS` nulls a
+/// leaking `summary` field inside the document rather than editing sentences.
+///
+/// Returns `None` when there is no document to replace, which is the common
+/// case: most responses are prose and carry no JSON at all. `None` means
+/// "nothing to amend", never "amendment failed".
+pub fn amend_document(text: &str, enforced: &Value) -> Option<String> {
+    let (t, span, claimed) = document_span(text)?;
+    if &claimed == enforced {
+        return None;
+    }
+    // Pretty-printed, because the span it replaces was written for a human to
+    // read and a one-line reflow of a 40-field document is a worse artifact
+    // than the one it corrects.
+    let replacement = serde_json::to_string_pretty(enforced).ok()?;
+    let mut out = String::with_capacity(t.len() + replacement.len());
+    out.push_str(&t[..span.start]);
+    out.push_str(&replacement);
+    out.push_str(&t[span.end..]);
+    Some(out)
 }
 
 /// The type this agent declares it produces, if any.
@@ -424,6 +482,7 @@ pub fn validate_input(
 mod tests {
     use super::*;
     use crate::agent_backend::executor::{AgentMetadata, AgentStatus};
+    use serde_json::json;
 
     pub(super) fn output_with(raw: Option<&str>) -> AgentOutput {
         AgentOutput {
@@ -753,7 +812,81 @@ mod tests {
         );
         assert_eq!(empty["payload_status"], json!("empty_response"));
     }
+
+    // ── amend_document ─────────────────────────────────────────────
+
+    /// The fabricated value must not survive into the text the caller reads.
+    #[test]
+    fn the_ungrounded_value_does_not_travel() {
+        let raw = "Here is the profile.\n\n```json\n{\"taxonomy\": {\"order\": \"Lepidoptera\"}, \
+                   \"conservation\": {\"iucn_status\": \"Least Concern\"}}\n```\nHope that helps.";
+        let enforced = json!({
+            "taxonomy": { "order": "Lepidoptera" },
+            "conservation": { "iucn_status": null }
+        });
+        let out = amend_document(raw, &enforced).expect("there is a document to amend");
+        assert!(
+            !out.contains("Least Concern"),
+            "the value grounding stripped is still in the body a caller reads:\n{out}"
+        );
+        assert!(
+            out.contains("Lepidoptera"),
+            "amendment removed a sourced value too"
+        );
+        // The model's prose is not ours to rewrite.
+        assert!(
+            out.contains("Here is the profile.") && out.contains("Hope that helps."),
+            "the prose around the document was altered; only the document span \
+             may be replaced"
+        );
+        // And what comes back is still a readable document.
+        assert_eq!(
+            extract_json(&out).and_then(|v| v.pointer("/conservation/iucn_status").cloned()),
+            Some(Value::Null)
+        );
+    }
+
+    /// A clean run is not "amended", and the distinction is the whole point of
+    /// reporting it: a caller that cannot tell a repaired document from an
+    /// untouched one has no reason to go and look at what was removed.
+    #[test]
+    fn a_clean_document_is_left_exactly_alone() {
+        let raw = "{\"a\": 1}";
+        assert_eq!(amend_document(raw, &json!({ "a": 1 })), None);
+    }
+
+    /// Most responses are prose and carry no document. `None` there means
+    /// "nothing to amend", and a caller must not read it as a failed repair.
+    #[test]
+    fn prose_with_no_document_is_not_a_failure() {
+        assert_eq!(amend_document("just a sentence", &json!({ "a": 1 })), None);
+    }
+
+    /// The replaced span is the one `extract_json` reads.
+    ///
+    /// Both go through `document_span`, and this is what keeps that true. Two
+    /// scans of the same text would agree on almost every input — which is the
+    /// kind of drift that surfaces once, in production, on the one response
+    /// shaped differently from the fixtures. Here a nested object earlier in the
+    /// prose is the trap: a scanner taking the FIRST brace rather than the
+    /// largest would amend the wrong one and leave the real document untouched.
+    #[test]
+    fn the_amended_span_is_the_span_that_was_read() {
+        let raw = "An aside: {\"note\": \"ignore me\"} and now the answer:\n\
+                   {\"taxonomy\": {\"order\": \"Odonata\"}, \"ploidy\": \"diploid\"}";
+        let enforced = json!({ "taxonomy": { "order": "Odonata" }, "ploidy": null });
+        let out = amend_document(raw, &enforced).expect("amends");
+        assert!(
+            out.contains("ignore me"),
+            "the aside was replaced instead of the document"
+        );
+        assert!(
+            !out.contains("diploid"),
+            "the real document was not the one amended:\n{out}"
+        );
+    }
 }
+
 
 /// The gate the hop reports to.
 ///

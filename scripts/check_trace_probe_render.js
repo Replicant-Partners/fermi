@@ -195,7 +195,28 @@ const TRACE = {
       actor_kind: "system", at: "2026-08-19T13:49:00Z",
       evidence: { path: "assessment", claimed: "Liverpool look strong" } },
   ],
-  belt: [],
+  // A grounding rung that AMENDS: it cannot refuse the run, and the ungrounded
+  // value does not reach the caller. Empty until now, which is why question
+  // five read `records only` in red on every fixture — the harness had no belt
+  // at all and the page's worst branch was the only one ever rendered.
+  belt: [
+    {
+      rung: "grounding",
+      clock: "invocation",
+      enforcement: "amend",
+      why_not_control: "a field's grounding is unknowable until the model has " +
+        "written it, so there is no moment at which refusing the run is available",
+      refuses: "a field no tool of the agent's could have supplied",
+      site: "episode_boundary::Pulse::grade + envelope::amend_document",
+      decided: {
+        decision: "refused",
+        reason: "2 violation(s)",
+        at: "2026-09-03T22:02:16Z",
+        decision_id: 1,
+      },
+      recomputed: { fields: 15, violations: 2 },
+    },
+  ],
   belt_route: [],
   caveats: [],
   contract: { declared: [], undeclared: [] },
@@ -592,6 +613,23 @@ const P = mod.exports;
   const ia = P.annotate("advanced_metrics.xgd");
   const itok = ia && ia.condition ? ia.condition.text : "";
   P.FIELD_BY_PATH["advanced_metrics.xgd"] = xgd;
+  // ── Question five knows what an amend is ───────────────────────────────
+  //
+  // `records only` was true of the code and false of the consequence: on a
+  // route that amends, the ungrounded value does not reach the caller. Red
+  // there said "uncontrolled" about the one gate on the page that actually
+  // changes what a consumer receives, which is why Q5 was red on every artifact
+  // this platform has ever produced.
+  const q5 = typeof qs === "string" ? qs : JSON.stringify(qs);
+  ok(/strips and records/.test(q5),
+    "question five has no word for a checkpoint that repairs rather than " +
+    "refuses, so an amending gate still reads as `records only`");
+  ok(!/c-bad[^>]*>[^<]*anything could stop it/.test(q5),
+    "question five is still rendering an amend as a fault");
+  ok(/cannot refuse the run itself|honest ceiling/.test(q5),
+    "question five does not say WHY it cannot refuse — without that, `strips " +
+    "and records` reads as a weaker control rather than the reachable one");
+
   ok(itok === "agent wrote nothing",
     `an empty inferred field reads \`${itok}\`. \`askedFor\` returns "unused" ` +
     "both when a named tool went uncalled and when the contract names no tool " +

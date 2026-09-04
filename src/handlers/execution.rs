@@ -495,6 +495,54 @@ pub async fn execute_agent_handler(
         (Some(_), None) => ("unverified_no_payload", vec![]),
     };
 
+    // 3.8 The body the caller reads carries the ENFORCED document.
+    //
+    // This is the difference between a control and a decoration, and until now
+    // this route was the decoration. `grade` produces two documents — `claimed`
+    // and `enforced`, with every ungrounded field nulled — and `enforced` was
+    // used for exactly one thing above: checking the declared schema. The body
+    // returned to the caller was the raw model text, fabrication included.
+    //
+    // `envelope::build` on the delegation hop has always handed back the
+    // enforced payload. So agent-to-agent was protected and person-to-API was
+    // not, and the artifact trace drew the same belt for both. The gate registry
+    // named it as the reason `Gate::Grounding` is a `Metric` here: *"the
+    // endpoint a third party calls reports fabrication rather than preventing
+    // it."*
+    //
+    // Three channels, and they are deliberately not treated alike:
+    //
+    //   * `document`  — new, and the one a machine should read. The enforced
+    //     artifact, first-class, so a consumer never has to scrape JSON out of
+    //     prose to get a trustworthy answer.
+    //   * `reasoning` — amended in place: the document span is replaced and the
+    //     model's prose around it is left alone. A function cannot honestly
+    //     rewrite a sentence, which is why a leaking `summary` is nulled inside
+    //     the document by `NARRATIVE_LEAKS` rather than edited here.
+    //   * `response_text` in the database — **raw, on purpose.** It is the only
+    //     evidence of what the model actually claimed, and it is what every
+    //     later verification, the artifact trace and any question of the form
+    //     "which model fabricates what" reads. Amending the record would
+    //     destroy the finding while appearing to fix it.
+    //
+    // Amendment is not refusal. Nothing here stops the run; the ungrounded
+    // value simply does not travel. That is the honest ceiling for a
+    // post-hoc gate — you cannot know a field is ungrounded until the model has
+    // written it — and it is the rung this route was missing.
+    let amended_reasoning: Option<String> =
+        match (&output.metadata.reasoning, graded.enforced.as_ref()) {
+            (Some(text), Some(enforced)) => {
+                fermi::agent_backend::envelope::amend_document(text, enforced)
+            }
+            _ => None,
+        };
+    let stripped_paths: Vec<&str> = graded
+        .report
+        .violations
+        .iter()
+        .map(|v| v.path.as_str())
+        .collect();
+
     // The gate. `unverified_*` maps to `Undetermined`, never `Approved` —
     // and on this path that is the overwhelming majority, because most
     // callers reach agents that declare no type at all.
@@ -845,10 +893,23 @@ pub async fn execute_agent_handler(
             "status": validation_status,
             "violations": schema_violations,
         },
+        // The artifact, enforced. Read this rather than scraping `reasoning`.
+        "document": graded.enforced,
+        // What the platform did to the body, said out loud. A caller that
+        // cannot see an amendment cannot tell a clean document from a repaired
+        // one, and would have no reason to go and look at what was removed.
+        "grounding": {
+            "amended": amended_reasoning.is_some(),
+            "stripped": stripped_paths,
+            "violations": graded.report.violations.len(),
+            "note": "Fields with no possible source are nulled before the \
+                     response leaves. The claim is retained verbatim on the \
+                     episode and is visible on the artifact trace.",
+        },
         "metadata": {
             "model_used": output.metadata.model_used,
             "provider": output.metadata.provider,
-            "reasoning": output.metadata.reasoning,
+            "reasoning": amended_reasoning.or(output.metadata.reasoning),
             "failure_reason": output.metadata.failure_reason,
             "stop_reason": output.metadata.stop_reason,
         }

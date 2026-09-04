@@ -266,6 +266,70 @@ fn the_schema_is_checked_against_the_enforced_document() {
     }
 }
 
+/// **Validating the enforced document is not the same as returning it.**
+///
+/// The test above proves the schema is checked against `graded.enforced`. For
+/// the life of the feature that was the *only* thing `enforced` was used for on
+/// the HTTP route: the body handed back to the caller was the raw model text,
+/// fabrication included. Every check on this page passed the whole time.
+///
+/// `envelope::build` on the delegation hop had always returned the enforced
+/// payload, so agent-to-agent was protected and person-to-API was not — and the
+/// gate registry recorded that as the reason `Gate::Grounding` was a `Metric`
+/// there: *"the endpoint a third party calls reports fabrication rather than
+/// preventing it."*
+///
+/// So: a route that grades must also *deliver* what grading produced.
+/// `execute/stream` is exempt and the exemption is declared rather than
+/// implied — a stream has already sent its tokens by the time the document is
+/// gradeable, and amending it needs a terminal frame instead. When that lands,
+/// remove it from `AMENDS_LATER` and this test starts holding it too.
+#[test]
+fn every_route_that_grades_also_returns_what_grading_produced() {
+    /// Routes that grade and cannot yet amend, with the reason.
+    const AMENDS_LATER: &[(&str, &str)] = &[(
+        "src/handlers/execution_stream.rs",
+        "a stream has already sent its tokens by the time the document can be \
+         graded; amending needs a terminal frame carrying the enforced document \
+         and a consumer that prefers it over the concatenated deltas",
+    )];
+
+    let mut amending = 0usize;
+    for file in GROUNDED_ROUTES {
+        if let Some((_, why)) = AMENDS_LATER.iter().find(|(f, _)| f == file) {
+            assert!(
+                why.len() > 60,
+                "{file} is exempt from amending and does not say why at length. \
+                 An exemption without a reason is a permanent one."
+            );
+            continue;
+        }
+        let src = code(&read(file));
+        assert!(
+            src.contains("amend_document"),
+            "{file} grades a document and hands the caller the raw one. \
+             `graded.enforced` is being used to CHECK a schema and then thrown \
+             away, which is the exact state the gate registry described as \
+             \"the endpoint a third party calls reports fabrication rather than \
+             preventing it\". Call `envelope::amend_document` before returning \
+             the body, or add the route to AMENDS_LATER with a reason."
+        );
+        assert!(
+            src.contains("\"stripped\"") || src.contains("stripped_paths"),
+            "{file} amends the body and does not tell the caller. A consumer \
+             that cannot see an amendment cannot distinguish a clean document \
+             from a repaired one, and has no reason to go and look at what was \
+             removed."
+        );
+        amending += 1;
+    }
+    assert!(
+        amending > 0,
+        "no route amends, so this guard is vacuous — GROUNDED_ROUTES and \
+         AMENDS_LATER have drifted apart"
+    );
+}
+
 /// `Graded::enforced` is a document enforcement produced, not a name for the
 /// one it was given.
 ///

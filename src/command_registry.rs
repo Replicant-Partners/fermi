@@ -73,6 +73,24 @@ pub enum Enforcement {
     /// Not a lesser control. On the surface a caller sees, a metric and an
     /// absent gate are the same thing.
     Metric,
+    /// It runs after the effect, cannot refuse it, and **repairs the artifact
+    /// before it leaves**.
+    ///
+    /// The rung between `Metric` and `Control`, and the one the vocabulary was
+    /// missing. A post-hoc check can never be a `Control` in the strict sense:
+    /// you cannot know a field is ungrounded until the model has written it, so
+    /// there is no moment at which refusing the *effect* is available. What is
+    /// available is refusing to let the bad part **travel**.
+    ///
+    /// `Gate::Grounding` on the execute routes is the case. It nulls fields no
+    /// tool of the agent's could have supplied, and the caller receives the
+    /// document without them. That is not a metric — a metric changes nothing a
+    /// caller sees — and it is not a control, because the run still happened and
+    /// still cost credits.
+    ///
+    /// Calling it `Metric` for the life of the feature is what let the execute
+    /// route return fabricated values while the trace drew a checkpoint over it.
+    Amend,
     /// Typed, persisted and exposed, and never compared against anything.
     Declared,
 }
@@ -81,6 +99,15 @@ impl Enforcement {
     /// Can this refuse the verb?
     pub fn refuses(self) -> bool {
         matches!(self, Enforcement::Control)
+    }
+
+    /// Does this change what the caller receives?
+    ///
+    /// The question `refuses()` could not answer, and the one that actually
+    /// separates a control from a decoration. An `Amend` does not refuse and is
+    /// emphatically not discarded.
+    pub fn alters_the_artifact(self) -> bool {
+        matches!(self, Enforcement::Control | Enforcement::Amend)
     }
 }
 
@@ -148,6 +175,16 @@ const fn metric(gate: Gate, site: &'static str, why: &'static str) -> GateApplic
     }
 }
 
+/// Cannot refuse the verb; does repair the artifact before it is returned.
+const fn amend(gate: Gate, site: &'static str, why: &'static str) -> GateApplication {
+    GateApplication {
+        gate,
+        enforcement: Enforcement::Amend,
+        site,
+        why_not_control: Some(why),
+    }
+}
+
 /// Every verb, with what governs it.
 ///
 /// Rule for adding one: **if a person can invoke it and it changes something,
@@ -166,14 +203,21 @@ pub const COMMANDS: &[Command] = &[
         gates: &[
             control(Gate::Credit, "handlers::execution, gas::charge_gas"),
             control(Gate::Attachment, "attachments::ensure_deliverable"),
-            metric(
+            amend(
                 Gate::Grounding,
-                "episode_boundary::Pulse::grade, from handlers::execution",
-                "`enforce` mutates a document the handler keeps only to check a \
-                 schema against; the persisted response_text and the rendered \
-                 body are both un-stripped. Retention is deliberate — a digest \
-                 is not a record — and it means the endpoint a third party \
-                 calls reports fabrication rather than preventing it.",
+                "episode_boundary::Pulse::grade + envelope::amend_document, \
+                 from handlers::execution",
+                "Cannot refuse: a field's grounding is unknowable until the model \
+                 has written it, so there is no moment at which refusing the run \
+                 is available. It amends instead — the response body carries the \
+                 enforced document and a `grounding.stripped` list naming what \
+                 was removed. The persisted response_text stays raw on purpose: \
+                 it is the only evidence of what was claimed. Previously a plain \
+                 Metric, and the reason recorded here was that `enforce` mutated \
+                 a copy the handler kept only to check a schema against, so the \
+                 endpoint a third party calls reported fabrication rather than \
+                 preventing it. That is now closed for the body and remains true \
+                 of the run itself.",
             ),
             metric(
                 Gate::InputBinding,
@@ -197,11 +241,14 @@ pub const COMMANDS: &[Command] = &[
             metric(
                 Gate::Grounding,
                 "episode_boundary::Pulse::grade, from handlers::execution_stream",
-                "The same un-stripped-body shape as agent.execute. It also \
-                 raised no anomaly, so the metric was not even recorded — that \
-                 half is fixed: both routes reach the grade and the raise \
-                 through the one boundary, and neither can drift from the other \
-                 again without the other going with it.",
+                "Still un-amended, and the asymmetry is now with its own sibling \
+                 rather than with the delegation hop: `agent.execute` returns the \
+                 enforced document and this route does not. A stream has already \
+                 sent its tokens by the time the document is gradeable, so \
+                 amending the body is not the same edit — it needs a terminal \
+                 frame carrying the enforced document and a consumer that prefers \
+                 it over the concatenated deltas. Named here so the gap is a \
+                 declared to-do rather than a difference nobody noticed.",
             ),
         ],
         ungated_because: None,
@@ -380,11 +427,15 @@ pub fn ungoverned_writes() -> Vec<&'static str> {
 ///
 /// The audit's §3 table, as a live query. On the surface a caller sees, one of
 /// these is indistinguishable from having no gate at all.
+/// Keyed on `alters_the_artifact`, not on `refuses`. An `Amend` is neither
+/// refused nor discarded: the caller receives a document the gate changed, so
+/// listing it here would report a working control as a dead one — the same
+/// error this function exists to expose, pointed the other way.
 pub fn gates_computed_and_discarded() -> Vec<(&'static str, &'static str)> {
     let mut out = Vec::new();
     for c in COMMANDS {
         for g in c.gates {
-            if !g.enforcement.refuses() {
+            if !g.enforcement.alters_the_artifact() {
                 out.push((c.id, g.gate.id()));
             }
         }
@@ -470,12 +521,22 @@ mod tests {
     /// Seeded non-empty on purpose: a governance registry whose first run is
     /// green has not been pointed at anything. Every pair here is a verb whose
     /// caller cannot tell the gate from its absence.
+    ///
+    /// **Three, then two.** `("agent.execute", "grounding")` came off the list
+    /// when that route started returning the enforced document instead of the
+    /// raw one — the caller can now tell the gate from its absence, because the
+    /// fabricated field is gone and `grounding.stripped` names it. That is the
+    /// ratchet doing the only thing it is for.
+    ///
+    /// The two that remain are both real and both named in their
+    /// `why_not_control`: the stream cannot amend a body it has already sent,
+    /// and `input_binding` is the one place genuine PREVENTION is available and
+    /// unused — a malformed input could be refused before a credit is spent.
     #[test]
     fn the_discarded_gate_verdicts_are_the_ones_we_know_about() {
         assert_eq!(
             gates_computed_and_discarded(),
             vec![
-                ("agent.execute", "grounding"),
                 ("agent.execute", "input_binding"),
                 ("agent.execute_stream", "grounding"),
             ],
@@ -485,28 +546,62 @@ mod tests {
         );
     }
 
-    /// The two general-purpose execute endpoints are the ungrounded ones.
+    /// What grounding actually does on the two public execute endpoints.
     ///
-    /// Pinned on its own because it is the audit's sharpest finding and the
-    /// easiest to lose in a refactor: grounding is a control on the creature and
-    /// wild handlers and a metric on the endpoints a third party actually calls.
+    /// This test used to assert `Metric` on both, and carried an instruction to
+    /// rewrite it if that ever changed. It has. `agent.execute` now **amends**:
+    /// the response body carries the enforced document and names what was
+    /// stripped, so a fabricated value no longer travels to a third party.
+    ///
+    /// Not promoted to `Control`, and the distinction is the point. A control
+    /// refuses the verb, and grounding cannot — a field's grounding is
+    /// unknowable until the model has written it, so the run has already
+    /// happened and already cost credits by the time there is anything to judge.
+    /// The reachable ceiling for a post-hoc gate is stopping the bad part from
+    /// leaving, which is what `Amend` names.
+    ///
+    /// The streaming sibling is still a plain `Metric` and that is now the
+    /// asymmetry worth watching: same platform, same contract, two different
+    /// answers depending on which endpoint you call.
     #[test]
-    fn grounding_is_not_a_control_on_the_public_execute_paths() {
-        for id in ["agent.execute", "agent.execute_stream"] {
-            let c = command(id).expect("declared");
-            let g = c
+    fn grounding_amends_on_execute_and_still_does_not_on_the_stream() {
+        let g = |id: &str| {
+            command(id)
+                .unwrap_or_else(|| panic!("{id} not declared"))
                 .gates
                 .iter()
                 .find(|g| g.gate == Gate::Grounding)
-                .unwrap_or_else(|| panic!("{id} no longer declares a grounding gate at all"));
-            assert_eq!(
-                g.enforcement,
-                Enforcement::Metric,
-                "{id}: grounding has changed enforcement. If it is now a Control, \
-                 that is the fix the audit asked for — delete this test and \
-                 update `the_discarded_gate_verdicts_are_the_ones_we_know_about`."
-            );
-        }
+                .unwrap_or_else(|| panic!("{id} no longer declares a grounding gate at all"))
+                .enforcement
+        };
+
+        assert_eq!(
+            g("agent.execute"),
+            Enforcement::Amend,
+            "grounding stopped amending the execute body. That route returns the \
+             document a third party reads; a Metric there means the endpoint \
+             reports fabrication rather than preventing it, which is the state \
+             this was fixed out of."
+        );
+        assert!(
+            g("agent.execute").alters_the_artifact(),
+            "an amend that does not reach the caller is a metric wearing a \
+             better name"
+        );
+        assert!(
+            !g("agent.execute").refuses(),
+            "grounding cannot refuse: there is no moment before the effect at \
+             which the answer is known. If this became a Control, something is \
+             claiming to prevent what it can only repair."
+        );
+
+        assert_eq!(
+            g("agent.execute_stream"),
+            Enforcement::Metric,
+            "the stream now amends too — good, and this test is stale. Its \
+             `why_not_control` says what that change requires (a terminal frame \
+             carrying the enforced document); update both together."
+        );
     }
 
     /// Reads must not claim to spend.
