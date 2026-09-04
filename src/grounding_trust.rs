@@ -3106,6 +3106,10 @@ pub const DERIVATIONS: &[(&str, &str, Derivation)] =
 /// So the rule is: a `Derived` field must be **computed by us or checked by
 /// us**. Never merely asserted. An entry here has to say which file keeps the
 /// promise, so a reader can go and look.
+///
+/// `cfg(test)` because the guard is its only consumer: nothing at runtime reads
+/// this list, and a release build warned that the constant was never used.
+#[cfg(test)]
 const DERIVED_ELSEWHERE: &[(&str, &str, &str)] = &[
     (
         "forage_identify",

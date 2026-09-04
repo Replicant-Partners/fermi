@@ -912,7 +912,6 @@ pub async fn create_agent_handler(
         valence: None,
         output_contract: req.output_contract.filter(|v| v.is_object()),
         input_contract: None,
-        competition: None,
         taxonomy: Some(derived_taxonomy),
     };
 
@@ -1267,10 +1266,6 @@ pub async fn import_agent_handler(
             .get("capabilities")
             .and_then(|c| c.get("input_contract"))
             .cloned(),
-        competition: card
-            .get("capabilities")
-            .and_then(|c| c.get("competition"))
-            .and_then(|v| serde_json::to_value(v).ok()),
         taxonomy,
     };
 
@@ -3885,7 +3880,6 @@ mod tests {
             valence: None,
             output_contract: None,
             input_contract: None,
-            competition: None,
             taxonomy: None,
         }
     }
@@ -3977,7 +3971,6 @@ mod tests {
             valence: Some(json!({})),
             output_contract: Some(json!({})),
             input_contract: Some(json!({})),
-            competition: Some(json!({})),
             version: Some("1.0.0".into()),
             taxonomy: Some(json!({})),
         };
