@@ -923,9 +923,9 @@ function badge(status) {
 }
 
 function provChip(mkt) {
-  if (endorsements['expert']) return `<div class="pchip end">★ ${mkt==='EU'?'eu':'mkt==="US"?"us':'cn'}_ruleset.yaml · human_endorsed</div>`;
-  const f = {EU:'eu_reg_1924.yaml',US:'us_fda_ftc.yaml',CN:'cn_gb_samr.yaml'};
-  return `<div class="pchip tv">📄 ${f[mkt]} · tool_verified</div>`;
+  const file = {EU:'eu_reg_1924.yaml', US:'us_fda_ftc.yaml', CN:'cn_gb_samr.yaml'}[mkt] ?? 'ruleset.yaml';
+  if (endorsements['expert']) return `<div class="pchip end">★ ${file} · human_endorsed</div>`;
+  return `<div class="pchip tv">📄 ${file} · tool_verified</div>`;
 }
 
 function renderTable(claims) {
