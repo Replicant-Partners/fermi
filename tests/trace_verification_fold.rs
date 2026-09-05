@@ -175,45 +175,90 @@ fn there_is_exactly_one_settle_ui_and_it_reads_its_verdicts_from_the_platform() 
     );
 }
 
-/// The question no checkpoint answers must keep reading as a hole.
+/// The question no checkpoint answers must keep reading as a hole — and the
+/// hole must be **found**, not hardcoded.
 ///
-/// The five questions each name the gate that answers them. Question three —
-/// *did it actually do the work?* — names none, and that is the finding rather
-/// than a gap in the page: `grounding` asks whether a tool **could** have
-/// supplied a value, never whether the agent **did** produce one, so an empty
-/// field inherits its block's grade and reads as sourced. On the reference
-/// episode, `squad_value` grades against blocks marked `tool_verified` with two
-/// of four values null.
+/// # What this test used to assert, and why it stopped being true
 ///
-/// The failure mode is somebody tidying it: assigning `grounding` to question
-/// three because every other row has a gate and the blank looks unfinished.
-/// That would delete the only place the platform admits the check does not
-/// exist, and nothing would go red.
+/// Question three — *did it actually do the work?* — named no gate, and that
+/// was the finding rather than a gap in the page: `grounding` asks whether a
+/// tool **could** have supplied a value, never whether the agent **did**
+/// produce one, so an empty field inherited its block's grade and read as
+/// sourced. This test pinned the empty gate list and said, in its own failure
+/// message, *"if one is built, delete this assertion in the same commit that
+/// builds it."*
+///
+/// One was built. `Gate::Completeness` answers question three, the template
+/// names it, and that commit did **not** delete this assertion — so the suite
+/// went red and stayed red, asserting the absence of a gate that exists.
+///
+/// # What is worth pinning now
+///
+/// The original failure mode was somebody *tidying* the blank: assigning
+/// `grounding` to question three because every other row had a gate and the
+/// hole looked unfinished. That is still the thing to prevent, and it is now
+/// preventable positively — question three must name the gate that actually
+/// answers it and must not borrow the one that cannot.
+///
+/// The second half is new, and it is the more general property: the page's
+/// `no gate` note must **derive** which question it is talking about. It used
+/// to say `Question 3 has no gate` in hardcoded text under a condition that
+/// had gone false, which is a claim nobody could see was wrong and which would
+/// have blamed question three for whichever question next lost its gate.
 #[test]
-fn the_question_with_no_gate_still_has_no_gate() {
+fn the_question_with_no_gate_is_found_rather_than_named() {
     let src = trace();
 
     assert!(
         src.contains("g-none"),
-        "the trace no longer renders a `no gate` token. One of the five questions \
-         is answered by nothing in the system, and that absence is the finding \
-         — it must be visible as a hole rather than as a blank cell."
+        "the trace no longer renders a `no gate` token. A question answered by \
+         nothing in the system must be visible as a hole rather than as a blank \
+         cell — absent has to look different from bad."
     );
 
-    // The empty gate list belongs to the work question and to no other.
+    // Question three names the gate that was built for it, and not the one
+    // that cannot answer it.
     let q3 = src
         .find("Did it actually do the work?")
-        .expect("the work question is gone; it is the only one computed from the values");
+        .expect("the work question is gone; it is the one `Gate::Completeness` was built for");
     let next = src[q3..]
         .find("Where did the numbers come from?")
         .map(|i| q3 + i)
         .expect("the provenance question must follow the work question");
+    let cell = &src[q3..next];
     assert!(
-        src[q3..next].contains("[]"),
-        "`Did it actually do the work?` has been given a gate. Nothing in the \
-         system checks whether a contracted field was filled in, so naming a \
-         checkpoint here claims a check that does not run. If one is built, \
-         delete this assertion in the same commit that builds it."
+        cell.contains("completeness"),
+        "`Did it actually do the work?` no longer names `completeness`. That \
+         gate exists and answers exactly this question; a blank here would \
+         report the platform as missing a check it has."
+    );
+    assert!(
+        !cell.contains("grounding"),
+        "`Did it actually do the work?` has been given `grounding`. That is the \
+         original defect and the reason `Gate::Completeness` was written: \
+         grounding asks whether a tool COULD have supplied a value, never \
+         whether the agent DID produce one, so it reads an empty field as \
+         sourced and would answer this question yes on a document with half its \
+         values null."
+    );
+
+    // And the note under the strip finds its subject instead of asserting one.
+    assert!(
+        src.contains("rows.findIndex(r => Array.isArray(r.g) && !r.g.length)"),
+        "the `no gate` note no longer derives WHICH question has no gate. \
+         Hardcoding the number is how it came to say `Question 3 has no gate` \
+         for two commits after question three got one — invisibly, because the \
+         condition guarding it was false at the same time."
+    );
+    // Over code lines only, per this file's own rule: the template explains
+    // the defect by name in a comment directly above the fix, and a scan that
+    // could not tell a sentence from a statement would force the explanation
+    // out of the codebase to stay green.
+    assert!(
+        !code_lines(&src).any(|l| l.contains("Question 3 has no gate")),
+        "the page hardcodes `Question 3 has no gate` again. Question three has \
+         a gate; this sentence must name whichever question is actually \
+         gateless, or render nothing."
     );
 
     // Absent, declared-elsewhere and unrecorded are three different findings.
@@ -694,9 +739,10 @@ fn the_three_unsettleable_kinds_are_not_one_state() {
 /// Two things must NOT move behind a fold, and they are the reason this is a test
 /// rather than a preference:
 ///
-/// * **`no gate`.** Question three is the finding this page ratcheted — nothing
-///   in the system checks whether a contracted field was filled in. A finding
-///   behind a fold is a finding nobody reads.
+/// * **`no gate`.** A question no checkpoint answers is a finding, and a
+///   finding behind a fold is a finding nobody reads. The note reporting it
+///   must stay above the fold even when nothing is currently gateless — what
+///   is pinned is the machinery, not today's answer.
 /// * **Each fold's own headline.** A summary reading "the loops" hides a count;
 ///   a summary reading "1 claim awaiting a verdict" is the reason to open it.
 ///   Closing a fold may cost detail and must never cost a finding.
@@ -707,7 +753,21 @@ fn the_summary_is_a_strip_and_the_expert_views_carry_their_headlines() {
     let at = src
         .find("function questions(d) {")
         .expect("the five questions are gone");
-    let block: String = src[at..].chars().take(6000).collect();
+
+    // Bounded by the next function declaration, not by a character count.
+    //
+    // This took `.take(6000)`, and every token below sits between 8,600 and
+    // 9,600 characters in — so the whole test was passing on a window that no
+    // longer reached the thing it was checking, until `Gate::Completeness`
+    // added question three's answer and pushed the strip out of range. A magic
+    // number measured the length of the prose above the strip and called it the
+    // presence of the strip; the two are unrelated, and the failure it finally
+    // produced pointed at the layout rather than at itself.
+    let end = src[at + 1..]
+        .find("\n  function ")
+        .map(|i| at + 1 + i)
+        .unwrap_or(src.len());
+    let block = &src[at..end];
 
     assert!(
         block.contains("q5strip") && block.contains("q5c-v"),

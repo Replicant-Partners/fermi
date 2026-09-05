@@ -258,9 +258,14 @@ impl Pulse {
             } else {
                 Decision::Refused
             },
-            (!report.is_clean())
-                .then(|| format!("{} violation(s)", report.violations.len()))
-                .as_deref(),
+            // What was refused, not how much of it. This read `1 violation(s)`
+            // and every one of the ledger's 42 grounding rows says exactly
+            // that — one distinct reason across the whole table. A reviewer
+            // asked whether that refusal was right has nothing to judge, which
+            // is why the review door had never been used once.
+            // `refusal_reason` names the kind and the paths.
+            report.refusal_reason().as_deref(),
+            agent_slug,
             self.episode_id,
         );
 
@@ -274,6 +279,7 @@ impl Pulse {
         }
 
         Graded {
+            agent: agent_slug.to_string(),
             claimed,
             enforced,
             report,
@@ -334,6 +340,10 @@ impl Pulse {
                     )
                 })
                 .as_deref(),
+            // Read off the document's own grade rather than taken as an
+            // argument, so the two gate rows this pulse writes cannot end up
+            // filed under different agents.
+            &graded.agent,
             self.episode_id,
         );
         a
@@ -355,6 +365,15 @@ impl Pulse {
 /// default is a convention again.
 #[derive(Debug, Clone)]
 pub struct Graded {
+    /// The agent this document was graded **against**.
+    ///
+    /// Carried rather than passed again to [`Pulse::assess_completeness`], so
+    /// the two `gate_decisions` rows one pulse writes are provably about the
+    /// same agent. A slug supplied twice is a slug that can differ twice, and
+    /// the ledger would then hold a grounding refusal and a completeness
+    /// refusal filed under different names with no way to tell they came from
+    /// one run.
+    pub agent: String,
     /// The document as the agent produced it. `None` when the response carried
     /// no JSON at all — which is the common case, and is not a failure.
     pub claimed: Option<Value>,

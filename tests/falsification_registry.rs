@@ -783,6 +783,42 @@ const FALSIFICATIONS: &[Falsification] = &[
                  rather than typed, so the pair cannot drift from what is \
                  actually exempt.",
     },
+    Falsification {
+        check: "grounding_trust::refusal_reason",
+        owner: "src/grounding_trust.rs",
+        // Permissive reading: "the ledger needs no reason for this document."
+        //
+        // True for a clean report and a lie for a dirty one. `Report::default()`
+        // rather than a literal, because the quiet world here IS the default
+        // and building one by hand would let the two drift.
+        passes: || gt::Report::default().refusal_reason().is_none(),
+        fires: || {
+            gt::Report {
+                violations: vec![gt::Violation {
+                    path: "genome.chromosome_count".into(),
+                    removed: serde_json::json!(0),
+                    kind: gt::ViolationKind::UngroundedField,
+                }],
+                provenance: vec![],
+            }
+            .refusal_reason()
+            .is_none()
+        },
+        models: "The grounding ledger's 42 production rows. 35 carry a NULL \
+                 reason and the other 7 carry the string `1 violation(s)` — one \
+                 distinct reason across the whole table. A refusal recorded \
+                 with nothing to read is why `gate_decision_reviews` has zero \
+                 rows: asked whether such a refusal was right, a reviewer can \
+                 only answer `unclear`, and \
+                 `gate_review::Standing::Inconclusive` is a finding about the \
+                 LEDGER rather than the gate. This pair holds the weaker half \
+                 — that a dirty report says something at all. That what it says \
+                 NAMES the field and the fault is asserted by \
+                 `grounding_trust::tests::a_refusal_reason_names_the_fault_and_the_field`, \
+                 which was mutated back to a count and confirmed red; a world \
+                 cannot express that one, because no input makes a correct \
+                 implementation forget to name a path.",
+    },
     // ── native_evaluators ───────────────────────────────────────────────
     Falsification {
         check: "native_evaluators::Verdict::is_failing",
@@ -2149,6 +2185,19 @@ const EXEMPT: &[(&str, &str)] = &[
         "`Report::is_clean` is `violations.is_empty()`. The falsifiable question \
          is whether `enforce` puts anything in that vector, which is exempted \
          above with the tests that answer it.",
+    ),
+    (
+        "grounding_trust::id",
+        "`ViolationKind::id` is a total mapping from three variants to three \
+         tokens, one arm each, and the compiler rejects a missing one — the \
+         same argument as `grounding_trust::kind` at the top of this list. \
+         There is no world in which it is wrong rather than merely different. \
+         The one thing that CAN go wrong is two variants rendering the same \
+         token, which would make a class of fault unreadable in \
+         `gate_decisions.reason` after the fact, and that is asserted directly \
+         by `grounding_trust::tests::every_violation_kind_has_its_own_token`. \
+         Mutated to confirm: pointing `NarrativeLeak` at `ungrounded_field` \
+         turns it red.",
     ),
     // native_evaluators
     (

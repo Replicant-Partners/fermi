@@ -1078,19 +1078,28 @@ declare it">${esc(id)}</span>`;
     // Said once, under the strip, and only when it is true.
     //
     // The absence is the finding and it is easy to read as an oversight in the
-    // page rather than in the platform, so it is named as the platform's. This
-    // is also why question three is asked at all: it is computed here, from the
-    // values, precisely because no checkpoint computes it.
-    const noGate = rows.some(r => Array.isArray(r.g) && !r.g.length)
-      // Named by its number, so the sentence and the cell it qualifies find each
-      // other. Half the length it was: it sits above the document, and a
-      // paragraph in that position is the summary dominating again — every claim
-      // in the original is still here.
-      ? `<div class="note q5-nogate"><b>Question 3 has no gate.</b> Nothing in the
-           system checks whether a contracted field was filled in — <code>grounding</code>
-           asks whether a tool <i>could</i> supply a value, never whether the agent
-           <i>did</i>. That answer is computed here, from the values, and it is the only
-           one on this page that no checkpoint stands behind.</div>`
+    // page rather than in the platform, so it is named as the platform's.
+    //
+    // DERIVED, not asserted. This read `<b>Question 3 has no gate.</b>` followed
+    // by a paragraph about `grounding` asking whether a tool COULD supply a
+    // value. Every word of that was true when it was written and none of it is
+    // now: `Gate::Completeness` stands behind question three, so the condition
+    // above it went false and the sentence stopped rendering — while remaining
+    // in the page, hardcoded, ready to blame question three for whichever
+    // question next loses its gate. A conditional claim nobody can see is
+    // false is the same defect as a gate whose verdict nobody reads.
+    //
+    // So the note now finds its own subject and names it by number AND label,
+    // so the sentence and the cell it qualifies find each other. The prose is
+    // general because the situation is: what makes this worth saying is not
+    // anything about completeness, it is that one answer on the page has no
+    // checkpoint behind it.
+    const gateless = rows.findIndex(r => Array.isArray(r.g) && !r.g.length);
+    const noGate = gateless >= 0
+      ? `<div class="note q5-nogate"><b>Question ${gateless + 1}
+           (${esc(rows[gateless].short)}) has no gate.</b> Nothing in the platform
+           stands behind this answer: it is computed here, from the values. Every
+           other answer on this page names the checkpoint that decides it.</div>`
       : "";
 
     const strip = rows.map((r, i) => `<div class="q5c t-${r.tone}" title="${esc(r.q)}">

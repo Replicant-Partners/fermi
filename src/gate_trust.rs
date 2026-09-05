@@ -510,13 +510,31 @@ pub fn decided_about(gate: Gate, decision: Decision, reason: Option<&str>, subje
 /// Only gates that fire **after** the artifact exists can pass one. `credit` and
 /// `rate_limit` decide whether to run at all, so their `episode_id` is
 /// permanently `None` — see migration 220 on why that is final rather than a gap.
+///
+/// # `subject` is required here, and that is the point
+///
+/// It was `None`, hardcoded, and the consequence was measurable: all 42
+/// `grounding` rows in production carry a null subject, so the ledger cannot
+/// say **which agent** any of them was about. The review door
+/// (`gate_api::GATE_DOORS`) hands a reviewer a decision and asks whether it was
+/// right; an anonymous refusal cannot be judged, and `gate_decision_reviews`
+/// has zero rows.
+///
+/// So it is a required `&str` rather than an `Option<&str>` widened onto the
+/// signature. A decision that reached the artifact stage always knows what it
+/// was about — both call sites had the slug in scope and were passing `None`
+/// past it — and an invariant the type system holds does not need a test to
+/// notice when it stops being true. This is the one entry point where
+/// anonymity was never defensible: `decided` and `decided_about` serve gates
+/// that fire before there is a subject to name.
 pub fn decided_for_episode(
     gate: Gate,
     decision: Decision,
     reason: Option<&str>,
+    subject: &str,
     episode_id: uuid::Uuid,
 ) {
-    decided_full(gate, decision, reason, None, Some(episode_id))
+    decided_full(gate, decision, reason, Some(subject), Some(episode_id))
 }
 
 fn decided_full(

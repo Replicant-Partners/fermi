@@ -2820,6 +2820,27 @@ pub enum ViolationKind {
     ContradictsCanonical,
 }
 
+impl ViolationKind {
+    /// The machine-stable token this enum's `kind` field has always promised.
+    ///
+    /// The doc comment on [`Violation::kind`] said "machine-stable reason, for
+    /// anomaly payloads" and there was no way to render one: no `Display`, no
+    /// `Serialize`, no `id`. The promise was kept nowhere, so every consumer
+    /// that wanted to name a violation either matched the variants itself or,
+    /// in the ledger's case, gave up and wrote a count.
+    ///
+    /// Stable in the `gate_decisions.reason` sense: these strings reach a
+    /// durable column and a reviewer reads them, so renaming one silently
+    /// rewrites history. Change them the way a vocabulary is changed.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::UngroundedField => "ungrounded_field",
+            Self::NarrativeLeak => "narrative_leak",
+            Self::ContradictsCanonical => "contradicts_canonical",
+        }
+    }
+}
+
 /// What [`enforce`] did.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Report {
@@ -2831,6 +2852,62 @@ pub struct Report {
 impl Report {
     pub fn is_clean(&self) -> bool {
         self.violations.is_empty()
+    }
+
+    /// **What was refused**, for `gate_decisions.reason`.
+    ///
+    /// This exists because the ledger recorded `1 violation(s)` for every one
+    /// of its 42 grounding rows, and that string is the reason the review door
+    /// had never been used. A reviewer is asked whether a refusal was *right*.
+    /// A count cannot be judged: it does not say which field was taken, what
+    /// class of fault was found, or which agent was involved. The only honest
+    /// verdict available against a count is `unclear`, and
+    /// [`crate::gate_review::Standing::Inconclusive`] is a finding about the
+    /// **ledger**, not about the gate.
+    ///
+    /// So this names the fault and the paths, grouped by kind, in the order the
+    /// kinds are declared:
+    ///
+    /// ```text
+    /// ungrounded_field genome.chromosome_count, taxonomy.divergence_mya; narrative_leak summary
+    /// ```
+    ///
+    /// Tokens and paths only, per the surface rule that a cell holds a value or
+    /// a token and never a sentence. The explanation of what
+    /// `ungrounded_field` *means* lives once, on [`ViolationKind`], keyed by
+    /// the token the rows print.
+    ///
+    /// **What is deliberately left out:** [`Violation::removed`] — the value
+    /// the model actually wrote. It is the single most useful thing for judging
+    /// a refusal, and it does not belong in a 400-character text column shared
+    /// with every other gate. It is also the one field here that can carry
+    /// arbitrary model output into a durable log. The reviewer's own table has
+    /// an `evidence JSONB` column for exactly this, and the artifact trace can
+    /// already show the claim beside the contract. Naming the path is what lets
+    /// a reviewer *get* to the value; carrying the value would be the ledger
+    /// trying to be the artifact.
+    ///
+    /// Returns `None` for a clean report, because an approval carries no reason
+    /// — see `gate_trust::decided_full`, which drops it anyway.
+    pub fn refusal_reason(&self) -> Option<String> {
+        if self.violations.is_empty() {
+            return None;
+        }
+        let mut groups: Vec<(&'static str, Vec<&str>)> = Vec::new();
+        for v in &self.violations {
+            let id = v.kind.id();
+            match groups.iter_mut().find(|(k, _)| *k == id) {
+                Some((_, paths)) => paths.push(v.path.as_str()),
+                None => groups.push((id, vec![v.path.as_str()])),
+            }
+        }
+        Some(
+            groups
+                .iter()
+                .map(|(kind, paths)| format!("{kind} {}", paths.join(", ")))
+                .collect::<Vec<_>>()
+                .join("; "),
+        )
     }
 }
 
@@ -5711,5 +5788,126 @@ mod tests {
                 .map(|v| &v.path)
                 .collect::<Vec<_>>()
         );
+    }
+
+    /// **A refusal reason must name what was refused.**
+    ///
+    /// The ledger held 42 grounding rows and exactly **one** distinct reason
+    /// across all of them: `1 violation(s)`. Every refusal in production was
+    /// recorded as a count, with a null subject beside it. That is why
+    /// `gate_decision_reviews` has zero rows — not neglect. A reviewer is
+    /// asked "was this refusal right?", and against a count the only honest
+    /// verdict is `unclear`, which `gate_review::Standing::Inconclusive`
+    /// reports as a finding about the **ledger** rather than the gate.
+    ///
+    /// So this asserts the reason carries the two things a judgement needs: the
+    /// **class** of fault and the **paths** it happened at. It is deliberately
+    /// not an equality assertion on the whole string — pinning the exact format
+    /// would make the separator a contract and fail on a cosmetic change, while
+    /// missing the case this guard exists for, which is the reason collapsing
+    /// back into a summary.
+    #[test]
+    fn a_refusal_reason_names_the_fault_and_the_field() {
+        let report = Report {
+            violations: vec![
+                Violation {
+                    path: "genome.chromosome_count".into(),
+                    removed: json!(0),
+                    kind: ViolationKind::UngroundedField,
+                },
+                Violation {
+                    path: "taxonomy.divergence_mya".into(),
+                    removed: json!(12.5),
+                    kind: ViolationKind::UngroundedField,
+                },
+                Violation {
+                    path: "summary".into(),
+                    removed: json!("a confident sentence"),
+                    kind: ViolationKind::NarrativeLeak,
+                },
+            ],
+            provenance: vec![],
+        };
+
+        let reason = report
+            .refusal_reason()
+            .expect("three violations must produce a reason");
+
+        for v in &report.violations {
+            assert!(
+                reason.contains(&v.path),
+                "`{}` was stripped and the ledger will not say so. reason = {reason:?}",
+                v.path
+            );
+            assert!(
+                reason.contains(v.kind.id()),
+                "the reason does not name the {} class, so a reviewer cannot \
+                 tell a fabricated field from a leaked narrative. reason = \
+                 {reason:?}",
+                v.kind.id()
+            );
+        }
+
+        // Grouped by kind, so two fields of one fault are one clause rather
+        // than the same token printed twice. This is what keeps the reason
+        // inside `gate_trust`'s 400-character truncation for a document that
+        // fails a dozen fields at once — truncation would otherwise silently
+        // drop the last paths and the ledger would under-report the refusal.
+        assert_eq!(
+            reason.matches("ungrounded_field").count(),
+            1,
+            "two fields of the same kind must group into one clause: {reason:?}"
+        );
+
+        // The regression this guard is really for: a count in place of a name.
+        assert!(
+            !reason.contains("violation(s)"),
+            "the reason has gone back to counting what it refused instead of \
+             naming it. That string is unjudgeable, and a ledger of \
+             unjudgeable rows is why the review door went unused: {reason:?}"
+        );
+
+        // And a clean report carries none, because an approval has no reason —
+        // `gate_trust::decided_full` drops it regardless, and returning
+        // `Some("")` here would put an empty string in the column instead.
+        assert_eq!(
+            Report::default().refusal_reason(),
+            None,
+            "a clean report must produce no reason at all"
+        );
+    }
+
+    /// Every [`ViolationKind`] renders a distinct, stable token.
+    ///
+    /// These strings reach `gate_decisions.reason`, which is durable and read
+    /// by people, so two kinds sharing a token would make a class of fault
+    /// unreadable after the fact — and a reviewer who cannot tell
+    /// `contradicts_canonical` from `ungrounded_field` is judging the wrong
+    /// question. `Antaxius beieri` is the first and the `Unsourced` strip is
+    /// the second; the remedies are opposite.
+    #[test]
+    fn every_violation_kind_has_its_own_token() {
+        let kinds = [
+            ViolationKind::UngroundedField,
+            ViolationKind::NarrativeLeak,
+            ViolationKind::ContradictsCanonical,
+        ];
+        let mut seen: Vec<&str> = kinds.iter().map(|k| k.id()).collect();
+        let before = seen.len();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(
+            seen.len(),
+            before,
+            "two violation kinds render the same ledger token: {seen:?}"
+        );
+        for k in kinds {
+            let id = k.id();
+            assert!(
+                !id.is_empty() && id.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
+                "`{id:?}` is not a token. These are printed in table cells and \
+                 compared as strings; a cell holds a token, never a sentence."
+            );
+        }
     }
 }
