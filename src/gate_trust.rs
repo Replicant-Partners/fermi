@@ -953,6 +953,96 @@ mod tests {
         assert_eq!(ledger_status().pending, 0, "drain empties the queue");
     }
 
+    /// **A decision must reach the queue naming its agent and its fault.**
+    ///
+    /// This is the test whose absence produced the defect. `gate_decisions`
+    /// held 42 grounding rows in production; every one had a null `subject`
+    /// and every refusal had the reason `1 violation(s)`. Nothing was wrong
+    /// with the queue, the flush, or the table — the writer simply never
+    /// passed what it knew, and no test looked at what arrived, so the column
+    /// `gate_api::LEDGER_SQL` selects had been null for the life of the ledger.
+    ///
+    /// It goes through `Pulse::grade` rather than calling `decided_full`
+    /// directly, because the two halves being checked are the ones the real
+    /// writer supplies: the agent slug it was grading against, and
+    /// `Report::refusal_reason` rather than a count. A unit test on
+    /// `refusal_reason` alone would still pass if `grade` threw the value away.
+    ///
+    /// Two `Unsourced` fields are filled, so this also exercises the grouping
+    /// end to end: one `ungrounded_field` clause carrying both paths, which is
+    /// what keeps a many-field refusal inside the 400-character truncation.
+    #[test]
+    fn an_episode_decision_reaches_the_queue_naming_its_agent_and_its_fault() {
+        let _g = exclusive();
+
+        // `genome.ploidy` and `conservation.iucn_status` are both declared
+        // Unsourced for this agent: no tool of its own could supply either, so
+        // a value in them is fabricated by construction. Two of them, so the
+        // grouping has something to group.
+        let raw = serde_json::json!({
+            "genome": { "ploidy": "diploid" },
+            "conservation": { "iucn_status": "Least Concern" }
+        })
+        .to_string();
+
+        let pulse = crate::episode_boundary::Pulse::after_the_fact(
+            uuid::Uuid::nil(),
+            "a gate-ledger fixture",
+        );
+        let _graded = pulse.grade("genome_profiler", None, Some(&raw));
+
+        let queued = drain();
+        let rows: Vec<&PendingDecision> =
+            queued.iter().filter(|d| d.gate == "grounding").collect();
+        assert_eq!(
+            rows.len(),
+            1,
+            "one graded document is one grounding decision; got {:?}",
+            queued.iter().map(|d| d.gate).collect::<Vec<_>>()
+        );
+        let row = rows[0];
+
+        assert_eq!(row.decision, "refused", "two fabricated fields is a refusal");
+
+        assert_eq!(
+            row.subject.as_deref(),
+            Some("genome_profiler"),
+            "the decision reached the ledger without naming the agent it was \
+             about. That is the state all 42 production rows are in, and it is \
+             what makes them unreviewable: `gate_api::LEDGER_SQL` selects this \
+             column so a reviewer can see whose refusal they are judging."
+        );
+
+        let reason = row
+            .reason
+            .as_deref()
+            .expect("a refusal must carry a reason a reviewer can read");
+        assert!(
+            reason.contains("genome.ploidy") && reason.contains("conservation.iucn_status"),
+            "the reason does not name both stripped fields, so the ledger \
+             under-reports what was refused: {reason:?}"
+        );
+        assert!(
+            !reason.contains("violation(s)"),
+            "the writer is counting what it refused again instead of naming it. \
+             `1 violation(s)` was the reason on every refusal in the ledger and \
+             the reason the review door went unused: {reason:?}"
+        );
+        assert_eq!(
+            reason.matches("ungrounded_field").count(),
+            1,
+            "both faults are the same kind and must group into one clause, or a \
+             document failing a dozen fields loses its last paths to the \
+             400-character truncation: {reason:?}"
+        );
+
+        assert!(
+            row.episode_id.is_some(),
+            "a decision about an artifact must point at the artifact, or a \
+             reviewer cannot reach the document the refusal was about"
+        );
+    }
+
     /// A full queue must lose the OLDEST and say so.
     ///
     /// A bounded queue that drops silently is worse than an unbounded one: the

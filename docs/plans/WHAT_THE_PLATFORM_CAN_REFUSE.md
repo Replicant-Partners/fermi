@@ -394,6 +394,7 @@ consequence of it.
 | no two violation kinds share a ledger token | `grounding_trust::tests::every_violation_kind_has_its_own_token` |
 | a dirty report always says something to the ledger | `falsification_registry` — the `grounding_trust::refusal_reason` pair |
 | an episode decision cannot be recorded anonymously | the compiler — `decided_for_episode` takes `subject: &str` |
+| what reaches the queue names its agent and its fault | `gate_trust::tests::an_episode_decision_reaches_the_queue_naming_its_agent_and_its_fault` |
 | question three names `completeness` and never `grounding` | `trace_verification_fold::the_question_with_no_gate_is_found_rather_than_named` |
 | the `no gate` note finds its subject instead of asserting one | same test |
 
@@ -405,6 +406,22 @@ exempted because a stream has already sent its tokens by the time the document
 is gradeable — for exactly one commit. That was true of the `progress` deltas
 and never true of the route, which emits a terminal `complete` frame after
 grading.
+
+### The guard whose absence was the defect
+
+`an_episode_decision_reaches_the_queue_naming_its_agent_and_its_fault` goes
+through `Pulse::grade` and then reads the `PendingDecision` that arrives. Nothing
+ever did that, and that is the whole story of the 42 rows: the queue, the flush
+and the table were all correct, the writer simply never passed what it knew, and
+no test looked at what turned up. A unit test on `refusal_reason` alone still
+passes if `grade` throws the value away.
+
+Mutated both ways, against the exact production states:
+
+| mutation | result |
+|---|---|
+| `subject` → `""` | red — *"reached the ledger without naming the agent"* |
+| reason → `format!("{} violation(s)", ...)` | red — *`"2 violation(s)"`* |
 
 ### The one guard that is not a test
 
