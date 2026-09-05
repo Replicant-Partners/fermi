@@ -281,6 +281,63 @@ impl Pulse {
             _graded_here: (),
         }
     }
+
+    /// **Did the agent fill the fields it was asked for?**
+    ///
+    /// The question `grade` cannot answer, and it is a separate call for one
+    /// reason: it needs the **run record**. Grounding is pure over the document
+    /// — whether a tool *could* supply a field — and completeness turns
+    /// entirely on whether the tool was *called*, which lives on
+    /// `AgentOutput::tool_invocations` and never reaches `grade`.
+    ///
+    /// The same document is a compliant run or a negligent one depending on
+    /// that record. `Lucanus cervus` with `ncbi_genome_search` called: four
+    /// null genome fields, the world's gap, nobody's fault. The same four nulls
+    /// with the tool never called: the agent's. No inspection of the document
+    /// can tell those apart, which is why grounding never could.
+    ///
+    /// Reports `Gate::Completeness` here rather than at the call sites, so a
+    /// route cannot compute the assessment and forget to file it — the mistake
+    /// `Graded`'s private witness exists to prevent one field over.
+    ///
+    /// A method rather than an argument to `grade`: `grade` has six call sites
+    /// across five files, two of them owned by work in flight, and widening a
+    /// signature that every execute path funnels through is the churn this
+    /// boundary was consolidated to stop.
+    pub fn assess_completeness(
+        &self,
+        graded: &Graded,
+        tools_called: &[&str],
+    ) -> crate::completeness::Assessment {
+        let a = crate::completeness::assess(&graded.fields, tools_called);
+        gate_trust::decided_for_episode(
+            Gate::Completeness,
+            if a.is_undetermined() {
+                // No contract, or nothing in it the agent was asked for. Not a
+                // pass: there is no list of fields to have filled.
+                Decision::Undetermined
+            } else if a.owed.is_empty() {
+                Decision::Approved
+            } else {
+                Decision::Refused
+            },
+            (!a.owed.is_empty())
+                .then(|| {
+                    format!(
+                        "{} field(s) owed: {}",
+                        a.owed.len(),
+                        a.owed
+                            .iter()
+                            .map(|g| format!("{} ({})", g.path, g.why.as_str()))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                })
+                .as_deref(),
+            self.episode_id,
+        );
+        a
+    }
 }
 
 /// What the field contract made of one document.

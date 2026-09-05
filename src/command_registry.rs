@@ -91,6 +91,20 @@ pub enum Enforcement {
     /// Calling it `Metric` for the life of the feature is what let the execute
     /// route return fabricated values while the trace drew a checkpoint over it.
     Amend,
+    /// It runs after the effect, changes nothing about the artifact, and **the
+    /// verdict is returned to the caller**.
+    ///
+    /// `Gate::Completeness` is the case: there is nothing to strip from a field
+    /// the agent left empty, and refusing would deny the caller fourteen good
+    /// fields because of one missing one. The remedy is the agent. So the honest
+    /// enforcement is a report — and a report a caller receives is not a
+    /// discarded verdict, which is the only thing `Metric` means.
+    ///
+    /// The distinction earns its place by keeping the ratchet honest. Declaring
+    /// completeness a `Metric` would have grown
+    /// [`gates_computed_and_discarded`] from two entries to three, reporting a
+    /// brand-new visible check as a regression.
+    Report,
     /// Typed, persisted and exposed, and never compared against anything.
     Declared,
 }
@@ -101,13 +115,28 @@ impl Enforcement {
         matches!(self, Enforcement::Control)
     }
 
-    /// Does this change what the caller receives?
+    /// Does this change the artifact itself?
     ///
-    /// The question `refuses()` could not answer, and the one that actually
-    /// separates a control from a decoration. An `Amend` does not refuse and is
-    /// emphatically not discarded.
+    /// The question `refuses()` could not answer. An `Amend` does not refuse and
+    /// emphatically does change what is delivered.
     pub fn alters_the_artifact(self) -> bool {
         matches!(self, Enforcement::Control | Enforcement::Amend)
+    }
+
+    /// Can the caller tell this gate ran?
+    ///
+    /// The predicate `gates_computed_and_discarded` actually wants, and it is
+    /// wider than `alters_the_artifact`: a refusal is visible, an amendment is
+    /// visible in the document, and a `Report`'s verdict is visible because it
+    /// is in the response body. A `Metric` is not visible at all — which is the
+    /// entire content of the sentence that list is built around, *"on the
+    /// surface a caller sees, one of these is indistinguishable from having no
+    /// gate at all."*
+    pub fn reaches_the_caller(self) -> bool {
+        matches!(
+            self,
+            Enforcement::Control | Enforcement::Amend | Enforcement::Report
+        )
     }
 }
 
@@ -185,6 +214,16 @@ const fn amend(gate: Gate, site: &'static str, why: &'static str) -> GateApplica
     }
 }
 
+/// Cannot refuse or repair; the verdict is returned to the caller.
+const fn report(gate: Gate, site: &'static str, why: &'static str) -> GateApplication {
+    GateApplication {
+        gate,
+        enforcement: Enforcement::Report,
+        site,
+        why_not_control: Some(why),
+    }
+}
+
 /// Every verb, with what governs it.
 ///
 /// Rule for adding one: **if a person can invoke it and it changes something,
@@ -224,7 +263,22 @@ pub const COMMANDS: &[Command] = &[
                 "port_trust::bind_input, from handlers::execution",
                 "Declared advisory: `is_mismatch()` guards a warning and control \
                  flow is identical either way. Here so the mismatch RATE is \
-                 visible, which is the number that would justify making it fatal.",
+                 visible, which is the number that would justify making it fatal. \
+                 Also the one place on this route where genuine PREVENTION is \
+                 available and unused — a malformed input can be refused before a \
+                 credit is spent, which protects the payer rather than the reader.",
+            ),
+            report(
+                Gate::Completeness,
+                "episode_boundary::Pulse::assess_completeness, from \
+                 handlers::execution",
+                "Cannot refuse and cannot amend: there is nothing to strip from a \
+                 field the agent left empty, and refusing would deny the caller \
+                 fourteen good fields because of one missing one. The remedy is \
+                 the agent, so the honest enforcement is a report. It exists at \
+                 all because this was the one question on the artifact trace that \
+                 no checkpoint stood behind — grounding asks whether a tool COULD \
+                 supply a field and never whether the agent DID.",
             ),
         ],
         ungated_because: None,
@@ -427,15 +481,17 @@ pub fn ungoverned_writes() -> Vec<&'static str> {
 ///
 /// The audit's §3 table, as a live query. On the surface a caller sees, one of
 /// these is indistinguishable from having no gate at all.
-/// Keyed on `alters_the_artifact`, not on `refuses`. An `Amend` is neither
-/// refused nor discarded: the caller receives a document the gate changed, so
-/// listing it here would report a working control as a dead one — the same
-/// error this function exists to expose, pointed the other way.
+/// Keyed on `reaches_the_caller`, not on `refuses`.
+///
+/// Two corrections, both the same shape. An `Amend` changes the document the
+/// caller receives and a `Report` puts its verdict in the response body; listing
+/// either as *discarded* would report a working check as a dead one — the error
+/// this function exists to expose, pointed the other way.
 pub fn gates_computed_and_discarded() -> Vec<(&'static str, &'static str)> {
     let mut out = Vec::new();
     for c in COMMANDS {
         for g in c.gates {
-            if !g.enforcement.alters_the_artifact() {
+            if !g.enforcement.reaches_the_caller() {
                 out.push((c.id, g.gate.id()));
             }
         }

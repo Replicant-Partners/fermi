@@ -120,20 +120,56 @@ a control nobody has ever checked. `gate_decision_reviews` exists (migration
 216) and is empty. The number that unlocks promotion is *overturned / decided*,
 per gate.
 
-### 4.3 A gate for question three
+### 4.3 ~~A gate for question three~~ — **done**
 
-Nothing asks *"did the agent fill the fields it was asked for."* Question three
-is computed on the trace, from the values, precisely because no checkpoint
-computes it — and it is the only cell on that page with no gate behind it.
+`Gate::Completeness`, in `src/completeness.rs`, filed by
+`Pulse::assess_completeness`. Question three names a gate now and the `no gate`
+caveat is gone, because it stopped being true.
 
-It is computable at the boundary today: `graded.fields` carries `produced` and
-`kind`, and the tool-call record is in scope. `Gate::Completeness`, `Metric`
-first. The distinction it must make is the one the row grammar already makes and
-the strip does not:
+The distinction it makes is the one the row grammar already made and the strip
+did not:
 
-* the tool was asked and had nothing → **the world's gap**, nobody's fault
-* the tool was never asked, or answered and the value was dropped → **the
-  agent's**
+| the field | whose | verdict |
+|---|---|---|
+| `unsourced`, or `derived` | nobody's — the contract requires null | excused |
+| `sourced`, tool asked and had nothing | the **world's** | excused, counted |
+| `sourced`, tool never called | the **agent's** | owed |
+| `inferred`/`narrative`, empty | the **agent's** — commissioned work | owed |
+
+**It needs the run record, and that is why it could not live in `enforce`.**
+Grounding is pure over the document; completeness turns entirely on whether the
+tool was *called*, which lives on `AgentOutput::tool_invocations`. The same four
+null genome fields are a compliant run or a negligent one depending on it, and
+no inspection of the document can tell them apart.
+
+**What it deliberately does not judge:** *the tool answered with substance and
+the field is still empty.* Telling that from an honest miss needs a judgement
+about whether the answer was inside that response — which the trace makes with a
+byte count and says only re-running settles. A gate must not accuse on a
+judgement, so `owed` counts only the unambiguous: a named tool never called, and
+commissioned work absent. **The count is a floor, not a total**, and the
+response says so.
+
+It is `Retention::Counted` and `Enforcement::Report`. Counted because §4.2 still
+holds — nothing has earned a per-decision ledger while the review count is zero.
+Promoting it to `Recorded` needs a migration widening
+`gate_decisions_gate_check` **in the same commit**, or every decision becomes
+unwritable in a batch insert whose error is swallowed by design.
+
+#### `Enforcement::Report` — the fourth kind
+
+Completeness can neither refuse nor amend: there is nothing to strip from a
+field the agent left empty, and refusing would deny the caller fourteen good
+fields because of one missing one. The remedy is the agent.
+
+But its verdict **is returned to the caller**, in `response.completeness`, so it
+is not a `Metric` either — `Metric` means the verdict is discarded, and *"on the
+surface a caller sees, one of those is indistinguishable from having no gate at
+all."*
+
+So `gates_computed_and_discarded` is keyed on `reaches_the_caller()` rather than
+`alters_the_artifact()`. Declaring completeness a `Metric` would have grown that
+list from two to three and reported a brand-new visible check as a regression.
 
 ### 4.4 `input_binding` is free prevention, unused
 
@@ -171,6 +207,13 @@ consequence of it.
 | grounding amends on execute and does not claim to be a Control | `command_registry::tests::grounding_amends_on_execute_and_still_does_not_on_the_stream` |
 | the discarded-verdict list may only shrink | `command_registry::tests::the_discarded_gate_verdicts_are_the_ones_we_know_about` — **3 → 2** |
 | question five has a word for repair | `scripts/check_trace_probe_render.js` |
+| a tool asked and empty is nobody's fault | `completeness::tests::a_tool_that_was_asked_and_had_nothing_is_nobodys_fault` |
+| the same document, tool never called, is the agent's | `completeness::tests::a_tool_that_was_never_called_is_the_agents_gap` |
+| `0` and `false` are answers; `[]` and `"  "` are not | `completeness::tests::zero_and_false_are_answers_and_empty_containers_are_not` |
+| a contract of only excused fields is undetermined, not a pass | `completeness::tests::a_required_absence_is_excused_and_so_is_a_derived_value` |
+| question three names a gate and the caveat is gone | `scripts/check_trace_probe_render.js` |
+| the belt is 7 rungs, and a change must say which | `artifact_trace::tests::the_absence_token_comes_from_the_gate_registry` |
+| `GATE_IDS` is derived from `GATES` | `gate_trust::tests::gate_ids_match_the_declared_gates` |
 
 Every one was mutated against the pre-fix source and watched go red.
 

@@ -543,6 +543,22 @@ pub async fn execute_agent_handler(
         .map(|v| v.path.as_str())
         .collect();
 
+    // 3.9 Did the agent fill the fields it was asked for?
+    //
+    // Question three on the artifact trace, which was computed on the page
+    // because no checkpoint computed it — and rendered `no gate`, which reads
+    // as the agent bypassing something when it was the platform missing
+    // something. `Gate::Completeness` is filed inside `assess_completeness`.
+    //
+    // The tool names are the input grounding never had, and they are what makes
+    // the same document a compliant run or a negligent one.
+    let tools_called: Vec<&str> = output
+        .tool_invocations
+        .iter()
+        .map(|t| t.tool_name.as_str())
+        .collect();
+    let completeness = pulse.assess_completeness(&graded, &tools_called);
+
     // The gate. `unverified_*` maps to `Undetermined`, never `Approved` —
     // and on this path that is the overwhelming majority, because most
     // callers reach agents that declare no type at all.
@@ -905,6 +921,20 @@ pub async fn execute_agent_handler(
             "note": "Fields with no possible source are nulled before the \
                      response leaves. The claim is retained verbatim on the \
                      episode and is visible on the artifact trace.",
+        },
+        // What the agent owed and did not deliver, separated from what the
+        // world could not supply. A caller deciding whether to retry needs
+        // those apart: `owed` may be worth another run, `no_data` never is.
+        "completeness": {
+            "asked_for": completeness.asked_for,
+            "filled": completeness.filled,
+            "owed": completeness.owed,
+            "no_data": completeness.no_data,
+            "excused": completeness.excused,
+            "note": "`owed` counts only unambiguous gaps — a named tool never \
+                     called, or commissioned work absent. A tool that was asked \
+                     and had nothing is in `no_data` and is nobody's fault. The \
+                     count is a floor, not a total.",
         },
         "metadata": {
             "model_used": output.metadata.model_used,

@@ -251,6 +251,7 @@ pub fn belt(command_id: &str) -> Vec<Rung> {
                 enforcement: match g.enforcement {
                     Enforcement::Control => "control",
                     Enforcement::Amend => "amend",
+                    Enforcement::Report => "report",
                     _ => "metric",
                 },
                 why_not_control: g.why_not_control,
@@ -801,14 +802,14 @@ mod tests {
             assert!(!b.is_empty(), "`{id}` declares no gates");
             for r in &b {
                 assert!(
-                    matches!(r.enforcement, "control" | "amend" | "metric"),
+                    matches!(r.enforcement, "control" | "amend" | "report" | "metric"),
                     "{}: enforcement is `{}`",
                     r.rung,
                     r.enforcement
                 );
-                // An amend is a demotion from control too, and owes the same
-                // sentence: it says what it cannot do, which is refuse.
-                if r.enforcement == "metric" || r.enforcement == "amend" {
+                // Anything that is not a control is a demotion from one, and
+                // owes the same sentence: it says what it cannot do.
+                if r.enforcement != "control" {
                     assert!(
                         r.why_not_control.is_some_and(|w| w.len() > 40),
                         "`{}` on `{id}` is a metric and does not say why. A gate \
@@ -935,11 +936,16 @@ mod tests {
         // assumption two comments in this file made, and the guard caught it.
         assert_eq!(
             checked,
-            6,
-            "expected 6 rungs across {} commands (4 on `agent.execute`, 2 on \
+            7,
+            "expected 7 rungs across {} commands (5 on `agent.execute`, 2 on \
              `agent.execute_stream`). A different number means a gate was added \
              or removed from a belt, which is a change to what the platform \
-             claims it checks -- update this and say which.",
+             claims it checks -- update this and say which.\n\
+             Six until `Gate::Completeness` joined `agent.execute`: question \
+             three on this very surface, which was computed from the values \
+             because no checkpoint computed it, and rendered `no gate` in a \
+             dotted box that read as the agent bypassing something rather than \
+             as our own missing check.",
             EXECUTE_COMMANDS.len()
         );
     }

@@ -951,6 +951,14 @@ declare it">${esc(id)}</span>`;
       // reported alongside rather than folded in: an `unsourced` null is the
       // contract working and a `derived` null is ours, and adding them to this
       // number is how a compliant agent scored `9 of 29 empty` in red.
+      //
+      // `g: ["completeness"]` — and that is new. This question was computed
+      // here, from the values, because nothing in the platform asked it, and it
+      // rendered `no gate` in a dotted box under a red header. A reader saw the
+      // agent bypassing a checkpoint; the truth was the platform missing one.
+      // `Gate::Completeness` now stands behind it, so the cell names a gate like
+      // every other cell and the `no gate` sentence below the strip disappears
+      // because it stopped being true.
       { short: "did the work",
         tok: e.total === 0
           ? "nothing examined"
@@ -971,7 +979,7 @@ declare it">${esc(id)}</span>`;
                 : ""),
         tone: e.total === 0 ? "na" : e.empty === 0 ? "ok" : "bad",
         q: "Did it actually do the work?",
-        g: [] },
+        g: ["completeness"] },
 
       // The one glance that is a distribution rather than a verdict, and it is
       // drawn in the same pips the rows use. A reader who has learnt the row

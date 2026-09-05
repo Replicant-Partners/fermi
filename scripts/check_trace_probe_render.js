@@ -216,6 +216,26 @@ const TRACE = {
       },
       recomputed: { fields: 15, violations: 2 },
     },
+    // The gate that did not exist. Question three was computed on the page,
+    // from the values, and rendered `no gate` in a dotted box under a red
+    // header — which reads as the agent bypassing a checkpoint when it was the
+    // platform missing one.
+    {
+      rung: "completeness",
+      clock: "invocation",
+      enforcement: "report",
+      why_not_control: "there is nothing to strip from a field the agent left " +
+        "empty, and refusing would deny the caller fourteen good fields because " +
+        "of one missing one; the remedy is the agent",
+      refuses: "nothing — it reports a contracted field the agent left empty",
+      site: "episode_boundary::Pulse::assess_completeness",
+      decided: {
+        decision: "approved",
+        reason: null,
+        at: "2026-09-03T22:02:16Z",
+        decision_id: 2,
+      },
+    },
   ],
   belt_route: [],
   caveats: [],
@@ -629,6 +649,20 @@ const P = mod.exports;
   ok(/cannot refuse the run itself|honest ceiling/.test(q5),
     "question five does not say WHY it cannot refuse — without that, `strips " +
     "and records` reads as a weaker control rather than the reachable one");
+
+  // ── Question three has a gate now ──────────────────────────────────────
+  //
+  // It was computed on the page, from the values, because nothing in the
+  // platform asked it. The page said so honestly in italics — but the honesty
+  // sat under a red header, so the dotted `no gate` box read as the agent
+  // bypassing a checkpoint when it was the platform missing one.
+  ok(/completeness/.test(q5),
+    "question three does not name a gate, so it is still the one cell on this " +
+    "page computed from the values with no checkpoint behind it");
+  ok(!/Question 3 has no gate/.test(q5),
+    "the `no gate` caveat is still printed. It was true and is not any more — " +
+    "`Gate::Completeness` stands behind question three, and a caveat that has " +
+    "stopped being true is worse than one that never was");
 
   ok(itok === "agent wrote nothing",
     `an empty inferred field reads \`${itok}\`. \`askedFor\` returns "unused" ` +

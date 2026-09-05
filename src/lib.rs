@@ -237,6 +237,9 @@ pub mod panel_contract;
 // are the same thing. A write must name a gate that can refuse it or say why it
 // needs none; the list of discarded verdicts is pinned and may only shrink.
 pub mod command_registry;
+// Did the agent fill the fields it was asked for? The one question on the
+// artifact trace that no checkpoint stood behind.
+pub mod completeness;
 
 // Liveness trust contract — the fifth sibling, and the one that would have
 // caught the other four. Every contract above examines data that EXISTS; none

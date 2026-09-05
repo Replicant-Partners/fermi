@@ -117,6 +117,16 @@ pub enum Gate {
     /// Advisory (non-blocking) — recorded as a counter, never halts execution.
     /// Symmetric to OutputSchema. Absence means no input_contract was declared.
     InputSchema = 8,
+    /// Did the agent fill the fields it was asked for?
+    ///
+    /// The question nothing asked. Grounding checks whether a tool *could* have
+    /// supplied a value and never whether the agent *did* produce one, so an
+    /// empty contracted field inherits its block's grade and reads as sourced.
+    /// The artifact trace computes it on the page, from the values, precisely
+    /// because no checkpoint computed it — and it was the only cell on that
+    /// surface with no gate behind it, rendered `no gate` in a dotted box that
+    /// read as the agent bypassing something rather than as our own gap.
+    Completeness = 9,
 }
 
 /// One gate's declaration.
@@ -324,6 +334,37 @@ pub const GATES: &[GateSpec] = &[
                            true, so extra fields pass). Check `undetermined` \
                            before believing `approved`.",
     },
+    GateSpec {
+        gate: Gate::Completeness,
+        id: "completeness",
+        // Decides about the artifact: it reads the document the agent produced.
+        decides_before_the_artifact: false,
+        clock: Clock::Invocation,
+        // Counted, deliberately, and this is the argument.
+        //
+        // A counter answers the only question that matters first: how often does
+        // this fire at all. `WHAT_THE_PLATFORM_CAN_REFUSE.md` §4.2 is the reason
+        // it does not start Recorded — there are 7 grounding refusals on this
+        // platform and 0 reviews of any of them, so nothing here has earned a
+        // per-decision ledger yet, and a ledger nobody reads is the state
+        // `gate_review` exists to end. Promote it together with a review door,
+        // which needs a migration to widen `gate_decisions.gate`.
+        retention: Retention::Counted,
+        site: "episode_boundary::Pulse::assess_completeness, from the execute \
+               handlers",
+        refuses: "nothing — it reports a contracted field the agent left empty \
+                  that no tool of its own excuses",
+        if_never_refuses: "It refuses nothing by construction and the COUNTER is \
+                           the finding. All zero means either every agent fills \
+                           every field it was asked for, or — far more likely — \
+                           the excusals are swallowing everything: an absence is \
+                           excused when the contract requires null, and when the \
+                           named tool was asked and had nothing. If `refused` is \
+                           flat zero while trace question three shows empties, \
+                           the excusal rule and the display disagree and one of \
+                           them is wrong.",
+    },
+
 ];
 
 impl Gate {
@@ -383,6 +424,15 @@ pub const GATE_IDS: &[&str] = &[
     "attachment",
     "output_schema",
     "input_schema",
+    // `Retention::Counted`, so nothing it decides is inserted and the CHECK is
+    // not yet reached. Listed anyway, because `gate_ids_match_the_declared_gates`
+    // derives this from GATES and the drift it prevents is one-directional: the
+    // day completeness is promoted to `Recorded`, every decision it makes
+    // becomes unwritable in a batch insert whose error is swallowed by design.
+    // A migration widening `gate_decisions_gate_check` has to land WITH that
+    // promotion, not after it.
+    "completeness",
+
 ];
 
 const N: usize = GATES.len();
