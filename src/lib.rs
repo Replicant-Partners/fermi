@@ -280,6 +280,25 @@ pub mod anomaly_vocabulary;
 // control — they strip the fabricated field — and then say nothing to Loop 2.
 pub mod grounding_anomaly;
 
+// Grounding gate for the regulatory lens translator (Adaptogen Lab demo suite).
+//
+// Where `grounding_trust` asks "could this value have come from anywhere?",
+// this module asks the next question for the lens translator specifically:
+// "for the values that *should* come from the ruleset YAML, did the agent
+// faithfully reproduce what the ruleset says?"
+//
+// Two provenance classes:
+//   Ruleset-sourced (PROV_TOOL): rendered_text, status, allergen format,
+//   ingredient status, verification_appendix. Must come from reading the
+//   ruleset YAML via read_workspace_file.
+//   Inferred (PROV_INFERRED): divergence_note, summary_divergence. The agent
+//   reasons across rulesets; these are judgements, not retrievals.
+//
+// The gate produces violations in the same Report type as enforce(), so
+// grounding_anomaly::spawn_raise sees a single merged picture. Merge with
+// merge_reports() before raising.
+pub mod lens_rendering;
+
 // The commitment anchor for a projection — the row that proves a prediction
 // pre-dated the measurement it is scored against. It lived in the api-server
 // binary, which the library cannot reach, so the agent tool that writes

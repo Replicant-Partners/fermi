@@ -1351,6 +1351,32 @@ async fn run_migrations(db: &PgPool) {
         // `list_workspace_agents` to serve `accepts_schema` for typed A2A
         // routing. NULL = no input contract declared.
         "migrations/227_agent_input_contract.sql",
+        // 228 — `agents.competition` (jsonb, nullable). Stores the agent's
+        // competition declaration: domains, price_credits_per_call, support_tier.
+        // Read by `select_agent` when ranking candidates for open coordination
+        // graph slots. Fidelity and selection_rate are platform-computed and
+        // stored separately. NULL = not competing for open slots.
+        "migrations/228_agent_competition.sql",
+        // 229 — `select_agent_decisions`. Typed selection trace: each call to the
+        // select_agent tool writes one row recording candidates, selected agent,
+        // scope, and criteria weights. Feeds competition-stats and Loop 4.
+        "migrations/229_select_agent_decisions.sql",
+        // 230 — two changes documented together because they are causally linked.
+        // (1) Widen gate_decisions + gate_decision_reviews for `input_schema`
+        //     (Gate::InputSchema was added in Phase C A2A; GATE_IDS gained the
+        //     token; the DB CHECKs were not widened because it is Counted and
+        //     writes no ledger row. Widened now to satisfy seam_vocabulary_contract).
+        // (2) Promote Gate::OutputSchema from Retention::Counted to Recorded
+        //     so fidelity (approved/(approved+refused)) is queryable per agent.
+        //     The gate_decisions constraint already accepts `output_schema` from
+        //     migration 217; no additional DDL is needed for the promotion itself.
+        "migrations/230_gate_input_schema_and_output_schema_recorded.sql",
+        // 231 — `teams.selection_weights` (jsonb, nullable). Per-workspace scoring
+        // weights for the select_agent tool. When set, override the platform defaults
+        // (brier: 0.40, cost: 0.20, valence_fit: 0.20, fidelity: 0.20). Loop 4B
+        // (selection performance consolidation) updates these over time based on
+        // observed selection outcomes. NULL = use platform defaults.
+        "migrations/231_workspace_selection_weights.sql",
     ];
 
     // Bootstrap the ledger before anything is recorded into it.
@@ -3110,6 +3136,18 @@ async fn main() {
             "/api/agents/:id/calibration",
             get(handlers::agents::get_agent_calibration_handler),
         )
+        // Gate::OutputSchema fidelity per agent (promoted to Recorded, mig 230).
+        // fidelity = approved / (approved + refused) from gate_decisions.
+        .route(
+            "/api/agents/:id/fidelity",
+            get(handlers::agents::agent_fidelity_handler),
+        )
+        // Competition stats: how often selected vs. considered in select_agent.
+        // Data from select_agent_decisions (mig 229).
+        .route(
+            "/api/agents/:id/competition-stats",
+            get(handlers::agents::agent_competition_stats_handler),
+        )
         .route(
             "/api/me/providers",
             get(handlers::agents::list_my_providers_handler),
@@ -3939,6 +3977,19 @@ async fn main() {
         .route(
             "/api/workspaces/:workspace_id/actions/log_observation",
             post(handlers::workspace::actions::log_observation_handler),
+        )
+        // Adaptogen Lab — regulatory lens translator actions
+        .route(
+            "/api/workspaces/:workspace_id/actions/render_lens",
+            post(handlers::workspace::lens_actions::render_lens_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/actions/compare_lenses",
+            post(handlers::workspace::lens_actions::compare_lenses_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/actions/flag_divergence",
+            post(handlers::workspace::lens_actions::flag_divergence_handler),
         )
         // Wild's identification capability, reachable without a creature.
         //
@@ -5641,6 +5692,11 @@ async fn seed_agents_to_database(
                 .and_then(|v| serde_json::to_value(v).ok()),
             output_contract: card.capabilities.output_contract.clone(),
             input_contract: card.capabilities.input_contract.clone(),
+            competition: card
+                .capabilities
+                .competition
+                .as_ref()
+                .and_then(|c| serde_json::to_value(c).ok()),
             // SPEC_30 / mig-186 — carry the card's taxonomy into the DB so the
             // Ecology lens can group DB rows without reading the filesystem.
             //
@@ -6398,6 +6454,10 @@ pub(crate) fn agent_card_from_db(agent: &Agent) -> AgentCard {
                 .and_then(|v| serde_json::from_value(v.clone()).ok()),
             output_contract: agent.output_contract.clone(),
             input_contract: agent.input_contract.clone(),
+            competition: agent
+                .competition
+                .as_ref()
+                .and_then(|v| serde_json::from_value(v.clone()).ok()),
             model_params: agent.model_params.clone(),
         },
         performance: AgentPerformance {

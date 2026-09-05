@@ -12,6 +12,7 @@ pub mod actions;
 pub mod agent_params_hook;
 mod coherence;
 mod core;
+pub mod lens_actions;
 mod messages;
 pub mod outputs;
 pub mod refit;

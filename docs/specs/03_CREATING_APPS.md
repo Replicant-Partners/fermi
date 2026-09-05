@@ -131,6 +131,11 @@ An advisor agent runs a multi-turn conversation; each turn is a workspace messag
 Canonical document is forked into named variants; variants compared via git/diff; variants run through forecasts or simulations for A/B.
 *Good for: anything users want to compare.*
 
+### Regulatory lens renderer (Adaptogen Lab)
+One source document (product composition + active rulesets) run through N regulatory frameworks in parallel. Each lens produces a legitimately compliant output for that market — not a translation of the source, but a correctly rendered artifact under that regime's rules. Divergence between regimes is first-class output: where claim language changes, where an ingredient triggers different labeling obligations, where regulatory *philosophy* differs (positive-list vs. risk-based, approved-category vs. claim-specific substantiation) rather than just stringency. Embed a "sources to verify before production use" appendix in every output — honesty about data provenance is the credibility mechanism, not a disclaimer that gets ignored.
+*Good for: cross-jurisdictional claims compliance, regulatory education, product launch preparation across markets.*
+*Note: treat each jurisdiction as a distinct regime (EU, US, China, Japan, Korea are not interchangeable). Two lenses beyond home-market is the honest ceiling for a synthetic-data build; name the roadmap lenses explicitly rather than implying generality you haven't built.*
+
 ### Content pipeline (`social_media_studio`)
 One compound agent orchestrates a fixed pipeline: brief → image → caption → publish. User provides a brief; downstream is automatic.
 *Good for: review-and-approve workflows.*
@@ -217,7 +222,7 @@ Registration is the foothold, not the finish line. Once your App is on the platf
   - efrain — Mario's research-notes App (external developer)
   - Rabble (`rabble-web/`, no manifest yet — gateway-style App)
   - Fermi Console (`crates/fermi-console/`)
-  - Adaptogen Lab (future)
+  - Adaptogen Lab (in progress — three-demo suite sharing one base SKU and one grounding/gate pipeline: info-card generator, cold-chain forecast, regulatory lens translator; see `docs/plans/regulatory-lens-translator-spec.md`)
 
 ---
 

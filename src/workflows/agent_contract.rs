@@ -220,6 +220,14 @@ pub const TYPED_TIER_EXEMPT: &[&str] = &[
     "flavor_profiler",
     "flight_coordinator",
     "football_institution_agent",
+    // `forage_identify` is the embedded Wild/Rabble identification agent.
+    // It has FIELD_CONTRACTS and DERIVED_ELSEWHERE entries but no standalone
+    // curated card on disk — its grounding is enforced entirely through the
+    // Rust const table and src/handlers/wild.rs. Not a separately publishable
+    // agent; the typed-tier requirement does not apply in the same sense.
+    // Omitted from this list at the tier's launch; adding it corrects that
+    // omission, not the rule.
+    "forage_identify",
     "forage_scout",
     "harvest_advisor",
     "instagram_publisher",

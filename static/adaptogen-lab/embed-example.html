@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<!--
+  Regulatory Lens Translator — Third-Party Embed Example
+  =======================================================
+
+  This is everything a third-party platform needs to wrap the
+  compare_lenses API in their own UI.
+
+  What you need:
+    1. A workspace ID (spawn one from the adaptogen_lab_regulatory App)
+    2. An API token (ferm_... from https://agent-bestiary.world/settings/api-keys)
+    3. This file (~120 lines of HTML/CSS/JS, zero dependencies)
+
+  What you get:
+    A fully grounded comparison across EU, US, and CN markets,
+    with provenance-stamped output and a verification appendix.
+    The API does the regulatory reasoning; you just render the result.
+
+  API endpoint:
+    POST https://agent-bestiary.world/api/workspaces/:id/actions/compare_lenses
+
+  Full API schema:
+    GET  https://agent-bestiary.world/api/apps/adaptogen_lab_regulatory/schema
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lens Translator — Embed Example</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 40px auto; padding: 20px; }
+  h1   { font-size: 18px; margin-bottom: 4px; }
+  .sub { font-size: 13px; color: #666; margin-bottom: 24px; }
+
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+  input    { padding: 7px 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 13px; width: 240px; }
+  button   { padding: 7px 16px; background: #222; color: #fff; border: none; border-radius: 5px;
+             font-size: 13px; cursor: pointer; }
+  button:hover { background: #444; }
+
+  #status  { font-size: 12px; color: #666; margin-bottom: 16px; min-height: 18px; }
+
+  /* The comparison table — style this however fits your product. */
+  table    { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th       { text-align: left; padding: 8px 12px; background: #f5f5f5;
+             border-bottom: 2px solid #e0e0e0; font-weight: 600; }
+  td       { padding: 10px 12px; border-bottom: 1px solid #eee; vertical-align: top; }
+  tr:hover { background: #fafafa; }
+
+  /* Status badge — swap these colors for your design system. */
+  .badge   { display: inline-block; padding: 2px 8px; border-radius: 4px;
+             font-size: 11px; font-weight: 600; margin-bottom: 4px; }
+  .allowed      { background: #d1fae5; color: #065f46; }
+  .conditional  { background: #fef3c7; color: #92400e; }
+  .not-allowed  { background: #fee2e2; color: #991b1b; }
+  .rewritten    { background: #dbeafe; color: #1e40af; }
+
+  .rendered-text { font-size: 13px; margin-top: 2px; }
+  .stripped      { font-size: 12px; color: #ef4444; font-style: italic; }
+
+  /* Verification appendix — shown as a first-class section, not a footer. */
+  .appendix      { background: #fffbeb; border: 1px solid #fde68a;
+                   border-radius: 6px; padding: 14px 16px; margin-top: 24px; }
+  .appendix h3   { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+  .appendix p    { font-size: 12px; color: #666; margin-bottom: 8px; }
+  .appendix ul   { list-style: none; padding: 0; }
+  .appendix li   { font-size: 12px; margin-bottom: 4px; }
+  .appendix li::before { content: "→ "; color: #d97706; }
+  .appendix a    { color: #2563eb; }
+
+  /* Grounding badge — shows whether the output passed the grounding gate. */
+  .grounding-badge { display: inline-flex; align-items: center; gap: 5px;
+                     font-size: 11px; padding: 3px 9px; border-radius: 20px;
+                     border: 1px solid; margin-left: 8px; }
+  .grounding-clean { color: #065f46; border-color: #a7f3d0; background: #ecfdf5; }
+  .grounding-dirty { color: #991b1b; border-color: #fca5a5; background: #fef2f2; }
+</style>
+</head>
+<body>
+
+<h1>Regulatory Lens Translator</h1>
+<p class="sub">
+  Precision Kombucha, Hibiscus, Cold F2 — three-market claim comparison<br>
+  <em>Powered by the <a href="index.html">Adaptogen Lab API</a></em>
+</p>
+
+<div class="controls">
+  <input id="ws"    placeholder="Workspace ID (UUID)" />
+  <input id="token" type="password" placeholder="API token (ferm_...)" />
+  <button onclick="runComparison()">Compare across EU / US / CN</button>
+</div>
+
+<div id="status">Enter your workspace ID and token, then click Compare.</div>
+
+<div id="output"></div>
+
+<script>
+/*
+  All the code needed to call the API and render the result.
+  This is the complete integration — not a trimmed example.
+*/
+
+const BASE = 'https://agent-bestiary.world';
+
+async function runComparison() {
+  const wsId  = document.getElementById('ws').value.trim();
+  const token = document.getElementById('token').value.trim();
+  const status = document.getElementById('status');
+
+  if (!wsId || !token) {
+    status.textContent = 'Enter workspace ID and token first.';
+    return;
+  }
+
+  status.textContent = 'Calling compare_lenses…';
+
+  // ── The API call. This is it. ────────────────────────────────────────────────
+  //
+  // One POST. The server reads the ruleset YAMLs from your workspace,
+  // runs the grounding gate, builds the comparison, and returns structured JSON.
+  // You don't need to know anything about EU Regulation 1924/2006 or GB 28050.
+  //
+  const res = await fetch(`${BASE}/api/workspaces/${wsId}/actions/compare_lenses`, {
+    method:  'POST',
+    headers: {
+      'Content-Type':  'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      source_product_id: 'precision_kombucha_hibiscus_f2',
+      // markets: ['EU', 'US', 'CN']  ← default; pass a subset to focus
+      // claim_id: 'hibiscus_wellness' ← optional: focus on one claim
+    }),
+  }).catch(e => { status.textContent = `Network error: ${e.message}`; return null; });
+
+  if (!res) return;
+  if (!res.ok) { status.textContent = `API error ${res.status}: ${await res.text()}`; return; }
+
+  const data = await res.json();
+  // ── data.output is the full comparison ────────────────────────────────────
+  // data.grounding_summary tells you whether the gate found any issues
+  render(data);
+}
+
+// ── Render the response. Swap this for your own UI. ───────────────────────────
+//
+// The comparison_table field is designed to be renderable without knowing
+// anything about the regulatory internals. Each row has:
+//   claim_id, candidate_text, divergence_score (0–3), demo_beat (bool)
+//   markets: [{ market, status, rendered_text, divergence_note }]
+//
+function render(apiResponse) {
+  const out     = apiResponse.output;
+  const status  = document.getElementById('status');
+  const gs      = apiResponse.grounding_summary ?? {};
+
+  // Show grounding summary so downstream consumers know the data quality.
+  const groundingBadge = gs.is_clean
+    ? `<span class="grounding-badge grounding-clean">✓ grounding clean</span>`
+    : `<span class="grounding-badge grounding-dirty">⚠ ${gs.violation_count} violations — check action log</span>`;
+
+  status.innerHTML = `
+    ${out.comparison_table.length} claims · ${out.data_status}
+    ${groundingBadge}
+  `;
+
+  // ── comparison table ────────────────────────────────────────────────────────
+  const rows = out.comparison_table.map(row => {
+    // Index market data for easy lookup
+    const byMarket = {};
+    row.markets.forEach(m => { byMarket[m.market] = m; });
+
+    const cell = code => {
+      const m = byMarket[code];
+      if (!m) return '<td>—</td>';
+
+      const badgeClass = {
+        'allowed':                     'allowed',
+        'conditionally_allowed':       'conditional',
+        'not_allowed':                 'not-allowed',
+        'rewritten':                   'rewritten',
+        'allowed_with_caution':        'allowed',
+        'allowed_with_important_note': 'allowed',
+        'allowed_rewritten':           'rewritten',
+      }[m.status] ?? 'allowed';
+
+      const text = m.status === 'not_allowed'
+        ? `<div class="stripped">— stripped —</div>`
+        : `<div class="rendered-text">${esc(m.rendered_text ?? '')}</div>`;
+
+      return `
+        <td>
+          <span class="badge ${badgeClass}">${esc(m.status.replace(/_/g,' '))}</span>
+          ${text}
+        </td>`;
+    };
+
+    const demoBeatMarker = row.demo_beat ? ' ★' : '';
+
+    return `
+      <tr>
+        <td><strong>${esc(row.claim_id)}${demoBeatMarker}</strong><br>
+            <em style="font-size:12px;color:#666">"${esc(row.candidate_text ?? '')}"</em>
+        </td>
+        ${cell('EU')} ${cell('US')} ${cell('CN')}
+      </tr>`;
+  }).join('');
+
+  const table = `
+    <table>
+      <thead>
+        <tr>
+          <th style="width:180px">Claim</th>
+          <th>🇪🇺 EU (Reg 1924/2006)</th>
+          <th>🇺🇸 US (FDA / FTC)</th>
+          <th>🇨🇳 China (GB / SAMR)</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
+  // ── verification appendix ───────────────────────────────────────────────────
+  //
+  // The API always returns verify_sources.
+  // Render it as a first-class section — not a footer, not a tooltip.
+  // Omitting this undermines the point of the tool.
+  //
+  const sources = (out.verification_appendix ?? []).map(s => {
+    const isUrl = s.startsWith('http');
+    return `<li>${isUrl ? `<a href="${esc(s)}" target="_blank">${esc(s)}</a>` : esc(s)}</li>`;
+  }).join('');
+
+  const appendix = `
+    <div class="appendix">
+      <h3>Verification appendix</h3>
+      <p>
+        These rulesets are <strong>synthetic-representative</strong> —
+        verify the following against primary sources before any commercial use.
+      </p>
+      <ul>${sources}</ul>
+    </div>`;
+
+  document.getElementById('output').innerHTML = table + appendix;
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+</script>
+
+<!--
+  That's the whole integration:
+
+  1. One POST to /api/workspaces/:id/actions/compare_lenses
+  2. Read data.output.comparison_table — it's already structured for rendering
+  3. Read data.output.verification_appendix — render it visibly (not hidden)
+  4. Read data.grounding_summary — show users the data quality level
+
+  The API handles:
+    - Reading the ruleset YAMLs from your workspace
+    - Grounding gate (checks rendered output against the rulesets)
+    - Anomaly filing (if the gate finds violations)
+    - Writing the comparison to your workspace git
+
+  You handle:
+    - The visual design
+    - What additional context to surface (divergence notes, ingredient beat, etc.)
+    - Where this sits in your product (compliance dashboard, product launch tool, etc.)
+
+  To focus on one claim:    body: { claim_id: 'hibiscus_wellness' }
+  To run a single lens:     POST /actions/render_lens  { target_market: 'EU' }
+  To explain a divergence:  POST /actions/flag_divergence  { claim_id, market_a, market_b }
+
+  Full schema: GET https://agent-bestiary.world/api/apps/adaptogen_lab_regulatory/schema
+-->
+
+</body>
+</html>

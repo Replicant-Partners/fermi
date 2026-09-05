@@ -1,0 +1,51 @@
+{
+  "domain": "regulatory",
+  "produces_schema": "fermi/regulatory_scan",
+  "title": "Regulatory compliance scan",
+
+  "_no_tool_loop_note": "This agent uses executor: llm with web_search declared but not enforced. The system prompt instructs it to return valid JSON directly. The consequence: flags are model inference from training data, not tool retrievals. web_search MAY be called for recent amendments but is not guaranteed. This contract declares flags as Inferred to match that reality. The alternative — declaring flags Sourced and enforcing a web_search call per response — would be the correct long-term architecture but is not what the agent currently does. This sketch is honest about the current state; it is not the aspirational state.",
+
+  "synthesis": "pipeline",
+
+  "blocks": [
+    {
+      "name": "flags",
+      "source": {
+        "status": "inferred",
+        "from": "agent training knowledge of EU, US, UK, DE food/beverage/cosmetic/environmental regulations — partially augmented by web_search for recent amendments when called",
+        "coverage": "partial"
+      },
+      "why": "Regulatory flags are the agent's reasoned assessment of applicable rules from training data. web_search may supplement this for recent regulatory changes, but is not called on every response and is not enforced. Declaring flags Sourced would be false: Sourced means a tool was called and the response populated the field, and that is not reliably true here. Inferred is correct: the agent reasons from training knowledge. The disclaimer field is the contract's honesty mechanism — it must appear verbatim in every output because the distinction between 'the regulation says X' and 'the agent believes the regulation says X based on training data' cannot currently be automated away. Coverage is partial: jurisdiction coverage is bounded by the system prompt; uncovered jurisdictions return empty flags.",
+      "fields": {
+        "severity": "enum:low|medium|high|critical",
+        "category": "enum:labelling|safety|environmental|certification|licensing|novel_food|other",
+        "stage_id": "string?",
+        "issue": "string",
+        "mitigation": "string",
+        "references": "string[]"
+      }
+    },
+    {
+      "name": "summary",
+      "source": {
+        "status": "inferred",
+        "from": "flags + domain knowledge"
+      },
+      "why": "The overall compliance posture summary is synthesis over the flagged issues. Model inference over model inference — the weakest grounding level. Worth having as a structured field because the disclaimer immediately below it keeps the epistemic status visible to the consumer.",
+      "fields": {
+        "summary": "string"
+      }
+    },
+    {
+      "name": "disclaimer",
+      "source": {
+        "status": "inferred",
+        "from": "required verbatim text from the system prompt"
+      },
+      "why": "The disclaimer ('This is a screening tool, not legal advice. Consult a qualified regulatory consultant...') is required verbatim in every response. It is not sourced from any tool — it is a constant the agent must include. Its presence is the minimum honesty signal available when all the substantive fields are model inference. An absent disclaimer means the agent is presenting unverified regulatory claims with no epistemic caveat, which is worse than no output at all.",
+      "fields": {
+        "disclaimer": "string"
+      }
+    }
+  ]
+}

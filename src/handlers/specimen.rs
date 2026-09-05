@@ -792,6 +792,14 @@ pub async fn specimen_handler(
                 -- surface presenting them as THE model is wrong for every agent
                 -- that has a ladder.
                 a.model_ladder, a.valence, a.system_prompt,
+                -- Competition declaration (migration 228) — domain tags, price,
+                -- support tier. The shelf edits these; fidelity and selection rate
+                -- are platform-computed from gate history and select_agent_decisions.
+                a.competition,
+                -- Typed interface schema IDs (migrations 117/227) — used by the
+                -- shelf to render schema-ID chips differently from bare labels.
+                a.input_contract->>'accepts_schema'  AS input_schema_id,
+                a.output_contract->>'produces_schema' AS output_schema_id,
                 -- The contract itself, not only the booleans derived from it.
                 -- `produces_schema` is what the prompt has to name, and reading
                 -- it through `try_get` on an unselected column returns None
@@ -1071,13 +1079,22 @@ pub async fn specimen_handler(
         .as_deref()
         .and_then(fermi::agent_backend::tool_executor::structured_output_trigger);
     let sourced_fields = fermi::grounding_trust::contracts_for(&agent_name)
-        .filter(|c| matches!(c.grounding, fermi::grounding_trust::Grounding::Sourced { .. }))
+        .filter(|c| {
+            matches!(
+                c.grounding,
+                fermi::grounding_trust::Grounding::Sourced { .. }
+            )
+        })
         .count();
     let produces_schema: Option<String> = row
         .try_get::<Option<Value>, _>("output_contract")
         .ok()
         .flatten()
-        .and_then(|oc| oc.get("produces_schema").and_then(|v| v.as_str()).map(str::to_string));
+        .and_then(|oc| {
+            oc.get("produces_schema")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        });
     // Absent is not bad: an agent with no prompt is unconfigured, and one with no
     // type name cannot fail to mention it.
     let names_its_type = match (&system_prompt, &produces_schema) {
@@ -1087,6 +1104,42 @@ pub async fn specimen_handler(
 
     let taxonomy: Option<Value> = row.try_get("taxonomy").ok().flatten();
     let succeeded: i64 = rec.try_get("succeeded").unwrap_or(0);
+
+    // ── Compile-state computation ──────────────────────────────────────────────
+    //
+    // Computed before the json! macro because json! does not support let
+    // bindings inside field values.
+    //
+    // has_any_contract: FIELD_CONTRACTS entries (the Rust table, checked by
+    //   contracts_for) count as a contract for this purpose. So does a
+    //   compiled output_contract in the DB row (declares_contract = true).
+    //
+    // is_exempt: on TYPED_TIER_EXEMPT. Predates the typed tier; allowed to
+    //   remain published without a contract until the burn-down list empties.
+    //   Grandfathered, not compiled.
+    //
+    // compiles: true only when a contract is present AND zero errors.
+    //   An absent contract is not zero errors; it is an unwritten promise,
+    //   and an unwritten promise is not a kept one. The previous computation
+    //   (error_count == 0) was vacuously true when no contract existed.
+    let has_any_contract = !contract_fields.is_empty()
+        || row
+            .try_get::<Option<bool>, _>("declares_contract")
+            .ok()
+            .flatten()
+            .unwrap_or(false);
+    let is_type_tier_exempt = fermi::workflows::agent_contract::is_typed_tier_exempt(&agent_name);
+    let compile_error_count = counts.get("error").copied().unwrap_or(0);
+    let compiles = if !has_any_contract && !is_type_tier_exempt {
+        // No contract, not grandfathered: compile failure.
+        // The absence of a contract is the finding; it is not counted in
+        // `counts` (which only counts field-level states) but it is
+        // reflected in the boolean.
+        false
+    } else {
+        compile_error_count == 0
+    };
+    let grandfathered = is_type_tier_exempt && !has_any_contract;
 
     Ok(Json(json!({
         "profile": {
@@ -1127,6 +1180,12 @@ pub async fn specimen_handler(
             // personality_traits. Served so the shelf can edit the four fields it
             // actually has rather than offering a JSON box.
             "valence": row.try_get::<Option<Value>, _>("valence").ok().flatten(),
+            // Competition declaration — domains, price, support_tier (editable).
+            // Fidelity and selection rate are platform-computed; not included here.
+            "competition": row.try_get::<Option<Value>, _>("competition").ok().flatten(),
+            // Typed port schema IDs — rendered as schema-id chips on the shelf.
+            "input_schema_id":  row.try_get::<Option<String>, _>("input_schema_id").ok().flatten(),
+            "output_schema_id": row.try_get::<Option<String>, _>("output_schema_id").ok().flatten(),
             "system_prompt": system_prompt.clone(),
             // What the prompt does to execution, and whether that agrees with
             // what the contract promises.
@@ -1191,10 +1250,15 @@ pub async fn specimen_handler(
             // The contract's own fields, and whether each resolves.
             "fields": contract_fields,
             "counts": counts,
-            // Stated rather than left to each surface to decide, because every
-            // surface so far has decided it the same wrong way.
-            "compiles": counts.get("error").copied().unwrap_or(0) == 0,
-            "green_means": "zero errors. `pending` fields are declared gaps with no                             source yet — an agent with pending fields and no errors                             compiles, and pruning them to reach green would delete                             the ambition the contract exists to record.",
+            // Three compile states, not two. See the comment above the
+            // json! call for the full explanation.
+            "compiles": compiles,
+            "grandfathered": grandfathered,
+            "no_contract": !has_any_contract,
+            "green_means": "zero errors AND a contract is present. `pending` fields are \
+                            declared gaps with no source yet — an agent with pending fields \
+                            and no errors compiles. `grandfathered` means the agent predates \
+                            the typed tier: not blocked, not clean.",
         },
     })))
 }
@@ -1231,7 +1295,10 @@ mod tests {
             return;
         };
         for (what, sql) in [
-            ("agent-scoped", format!("{PULSE_SELECT} WHERE e.agent_id = $1 LIMIT 0")),
+            (
+                "agent-scoped",
+                format!("{PULSE_SELECT} WHERE e.agent_id = $1 LIMIT 0"),
+            ),
             (
                 "the whole stream",
                 format!("{PULSE_SELECT} WHERE a.agent_name NOT LIKE 'x' LIMIT 0"),

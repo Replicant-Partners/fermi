@@ -1,0 +1,346 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Regulatory Ruleset — People's Republic of China
+#
+# Structural reference:
+#   GB 7718-2011  — General standard for labeling of prepackaged food (通用标准)
+#   GB 28050-2011 — National standard for nutrition labeling (营养标签标准)
+#   GB 2760       — Food additive use standard (食品添加剂使用标准)
+#   GB 2759.3 / relevant category standard — tea beverage standard
+#   SAMR — 保健食品注册与备案管理办法 (Health food registration regulations)
+#   SAMR — 新食品原料安全性审查管理办法 (New food ingredient safety review)
+#   药食同源目录 — Homologous food-medicine list (current version)
+#
+# SYNTHETIC-BUT-STRUCTURALLY-REPRESENTATIVE — per §2 of the spec.
+# China's regulatory landscape updates frequently and the detail of specific
+# GB standards, SAMR administrative measures, and positive-list contents must
+# be verified against current SAMR announcements and current GB standard
+# versions before any commercial use.
+#
+# CONTEXT NOTE: This ruleset is included specifically because China is the
+# regime most likely to be treated as opaque or as a single block ('Asian
+# regulation') by Western food brands. The divergences here are often about
+# categorical structure and the two-track system, not about higher/lower
+# stringency. Getting this wrong in either direction — treating China as
+# arbitrarily stricter or as a single 'Asia' label — misrepresents the
+# actual regulatory logic.
+#
+# Verify against:
+#   SAMR official portal: https://www.samr.gov.cn
+#   GB standards via CNCA or SAC (standards authority)
+#   Current 药食同源目录 via NHC (National Health Commission)
+# ─────────────────────────────────────────────────────────────────────────────
+
+ruleset_id: cn_gb_samr
+market: CN
+display_name: "China (GB standards / SAMR)"
+regulatory_body: "SAMR — State Administration for Market Regulation (市场监督管理总局)"
+regulatory_philosophy: positive_list_with_two_track_categorical_system
+data_status: synthetic_representative
+
+philosophy_note: >
+  China's food regulatory structure has two important elements that together
+  define the claim landscape for this product:
+
+  1. POSITIVE LISTS: Food additives (GB 2760) and new food ingredients
+     (新食品原料) both operate on positive lists — something must be on the list
+     to be used. This is similar to the EU approach for additives.
+
+  2. TWO-TRACK SYSTEM (the structurally significant element):
+     普通食品 (ordinary food) vs. 保健食品 (health functional food / 'blue hat').
+     This is the most important feature for claims: making any health function
+     claim — even a mild one, even one that would be a routine structure/function
+     claim in the US — moves a product from the ordinary food track to the
+     health food track. The health food (保健食品) track requires:
+       - Pre-market SAMR registration or filing (备案/注册)
+       - Dedicated 'blue hat' (蓝帽子) labeling
+       - Specific approved function language (27 permitted function categories)
+       - Significant import and distribution restrictions
+       - Product testing and clinical documentation requirements
+
+  The consequence: a kombucha sold as an ordinary fermented beverage cannot
+  carry health function claims, not because those claims are scientifically
+  wrong, but because making them reclassifies the product into a category
+  that requires pre-market registration. The claim prohibition is structural,
+  not evidentiary. This is philosophically different from both the EU
+  (positive-list for authorized claims on ordinary food) and the US (risk-based
+  substantiation without reclassification).
+
+# ── Product category ───────────────────────────────────────────────────────────
+product_category:
+  primary: "发酵茶饮料 (fermented tea beverage)"
+  relevant_standard: "GB 2759 (tea beverages and related)"
+  abv_status: >
+    0.4% ABV — below the 0.5% threshold for alcoholic beverage classification
+    in China. Classified as a non-alcoholic fermented beverage. Recommend
+    declaring ABV on the label for transparency even though not required at <0.5%.
+
+# ── Two-track gate — must be resolved before any claims are rendered ───────────
+regulatory_gate:
+  id: ordinary_vs_health_food_track
+  decision: ordinary_food_track
+  rationale: >
+    The rendered CN label uses the ordinary food (普通食品) track. All health
+    function language is stripped or reframed as compositional descriptors.
+    Making any claim that links an ingredient or nutrient to a body function
+    or health benefit would require 保健食品 registration — a multi-year,
+    multi-document process that is not appropriate for a demo build or for
+    most export-market beverage products entering China.
+
+    The 27 permitted 保健食品 function categories (as of mid-2026 [SYNTHETIC]):
+    examples include 增强免疫力 (enhance immunity), 辅助降血糖 (assist blood
+    glucose reduction), 抗氧化 (antioxidant function). Note that 'antioxidant'
+    is a HEALTH FOOD FUNCTION in China — not an ordinary food nutrient content
+    claim. This is a significant divergence from EU and US.
+
+# ── Claim categories ──────────────────────────────────────────────────────────
+claim_categories:
+
+  - id: compositional_descriptor
+    name: "成分描述 (Compositional descriptor)"
+    allowed: true
+    mechanism: >
+      Factual statements about what the product contains. Ingredient identity,
+      quantity, and sourcing information. Required by GB 7718 (mandatory labeling
+      elements) and permitted as additional information beyond mandatory requirements.
+    note: "The key: describe what is in the product, not what the product does."
+
+  - id: process_descriptor
+    name: "工艺描述 (Process descriptor)"
+    allowed: true
+    mechanism: >
+      Descriptions of production method: 传统发酵 (traditionally fermented),
+      冷萃 (cold brew), 二次发酵 (second fermentation). These are factual process
+      statements. They describe how the product was made, not what it does.
+
+  - id: health_function_claim
+    name: "保健功能声称 (Health function claim)"
+    allowed: false_on_ordinary_food_track
+    note: >
+      Health function claims are ONLY permitted on registered 保健食品 (health food)
+      products, and only using pre-approved function language from the 27 permitted
+      categories. Even paraphrasing an approved function claim using different wording
+      is not permitted — the approved text is prescribed.
+
+      This is stricter than EU authorized claims in terms of exact wording compliance.
+      EU authorized claims have some flexibility in expression; CN approved 保健食品
+      function language must match the official text.
+
+  - id: probiotic_term
+    name: "'益生菌' (probiotic) — compositional vs. functional use"
+    allowed: compositional_descriptor_only
+    note: >
+      '含活性益生菌' (contains active probiotics) can appear on ordinary food as a
+      compositional descriptor if supported by CFU testing at the time of purchase.
+      This names what the product contains.
+
+      However: any statement linking the probiotics to a body function — even
+      '改善肠道环境' (improves gut environment) or '促进消化' (promotes digestion) —
+      triggers 保健食品 reclassification. The boundary is at the FUNCTION LINK,
+      not at the word itself.
+
+      This is the key CN-specific nuance vs. EU (where the word is prohibited) and
+      US (where the function claim requires substantiation but not reclassification):
+      In CN, the word can be used, but the moment it's paired with a function,
+      the entire product is reclassified — not just the claim refused.
+
+  - id: antioxidant_claim
+    name: "抗氧化 (antioxidant) claims"
+    allowed: false_on_ordinary_food_track
+    note: >
+      '抗氧化' is one of the 27 approved 保健食品 function categories.
+      This means that 'antioxidant' as a health function claim — even as mild as
+      '具有抗氧化功效' (has antioxidant effect) — requires 保健食品 registration.
+
+      This is a significant divergence from both EU (where 'source of antioxidants'
+      is a nutrient content claim on ordinary food) and US (where 'good source of
+      antioxidants' is a nutrient content claim on ordinary food).
+
+      On the CN ordinary food track, the safe rendering is the compositional fact
+      ('富含花青素' — rich in anthocyanins) without the function link.
+      The function claim ('具有抗氧化功效') is off-limits on ordinary food.
+
+  - id: nutrition_label_mandatory
+    name: "营养标签 (Nutrition label — GB 28050-2011)"
+    allowed: required
+    mechanism: >
+      GB 28050-2011 mandates a nutrition facts table (营养成分表) for prepackaged food.
+      The 'Big Four + 1' must appear: 能量 (energy), 蛋白质 (protein), 脂肪 (fat),
+      碳水化合物 (carbohydrate), 钠 (sodium). Each declared per 100 g or 100 ml AND
+      as a percentage of NRV (营养素参考值).
+
+      Additional nutrients (vitamins, minerals) may be declared if supported by
+      lab analysis. Vitamin C can be declared in the CN nutrition table.
+
+# ── Claim renderings — source claims mapped to CN-valid output ─────────────────
+claim_renderings:
+
+  - source_claim_id: live_cultures_present
+    rendered_text: "含活性醋酸菌和酵母菌 (Contains active Acetobacter and yeast cultures)"
+    status: allowed
+    basis: compositional_descriptor
+    divergence_note: >
+      CN RENDERING vs. EU: Both restrict probiotic language. EU restricts the
+      word 'probiotic' entirely. CN allows '益生菌' as a descriptor but strips
+      any function link. This rendering names the organisms specifically rather
+      than using the probiotic category term — the safest approach in both markets.
+
+      CN RENDERING vs. US: US allows 'live and active cultures' as a commercial
+      descriptor; CN uses organism-specific naming. CFU count at time of purchase
+      can be stated on the CN label if substantiated by testing.
+
+  - source_claim_id: antioxidant_character
+    rendered_text: "富含花青素 (Rich in anthocyanins)"
+    status: allowed_rewritten
+    basis: compositional_descriptor
+    divergence_note: >
+      CN RENDERING vs. EU and US: This is the most significant divergence on this
+      specific claim. In EU and US, 'source of antioxidants' or 'good source of
+      antioxidants' is a nutrient content claim on ordinary food — the regulatory
+      machinery for ordinary food allows antioxidant content claims.
+
+      In China, 抗氧化 (antioxidant) is a 保健食品 function category. Any claim
+      using antioxidant language as a function claim is off-limits on ordinary food.
+      The safe rendering is the compositional fact — 富含花青素 (rich in anthocyanins)
+      names what the product contains without invoking the function.
+
+      This divergence is about REGULATORY PHILOSOPHY, not stringency: EU and US
+      regulate antioxidant language as a nutrient content question; CN regulates it
+      as a health function question. Same ingredient, same evidence, different
+      categorical assignment.
+
+  - source_claim_id: hibiscus_wellness
+    rendered_text: "采用玫瑰茄 (Made with Hibiscus sabdariffa / 玫瑰茄)"
+    status: allowed_with_important_caveat
+    basis: compositional_descriptor_ingredient_identity
+    divergence_note: >
+      CN RENDERING vs. EU: Both strip any wellness/benefit language and reduce to
+      ingredient identity. EU strips because no authorized claim exists; CN strips
+      because function claims trigger reclassification.
+
+      CN RENDERING — UNIQUE INGREDIENT STATUS NOTE:
+      Hibiscus sabdariffa (玫瑰茄) appears on the 药食同源目录 (homologous food-medicine
+      list) — the list of substances permitted for use as both food and traditional
+      Chinese medicine. This dual-status means it is freely usable as a food ingredient
+      without novel food review.
+
+      CRITICAL MISUNDERSTANDING TO AVOID: The 药食同源 status is an INGREDIENT
+      authorization, not a CLAIMS authorization. A Western brand might see '药食同源'
+      and infer that traditional medicinal properties can be referenced on the food label.
+      This is incorrect. Referencing the traditional medicinal properties of a
+      药食同源 ingredient in a health-benefit context on a food label still crosses
+      into 保健食品 territory. The listing authorizes the ingredient for food use;
+      it does not authorize health function claims about it.
+
+  - source_claim_id: fermentation_process
+    rendered_text: "传统工艺发酵 (Traditionally fermented)"
+    status: allowed
+    basis: process_descriptor
+    divergence_note: "No divergence — process descriptor renders identically across all markets."
+
+  - source_claim_id: low_sugar
+    rendered_text: "低糖 (Low sugar)"
+    status: conditionally_allowed
+    basis: nutrition_claim_gb28050
+    condition: >
+      GB 28050-2011 defines 低糖 (low sugar) for liquid foods: ≤5 g per 100 ml.
+      This product: 8.8 g / 330 ml = 2.67 g per 100 ml. PASSES. [SYNTHETIC]
+      Declare in the 营养成分表 (nutrition facts table) as required.
+    divergence_note: >
+      CN RENDERING vs. US: CN (like EU) has a defined 'low sugar' threshold for
+      liquids and this product meets it. US lacks a defined 'low sugar' nutrient
+      content claim term for sugars, making a factual declaration the safer US path.
+      CN and EU align; US is the outlier here.
+
+# ── Allergen labeling format ───────────────────────────────────────────────────
+allergen_format:
+  standard: "GB 7718-2011 Appendix B (recommended, not mandatory)"
+  mechanism: >
+    Unlike EU (mandatory emphasis) and US (mandatory 'Contains:' or in-list
+    identification), Chinese allergen labeling under GB 7718 Appendix B is
+    RECOMMENDED but not legally mandatory in the same prescriptive form.
+
+    The 8 Appendix B allergen categories: cereals containing gluten, crustaceans,
+    fish and fish products, eggs and egg products, peanuts and peanut products,
+    soybeans and soybean products, milk and dairy products, nuts and nut products.
+
+    This is a regulatory PHILOSOPHY difference: the mechanism is recommendation
+    and industry good practice, not statutory mandate with the same enforcement
+    consequences as EU or US. It is not that China 'doesn't care' about allergens;
+    it is that the regulatory instrument is different. SAMR enforcement on allergen
+    labeling is evolving and the area is getting more attention following food
+    safety incidents.
+  this_product: >
+    No Appendix B allergens present. Recommended (not mandatory) practice is to
+    include a note or simply omit the allergen statement given zero declared allergens.
+    Industry practice: many brands do not include a 'contains no allergens' statement
+    when no allergens are present — that space on the CN label is typically reserved
+    for present allergens.
+
+# ── Ingredient status — the two key divergence points ─────────────────────────
+ingredient_status:
+
+  - ingredient_id: fermented_sweet_tea
+    status: conventional_food
+    notes: "Black tea and cane sugar are conventional food ingredients. No special status."
+
+  - ingredient_id: hibiscus_infusion
+    status: food_medicine_homologous
+    chinese_name: "玫瑰茄"
+    homologous_list: 药食同源目录
+    notes: >
+      KEY DIVERGENCE POINT — INGREDIENT APPROVAL PATHWAY:
+      Hibiscus sabdariffa (玫瑰茄) is on the 药食同源目录 (homologous food-medicine list),
+      meaning it is approved for use as both a food ingredient and a traditional Chinese
+      medicine ingredient. This is a CN-specific approval pathway that has no direct
+      equivalent in EU or US.
+
+      In EU: hibiscus is a conventional food ingredient (pre-1997 use, not novel food).
+      In US: hibiscus is GRAS.
+      In CN: hibiscus has a specific categorical status (food-medicine homologous) that
+      authorizes its use in food without novel food review — analogous outcome to EU/US
+      but through a structurally different pathway.
+
+      The educational beat: same ingredient, three different regulatory pathways to the
+      same outcome (approved for use). The pathway difference becomes important if the
+      ingredient's status needs to be justified in regulatory documentation — citing
+      'GRAS' doesn't help a CN submission; citing 药食同源 doesn't help a US or EU one.
+
+  - ingredient_id: live_cultures
+    status: permitted_fermentation_organism
+    notes: >
+      KEY DIVERGENCE POINT — WHAT CAN BE CLAIMED:
+      SCOBY cultures are permitted fermentation organisms for ordinary food production.
+      The divergence from EU and US is not in the ingredient's status (all three markets
+      permit the cultures) but in the consequence of claiming health functions about them:
+
+      EU: 'probiotic' claim language prohibited entirely (EFSA rejected all submissions)
+      US: probiotic descriptor allowed on conventional food; function claims require substantiation
+      CN: probiotic descriptor allowed; any function claim triggers 保健食品 reclassification
+          of the entire product — a much larger structural consequence
+
+      The CN version of this constraint is qualitatively different: it's not just that
+      the specific claim is rejected, it's that one claim changes the regulatory category
+      of the whole product. Understanding this distinction is the highest-value piece of
+      CN regulatory literacy for fermented food brands.
+
+  - ingredient_id: citric_acid
+    status: approved_gb2760
+    chinese_name: "柠檬酸"
+    notes: "Authorized food additive under GB 2760 as an acidulant. No restrictions for beverage use."
+
+# ── Import-specific requirements ───────────────────────────────────────────────
+import_notes:
+  label_language: >
+    All prepackaged food sold in mainland China requires a Chinese-language label
+    meeting GB 7718. Foreign-language labels must be accompanied by a compliant
+    Chinese label. The Chinese label is the legally binding one; the foreign-language
+    label is supplementary.
+  product_registration: >
+    Imported food must be registered with SAMR / GACC (General Administration
+    of Customs of China — 海关总署). The product name must be registered in Chinese.
+    First-time imports from new production facilities require facility registration.
+  abv_declaration: >
+    0.4% ABV: below the 0.5% classification threshold for alcoholic beverages.
+    Classified as non-alcoholic fermented beverage. Recommend declaring the ABV
+    (e.g., '酒精度 < 0.5%') for consumer transparency and to pre-empt regulatory
+    questions at customs, even though not strictly required below the threshold.

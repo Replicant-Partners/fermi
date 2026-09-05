@@ -1,0 +1,53 @@
+{
+  "domain": "regulatory-lens",
+  "produces_schema": "adaptogen-lab/action_intent",
+  "title": "Regulatory lens translator — action intent and conversational framing",
+
+  "_architecture_note": "This agent is a DISPATCHER. The grounded regulatory computation lives in the action handlers (src/handlers/workspace/lens_actions.rs), which read the ruleset YAMLs from the workspace git and derive structured output. The agent's job is to understand user intent and emit the correct action block. Its conversational responses (explaining what the comparison shows, answering follow-up questions) are model inference from the handler results visible in the workspace context plus training-data understanding of regulatory philosophy. There are no Sourced blocks in this contract because the agent does not call tools to retrieve regulatory data on the conversational path.",
+
+  "synthesis": "pipeline",
+
+  "blocks": [
+    {
+      "name": "action",
+      "source": {
+        "status": "inferred",
+        "from": "user's stated task, product composition context in the workspace, and active market selection"
+      },
+      "why": "The agent decides which action to emit (render_lens, compare_lenses, flag_divergence) based on the user's request. This is a routing judgement over context — the action intent is model inference. The handler the action triggers is where grounding lives: it reads the workspace YAML, derives structured output, and runs gate_lens_output before committing. The agent dispatches; the handler computes.",
+      "fields": {
+        "type": "enum:render_lens|compare_lenses|flag_divergence",
+        "target_market": "string?",
+        "source_product_id": "string?",
+        "claim_id": "string?",
+        "market_a": "string?",
+        "market_b": "string?"
+      }
+    },
+    {
+      "name": "explanation",
+      "source": {
+        "status": "inferred",
+        "from": "handler results returned in the workspace context after the action completes, plus agent training-data understanding of regulatory philosophy (positive-list vs risk-based vs two-track)"
+      },
+      "why": "The agent's conversational explanation of what the comparison shows — why claims differ across markets, what the divergence type means, what a producer should do next. This is model inference: the agent reads the handler output from the workspace context and reasons about it. It is NOT sourced from the ruleset YAMLs directly; those travel through the handler layer. The regulatory philosophy framing (e.g. 'EU is positive-list; a claim not on the authorized list is prohibited regardless of evidence') comes from the agent's training data. Stamped model_inference.",
+      "fields": {
+        "summary": "string",
+        "divergence_note": "string?",
+        "next_step": "string?"
+      }
+    },
+    {
+      "name": "disclaimer",
+      "source": {
+        "status": "inferred",
+        "from": "required verbatim constant from the system prompt"
+      },
+      "why": "The data-honesty caveat (synthetic-representative rulesets, verify before commercial use) is required in every conversational response that discusses a specific claim status or ingredient approval. It is a constant the agent must include — not sourced from a tool, but required by the contract. Its presence is checked by the gate; its content is fixed by the system prompt.",
+      "fields": {
+        "data_status": "string",
+        "verify_before_use": "string"
+      }
+    }
+  ]
+}

@@ -1,0 +1,170 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Product Composition — Precision Kombucha, Hibiscus, Cold F2
+#
+# This is the single source-of-truth document for the demo SKU used across
+# the Adaptogen Lab demo suite (info-card, cold-chain, regulatory-lens demos).
+# All regulatory renderings are generated FROM this document — it is never
+# modified by the lens rendering process itself.
+#
+# DATA HONESTY: Values marked [SYNTHETIC] are structurally representative
+# but fabricated for demo purposes. Verify against actual product specs and
+# lot-by-lot lab analysis before any commercial use.
+# ─────────────────────────────────────────────────────────────────────────────
+
+product_id: precision_kombucha_hibiscus_cold_f2
+display_name: "Precision Kombucha — Hibiscus, Cold F2"
+sku: PKH-F2-330
+version: "1.0"
+format: cold_brew_ready_to_drink
+suite: adaptogen_lab_demos   # shared anchor across all three demo apps
+
+serving:
+  volume_ml: 330
+  servings_per_unit: 1
+
+# ── Declared ingredients (in descending weight order) ────────────────────────
+# Order matters for EU/US/CN labeling — all three regimes require descending
+# weight, but what counts as a single ingredient vs. a compound ingredient
+# differs by market (rendered per-lens).
+ingredients:
+  - id: fermented_sweet_tea
+    display_name: "Fermented sweet tea"
+    category: base
+    composition_pct: 91.2              # [SYNTHETIC]
+    notes: "Black tea (Camellia sinensis), cane sugar, water; SCOBY-fermented F1"
+    sub_components:
+      - { id: black_tea,            pct: 0.8 }
+      - { id: cane_sugar_residual,  pct: 2.1 }  # post-fermentation residual
+      - { id: water,                pct: 88.3 }
+
+  - id: hibiscus_infusion
+    display_name: "Hibiscus infusion"
+    botanical: "Hibiscus sabdariffa L."
+    category: botanical_infusion
+    composition_pct: 8.5               # [SYNTHETIC]
+    notes: "Cold-steeped dried hibiscus calyces (玫瑰茄 in CN; Karkadé in EU/trade)"
+
+  - id: live_cultures
+    display_name: "Live cultures"
+    category: processing_culture
+    composition_pct: trace
+    notes: "SCOBY-derived organisms surviving into packaged product"
+    declared_organisms:
+      - { id: acetobacter_xylinum,        common: "Kombucha acetobacter", status: natural_fermentation }
+      - { id: brettanomyces_bruxellensis, common: "Kombucha yeast",       status: natural_fermentation }
+    cfu_per_ml_at_pack: 1.2e6          # [SYNTHETIC] — target; actual is lot-by-lot
+
+  - id: citric_acid
+    display_name: "Citric acid"
+    category: acidulant
+    composition_pct: 0.3               # [SYNTHETIC]
+    function: pH_adjustment_post_f2
+    additive_codes: { eu: "E330", cn: "柠檬酸 (GB 2760)" }
+    notes: "Added post-F2 to stabilise pH at target; not fermentation-derived"
+
+# ── Nutrition per 330 ml serving ─────────────────────────────────────────────
+# [SYNTHETIC] — representative values only.
+# Actual figures require lab analysis per lot. Values below are typical for
+# a low-sugar F2 kombucha with hibiscus; treat as demo placeholders.
+nutrition_per_serving:
+  energy_kcal:          38
+  energy_kj:           159
+  fat_g:               0.0
+  saturated_fat_g:     0.0
+  carbohydrate_g:       9.2
+  of_which_sugars_g:    8.8
+  fibre_g:              0.2
+  protein_g:            0.2
+  salt_g:               0.01
+  vitamin_c_mg:        14.2   # from hibiscus; [SYNTHETIC] — ~15.8% US DV / ~18% EU NRV per serving
+
+# ── Physical parameters ───────────────────────────────────────────────────────
+physical:
+  ph_at_pack:       3.1       # [SYNTHETIC] — typical for F2; actual lot-by-lot
+  alcohol_abv_pct:  0.4       # [SYNTHETIC] — sub-0.5% → non-alcoholic classification in all three markets
+  colour:           deep_ruby_red
+  carbonation:      mild_effervescent   # F2 secondary fermentation CO₂
+  shelf_life_days:  180
+  storage:          refrigerated_2_8c
+
+# ── Functional compounds of interest ──────────────────────────────────────────
+# These are the compounds that generate claim-pressure against regulatory rulesets.
+# Not all of them can be claimed in all markets — that's the point of the lens renderer.
+functional_compounds:
+  - id: anthocyanins
+    source: hibiscus_infusion
+    mg_per_serving: 18.5               # [SYNTHETIC]
+    role: antioxidant_colour
+    claim_pressure: high               # generates different output across all three markets
+
+  - id: hydroxycitric_acid
+    source: hibiscus_infusion
+    mg_per_serving: 6.2                # [SYNTHETIC]
+    role: organic_acid
+
+  - id: organic_acids_kombucha
+    source: fermented_sweet_tea
+    components:
+      - { id: acetic_acid,   mg_per_serving: 120 }  # [SYNTHETIC]
+      - { id: lactic_acid,   mg_per_serving:  85 }  # [SYNTHETIC]
+      - { id: gluconic_acid, mg_per_serving:  40 }  # [SYNTHETIC]
+    role: fermentation_character
+
+  - id: live_bacteria_and_yeast
+    source: live_cultures
+    role: probiotic_character
+    claim_pressure: high               # single most divergent claim across all three markets
+    note: >
+      The word "probiotic" itself is handled very differently across the three markets:
+      EU — the word is prohibited as a label term (EFSA rejected all Art.13(5) probiotic claims);
+      US — the word is usable as a descriptor for conventional food if substantiated;
+      CN — the word can describe composition but any linked function claim triggers
+           reclassification of the entire product to 保健食品 (health food).
+      This is the demo's primary divergence beat.
+
+# ── Allergens ─────────────────────────────────────────────────────────────────
+# Regulatory relevance: allergen FORMAT differs meaningfully across all three
+# markets even when allergen CONTENT is identical. This is the format-vs-content
+# distinction the spec calls out explicitly.
+allergens:
+  present: []
+  may_contain: []
+  gluten_free: true
+  vegan: true
+  format_note: >
+    EU: emphasise in the ingredients list (bold/italic/contrasting colour) — no Contains: line.
+    US: 'Contains:' statement after the ingredients list OR emphasis in the list — either valid.
+    CN: Appendix B of GB 7718 is recommended, not mandatory — less prescriptive format.
+    Same zero-allergen content, three different prescribed or recommended formats.
+
+# ── Source claims — candidates for lens rendering ──────────────────────────────
+# These are the CANDIDATE claims as they might appear on an uncommitted draft label.
+# They are NOT yet validated against any specific market.
+# The regulatory lens rendering process takes these candidates and produces either:
+#   (a) a valid per-market form, or
+#   (b) a flag where no valid form exists (claim stripped or rewritten)
+source_claims:
+  - id: live_cultures_present
+    candidate_text: "Contains live cultures"
+    notes: "Factual descriptor — organism counts substantiated by lot testing"
+    claim_pressure: high
+
+  - id: antioxidant_character
+    candidate_text: "Naturally rich in antioxidants"
+    notes: "Anthocyanins from hibiscus; vitamin C also present"
+    claim_pressure: medium
+
+  - id: hibiscus_wellness
+    candidate_text: "Hibiscus — traditionally used for wellbeing"
+    notes: "Traditional use reference; not a modern clinical health claim"
+    claim_pressure: high
+
+  - id: fermentation_process
+    candidate_text: "Naturally fermented using traditional kombucha culture"
+    notes: "Process descriptor — factually accurate"
+    claim_pressure: low    # least divergence across markets
+
+  - id: low_sugar
+    candidate_text: "Low in sugar"
+    notes: "8.8 g per 330 ml serving; whether 'low sugar' is claimable depends on market thresholds"
+    claim_pressure: medium

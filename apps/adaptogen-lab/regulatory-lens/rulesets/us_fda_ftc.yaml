@@ -1,0 +1,278 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Regulatory Ruleset — United States
+#
+# Structural reference:
+#   FDCA (Federal Food, Drug, and Cosmetic Act) — labeling authority
+#   21 CFR Part 101 — food labeling
+#   21 CFR Part 101.14 — health claims: general requirements
+#   21 CFR Part 101.54 — nutrient content claims for antioxidant nutrients
+#   21 CFR Part 101.60 — nutrient content claims for the sugar content of food
+#   FTC Act — advertising substantiation standard
+#   FALCPA (2004) + FASTER Act (2023) — allergen labeling
+#
+# SYNTHETIC-BUT-STRUCTURALLY-REPRESENTATIVE — per §2 of the spec.
+# The structural logic (risk-based substantiation, structure/function vs. health
+# claim distinction, FTC/FDA dual authority) is representative of the actual
+# framework. Specific thresholds, RACC values, and claim definitions should
+# be verified against current 21 CFR before any commercial use.
+#
+# Verify against:
+#   21 CFR Part 101: https://www.ecfr.gov/current/title-21/chapter-I/part-101
+#   FDA guidance on structure/function claims for conventional foods
+#   FTC: Dietary Supplements: An Advertising Guide for Industry
+# ─────────────────────────────────────────────────────────────────────────────
+
+ruleset_id: us_fda_ftc
+market: US
+display_name: "United States (FDA/FTC framework)"
+regulatory_body: "FDA (labeling) + FTC (advertising)"
+regulatory_philosophy: risk_based_substantiation
+data_status: synthetic_representative
+
+philosophy_note: >
+  The US uses a risk-based substantiation model: a claim is permitted if it is
+  truthful, not misleading, and substantiated by competent and reliable scientific
+  evidence (the FTC standard). Unlike the EU positive-list model, there is no
+  pre-market authorization requirement for structure/function claims on conventional
+  food. Claims can go to market; FDA and FTC have authority to challenge them
+  after the fact.
+
+  This creates different commercial risk: EU risk is prohibition (claim not on
+  the list → cannot use it, period). US risk is enforcement (claim is available
+  without pre-approval → company carries substantiation liability). The practical
+  consequence is that US permits more expressive claim language on a wider range
+  of topics, with the substantiation burden on the producer.
+
+  Key distinction within US: structure/function claims vs. health claims vs.
+  nutrient content claims are governed differently. Health claims (disease-risk
+  reduction) require pre-authorization or qualified-claim status. Structure/function
+  claims (describes a role of a nutrient in normal body function) do not.
+
+# ── Claim categories ──────────────────────────────────────────────────────────
+claim_categories:
+
+  - id: structure_function_claim
+    name: "Structure/function claim (FDCA §403(r)(6))"
+    allowed: true
+    mechanism: >
+      For conventional food: permitted without pre-market FDA authorization.
+      Must be truthful, not misleading, and substantiated. The substantiation
+      standard is FTC's 'competent and reliable scientific evidence' — which
+      in practice means well-designed human studies, though the exact bar
+      varies by claim type and strength of implied benefit.
+
+      For dietary supplements: same standard but also requires a 75-day
+      pre-market notification to FDA and the mandatory disclaimer:
+      'These statements have not been evaluated by the Food and Drug
+      Administration. This product is not intended to diagnose, treat,
+      cure, or prevent any disease.'
+
+      This product is a conventional food (fermented beverage), so the
+      disclaimer is not required, and no 75-day notification is needed.
+    substantiation: competent_and_reliable_scientific_evidence
+
+  - id: nutrient_content_claim
+    name: "Nutrient content claim (21 CFR 101.13+)"
+    allowed: true
+    mechanism: >
+      Defined terms with specific numerical thresholds per 21 CFR. Must meet
+      those thresholds. The threshold definitions are precise — cannot use a
+      defined term (low, reduced, free, good source, excellent source) unless
+      the product meets the specific regulatory definition. Automatic if
+      threshold is met; no pre-authorization required.
+    substantiation: threshold_based_automatic
+
+  - id: health_claim_authorized
+    name: "Authorized health claim (21 CFR 101.14)"
+    allowed: true_but_high_bar
+    mechanism: >
+      Pre-authorized by FDA based on 'significant scientific agreement'.
+      Authorized for specific food-disease relationships with strong evidence
+      (e.g., calcium and osteoporosis, sodium and hypertension). Few categories
+      qualify. A kombucha with hibiscus is unlikely to access any authorized
+      health claim pathway.
+    substantiation: significant_scientific_agreement_fda_authorized
+
+  - id: qualified_health_claim
+    name: "Qualified health claim (FDA enforcement discretion)"
+    allowed: true_with_disclaimer
+    mechanism: >
+      For relationships with emerging but not-yet-sufficient evidence. Requires
+      an FDA-approved disclaimer that qualifies the claim's certainty level.
+      Typically obtained via petition or FDA enforcement discretion letter.
+    substantiation: emerging_evidence_plus_fda_discretion
+
+  - id: probiotic_label_term
+    name: "'Probiotic' as a label term — conventional food"
+    allowed: true_with_conditions
+    note: >
+      FDA has not defined 'probiotic' as a regulatory term for conventional food.
+      For a conventional food (not a dietary supplement), using the word 'probiotic'
+      to describe a product characteristic is permissible if substantiated — it
+      describes what the product contains, not a disease-treatment claim.
+
+      'Contains probiotics' on a conventional food label is treated differently from
+      'probiotics prevent X disease' — the former is a compositional descriptor, the
+      latter is a health claim requiring authorization or qualified-claim status.
+
+      IMPORTANT: this is materially different from EU, where 'probiotic' is prohibited
+      as a label term regardless of accompanying language. A US-formatted label using
+      'probiotic' as a descriptor would need to be stripped of that word for EU.
+
+  - id: traditional_use_framing
+    name: "Traditional use context"
+    allowed: true_with_caution
+    note: >
+      Traditional use can be cited as contextual information without triggering
+      a structure/function claim, provided no specific health benefit is explicitly
+      or implicitly claimed. 'Hibiscus — a traditional wellness botanical' is lower
+      risk than 'Hibiscus — traditionally used to support healthy blood pressure.'
+      FTC applies its substantiation standard to any express or implied benefit claim,
+      and 'traditionally used' does not substitute for that substantiation if a
+      specific benefit is implied.
+
+# ── Claim renderings — source claims mapped to US-valid output ─────────────────
+claim_renderings:
+
+  - source_claim_id: live_cultures_present
+    rendered_text: "Contains live and active cultures"
+    status: allowed
+    basis: compositional_descriptor
+    divergence_note: >
+      US RENDERING vs. EU: US allows 'live and active cultures' as a descriptor —
+      the phrase is commercially standard and avoids the 'probiotic' word while still
+      communicating the same content. 'Contains probiotics' is also usable as a
+      conventional food descriptor if substantiated, but 'live and active cultures'
+      is the lower-risk phrasing.
+
+      US RENDERING vs. CN: Both US and CN allow the organisms to be named and counted.
+      The key difference comes if a function statement is added — in CN that triggers
+      reclassification; in US it triggers structure/function claim scrutiny.
+
+  - source_claim_id: antioxidant_character
+    rendered_text: "Good source of antioxidants"
+    status: conditionally_allowed
+    basis: nutrient_content_claim
+    condition: >
+      21 CFR 101.54: 'Good source of antioxidant [nutrient]' requires ≥10% DV
+      per Reference Amount Customarily Consumed (RACC).
+
+      Vitamin C DV (US): 90 mg.
+      This product: 14.2 mg per 330 ml = ~15.8% DV.
+
+      RACC for this product category: RACC for 'juice drinks, noncarbonated' or
+      'kombucha' — verify current applicable RACC per 21 CFR 101.12. If RACC is
+      240 ml, the per-RACC vitamin C is ~10.4 mg = ~11.5% DV → PASSES 'good source'
+      threshold. [SYNTHETIC calculation — verify with actual lab data and current RACC]
+
+      Basis must be vitamin C — anthocyanins have no established DV and cannot
+      support this claim independently.
+    divergence_note: >
+      US RENDERING vs. EU: 'Good source of antioxidants' vs. EU 'Source of antioxidants'.
+      US 'good source' threshold (10% DV per RACC) and EU 'source of' threshold (15% NRV
+      per 100 ml or serving) use different reference amounts and different baseline values.
+      The same product may pass one threshold and fail the other. Verify independently.
+
+  - source_claim_id: hibiscus_wellness
+    rendered_text: "Hibiscus — a traditional wellness botanical"
+    status: allowed_with_caution
+    basis: traditional_use_context
+    divergence_note: >
+      US RENDERING vs. EU: This claim is stripped entirely in EU (no authorized claim,
+      traditional use not a valid basis). In US, 'traditional wellness botanical' is
+      defensible as context — it describes the ingredient's cultural history, not a
+      specific health function. The key is that no specific body function or disease
+      outcome is mentioned.
+
+      If this were 'Hibiscus — traditionally used to support healthy cardiovascular
+      function', that would become a structure/function claim requiring substantiation.
+      As written ('wellness botanical'), it sits in the lower-risk zone.
+
+  - source_claim_id: fermentation_process
+    rendered_text: "Naturally fermented using traditional kombucha culture"
+    status: allowed
+    basis: process_descriptor
+    divergence_note: "No divergence — process descriptor renders identically across all markets."
+
+  - source_claim_id: low_sugar
+    rendered_text: "8.8 g sugar per serving"
+    status: rewritten
+    basis: factual_declaration
+    condition: >
+      21 CFR 101.60: FDA has defined 'low fat', 'low sodium', 'low calorie', and
+      'low cholesterol' as nutrient content claims with specific thresholds. However,
+      FDA has NOT defined 'low sugar' or 'low sugars' as an authorized nutrient
+      content claim term for sugars (as of this ruleset version). [SYNTHETIC — verify
+      current 21 CFR 101.60 for any updates]
+
+      Options:
+        (a) Declare the sugar content factually: '8.8 g sugar per serving' — always safe.
+        (b) Use 'reduced sugar' if the product has ≥25% less sugar than a comparable
+            reference food — requires reference food identification.
+        (c) Do not use 'low sugar' as a standalone descriptor — not a defined term.
+
+      This rendering uses option (a) as the safe default.
+    divergence_note: >
+      US RENDERING vs. EU and CN: Both EU and CN have defined 'low sugars' thresholds
+      for liquid foods (≤5 g/100 ml) and this product meets them (2.67 g/100 ml).
+      US is the outlier here — not because it's stricter, but because 'low sugar' is
+      simply not a defined claim term in US for sugars, making the safer path a
+      factual declaration rather than the defined-term claim the other two markets
+      allow.
+
+# ── Allergen labeling format ───────────────────────────────────────────────────
+allergen_format:
+  standard: "FALCPA (2004) + FASTER Act (2023)"
+  major_allergens:
+    - milk
+    - eggs
+    - fish
+    - shellfish
+    - tree_nuts
+    - peanuts
+    - wheat
+    - soybeans
+    - sesame   # added by FASTER Act, effective January 1 2023
+  mechanism: >
+    Two equivalent options:
+      (1) In-list: identify the allergen in the ingredient list using its common
+          English name in parentheses after the food source name — e.g., 'wheat flour
+          (wheat)'. No emphasis requirement.
+      (2) Contains statement: add 'Contains: [allergen list]' immediately after
+          (or adjacent to) the ingredient list.
+
+    US mechanism is additive to the ingredient list — it adds a separate 'Contains:'
+    line (option 2) or adds parenthetical common names in the list (option 1). EU
+    mechanism is emphasis within the list. CN mechanism is advisory/recommended.
+    Same zero-allergen outcome, different structural approach.
+  this_product: >
+    No FALCPA/FASTER major allergens present. No 'Contains:' statement required.
+    Sesame is the newest addition (FASTER Act, 2023) — confirm no cross-contact risk.
+
+# ── Ingredient status ──────────────────────────────────────────────────────────
+ingredient_status:
+
+  - ingredient_id: fermented_sweet_tea
+    status: gras
+    notes: "Black tea and cane sugar are GRAS ingredients. No pre-market notification required."
+
+  - ingredient_id: hibiscus_infusion
+    status: gras
+    notes: >
+      Hibiscus sabdariffa is GRAS and widely used as a food ingredient and flavoring
+      in the US market. No special regulatory status. Common in hibiscus teas (agua
+      de Jamaica), herbal teas, juices, and flavored beverages.
+
+  - ingredient_id: live_cultures
+    status: gras_with_caveat
+    notes: >
+      SCOBY cultures are GRAS for use in traditional kombucha fermentation. Specific
+      novel strains not previously commercialized in the US market may require a GRAS
+      notification (self-affirmed GRAS or FDA-notified GRAS) before commercial use.
+      The base SCOBY culture (Acetobacter xylinum, Brettanomyces) in traditional
+      kombucha production is not a regulatory concern.
+
+  - ingredient_id: citric_acid
+    status: gras
+    regulatory_reference: "21 CFR 184.1033"
+    notes: "GRAS under 21 CFR 184.1033. Widely used as a food additive — no restrictions."

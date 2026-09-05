@@ -1,0 +1,124 @@
+{
+  "slug": "adaptogen_lab_regulatory",
+  "name": "Adaptogen Lab — Regulatory Lens Translator",
+  "tagline": "Same product. Same composition. Rendered compliantly for three markets.",
+  "owner_user_id": "sys",
+  "homepage_url": "https://kask.bio/projects/adaptogen-lab/regulatory-lens",
+  "description": "The Regulatory Lens Translator takes a real product composition and renders it as a legitimately compliant label for the EU, US, and Chinese markets — showing not where one regime is stricter, but where regulatory philosophies actually differ. The educational content is the divergence itself: positive-list vs. risk-based vs. two-track categorical. Built on the same grounding architecture that prevents fabricated claims — the same honesty that stops a bad claim also produces a correctly different valid claim depending on where you're standing.\n\nSynthetic-but-structurally-representative rulesets. Verify against primary sources before commercial use. Japan and Korea named as roadmap lenses, not delivered in this build.",
+  "composition_slug": "regulatory_lens_fleet",
+  "schema_slug": "adaptogen-lab-regulatory/1",
+  "schema_json": {
+    "$schema": "adaptogen-lab-regulatory/1",
+    "description": "Action grammar for the regulatory_lens_translator agent. Three action types: render a single lens, compare across lenses, flag a specific divergence point.",
+    "canonical_document": {
+      "path": "regulatory-lens/sku/precision_kombucha_hibiscus_f2.yaml",
+      "description": "The product composition source document — the single source of truth that all lens renderings are generated from. Never modified by the lens rendering process."
+    },
+    "action_types": [
+      {
+        "type": "render_lens",
+        "description": "Render the source composition through a single regulatory lens, producing a valid label for that market with claim renderings, allergen block, divergence notes, and a verification appendix.",
+        "api_endpoint": "POST /api/workspaces/:id/actions/render_lens",
+        "fields": {
+          "target_market":     { "type": "string",  "required": true,  "enum": ["EU", "US", "CN"], "description": "Which regulatory lens to render through" },
+          "source_product_id": { "type": "string",  "required": false, "default": "precision_kombucha_hibiscus_f2", "description": "Product composition document ID" },
+          "claim_ids":         { "type": "array",   "required": false, "description": "Specific claim IDs to render. If omitted, renders all source_claims." },
+          "include_verification_appendix": { "type": "boolean", "required": false, "default": true, "description": "Include the verification appendix in the output (recommended: always true)" }
+        },
+        "response": {
+          "action_id":              "UUID of the action log entry",
+          "target_market":          "EU | US | CN",
+          "rendered_claims":        "Array of {claim_id, rendered_text, status, basis, divergence_note}",
+          "allergen_block":         "{standard, mechanism, this_product}",
+          "ingredient_status":      "Array of notable ingredient-status notes for this market",
+          "verification_appendix":  "Array of {item, source, url}"
+        }
+      },
+      {
+        "type": "compare_lenses",
+        "description": "Run the same source composition through multiple regulatory lenses and produce a side-by-side comparison, optionally focused on a specific claim.",
+        "api_endpoint": "POST /api/workspaces/:id/actions/compare_lenses",
+        "fields": {
+          "source_product_id": { "type": "string",  "required": false, "default": "precision_kombucha_hibiscus_f2" },
+          "markets":           { "type": "array",   "required": false, "default": ["EU", "US", "CN"], "description": "Markets to include in the comparison" },
+          "claim_id":          { "type": "string",  "required": false, "description": "Focus the comparison on a specific claim. If omitted, compares all claims." }
+        },
+        "response": {
+          "action_id":        "UUID",
+          "comparison_table": "Array of {claim_id, eu_rendering, us_rendering, cn_rendering, divergence_type, summary}",
+          "demo_beat":        "The scripted demo moment — highest-divergence claim highlighted with one-line regulatory attribution per market"
+        }
+      },
+      {
+        "type": "flag_divergence",
+        "description": "Surface and explain a specific divergence point between two markets on a specific claim or ingredient, attributed to the underlying regulatory philosophy difference.",
+        "api_endpoint": "POST /api/workspaces/:id/actions/flag_divergence",
+        "fields": {
+          "claim_id":        { "type": "string", "required": false, "description": "The claim driving the divergence" },
+          "ingredient_id":   { "type": "string", "required": false, "description": "The ingredient driving the divergence (if ingredient-status divergence)" },
+          "market_a":        { "type": "string", "required": true,  "enum": ["EU", "US", "CN"] },
+          "market_b":        { "type": "string", "required": true,  "enum": ["EU", "US", "CN"] }
+        },
+        "response": {
+          "action_id":        "UUID",
+          "divergence_type":  "philosophy | threshold | ingredient_status | format",
+          "market_a_position": "How market_a handles this claim/ingredient",
+          "market_b_position": "How market_b handles this claim/ingredient",
+          "explanation":       "One-sentence explanation tied to specific regulatory logic — not 'they're stricter'",
+          "reinstatement":     "What it would take to make this claim valid in the market where it's currently not allowed"
+        }
+      }
+    ]
+  },
+  "workspace_template": {
+    "git_init": true,
+    "initial_files": [
+      {
+        "path": "regulatory-lens/sku/precision_kombucha_hibiscus_f2.yaml",
+        "source": "apps/adaptogen-lab/regulatory-lens/sku/precision_kombucha_hibiscus_f2.yaml"
+      },
+      {
+        "path": "regulatory-lens/rulesets/eu_reg_1924.yaml",
+        "source": "apps/adaptogen-lab/regulatory-lens/rulesets/eu_reg_1924.yaml"
+      },
+      {
+        "path": "regulatory-lens/rulesets/us_fda_ftc.yaml",
+        "source": "apps/adaptogen-lab/regulatory-lens/rulesets/us_fda_ftc.yaml"
+      },
+      {
+        "path": "regulatory-lens/rulesets/cn_gb_samr.yaml",
+        "source": "apps/adaptogen-lab/regulatory-lens/rulesets/cn_gb_samr.yaml"
+      }
+    ],
+    "shared_memory_schema": {
+      "active_renderings": "map<market, rendered_label>",
+      "last_comparison": "comparison_table | null"
+    }
+  },
+  "auto_hire": ["regulatory_lens_translator"],
+  "visibility": "private",
+  "spawn_defaults": {
+    "workspace_name": "Regulatory Lens — {product_name}",
+    "initial_message": "I have the Precision Kombucha Hibiscus Cold F2 composition loaded. Which regulatory lens would you like to run first — EU, US, or China? Or ask me to run all three side by side and show you where they diverge."
+  },
+  "suite": {
+    "name": "Adaptogen Lab",
+    "demos": ["info_card_generator", "cold_chain_forecast", "regulatory_lens_translator"],
+    "shared_sku": "precision_kombucha_hibiscus_f2",
+    "pitch_line": "Same grounding architecture that stops a fabricated claim also produces a legitimately different, legitimately compliant claim depending on where you're standing."
+  },
+  "roadmap": {
+    "japan_lens": "FOSHU/functional-labeling system (MHLW/Consumer Affairs Agency) — distinct from CN, not 'Asian regulation'",
+    "korea_lens": "MFDS health functional food system — distinct from both CN and JP",
+    "live_label_renderer": "Camera input → extract source facts → run against selected ruleset → render compliant mutation live (§8 of spec). Depends on static demo proving the mechanism first."
+  },
+  "data_honesty": {
+    "status": "synthetic_representative",
+    "caveat": "Rulesets are structurally representative of each regime's regulatory logic but are not certified compliance documents. Specific authorized claim wording, current threshold values, and regulatory status should be verified against primary sources (EFSA register, current 21 CFR, current SAMR announcements) before any commercial use.",
+    "verification_sources": {
+      "eu": "https://ec.europa.eu/food/safety/labelling_nutrition/claims/register_en",
+      "us": "https://www.ecfr.gov/current/title-21/chapter-I/part-101",
+      "cn": "https://www.samr.gov.cn"
+    }
+  }
+}

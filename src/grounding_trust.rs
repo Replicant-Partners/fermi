@@ -2782,6 +2782,142 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               does the damage.",
         cross_check_sql: None,
     },
+    // ── regulatory_lens_translator ─────────────────────────────────────────
+    //
+    // Architecture: the agent is a DISPATCHER, not a data retriever.
+    //
+    // The action handlers (src/handlers/workspace/lens_actions.rs) read the
+    // ruleset YAMLs from the workspace git and derive the structured output.
+    // The agent's job is to understand user intent and emit the right action
+    // block (render_lens, compare_lenses, flag_divergence). It does NOT call
+    // read_workspace_file to get rendered claims — the handler does that.
+    //
+    // This matters for the grounding type: fields the HANDLER computes from
+    // the YAML are `Derived`, not `Sourced`. `Sourced` means an agent called
+    // a tool and the tool's response supplied the value. That is not what
+    // happens here. Using `Sourced` would have been the same error as marking
+    // genome_profiler's fields sourced before it had working NCBI tools:
+    // enforce would not null the values (since they're not `Unsourced`), so
+    // fabricated regulatory claims from the agent's training data would survive.
+    //
+    // The actual check for handler-computed fields is `gate_lens_output` in
+    // src/lens_rendering.rs, called explicitly by each action handler after it
+    // derives the output. This runs on the handler's output document, not on
+    // the agent's conversational response — see DERIVED_ELSEWHERE below.
+    //
+    // The agent's conversational responses (explaining results, answering
+    // follow-up questions) are `Inferred` or `Narrative`: the agent reasons
+    // from (a) action results visible in the workspace context, and (b)
+    // training-data knowledge of regulatory philosophy. The output_contract
+    // sketch at agents/curated/regulatory_lens_translator/output_contract.
+    // sketch.json declares this honestly.
+    FieldContract {
+        agent_id: "regulatory_lens_translator",
+        path: "rendered_claims",
+        grounding: Grounding::Derived {
+            from: "regulatory-lens/rulesets/*.yaml — workspace git at HEAD",
+            how: "lens_actions::render_lens_handler and compare_lenses_handler \
+                  read YAML via workspace_git.read_file_bytes and map the \
+                  claim_renderings array to the response; gate_lens_output in \
+                  src/lens_rendering.rs validates the mapping post-write",
+        },
+        why: "rendered_claims is constructed by the action handler from the \
+              ruleset YAML — it is not produced by the agent calling a tool. \
+              `Derived` is correct: platform code computes it deterministically \
+              from a file the workspace git holds. The grounding promise is kept \
+              by gate_lens_output (see DERIVED_ELSEWHERE), which reads the same \
+              YAML and checks every claim's status, overwriting contradictions \
+              and filing ContradictsCanonical violations before the response \
+              is committed.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "regulatory_lens_translator",
+        path: "rendered_claims[].divergence_note",
+        grounding: Grounding::Inferred {
+            from: "comparison across the loaded rulesets, carried through the \
+                   handler as divergence_note fields from the YAML, then \
+                   synthesised by the agent in conversational responses",
+        },
+        why: "The divergence note is the agent's judgement about *why* the claim \
+              differs across markets. The ruleset YAML seeds a template; the \
+              agent produces the final form by reasoning across markets. That \
+              reasoning is the product — it cannot be sourced from a tool \
+              without defeating the point. Stamped model_inference.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "regulatory_lens_translator",
+        path: "allergen_block",
+        grounding: Grounding::Derived {
+            from: "regulatory-lens/rulesets/*.yaml — allergen_format block",
+            how: "lens_actions handler reads allergen_format from the ruleset \
+                  and maps standard, mechanism, this_product to the response",
+        },
+        why: "The allergen format (EU emphasis-in-list, US Contains-line, CN \
+              advisory) is prescribed by the ruleset. The handler derives the \
+              response block directly from the YAML; the agent does not generate \
+              this from regulatory memory. See DERIVED_ELSEWHERE.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "regulatory_lens_translator",
+        path: "ingredient_status",
+        grounding: Grounding::Derived {
+            from: "regulatory-lens/rulesets/*.yaml — ingredient_status array",
+            how: "lens_actions handler reads ingredient_status from the ruleset \
+                  and passes entries through to the response",
+        },
+        why: "Ingredient status entries (GRAS, 药食同源, approved_gb2760) are \
+              read from the ruleset YAML by the handler. The hibiscus 药食同源 \
+              entry is the most likely fabrication target — the agent knows \
+              this from training — so Derived is the right grounding: the \
+              handler derives it from the file, not from model memory. \
+              See DERIVED_ELSEWHERE.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "regulatory_lens_translator",
+        path: "verification_appendix",
+        grounding: Grounding::Derived {
+            from: "regulatory-lens/rulesets/*.yaml — verify_sources field",
+            how: "lens_actions handler reads verify_sources and passes it \
+                  through; gate_lens_output enforces presence (UngroundedField \
+                  if absent)",
+        },
+        why: "The verification appendix is the honesty-as-credibility mechanism \
+              from the spec (§6, §7). It must come from the ruleset file, not \
+              from the agent's memory of regulatory URLs. Absence is a violation \
+              caught by gate_lens_output. Derived rather than Sourced because \
+              the handler derives it, not the agent via tool call.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "regulatory_lens_translator",
+        path: "summary_divergence",
+        grounding: Grounding::Inferred {
+            from: "comparison of rendered outputs across all three markets, \
+                   as visible in the workspace context after the action handlers run",
+        },
+        why: "The overall divergence summary is the agent's synthesis over the \
+              handler outputs. Model inference — stamped so no run can present \
+              a reasoned comparison as a retrieved fact.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "regulatory_lens_translator",
+        path: "summary",
+        grounding: Grounding::Narrative,
+        why: "Free prose summarising the rendering or the comparison. Permitted \
+              and checked — it must not assert a claim status or ingredient \
+              approval that the sourced blocks don't support. The verification \
+              appendix makes this more important than in other agents: a prose \
+              channel that implies a market permits a claim when the ruleset says \
+              it doesn't is exactly the failure the gate is designed to catch, \
+              and prose is where that failure moves when the structured fields \
+              are correctly enforced.",
+        cross_check_sql: None,
+    },
 ];
 
 // ─── enforcement ───────────────────────────────────────────────────────
@@ -3188,6 +3324,43 @@ pub const DERIVATIONS: &[(&str, &str, Derivation)] =
 /// this list, and a release build warned that the constant was never used.
 #[cfg(test)]
 const DERIVED_ELSEWHERE: &[(&str, &str, &str)] = &[
+    // ── regulatory_lens_translator ─────────────────────────────────────────
+    //
+    // All four `Derived` handler-computed fields are filled by the action
+    // handlers in src/handlers/workspace/lens_actions.rs, not by the agent
+    // calling a tool. The gate that validates them (gate_lens_output) lives
+    // in src/lens_rendering.rs and is called explicitly after each handler
+    // derives the output. Neither file is a DERIVATIONS closure (which only
+    // works when the derivation input is the document itself); the handler
+    // reads the workspace git, which is external to the document.
+    (
+        "regulatory_lens_translator",
+        "rendered_claims",
+        "src/handlers/workspace/lens_actions.rs — render_lens_handler and \
+         compare_lenses_handler read the ruleset YAML via workspace_git and \
+         map claim_renderings to the response. Validated post-write by \
+         gate_lens_output in src/lens_rendering.rs (ContradictsCanonical \
+         for status mismatches, UngroundedField for missing appendix).",
+    ),
+    (
+        "regulatory_lens_translator",
+        "allergen_block",
+        "src/handlers/workspace/lens_actions.rs — handlers read allergen_format \
+         from the ruleset YAML and map it to the response block.",
+    ),
+    (
+        "regulatory_lens_translator",
+        "ingredient_status",
+        "src/handlers/workspace/lens_actions.rs — handlers read ingredient_status \
+         from the ruleset YAML and pass entries through to the response.",
+    ),
+    (
+        "regulatory_lens_translator",
+        "verification_appendix",
+        "src/handlers/workspace/lens_actions.rs — handlers read verify_sources \
+         from the ruleset YAML and pass through. gate_lens_output in \
+         src/lens_rendering.rs enforces presence (UngroundedField if absent).",
+    ),
     (
         "forage_identify",
         "safety",
@@ -5909,5 +6082,171 @@ mod tests {
                  compared as strings; a cell holds a token, never a sentence."
             );
         }
+    }
+
+    /// Agents with FIELD_CONTRACTS entries must have an output_contract sketch.
+    ///
+    /// # Why this test exists
+    ///
+    /// FIELD_CONTRACTS is a grounding promise. Without a card-level contract,
+    /// the promise is invisible to the typing system and the specimen page.
+    /// An author can add FIELD_CONTRACTS entries, immediately exempt sourced
+    /// fields from SQL cross-check, and the system reports the agent as
+    /// compiling cleanly — zero declared fields, zero errors, "compiles".
+    /// That is the vacuous bypass this test closes.
+    ///
+    /// # The rule
+    ///
+    /// For every `agent_id` in FIELD_CONTRACTS, one must be true:
+    ///   1. The agent is on `TYPED_TIER_EXEMPT` (legacy burn-down).
+    ///   2. `agents/curated/<id>/output_contract.sketch.json` exists.
+    ///   3. `agents/curated/<id>/agent_card.json` contains `"output_contract"`
+    ///      (a compiled contract embedded in the card).
+    ///
+    /// # How to fix a failure
+    ///
+    /// Create `agents/curated/<agent_id>/output_contract.sketch.json`.
+    /// See `agents/curated/regulatory_lens_translator/output_contract.sketch.json`
+    /// for a worked example of a dispatcher agent with inferred blocks.
+    #[test]
+    fn agents_with_field_contracts_must_have_output_contract_sketches() {
+        use crate::workflows::agent_contract::is_typed_tier_exempt;
+
+        let agent_ids: std::collections::BTreeSet<&str> =
+            FIELD_CONTRACTS.iter().map(|c| c.agent_id).collect();
+
+        let mut missing: Vec<&str> = Vec::new();
+
+        for agent_id in &agent_ids {
+            if is_typed_tier_exempt(agent_id) {
+                // Grandfathered. On the burn-down list; exempt until a sketch
+                // is added and the agent is removed from TYPED_TIER_EXEMPT.
+                continue;
+            }
+
+            let sketch = std::path::Path::new(&format!(
+                "agents/curated/{agent_id}/output_contract.sketch.json"
+            ))
+            .exists();
+
+            let embedded =
+                std::fs::read_to_string(format!("agents/curated/{agent_id}/agent_card.json"))
+                    .map(|s| s.contains("\"output_contract\""))
+                    .unwrap_or(false);
+
+            if !sketch && !embedded {
+                missing.push(agent_id);
+            }
+        }
+
+        assert!(
+            missing.is_empty(),
+            "Agent(s) with FIELD_CONTRACTS entries have no output_contract sketch \
+             or embedded contract: {missing:?}.\
+             \n\n\
+             A FIELD_CONTRACTS entry is a grounding promise. Without a card-level \
+             contract the promise is invisible to the typing system, the specimen \
+             page compiles the agent vacuously (zero fields -> zero errors -> \
+             'compiles'), and the bypass that CROSS_CHECK_EXEMPTIONS was designed \
+             to require a reason for has no audience to read it.\
+             \n\n\
+             Create: agents/curated/<agent_id>/output_contract.sketch.json\
+             \nSee agents/curated/regulatory_lens_translator/output_contract.sketch.json \
+             for a worked example."
+        );
+    }
+
+    /// A `Sourced` field in FIELD_CONTRACTS must not coexist with a prompt
+    /// that removes the tool loop.
+    ///
+    /// # Why
+    ///
+    /// The specimen page surfaces `contradicts_contract` at runtime. This
+    /// test catches the same contradiction at build time against the curated
+    /// corpus, before deployment.
+    ///
+    /// If the prompt contains a structured-output trigger (the substring that
+    /// makes `ToolAwareExecutor` skip the tool loop) and the FIELD_CONTRACTS
+    /// declare `Sourced` fields, the tool can never be called. The grounding
+    /// promise is permanently false: the field will always come from model
+    /// memory, not from the declared tool.
+    ///
+    /// # Known violations — this list may only shrink
+    ///
+    /// `video_analyst` is in FIELD_CONTRACTS with Sourced fields and has a
+    /// prompt that triggers the no-tool-loop path. This is already tracked in
+    /// `tool_executor::tests::no_typed_card_removes_the_tool_loop_its_own_contract_needs`
+    /// with the same `KNOWN` list. Listed here too so this check does not fire
+    /// on a problem that is already visible and tracked. Fix: reword the prompt
+    /// to remove the trigger substring, or regrade the blocks to `Inferred`.
+    ///
+    /// This test is a filesystem integration test — it reads agent card files.
+    /// It passes silently when no agent cards are present (unit suite), and
+    /// fires in CI where the curated corpus exists.
+    #[test]
+    fn sourced_field_contracts_must_not_pair_with_no_tool_loop_prompts() {
+        use crate::agent_backend::tool_executor::structured_output_trigger;
+
+        // Known violations that predate this test. This list may only shrink.
+        // Each entry is a deadline and a debt, not a dispensation.
+        // `no_typed_card_removes_the_tool_loop_its_own_contract_needs` in
+        // src/agent_backend/tool_executor.rs tracks the same set from the
+        // card-level grounding; remove from both when fixed.
+        const KNOWN: &[&str] = &[
+            "video_analyst", // prompt contains "ONLY"; reel/transcripts/clips are Sourced
+        ];
+
+        let sourced_agent_ids: std::collections::BTreeSet<&str> = FIELD_CONTRACTS
+            .iter()
+            .filter(|c| matches!(c.grounding, Grounding::Sourced { .. }))
+            .map(|c| c.agent_id)
+            .collect();
+
+        let mut contradictions: Vec<String> = Vec::new();
+
+        for agent_id in &sourced_agent_ids {
+            if KNOWN.contains(agent_id) {
+                continue; // Known; tracked in tool_executor tests.
+            }
+            let card_path = format!("agents/curated/{agent_id}/agent_card.json");
+            let Ok(card_text) = std::fs::read_to_string(&card_path) else {
+                continue; // Card absent on this machine; skip.
+            };
+            let Ok(card) = serde_json::from_str::<serde_json::Value>(&card_text) else {
+                continue;
+            };
+            let Some(prompt) = card.get("system_prompt").and_then(|v| v.as_str()) else {
+                continue;
+            };
+
+            if let Some(trigger) = structured_output_trigger(prompt) {
+                let sourced_paths: Vec<&str> = FIELD_CONTRACTS
+                    .iter()
+                    .filter(|c| {
+                        c.agent_id == *agent_id && matches!(c.grounding, Grounding::Sourced { .. })
+                    })
+                    .map(|c| c.path)
+                    .collect();
+                contradictions.push(format!(
+                    "`{agent_id}`: prompt trigger `{trigger:?}` removes tool loop, \
+                     but these fields are Sourced: {sourced_paths:?}"
+                ));
+            }
+        }
+
+        assert!(
+            contradictions.is_empty(),
+            "FIELD_CONTRACTS declare Sourced fields for agents whose prompts remove \
+             the tool loop — the tool can never be called, so the grounding promise \
+             is permanently false:\
+             \n\n{}\
+             \n\nEither change the FIELD_CONTRACTS entry to `Inferred` or `Derived` \
+             (if platform code or agent reasoning supplies the value), or remove \
+             the structured-output trigger from the prompt so the tool loop runs. \
+             If this is a known pre-existing issue, add the agent to KNOWN above \
+             and to the matching list in \
+             tool_executor::tests::no_typed_card_removes_the_tool_loop_its_own_contract_needs.",
+            contradictions.join("\n")
+        );
     }
 }

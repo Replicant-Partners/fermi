@@ -81,6 +81,10 @@ curl https://agent-bestiary.world/api/apps/kask_simops/schema
 
 # efrain — a simpler App (good starting template for something new)
 curl https://agent-bestiary.world/api/apps/efrain_ai/schema
+
+# Adaptogen Lab demos (in progress) — will add three more reference shapes:
+# info-card generator, cold-chain forecast, regulatory lens translator
+# See docs/plans/regulatory-lens-translator-spec.md for the third demo's architecture
 ```
 
 **Give the output to your AI coding tool.** Paste the JSON into Cursor
@@ -379,7 +383,7 @@ dispatcher and UI in one pass.
 
 ---
 
-## Step 6 — What's still rough (known limitations as of May 2026)
+## Step 6 — What's still rough (known limitations as of September 2026)
 
 These are real gaps. Work around them; don't fight them.
 

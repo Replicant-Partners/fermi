@@ -1,0 +1,252 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Regulatory Ruleset — European Union
+#
+# Structural reference:
+#   EU Reg 1924/2006 — nutrition and health claims on food
+#   EU Reg 1169/2011 — provision of food information to consumers (allergens,
+#                      mandatory labeling, nutrition declaration)
+#   EU Reg 2015/2283 — novel food
+#
+# SYNTHETIC-BUT-STRUCTURALLY-REPRESENTATIVE — per §2 of the spec.
+# The structural logic (positive-list model, EFSA authorization pathway,
+# allergen emphasis rules) is representative of the actual regulatory framework.
+# Specific authorized claim wording, current EFSA register entries, and
+# thresholds should be verified against primary sources before any commercial use.
+#
+# Verify against:
+#   EU Register of authorized health claims:
+#   https://ec.europa.eu/food/safety/labelling_nutrition/claims/register_en
+#   Reg 1924/2006 consolidated text
+#   Reg 1169/2011 consolidated text
+# ─────────────────────────────────────────────────────────────────────────────
+
+ruleset_id: eu_reg_1924_1169
+market: EU
+display_name: "European Union (Reg 1924/2006 + 1169/2011)"
+regulatory_body: "European Commission (legislation) / EFSA (scientific assessment)"
+regulatory_philosophy: positive_list
+data_status: synthetic_representative
+
+philosophy_note: >
+  The EU uses a positive-list model for health claims: a claim is only permitted
+  if it appears on the EFSA-authorized list. A claim that is not on the list is
+  prohibited regardless of whether evidence supports it. This is the defining
+  structural difference from the US risk-based approach and the CN categorical
+  pathway approach. The consequence is that "we have evidence for this" is not,
+  by itself, a sufficient condition for making the claim — it must also have been
+  submitted, evaluated by EFSA, and authorized by the Commission.
+
+  The positive-list review history matters: EFSA undertook a bulk review of
+  submitted claims 2008–2011 and rejected the large majority. The authorized list
+  is significantly shorter than what industry originally expected. Many claims
+  that are commercially standard in the US are simply not on the EU list.
+
+# ── Claim categories ──────────────────────────────────────────────────────────
+claim_categories:
+
+  - id: nutrition_claim
+    name: "Nutrition claim (Art. 8, Annex)"
+    allowed: true
+    mechanism: >
+      Must match an authorized nutrition claim term (e.g., 'low fat', 'source of
+      fibre', 'reduced sugar') and meet the specific numerical threshold defined
+      in the Annex to Reg 1924/2006. Automatic if the product meets the threshold —
+      no separate authorization required.
+    substantiation: threshold_based_automatic
+
+  - id: health_claim_art13
+    name: "Health claim — general function (Art. 13)"
+    allowed: true
+    mechanism: >
+      Must appear on the Commission authorized list. Listed claims can be used by
+      any food business operator whose product meets the nutrient profile conditions.
+      Cannot use claims not on the list, even with supporting evidence.
+    substantiation: positive_list_only
+    note: >
+      EFSA rejected the vast majority of Art. 13 submissions. The authorized list
+      covers specific vitamins, minerals, and a small number of food substances.
+      Most botanical/herbal claims were rejected or placed on hold.
+
+  - id: health_claim_art14
+    name: "Health claim — reduced disease risk / children's development (Art. 14)"
+    allowed: true
+    mechanism: >
+      Requires an individual EFSA scientific opinion followed by Commission
+      authorization. Case-by-case process. High evidence bar — near-pharmaceutical
+      standard of clinical evidence required.
+    substantiation: efsa_opinion_plus_commission_authorization
+
+  - id: traditional_use_claim
+    name: "Traditional use as basis for health claims"
+    allowed: false
+    note: >
+      Traditional use is NOT a valid basis for an EU health claim under Reg 1924/2006.
+      A statement like 'traditionally used for wellbeing' is prohibited if it implies
+      a health benefit, because it has not been authorized. This is a common and
+      commercially costly mistake for brands that successfully use traditional use
+      framing in other markets (particularly US). The EU position is that evidence
+      must be evaluated by EFSA — traditional use is not a substitute for that
+      evaluation.
+
+  - id: probiotic_label_term
+    name: "'Probiotic' as a label term"
+    allowed: false
+    note: >
+      EFSA evaluated all probiotic-related health claims submitted under Art. 13(5)
+      in 2010–2011 and rejected them due to insufficient evidence specificity — the
+      submissions did not define the strain, the dose, and the health effect with
+      sufficient precision for EFSA's standard. The word 'probiotic' is consequently
+      not an authorized health claim descriptor in the EU.
+
+      Products may describe the organisms factually ('contains live Lactobacillus
+      acidophilus NCFM') but may not use 'probiotic' as a health claim. This is one
+      of the most practically significant EU-vs-US divergences for fermented food
+      and functional beverage brands. Many US brands are surprised by this.
+
+  - id: process_descriptor
+    name: "Process descriptions (factual)"
+    allowed: true
+    note: >
+      Factual descriptions of the production process are not health claims and do
+      not require authorization. 'Naturally fermented', 'cold-brewed', 'traditionally
+      made' are process descriptors, not function claims. The line is: if it describes
+      what was done to make the product, it's a process descriptor; if it describes
+      what the product does to you, it's a function claim.
+
+# ── Claim renderings — source claims mapped to EU-valid output ─────────────────
+# Status values: allowed | conditionally_allowed | not_allowed
+# A 'not_allowed' rendering strips the claim from the EU label entirely.
+claim_renderings:
+
+  - source_claim_id: live_cultures_present
+    rendered_text: "Contains live Acetobacter and Brettanomyces cultures"
+    status: allowed
+    basis: process_descriptor
+    divergence_note: >
+      EU RENDERING vs. SOURCE: The word 'probiotic' cannot be used. The organisms
+      must be named specifically if described at all. No health benefit can be
+      stated or implied. The rendering is purely descriptive of what the product contains.
+
+  - source_claim_id: antioxidant_character
+    rendered_text: "Source of antioxidants"
+    status: conditionally_allowed
+    basis: nutrition_claim
+    condition: >
+      EU nutrition claim 'source of [nutrient]' requires ≥15% NRV per 100 ml (liquids)
+      or per labeled serving. 'Rich in [nutrient]' requires ≥30% NRV.
+
+      Vitamin C NRV (EU): 80 mg.
+      This product: 14.2 mg per 330 ml serving = 4.3 mg per 100 ml.
+      Per 100 ml: ~5.4% NRV — FAILS the 'source of' threshold for 100 ml basis.
+      Per 330 ml serving: ~17.8% NRV — PASSES 'source of' on a per-serving basis.
+
+      Whether EU allows per-serving vs per-100ml basis for this claim depends on
+      the specific claim condition in the Annex — verify against current authorized
+      claim wording. [SYNTHETIC calculation — verify with actual lab data and
+      current EFSA register]
+
+      IMPORTANT: Anthocyanins have no established EU NRV and cannot be used as the
+      basis for an antioxidant nutrition claim. Only vitamin C qualifies here.
+    divergence_note: >
+      EU RENDERING vs. SOURCE: 'Naturally rich in antioxidants' → 'Source of antioxidants'
+      (if vitamin C threshold met). The word 'naturally' adds no regulatory value in EU.
+      The claim basis is vitamin C — anthocyanins are not the claim vehicle here.
+
+  - source_claim_id: hibiscus_wellness
+    rendered_text: null
+    status: not_allowed
+    reason: >
+      No EFSA-authorized health claim exists for Hibiscus sabdariffa. The phrase
+      'traditionally used for wellbeing' implies a health benefit (wellbeing is a
+      health-related outcome) and is prohibited without an authorized claim under
+      Art. 10 of Reg 1924/2006. Traditional use is not a valid basis.
+
+      This claim is stripped entirely from the EU label.
+    divergence_note: >
+      EU RENDERING vs. SOURCE: Claim stripped. This is the clearest EU-vs-US
+      divergence on this product — the hibiscus wellness framing that is permissible
+      in the US (as traditional use context without a specific function claim) is not
+      permissible in the EU because traditional use is not a valid basis for any
+      health benefit language.
+
+  - source_claim_id: fermentation_process
+    rendered_text: "Naturally fermented using traditional kombucha culture"
+    status: allowed
+    basis: process_descriptor
+    divergence_note: "No divergence — process descriptor renders identically across all markets."
+
+  - source_claim_id: low_sugar
+    rendered_text: "Low sugars"
+    status: conditionally_allowed
+    basis: nutrition_claim
+    condition: >
+      EU Annex threshold for 'low sugars' (liquids): ≤5 g per 100 ml.
+      This product: 8.8 g / 330 ml = 2.67 g per 100 ml. PASSES. [SYNTHETIC]
+      Note EU spelling: 'sugars' (plural), not 'sugar'. This is mandatory — using
+      'sugar' (singular) as a nutrition claim term is not the authorized wording.
+    divergence_note: >
+      EU RENDERING vs. SOURCE: 'Low in sugar' → 'Low sugars' (plural required).
+      Threshold passes. Minor wording correction; same substantive meaning.
+
+# ── Allergen labeling format ───────────────────────────────────────────────────
+allergen_format:
+  standard: "Reg 1169/2011 Annex II — 14 major allergens"
+  major_allergens:
+    - cereals_containing_gluten
+    - crustaceans
+    - eggs
+    - fish
+    - peanuts
+    - soybeans
+    - milk
+    - nuts
+    - celery
+    - mustard
+    - sesame_seeds
+    - sulphur_dioxide_and_sulphites
+    - lupin
+    - molluscs
+  mechanism: >
+    The 14 Annex II allergens must be emphasised — using bold, italic, or a
+    contrasting colour — wherever they appear in the ingredients list. There is
+    no separate 'Contains:' summary line requirement in EU. Emphasis within the
+    ingredients list is the EU mechanism.
+
+    This is a FORMAT difference vs. US and CN, not a stringency difference —
+    the EU mechanism is emphasis in the list; the US mechanism is a 'Contains:'
+    line or in-list parenthetical; CN is advisory.
+  this_product: >
+    No Annex II allergens present. No emphasis required. Do not add a 'Contains:'
+    line — this is not standard EU format and may look inconsistent with EU
+    packaging conventions.
+
+# ── Ingredient status ──────────────────────────────────────────────────────────
+ingredient_status:
+
+  - ingredient_id: fermented_sweet_tea
+    status: conventional_food
+    notes: >
+      Black tea (Camellia sinensis) and cane sugar are conventional food ingredients
+      with pre-1997 EU use. Not subject to Novel Food Regulation 2015/2283.
+
+  - ingredient_id: hibiscus_infusion
+    status: conventional_food
+    notes: >
+      Hibiscus sabdariffa has pre-1997 use as a food ingredient in the EU
+      (commonly used in Karkadé tea and Bissap beverages). Not a novel food.
+      Important: the conventional food status covers the ingredient; it does not
+      authorize any health claims about it.
+
+  - ingredient_id: live_cultures
+    status: conventional_food_with_caveat
+    notes: >
+      SCOBY cultures used in traditional kombucha production have pre-1997 use
+      in the EU as a fermentation culture and are not subject to Novel Food
+      Regulation for the base SCOBY culture. Specific novel yeast or bacterial
+      strains that were not traditionally used before May 1997 may require
+      authorization under Reg 2015/2283.
+
+  - ingredient_id: citric_acid
+    status: approved_additive
+    additive_code: E330
+    notes: "Authorized food additive across all EU food categories. No restrictions."
