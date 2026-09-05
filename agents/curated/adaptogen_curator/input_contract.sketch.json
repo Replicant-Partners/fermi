@@ -1,0 +1,21 @@
+{
+  "accepts_schema": "abw/adaptogen-query/1",
+  "title": "Adaptogen and botanical research query",
+  "fields": [
+    {
+      "name": "query",
+      "type": "string",
+      "note": "The adaptogen or botanical research question (e.g. 'What is the evidence for Ashwagandha reducing cortisol?', 'Profile Rhodiola rosea safety and interactions', 'Compare adaptogenic mushrooms for cognitive function')."
+    },
+    {
+      "name": "domains",
+      "type": "array?",
+      "note": "Optional. Which knowledge domains to search: 'species', 'traditional_medicine', 'phytochemistry', 'evidence', 'safety', 'genomics'. If omitted, searches all 7 domains."
+    },
+    {
+      "name": "include_supply_chain",
+      "type": "boolean?",
+      "note": "Optional. If true, also invoke supply_chain_oracle for pricing and sourcing data on the botanicals identified. Default false."
+    }
+  ]
+}

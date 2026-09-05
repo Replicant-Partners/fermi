@@ -198,6 +198,7 @@ impl SeedData {
                 taxonomy: None,
                 output_contract: None,
                 input_contract: None,
+                competition: None,
             },
             Agent {
                 agent_id: make_uuid(1, 0, 0),
@@ -260,6 +261,7 @@ impl SeedData {
                 taxonomy: None,
                 output_contract: None,
                 input_contract: None,
+                competition: None,
             },
             Agent {
                 agent_id: make_uuid(2, 0, 0),
@@ -317,6 +319,7 @@ impl SeedData {
                 taxonomy: None,
                 output_contract: None,
                 input_contract: None,
+                competition: None,
             },
         ]
     }

@@ -415,6 +415,12 @@ ok(!/closed by the/.test(portsRow),
 // The ports rung now has an editor for `accepts`.
 ok(shelf.includes('id="af-ports"'),
   "the ports rung has no mount point for the accepts editor");
+// The competition block shows where creators declare their participation.
+ok(shelf.includes('id="af-competition"'),
+  "the shelf has no competition mount point — creators cannot declare domains, price, or support tier");
+// Platform-computed competition stats are displayed (not editable).
+ok(/comp-stats/.test(shelf),
+  "the competition block is missing the platform-computed stats section (fidelity, selection rate)");
 // The two groups mount the shared field editor rather than printing a <dl>.
 // A read-only summary where an editor belongs is how the old page grew eight
 // tabs, and a second hand-written form is how they drifted.

@@ -57,6 +57,13 @@
   .chips{display:flex;flex-wrap:wrap;gap:4px;}
   .chip{font-size:0.66rem;padding:1px 6px;border:1px solid var(--bg3);color:var(--fg4);}
   .chip.filled{border-color:var(--green);color:var(--green);background:rgba(152,151,26,0.1);}
+  /* Schema ID chips (e.g. scro/bom-query/1) — verified typed interface declarations,
+     not author labels. Monospace so the namespace/name/version structure is legible. */
+  .chip.schema-id{border-color:var(--aqua);color:var(--aqua);background:rgba(69,133,136,0.1);
+                  font-family:monospace;font-size:0.6rem;letter-spacing:-0.01em;}
+  /* Competition credential display — platform-computed stats below the editable fields */
+  .comp-stats{margin-top:7px;font-size:0.62rem;color:var(--fg4);display:flex;flex-direction:column;gap:3px;}
+  .comp-stat b{color:var(--fg2);}
   .chip.orphan{border-style:dashed;opacity:0.7;}
 
   .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:1px;background:var(--bg2);}
@@ -263,6 +270,9 @@
     ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const NAME = decodeURIComponent(location.pathname.split("/").filter(Boolean).pop() || "");
   let D = null, TAB = "profile", SEAM = new Set();
+  // Schema ID pattern: namespace/name/version (e.g. scro/bom-query/1).
+  // These chips render distinctly from bare author labels.
+  const SCHEMA_ID_RE = /^[a-z][a-z0-9-]*\/[a-z][a-z0-9-]*\/[0-9]+$/;
 
   const num = n => n == null ? `<span class="absent">not measured</span>` : n;
   const pct = v => v == null ? `<span class="absent">no runs yet</span>`
@@ -316,9 +326,13 @@
 
   function studChips(list, typed) {
     if (!list.length) return `<span class="dim">none declared</span>`;
-    return `<div class="chips">${list.map(l =>
-      `<span class="chip ${typed ? "filled" : ""} ${SEAM.has(l) ? "" : "orphan"}">${esc(l)}</span>`
-    ).join("")}</div>`;
+    return `<div class="chips">${list.map(l => {
+      // Schema IDs (e.g. scro/bom-query/1) get a distinct chip class:
+      // they are verified typed interface declarations, not author labels.
+      const isSchema = SCHEMA_ID_RE.test(l);
+      const cls = isSchema ? "schema-id" : typed ? "filled" : "";
+      return `<span class="chip ${cls} ${SEAM.has(l) ? "" : "orphan"}">${esc(l)}</span>`;
+    }).join("")}</div>`;
   }
 
   function paneProfile() {
@@ -752,7 +766,14 @@
         <div class="af-meta">how it reads, and how far that is from its teammates</div>
         <div id="af-personality"></div></div>
       ${bankBlock(D.record || {}, p)}
-      <div class="block"><h3><span class="g-mark">\u25ce</span>Identity and reach</h3>
+      <div class="block"><h3><span class="g-mark">◇</span>Competition</h3>
+        <div class="af-meta">how this agent competes for open coordination graph slots</div>
+        <div id="af-competition"></div>
+        <div class="comp-stats" id="af-comp-stats">
+          <span class="comp-stat">Fidelity: <b>…</b></span>
+          <span class="comp-stat">Selection rate: <b>…</b></span>
+        </div></div>
+      <div class="block"><h3><span class="g-mark">◎</span>Identity and reach</h3>
         <div class="af-meta">${p.fork_count ?? 0} fork(s)${
           p.forked_from ? ` \u00b7 from ${esc(p.forked_from)}` : ""}</div>
         <div id="af-manage"></div>
@@ -761,12 +782,58 @@
     document.getElementById("close-drawer").onclick = closeDrawer;
     wireGrip();
 
+    // Fetch platform-computed competition credentials and fill them in once
+    // the data arrives. These are read-only signals (gate history + selection
+    // records) so they come from dedicated endpoints, not the profile.
+    //
+    // The shelf renders immediately with … placeholders; the update is
+    // non-blocking. If either fetch fails, the placeholder stays and the
+    // author is not left with a broken panel.
+    (async () => {
+      const name = encodeURIComponent(p.agent_name);
+      const [fid, stats] = await Promise.all([
+        fetch(`/api/agents/${name}/fidelity`).then(r => r.ok ? r.json() : null).catch(() => null),
+        fetch(`/api/agents/${name}/competition-stats`).then(r => r.ok ? r.json() : null).catch(() => null),
+      ]);
+      const el = document.getElementById("af-comp-stats");
+      if (!el) return;
+
+      // Fidelity: approved / (approved + refused) from Gate::OutputSchema ledger.
+      let fidHtml;
+      if (fid && fid.fidelity != null) {
+        const pct = (fid.fidelity * 100).toFixed(1);
+        fidHtml = `Fidelity: <b>${pct}%</b>
+          <span class="dim">· ${fid.approved} valid, ${fid.refused} refused</span>`;
+      } else if (fid && fid.total === 0) {
+        fidHtml = `Fidelity: <b>no data yet</b>
+          <span class="dim">· accrues as delegation hops run</span>`;
+      } else {
+        fidHtml = `Fidelity: <b>N/A</b>`;
+      }
+
+      // Selection rate: how often chosen when in the candidate set.
+      let selHtml;
+      if (stats && stats.selection_rate != null) {
+        const pct = (stats.selection_rate * 100).toFixed(1);
+        selHtml = `Selection rate: <b>${pct}%</b>
+          <span class="dim">· ${stats.selected} of ${stats.considered} considered</span>`;
+      } else if (stats && stats.considered === 0) {
+        selHtml = `Selection rate: <b>no data yet</b>
+          <span class="dim">· accrues as select_agent calls run</span>`;
+      } else {
+        selHtml = `Selection rate: <b>N/A</b>`;
+      }
+
+      el.innerHTML = `<span class="comp-stat">${fidHtml}</span>
+        <span class="comp-stat">${selHtml}</span>`;
+    })();
+
     // Both groups, from one spec. `profile` is the served object and the widget
     // reads each field out of it by path, so there is no second copy of "where
     // does the model live" — which is the mistake that made the old page render
     // thirteen metrics twice under different names.
     if (typeof AgentFields !== "undefined") {
-      ["prompt", "intelligence", "personality", "manage", "ports"].forEach(group => {
+      ["prompt", "intelligence", "personality", "competition", "manage", "ports"].forEach(group => {
         const host = document.getElementById("af-" + group);
         if (!host) return;
         AgentFields.mount({
@@ -781,7 +848,7 @@
         });
       });
     } else {
-      ["prompt", "intelligence", "personality", "manage", "ports"].forEach(group => {
+      ["prompt", "intelligence", "personality", "competition", "manage", "ports"].forEach(group => {
         const host = document.getElementById("af-" + group);
         if (host) {
           host.innerHTML = `<div class="note">The field editor did not load, so this

@@ -473,6 +473,53 @@
   font-family: inherit;
   font-size: 0.8rem;
 }
+/* ── View 3 redesign ─────────────────────────────────────────────────────────── */
+/* Hint text for calibration + prompt sections (replaces .hint, scoped globally) */
+.cb-cal-hint {
+  font-size: 0.7rem;
+  color: var(--fg3);
+  line-height: 1.55;
+  margin-top: 6px;
+  margin-bottom: 4px;
+}
+/* Coordinator-only collapsible (synthesis + full prompt schema reference) */
+.cb-coordinator-only {
+  margin-top: 16px;
+  border-top: 1px dashed var(--bg2);
+  padding-top: 10px;
+}
+.cb-coordinator-only > summary {
+  cursor: pointer;
+  font-size: 0.71rem;
+  color: var(--fg3);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  list-style: none;
+  user-select: none;
+}
+.cb-coordinator-only > summary::-webkit-details-marker { display: none; }
+.cb-coordinator-only > summary::before {
+  content: "▶ ";
+  font-size: 0.58rem;
+  opacity: 0.6;
+  display: inline-block;
+  transition: transform 0.15s;
+}
+.cb-coordinator-only[open] > summary::before { content: "▼ "; }
+.cb-coordinator-body { margin-top: 10px; }
+/* Minimal prompt declaration — one copy-able line */
+.cb-prompt-minimal {
+  background: var(--bg0-hard);
+  border: 1px solid var(--bg2);
+  padding: 8px 10px;
+  font-size: 0.7rem;
+  color: var(--fg2);
+  line-height: 1.55;
+  margin-top: 5px;
+  overflow-wrap: break-word;
+}
+.cb-prompt-minimal .cb-copybtn { float: right; margin-left: 8px; }
+/* ─────────────────────────────────────────────────────────────── */
 .cb-standalone .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .cb-standalone .hint { font-size: 0.7rem; color: var(--fg3); line-height: 1.5; }
 .cb-standalone .info-box {

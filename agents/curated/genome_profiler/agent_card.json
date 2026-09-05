@@ -372,6 +372,36 @@
           "why": "Prose, and the channel `parse_evidence_text` lifts verbatim into the episode digest — so it is the part a reader actually sees, and the highest-risk field here. It is where a fabrication moves once the structured fields are constrained, which is precisely what happened on this agent: a genome size correctly nulled out of `genome.estimated_size_mb` came back as \"~480 Mb, typical for Lepidoptera\" in a sentence. `grounding_trust::NARRATIVE_LEAKS` scans it for megabases, chromosome counts, ploidy, karyotypes, divergence dates and conservation status, and nulls the whole paragraph when it names a block that was not sourced on this run — nulled rather than flagged, because a validator cannot rewrite prose into honesty. A number moved out of a null field and into a sentence is still a fabrication."
         }
       }
+    },
+    "input_contract": {
+      "accepts_schema": "abw/genome-query/1",
+      "title": "Genome and phylogenetic profile query",
+      "required": [
+        "organism"
+      ],
+      "schema": {
+        "$id": "abw/genome-query/1",
+        "title": "Genome and phylogenetic profile query",
+        "type": "object",
+        "required": [
+          "organism"
+        ],
+        "properties": {
+          "organism": {
+            "type": "string",
+            "description": "The organism to profile. Common name or scientific name (e.g. 'Homo sapiens', 'king cobra', 'Arabidopsis thaliana')."
+          },
+          "focus": {
+            "type": "string",
+            "description": "Optional. Specific aspect to emphasise: 'phylogeny', 'genome', 'conservation', or 'all' (default). Narrows which NCBI / GBIF tool calls are prioritised."
+          },
+          "context": {
+            "type": "string",
+            "description": "Optional. Research context or specific questions to address (e.g. 'compare to Arabidopsis lyrata for synteny analysis')."
+          }
+        },
+        "additionalProperties": true
+      }
     }
   },
   "performance": {
@@ -439,6 +469,7 @@
     "description": "Phylogenetic analyst. Builds genomic context profiles for creatures showing their position in the tree of life, genome characteristics, evolutionary relationships, and conservation status."
   },
   "accepts": [
+    "abw/genome-query/1",
     "query"
   ],
   "produces": [

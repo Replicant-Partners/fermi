@@ -1,0 +1,26 @@
+{
+  "accepts_schema": "fermi/forecast-question/1",
+  "title": "Forecast question",
+  "fields": [
+    {
+      "name": "question",
+      "type": "string",
+      "note": "The geopolitical or macroeconomic forecast question to answer (e.g. 'Will the Fed cut rates before July?', 'Will GDP growth exceed 2% this year?')."
+    },
+    {
+      "name": "resolution_criteria",
+      "type": "string?",
+      "note": "Optional. The observable event or data release that resolves the question."
+    },
+    {
+      "name": "context",
+      "type": "string?",
+      "note": "Optional. Additional context: current indicators, policy guidance, market pricing, recent events."
+    },
+    {
+      "name": "deadline",
+      "type": "string?",
+      "note": "Optional. Resolution date or time horizon."
+    }
+  ]
+}

@@ -26,6 +26,26 @@
         "description": "List all agents in this workspace with their accepts, produces, input_schema_id, output_schema_id, and skills. Use input_schema_id and output_schema_id for seam validation when available — a schema ID match is a verified typed compatibility; a label match is an author assertion. Also used to propose candidates for an open slot."
       },
       {
+        "name": "execute_coordination_graph",
+        "description": "Traverse a typed coordination graph (nodes + edges) and return a CoordinationTrace. Handles open slot resolution, schema validation at each hop, and execution order. Use this for graphs that have declared nodes/edges.",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "entry_input": {
+              "type": "string",
+              "description": "Input to the first node"
+            },
+            "workflow_template": {
+              "type": "object",
+              "description": "The typed graph"
+            }
+          },
+          "required": [
+            "entry_input"
+          ]
+        }
+      },
+      {
         "name": "execute_agent",
         "description": "Invoke the agent bound to a stage with that stage's input, and receive its output."
       },
@@ -39,7 +59,187 @@
       "contract-matching",
       "stage-orchestration"
     ],
-    "output_contract": null,
+    "output_contract": {
+      "domain": "coordination",
+      "produces_schema": "abw/coordination-trace/1",
+      "synthesis": "pipeline",
+      "calibration": {
+        "signal": "hitl_review",
+        "comparison": "pipeline_completion_rate"
+      },
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "abw/coordination-trace/1",
+        "title": "Coordination trace — pipeline execution",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "seam_check",
+          "seam_check_provenance",
+          "steps",
+          "steps_provenance",
+          "summary",
+          "summary_provenance"
+        ],
+        "properties": {
+          "seam_check": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "from_node": {
+                "type": "string"
+              },
+              "from_schema": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "seam_type": {
+                "type": "string"
+              },
+              "to_node": {
+                "type": "string"
+              },
+              "to_schema": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "description": "Pre-execution seam validation across adjacent pipeline nodes."
+          },
+          "seam_check_provenance": {
+            "enum": [
+              "tool_verified",
+              "tool_no_match",
+              "unavailable_no_tool_source"
+            ]
+          },
+          "steps": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "agent": {
+                "type": "string"
+              },
+              "duration_ms": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "failure": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "gate_input": {
+                "type": "string"
+              },
+              "gate_output": {
+                "type": "string"
+              },
+              "node_id": {
+                "type": "string"
+              }
+            },
+            "description": "Per-stage execution trace."
+          },
+          "steps_provenance": {
+            "enum": [
+              "tool_verified",
+              "tool_no_match"
+            ]
+          },
+          "summary": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "better_strategy": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "completed_stages": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "failure_at": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "final_output_schema": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "open_slots": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "string"
+                }
+              },
+              "total_stages": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "description": "Assessment of whether the pipeline shape fit the mission."
+          },
+          "summary_provenance": {
+            "const": "model_inference"
+          }
+        }
+      },
+      "grounding": {
+        "seam_check": {
+          "status": "sourced",
+          "tool": "get_workflow_template",
+          "response_field": "nodes, edges, input_schema_id, output_schema_id per node, from list_workspace_agents",
+          "why": "Each adjacent pair is classified as SCHEMA MATCH (output_schema_id == input_schema_id — verified typed compatibility), LABEL MATCH (labels correspond but no typed schema — author assertion), UNMATCHED, or OPEN SLOT. Derived from the declared graph topology and agent schema IDs — not inferred. Coverage is partial because not all nodes declare schema IDs."
+        },
+        "seam_check_provenance": {
+          "status": "inferred",
+          "from": "src/grounding_trust.rs enforcement over this response",
+          "why": "Platform-written provenance stamp over the `seam_check` block: `tool_verified` when `get_workflow_template` returned a value, `tool_no_match` when it was asked and had nothing, and `unavailable_no_tool_source` for the parts of `seam_check` that `get_workflow_template` does not cover. Written by the platform, not by the model and not by a tool, so it is declared `inferred`: card_contract::GROUNDING_STATUSES has no `derived` token while the runtime's Grounding enum does, and understating a reproducible value is the safe direction. Generated by contract_sketch, whose subject here is platform behaviour rather than this agent's data."
+        },
+        "steps": {
+          "status": "sourced",
+          "tool": "execute_agent",
+          "response_field": "execution envelope per delegation hop: agent, gate_input, gate_output, duration_ms, failure",
+          "why": "Derived from envelope at each hop. If a stage fails, execution stops and subsequent steps are absent — the trace is honest about the boundary, not padded to look complete."
+        },
+        "steps_provenance": {
+          "status": "inferred",
+          "from": "src/grounding_trust.rs enforcement over this response",
+          "why": "Platform-written provenance stamp over the `steps` block: `tool_verified` when `execute_agent` returned a value, `tool_no_match` when it was asked and had nothing. Written by the platform, not by the model and not by a tool, so it is declared `inferred`: card_contract::GROUNDING_STATUSES has no `derived` token while the runtime's Grounding enum does, and understating a reproducible value is the safe direction. Generated by contract_sketch, whose subject here is platform behaviour rather than this agent's data."
+        },
+        "summary": {
+          "status": "inferred",
+          "from": "steps + seam_check",
+          "why": "Inferred from the execution trace — which stages completed, where failure entered, whether an OPEN SLOT prevented execution. The 'better strategy' recommendation is the strategist's judgement."
+        },
+        "summary_provenance": {
+          "status": "inferred",
+          "from": "src/grounding_trust.rs enforcement over this response",
+          "why": "Platform-written provenance stamp over the `summary` block: constant `model_inference`, because every field under `summary` is a judgement rather than a retrieval. Written by the platform, not by the model and not by a tool, so it is declared `inferred`: card_contract::GROUNDING_STATUSES has no `derived` token while the runtime's Grounding enum does, and understating a reproducible value is the safe direction. Generated by contract_sketch, whose subject here is platform behaviour rather than this agent's data."
+        }
+      }
+    },
     "fermi_contract": null
   },
   "accepts": [
@@ -48,6 +248,7 @@
     "pipeline-request"
   ],
   "produces": [
+    "abw/coordination-trace/1",
     "execution-trace",
     "stage-output",
     "seam-report"
@@ -103,34 +304,52 @@
   },
   "workflow_template": {
     "description": "4-stage pipeline execution cycle: Read → Validate → Execute → Report",
+    "synthesis": "pipeline",
     "mermaid": "sequenceDiagram\n    participant User\n    participant Pipeline as pipeline_strategist\n    participant Members as Stage agents\n    User->>Pipeline: pipeline-request\n    Pipeline->>Pipeline: read workflow_template\n    Pipeline->>Pipeline: seam check (accepts vs produces)\n    alt any seam unmatched\n        Pipeline-->>User: seam-report, halt before spending\n    else all seams matched\n        loop each stage in order\n            Pipeline->>Members: execute_agent(stage input)\n            Members-->>Pipeline: stage output\n        end\n        Pipeline-->>User: execution-trace + final stage-output\n    end",
     "stages": [
       {
         "name": "Read",
         "agent": "pipeline_strategist",
-        "accepts": ["workflow-template"],
-        "produces": ["stage-list"],
+        "accepts": [
+          "workflow-template"
+        ],
+        "produces": [
+          "stage-list"
+        ],
         "description": "Load the composition's declared stage sequence"
       },
       {
         "name": "Validate",
         "agent": "pipeline_strategist",
-        "accepts": ["stage-list"],
-        "produces": ["seam-report"],
+        "accepts": [
+          "stage-list"
+        ],
+        "produces": [
+          "seam-report"
+        ],
         "description": "Check every adjacent seam: does upstream produce what downstream accepts? Halt before spending if not."
       },
       {
         "name": "Execute",
         "agent": "pipeline_strategist",
-        "accepts": ["seam-report", "stage-list"],
-        "produces": ["stage-output"],
+        "accepts": [
+          "seam-report",
+          "stage-list"
+        ],
+        "produces": [
+          "stage-output"
+        ],
         "description": "Walk the stages in order, threading each output into the next input via execute_agent"
       },
       {
         "name": "Report",
         "agent": "pipeline_strategist",
-        "accepts": ["stage-output"],
-        "produces": ["execution-trace"],
+        "accepts": [
+          "stage-output"
+        ],
+        "produces": [
+          "execution-trace"
+        ],
         "description": "Return the final output plus a stage-by-stage trace showing where any bad result entered"
       }
     ]

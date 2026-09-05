@@ -494,6 +494,10 @@
   <!-- ── auth + run controls ──────────────────────────────── -->
   <div class="controls">
     <div class="field">
+      <label>ABW Base URL</label>
+      <input id="base-url" placeholder="https://agent-bestiary.world" style="width:260px" />
+    </div>
+    <div class="field">
       <label>Workspace ID</label>
       <input id="ws-id" placeholder="paste workspace UUID or URL" />
     </div>
@@ -612,7 +616,14 @@
 
 <script>
 // ── constants ──────────────────────────────────────────────────────────────────
-const BASE = 'https://agent-bestiary.world';
+// BASE is read from: URL param ?base=, then localStorage, then default.
+// Third parties hosting their own ABW instance set this once and it persists.
+function getBase() {
+  const p = new URLSearchParams(window.location.search).get('base');
+  if (p) { localStorage.setItem('abw_base', p); return p; }
+  return localStorage.getItem('abw_base') || 'https://agent-bestiary.world';
+}
+const BASE = getBase();
 
 // ── helper: resolve workspace UUID from URL or bare UUID ───────────────────────
 function wsId() {
@@ -621,6 +632,11 @@ function wsId() {
   return m ? m[0] : v;
 }
 function token() { return document.getElementById('token').value.trim(); }
+function base() {
+  const v = document.getElementById('base-url').value.trim();
+  if (v) { localStorage.setItem('abw_base', v); return v; }
+  return BASE;
+}
 
 // ── status helpers ─────────────────────────────────────────────────────────────
 function setStatus(text, mode /* live | demo | loading | error */) {
@@ -867,7 +883,7 @@ async function runComparison() {
   setStatus('Calling compare_lenses…', 'loading');
 
   try {
-    const res = await fetch(`${BASE}/api/workspaces/${id}/actions/compare_lenses`, {
+    const res = await fetch(`${base()}/api/workspaces/${id}/actions/compare_lenses`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1019,7 +1035,10 @@ const DEMO_DATA = {
 function loadDemo() { renderAll(DEMO_DATA, false); }
 
 // Auto-load demo on page open so the page is never empty on first visit.
-window.addEventListener('DOMContentLoaded', loadDemo);
+window.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('base-url').value = BASE;
+  loadDemo();
+});
 </script>
 </body>
 </html>

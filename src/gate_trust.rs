@@ -294,13 +294,18 @@ pub const GATES: &[GateSpec] = &[
         // Decides about the artifact, so it can name one.
         decides_before_the_artifact: false,
         clock: Clock::Invocation,
-        // Counted rather than Recorded, for now. Promotion needs a widened
-        // `gate_decision_reviews` CHECK and a door in `gate_api::GATE_DOORS`,
-        // and an unreviewable ledger row is not obviously better than a
-        // counter. The counter answers the question this gate was added for:
-        // is a declared type ever actually contradicted, or is every contract
-        // in the corpus inert?
-        retention: Retention::Counted,
+        // Promoted to Recorded by migration 230. Gate decisions now land in
+        // `gate_decisions` so fidelity — `approved / (approved + refused)` per
+        // agent — is queryable from the ledger. The constraint widened in
+        // migration 217 and gate_decision_reviews widened in 219 already accept
+        // the token; 230 is the argument for the promotion and widens for
+        // input_schema in the same migration.
+        //
+        // Before the promotion, `unverified_no_schema` was 98% of outcomes
+        // (almost nothing declares a schema), so the counter reported nearly
+        // nothing. The ledger is more honest: it records what was checked,
+        // including every undetermined, so fidelity is computable from real data.
+        retention: Retention::Recorded,
         site: "agent_backend::envelope::build, at every delegation hop",
         refuses: "a delegated document that contradicts the schema its own \
                   producer declared",
@@ -364,7 +369,6 @@ pub const GATES: &[GateSpec] = &[
                            the excusal rule and the display disagree and one of \
                            them is wrong.",
     },
-
 ];
 
 impl Gate {
@@ -432,7 +436,6 @@ pub const GATE_IDS: &[&str] = &[
     // A migration widening `gate_decisions_gate_check` has to land WITH that
     // promotion, not after it.
     "completeness",
-
 ];
 
 const N: usize = GATES.len();
@@ -1094,13 +1097,15 @@ mod tests {
     #[test]
     fn the_ledger_says_which_gates_are_memory_only() {
         let s = ledger_status();
-        // `grounding` joined the ledger in migration 221. The pin is updated
-        // rather than relaxed: this list is the claim `GateView::since` makes to
-        // a reader -- "these counters survive a restart" -- and it must move only
-        // when somebody means it to.
+        // `grounding` joined the ledger in migration 221.
+        // `output_schema` joined the ledger in migration 230 (promoted from
+        // Counted to Recorded so fidelity is queryable per agent).
+        // The pin is updated rather than relaxed: this list is the claim
+        // `GateView::since` makes to a reader -- "these counters survive a
+        // restart" -- and it must move only when somebody means it to.
         assert_eq!(
             s.recorded_gates,
-            vec!["coherence", "grounding", "admission"]
+            vec!["coherence", "grounding", "admission", "output_schema"]
         );
         assert!(
             s.counted_only_gates.contains(&"rate_limit"),

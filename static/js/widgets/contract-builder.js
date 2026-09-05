@@ -186,69 +186,58 @@ const ContractBuilder = (() => {
                 to be able to score it.
               </div>
 
-              <div class="cb-sub">Who could consume this</div>
+              <!-- ── consumers ── -->
+              <div class="cb-sub">Who declares this type</div>
               <div id="cb-consumers"></div>
 
-              <div class="row" style="margin-top: 14px">
-                <div class="form-group">
-                  <label for="cb-synthesis">
-                    How a coordinator combines members
-                  </label>
-                  <select id="cb-synthesis" onchange="cbTouch()">
-                    <option value="">(not declared)</option>
-                    <option value="aggregation">
-                      aggregation &mdash; merge every member's document
-                    </option>
-                    <option value="pipeline">
-                      pipeline &mdash; each feeds the next
-                    </option>
-                    <option value="selection">
-                      selection &mdash; pick the best one
-                    </option>
-                    <option value="max_risk">
-                      max_risk &mdash; the worst finding wins
-                    </option>
-                    <option value="cep_weighted">
-                      cep_weighted &mdash; weight by calibration
-                    </option>
-                  </select>
-                </div>
-                <div class="form-group">
-                  <label for="cb-cal-signal">
-                    How correctness is eventually measured
-                  </label>
-                  <select
-                    id="cb-cal-signal"
-                    onchange="cbTouch(); cbRenderNav()"
-                  >
-                    <option value="">(not declared)</option>
-                    <option value="brier_forecast">
-                      brier_forecast &mdash; a forecast resolves
-                    </option>
-                    <option value="sosa_observation">
-                      sosa_observation &mdash; a sensor reading arrives
-                    </option>
-                    <option value="hitl_review">
-                      hitl_review &mdash; a human judges it
-                    </option>
-                    <option value="user_rating">
-                      user_rating &mdash; the caller rates it
-                    </option>
-                  </select>
-                  <div class="hint">
-                    Without this the document is composable and
-                    unfalsifiable &mdash; a strange pair to ship.
-                  </div>
-                </div>
+              <!-- ── calibration signal ── -->
+              <div class="cb-sub" style="margin-top:18px">How correctness is measured</div>
+              <select
+                id="cb-cal-signal"
+                onchange="cbTouch(); cbRenderNav()"
+                style="width:100%"
+              >
+                <option value="">(not declared)</option>
+                <option value="brier_forecast">brier_forecast &mdash; a forecast resolves</option>
+                <option value="sosa_observation">sosa_observation &mdash; a sensor reading arrives</option>
+                <option value="hitl_review">hitl_review &mdash; a human judges it</option>
+                <option value="user_rating">user_rating &mdash; the caller rates it</option>
+              </select>
+              <div class="cb-cal-hint">
+                Without a calibration signal the document is composable and
+                unfalsifiable &mdash; something can run this agent but nothing
+                can tell a reviewer whether it ran correctly.
               </div>
 
-              <div class="cb-sub" style="margin-top: 14px">
-                Paste this into your system prompt
-                <span class="cb-hintlet">
-                  or the schema is checked against prose for ever
-                </span>
+              <!-- ── prompt check ── -->
+              <div class="cb-sub" style="margin-top:18px">What your prompt needs
+                <span class="cb-hintlet">— the shelf’s prompt panel shows whether it already does</span>
               </div>
               <div id="cb-promptsnippet"></div>
+
+              <!-- ── synthesis: coordinator agents only ── -->
+              <details class="cb-coordinator-only">
+                <summary>
+                  Synthesis protocol
+                  <span class="cb-hintlet">&mdash; for coordinator agents only</span>
+                </summary>
+                <div class="cb-coordinator-body">
+                  <div class="cb-cal-hint">
+                    Specialist agents leave this blank. Declare synthesis only if
+                    THIS agent coordinates others and combines their outputs
+                    (e.g. moe_router_strategist). The composition that uses a
+                    specialist sets synthesis on its own workflow_template.
+                  </div>
+                  <select id="cb-synthesis" onchange="cbTouch()" style="width:100%;margin-top:6px">
+                    <option value="">(not declared)</option>
+                    <option value="aggregation">aggregation &mdash; merge every member&rsquo;s document</option>
+                    <option value="pipeline">pipeline &mdash; each feeds the next</option>
+                    <option value="selection">selection &mdash; pick the best one</option>
+                    <option value="max_risk">max_risk &mdash; the worst finding wins</option>
+                    <option value="cep_weighted">cep_weighted &mdash; weight by calibration</option>
+                  </select>
+                </div>
+              </details>
             </div>
           </div>
 
@@ -1142,25 +1131,43 @@ const ContractBuilder = (() => {
     const el = document.getElementById("cb-promptsnippet");
     if (!el) return;
     if (!cbCompiled) {
-      el.innerHTML = `<div class="hint">Nothing compiled yet. Once the
-        contract compiles, the exact document to paste appears here.</div>`;
+      el.innerHTML = `<div class="cb-cal-hint">Name a type in view 1 and compile — the prompt
+        declaration appears here once the contract compiles.</div>`;
       return;
     }
+    const schema_id = cbCompiled.output_contract.produces_schema;
     const doc = JSON.stringify(cbSampleDoc(cbCompiled.output_contract.schema), null, 2);
-    const rules = `End every response with one JSON document in a \`\`\`json fence, conforming exactly to type ${cbCompiled.output_contract.produces_schema}:
-
-${doc}
-
-Rules, each enforced by the platform:
-1. Every key is required, including the nulls. A field you could not fill is null, not absent — "I looked and found nothing" and "I did not answer" are different facts.
-2. No extra keys. The document is closed at every level.
-3. Never write a *_provenance value outside its declared set.
-4. Only fill a sourced block from that block's own tool. If you did not call it, the block is null and its stamp says tool_no_match.
-5. Reasoned blocks are stamped model_inference always. Do not compute derived numbers inside a retrieved block.`;
+    // The minimal line is what the platform checks for in the prompt
+    // (prompt_check.names_its_type). It is also the only required change
+    // for a working contract — the schema is enforced at every hop regardless.
+    const minimal = `End every response with one JSON document in a \`\`\`json fence, conforming exactly to type ${schema_id}.`;
+    const full_rules = `End every response with one JSON document in a \`\`\`json fence, conforming exactly to type ${schema_id}:\n\n${doc}\n\nRules, each enforced by the platform:\n1. Every key is required, including the nulls. A field you could not fill is null, not absent.\n2. No extra keys. The document is closed at every level.\n3. Never write a *_provenance value outside its declared set.\n4. Only fill a sourced block from that block\u2019s own tool. If you did not call it, the block is null and its stamp says tool_no_match.\n5. Reasoned blocks are stamped model_inference always. Do not compute derived numbers inside a retrieved block.`;
 
     el.innerHTML = `
-      <button class="btn cb-copybtn" onclick="cbCopySnippet()">Copy</button>
-      <div class="cb-pre" id="cb-snippet-text">${esc(rules)}</div>`;
+      <div class="cb-cal-hint">The platform checks that your prompt names the type. At
+        minimum, add this line:</div>
+      <div class="cb-prompt-minimal">
+        <button class="btn cb-copybtn" onclick="cbCopyMinimalSnippet()">Copy</button>
+        <span id="cb-minimal-text">${esc(minimal)}</span>
+      </div>
+      <details class="cb-coordinator-only" style="margin-top:10px">
+        <summary>Full schema reference
+          <span class="cb-hintlet">&mdash; include in prompt for maximum fidelity</span>
+        </summary>
+        <div class="cb-coordinator-body">
+          <button class="btn cb-copybtn" onclick="cbCopySnippet()">Copy</button>
+          <div class="cb-pre" id="cb-snippet-text">${esc(full_rules)}</div>
+        </div>
+      </details>`;
+  }
+
+  function cbCopyMinimalSnippet() {
+    const t = document.getElementById("cb-minimal-text");
+    if (!t) return;
+    navigator.clipboard
+      ?.writeText(t.textContent)
+      .then(() => cbSetStatusChip("Copied", "ok"))
+      .catch(() => {});
   }
 
   function cbCopySnippet() {
@@ -1168,7 +1175,7 @@ Rules, each enforced by the platform:
     if (!t) return;
     navigator.clipboard
       ?.writeText(t.textContent)
-      .then(() => cbSetStatusChip("Snippet copied", "ok"))
+      .then(() => cbSetStatusChip("Copied", "ok"))
       .catch(() => {});
   }
 
@@ -1771,7 +1778,7 @@ Rules, each enforced by the platform:
     cbToggle, cbAddFromProposal, cbAddJudgement, cbAddProse, cbAddGap,
     cbBorrow, cbTab, cbToolsChanged, cbTouch, cbLoadExample, cbClear,
     cbToggleShapeField, cbAdoptSource,
-    cbCopySnippet, cbRenderAll, cbRenderNav, cbRenderConsumers,
+    cbCopySnippet, cbCopyMinimalSnippet, cbRenderAll, cbRenderNav, cbRenderConsumers,
   });
 
   // The markup's ontology section uses the wizard's collapsible helper. Define

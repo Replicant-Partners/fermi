@@ -261,7 +261,7 @@ async fn record_delegated_episode(
     }
 }
 
-async fn execute_execute_agent(
+pub(crate) async fn execute_execute_agent(
     input: &serde_json::Value,
     ctx: &ToolContext,
 ) -> Result<String, String> {

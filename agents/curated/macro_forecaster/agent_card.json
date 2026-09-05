@@ -230,6 +230,40 @@
           "confidence": 0.7
         }
       ]
+    },
+    "input_contract": {
+      "accepts_schema": "fermi/forecast-question/1",
+      "title": "Forecast question",
+      "required": [
+        "question"
+      ],
+      "schema": {
+        "$id": "fermi/forecast-question/1",
+        "title": "Forecast question",
+        "type": "object",
+        "required": [
+          "question"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "description": "The geopolitical or macroeconomic forecast question to answer (e.g. 'Will the Fed cut rates before July?', 'Will GDP growth exceed 2% this year?')."
+          },
+          "resolution_criteria": {
+            "type": "string",
+            "description": "Optional. The observable event or data release that resolves the question."
+          },
+          "context": {
+            "type": "string",
+            "description": "Optional. Additional context: current indicators, policy guidance, market pricing, recent events."
+          },
+          "deadline": {
+            "type": "string",
+            "description": "Optional. Resolution date or time horizon."
+          }
+        },
+        "additionalProperties": true
+      }
     }
   },
   "performance": {
@@ -264,7 +298,8 @@
       "indicators",
       "gdp",
       "inflation",
-      "fermi-orchestra"
+      "fermi-orchestra",
+      "fleet:fermi"
     ],
     "sample_queries": [
       "What are the key risks to global GDP growth in 2026?",
@@ -336,6 +371,7 @@
     }
   },
   "accepts": [
+    "fermi/forecast-question/1",
     "query",
     "data",
     "indicator"

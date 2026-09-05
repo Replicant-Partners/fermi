@@ -439,6 +439,7 @@ pub async fn create_workspace_agent_handler(
         valence: None,
         output_contract: None,
         input_contract: None,
+        competition: None,
         taxonomy: Some(derived_taxonomy),
     };
 

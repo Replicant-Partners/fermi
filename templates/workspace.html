@@ -1009,6 +1009,61 @@
       .chat-text strong {
         color: var(--fg0);
       }
+
+      /* ─── Composition graph editor ─────────────────────────────────────────── */
+      .cg-section { margin-bottom: 18px; }
+      .cg-section-head {
+        font-size: 0.72rem; color: var(--aqua); text-transform: uppercase;
+        letter-spacing: 0.5px; margin-bottom: 8px; display: flex; gap: 10px; align-items: baseline;
+      }
+      .cg-hint { font-size: 0.66rem; color: var(--fg4); text-transform: none;
+                 letter-spacing: 0; font-style: italic; }
+      .cg-empty, .cg-empty-hint {
+        font-size: 0.72rem; color: var(--fg4); padding: 12px 0;
+      }
+      .cg-row { display: flex; gap: 12px; flex-wrap: wrap; }
+      .cg-node-row {
+        display: grid;
+        grid-template-columns: 100px 1fr 1fr 1fr 56px 28px;
+        gap: 6px; align-items: center;
+        padding: 6px 0; border-top: 1px solid var(--bg2);
+      }
+      .cg-edge-row {
+        display: flex; gap: 6px; align-items: center;
+        padding: 6px 0; border-top: 1px solid var(--bg2);
+      }
+      .cg-lbl {
+        display: block; font-size: 0.6rem; color: var(--fg4);
+        text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px;
+      }
+      .cg-input {
+        width: 100%; font-family: inherit; font-size: 0.7rem;
+        background: var(--bg0-hard); border: 1px solid var(--bg3);
+        color: var(--fg2); padding: 3px 6px;
+      }
+      .cg-select {
+        font-family: inherit; font-size: 0.7rem;
+        background: var(--bg0-hard); border: 1px solid var(--bg3);
+        color: var(--fg2); padding: 3px 6px;
+      }
+      .cg-pin { font-size: 0.68rem; color: var(--fg4);
+                display: flex; gap: 4px; align-items: center; }
+      .cg-rm {
+        background: none; border: 1px solid var(--bg3); color: var(--fg4);
+        font-size: 0.75rem; cursor: pointer; padding: 1px 5px;
+      }
+      .cg-rm:hover { border-color: var(--red, #fb4934); color: var(--red, #fb4934); }
+      .cg-arrow { color: var(--fg4); flex-shrink: 0; }
+      .cg-add-btn {
+        background: none; border: 1px solid var(--bg3); color: var(--aqua);
+        font-size: 0.68rem; cursor: pointer; padding: 3px 10px;
+        font-family: inherit; margin-top: 6px;
+      }
+      .cg-add-btn:hover { border-color: var(--aqua); }
+      .cg-save-btn { font-size: 0.72rem; }
+      .cg-footer { display: flex; gap: 12px; align-items: center;
+                   padding-top: 12px; border-top: 1px solid var(--bg2); }
+      /* ─────────────────────────────────────────────────────────────── */
     </style>
     <script src="https://cdn.jsdelivr.net/npm/marked@12.0.1/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js"></script>
@@ -1163,6 +1218,14 @@
           >
             Workflow
           </button>
+          <button
+            class="center-tab"
+            id="tab-graph"
+            onclick="switchTab('graph')"
+            style="display:none"
+          >
+            △ Graph
+          </button>
         </div>
 
         <!-- Chat panel -->
@@ -1244,6 +1307,20 @@
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+
+        <!-- Composition graph editor panel -->
+        <!-- Shown when the workspace has a coordination strategist.
+             Authors edit nodes/edges/synthesis here; saves via PUT
+             to the strategist agent's workflow_template. -->
+        <div id="panel-graph" style="display:none;flex:1;flex-direction:column;min-width:0;overflow:hidden">
+          <div style="padding:10px 16px;border-bottom:1px solid var(--bg2);display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:0.8rem;color:var(--fg3)">Typed coordination graph</span>
+            <span id="cg-status" style="font-size:0.7rem;color:var(--fg4)"></span>
+          </div>
+          <div id="cg-body" style="flex:1;overflow:auto;padding:16px">
+            <div style="color:var(--fg3);text-align:center;padding:40px 0">Loading…</div>
           </div>
         </div>
 
@@ -1682,6 +1759,7 @@
           document.title = ws.name + " — Agent Bestiary";
 
           // Composition identity — show mission + strategist chip when set
+          // Also reveal the Graph tab so authors can edit the typed graph.
           if (ws.is_composition) {
             const identityEl = document.getElementById("ws-composition-identity");
             const missionEl = document.getElementById("ws-mission");
@@ -1693,6 +1771,11 @@
               chipEl.style.display = "";
               chipEl.title = "Coordination strategist: " + ws.coordination_strategist_name;
             }
+            // Reveal the △ Graph tab and record strategist info for the editor.
+            const tabGraph = document.getElementById("tab-graph");
+            if (tabGraph) tabGraph.style.display = "";
+            window._wsStrategistName = ws.coordination_strategist_name;
+            window._wsStrategistId   = ws.coordination_strategist_id;
           }
           setTextById("ws-description", ws.description || "No description.");
 
@@ -3267,25 +3350,25 @@
 
       // ─── Tab switching ───
       function switchTab(tab) {
-        document
-          .getElementById("tab-chat")
+        document.getElementById("tab-chat")
           .classList.toggle("active", tab === "chat");
-        document
-          .getElementById("tab-files")
+        document.getElementById("tab-files")
           .classList.toggle("active", tab === "files");
-        document
-          .getElementById("tab-workflow")
+        document.getElementById("tab-workflow")
           .classList.toggle("active", tab === "workflow");
-        document
-          .getElementById("panel-chat")
+        const tabGraph = document.getElementById("tab-graph");
+        if (tabGraph) tabGraph.classList.toggle("active", tab === "graph");
+        document.getElementById("panel-chat")
           .classList.toggle("hidden", tab !== "chat");
-        document
-          .getElementById("panel-files")
+        document.getElementById("panel-files")
           .classList.toggle("active", tab === "files");
         const wfPanel = document.getElementById("panel-workflow");
         wfPanel.style.display = tab === "workflow" ? "flex" : "none";
+        const cgPanel = document.getElementById("panel-graph");
+        if (cgPanel) cgPanel.style.display = tab === "graph" ? "flex" : "none";
         if (tab === "files" && !filesLoaded) loadFiles();
         if (tab === "workflow" && !workflowLoaded) loadWorkflow();
+        if (tab === "graph" && !cgLoaded) loadCompositionGraph();
       }
 
       // ─── Files panel ───
@@ -3748,6 +3831,263 @@
           workflowLoaded = true;
         }
       }
+
+      // ─── Composition graph editor ───
+      //
+      // A form-based editor for the typed workflow_template (nodes/edges/
+      // synthesis/selection). Reads from the workspace's coordination
+      // strategist agent card and saves back via PUT /api/agents/:name.
+      //
+      // Phase 1: list-based form. Phase 2 will add a canvas-based visual graph.
+
+      let cgLoaded = false;
+
+      // Unique id counter for new nodes created in-session.
+      let _cgNodeSeq = 0;
+      const cgNewId = () => `node_${++_cgNodeSeq}`;
+
+      // Escaping for inline HTML.
+      const cgEsc = s => String(s ?? "").replace(/[&<>"']/g, c =>
+        ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+      // Current in-memory graph state.
+      let cgNodes = []; // [{id,agent,pinned,input_schema,output_schema}]
+      let cgEdges = []; // [{from,to,schema}]
+      let cgSynthesis = "selection";
+      let cgScope = "workspace";
+
+      async function loadCompositionGraph() {
+        const body = document.getElementById("cg-body");
+        const status = document.getElementById("cg-status");
+        if (!body) return;
+
+        const name = window._wsStrategistName;
+        if (!name) {
+          body.innerHTML = `<div class="cg-empty">
+            No coordination strategist assigned to this workspace.<br>
+            Set one via  <code>POST /api/workspaces/${wsId}/composition/identity</code>.
+          </div>`;
+          cgLoaded = true;
+          return;
+        }
+
+        try {
+          const res = await fetch(`/api/specimen/${encodeURIComponent(name)}`);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+          const wt = data.profile && data.profile.workflow_template
+            ? data.profile.workflow_template : {};
+
+          cgNodes = (wt.nodes || []).map(n => ({ ...n }));
+          cgEdges = (wt.edges || []).map(e => ({ ...e }));
+          cgSynthesis = wt.synthesis || "selection";
+          cgScope = (wt.selection && wt.selection.scope) || "workspace";
+
+          // Initialise the node sequence counter above any existing IDs.
+          cgNodes.forEach(n => {
+            const m = /^node_(\d+)$/.exec(n.id);
+            if (m) _cgNodeSeq = Math.max(_cgNodeSeq, +m[1]);
+          });
+
+          renderCgEditor();
+          if (status) status.textContent = `strategist: ${name}`;
+          cgLoaded = true;
+        } catch (e) {
+          body.innerHTML = `<div class="cg-empty">Could not load graph: ${cgEsc(e.message)}</div>`;
+          cgLoaded = true;
+        }
+      }
+
+      function renderCgEditor() {
+        const body = document.getElementById("cg-body");
+        if (!body) return;
+
+        const SYNTHESIS_OPTIONS = [
+          ["selection",   "selection — pick the best output"],
+          ["aggregation", "aggregation — merge all outputs"],
+          ["pipeline",    "pipeline — each feeds the next"],
+          ["cep_weighted","cep_weighted — calibration-weighted"],
+          ["max_risk",    "max_risk — worst finding wins"],
+        ];
+        const SCOPE_OPTIONS = [
+          ["workspace",   "workspace"],
+          ["fleet",       "fleet"],
+          ["marketplace", "marketplace (stub)"],
+        ];
+
+        const synOpts = SYNTHESIS_OPTIONS.map(([v,l]) =>
+          `<option value="${v}"${cgSynthesis===v?" selected":""}>${cgEsc(l)}</option>`).join("");
+        const scopeOpts = SCOPE_OPTIONS.map(([v,l]) =>
+          `<option value="${v}"${cgScope===v?" selected":""}>${cgEsc(l)}</option>`).join("");
+
+        const nodesHtml = cgNodes.length === 0
+          ? `<div class="cg-empty-hint">No nodes yet. Add one below.</div>`
+          : cgNodes.map((n, i) => `
+            <div class="cg-node-row" data-idx="${i}">
+              <div class="cg-node-id">
+                <label class="cg-lbl">id</label>
+                <input class="cg-input" data-f="id" value="${cgEsc(n.id)}" placeholder="node_1">
+              </div>
+              <div class="cg-node-agent">
+                <label class="cg-lbl">agent <span class="cg-hint">(blank = open slot)</span></label>
+                <input class="cg-input" data-f="agent" value="${cgEsc(n.agent||"")}" placeholder="leave blank for select_agent">
+              </div>
+              <div class="cg-node-schema">
+                <label class="cg-lbl">input schema</label>
+                <input class="cg-input" data-f="input_schema" value="${cgEsc(n.input_schema||"")}" placeholder="fermi/forecast-question/1">
+              </div>
+              <div class="cg-node-schema">
+                <label class="cg-lbl">output schema</label>
+                <input class="cg-input" data-f="output_schema" value="${cgEsc(n.output_schema||"")}" placeholder="fermi/football-evidence/1">
+              </div>
+              <label class="cg-pin" title="Pinned agents are never replaced by select_agent">
+                <input type="checkbox" data-f="pinned"${n.pinned?" checked":""}> pin
+              </label>
+              <button class="cg-rm" onclick="cgRemoveNode(${i})">×</button>
+            </div>`).join("");
+
+        const nodeIdOptions = cgNodes.map(n =>
+          `<option value="${cgEsc(n.id)}">${cgEsc(n.id)}</option>`).join("");
+
+        const edgesHtml = cgEdges.length === 0
+          ? `<div class="cg-empty-hint">No edges — all nodes receive the same input (MoE fan-out).</div>`
+          : cgEdges.map((e, i) => `
+            <div class="cg-edge-row" data-idx="${i}">
+              <select class="cg-select" data-f="from">
+                ${cgNodes.map(n => `<option value="${cgEsc(n.id)}"${e.from===n.id?" selected":""}>${cgEsc(n.id)}</option>`).join("")}
+              </select>
+              <span class="cg-arrow">→</span>
+              <select class="cg-select" data-f="to">
+                ${cgNodes.map(n => `<option value="${cgEsc(n.id)}"${e.to===n.id?" selected":""}>${cgEsc(n.id)}</option>`).join("")}
+              </select>
+              <input class="cg-input" data-f="schema" value="${cgEsc(e.schema||"")}" placeholder="schema ID (optional)" style="flex:2">
+              <button class="cg-rm" onclick="cgRemoveEdge(${i})">×</button>
+            </div>`).join("");
+
+        body.innerHTML = `
+          <div class="cg-section">
+            <div class="cg-row">
+              <div>
+                <label class="cg-lbl">Synthesis protocol</label>
+                <select class="cg-select" id="cg-synthesis">${synOpts}</select>
+              </div>
+              <div>
+                <label class="cg-lbl">Candidate scope</label>
+                <select class="cg-select" id="cg-scope">${scopeOpts}</select>
+              </div>
+            </div>
+          </div>
+
+          <div class="cg-section">
+            <div class="cg-section-head">
+              Nodes
+              <span class="cg-hint">blank agent = open slot (filled by select_agent at runtime)</span>
+            </div>
+            <div id="cg-nodes">${nodesHtml}</div>
+            <button class="cg-add-btn" onclick="cgAddNode()">+ Add node</button>
+          </div>
+
+          <div class="cg-section">
+            <div class="cg-section-head">
+              Edges
+              <span class="cg-hint">empty = MoE fan-out (all nodes receive the same input)</span>
+            </div>
+            <div id="cg-edges">${edgesHtml}</div>
+            <button class="cg-add-btn" onclick="cgAddEdge()">+ Add edge</button>
+          </div>
+
+          <div class="cg-section cg-footer">
+            <button class="btn btn-primary cg-save-btn" onclick="cgSave()">Save composition graph</button>
+            <span id="cg-save-status" style="font-size:0.7rem;color:var(--fg4)"></span>
+          </div>`;
+      }
+
+      function cgCollect() {
+        // Collect current node values from the DOM.
+        const nodeRows = document.querySelectorAll("#cg-nodes .cg-node-row");
+        cgNodes = [...nodeRows].map(row => ({
+          id:            row.querySelector('[data-f="id"]').value.trim() || cgNewId(),
+          agent:         row.querySelector('[data-f="agent"]').value.trim() || null,
+          input_schema:  row.querySelector('[data-f="input_schema"]').value.trim() || null,
+          output_schema: row.querySelector('[data-f="output_schema"]').value.trim() || null,
+          pinned:        row.querySelector('[data-f="pinned"]').checked,
+        }));
+        const edgeRows = document.querySelectorAll("#cg-edges .cg-edge-row");
+        cgEdges = [...edgeRows].map(row => ({
+          from:   row.querySelector('[data-f="from"]').value,
+          to:     row.querySelector('[data-f="to"]').value,
+          schema: row.querySelector('[data-f="schema"]').value.trim() || null,
+        })).filter(e => e.from && e.to);
+        cgSynthesis = document.getElementById("cg-synthesis")?.value || "selection";
+        cgScope     = document.getElementById("cg-scope")?.value || "workspace";
+      }
+
+      function cgAddNode() {
+        cgCollect();
+        cgNodes.push({ id: cgNewId(), agent: null, input_schema: null, output_schema: null, pinned: false });
+        renderCgEditor();
+      }
+
+      function cgRemoveNode(idx) {
+        cgCollect();
+        cgNodes.splice(idx, 1);
+        renderCgEditor();
+      }
+
+      function cgAddEdge() {
+        cgCollect();
+        const first = cgNodes[0]?.id || "";
+        const second = cgNodes[1]?.id || first;
+        cgEdges.push({ from: first, to: second, schema: null });
+        renderCgEditor();
+      }
+
+      function cgRemoveEdge(idx) {
+        cgCollect();
+        cgEdges.splice(idx, 1);
+        renderCgEditor();
+      }
+
+      async function cgSave() {
+        cgCollect();
+        const statusEl = document.getElementById("cg-save-status");
+        const name = window._wsStrategistName;
+        if (!name) {
+          if (statusEl) statusEl.textContent = "No strategist assigned";
+          return;
+        }
+        if (statusEl) statusEl.textContent = "Saving…";
+
+        const workflow_template = {
+          synthesis: cgSynthesis,
+          selection: { scope: cgScope },
+          nodes: cgNodes,
+          edges: cgEdges,
+        };
+
+        try {
+          const r = await fetch(`/api/agents/${encodeURIComponent(name)}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ workflow_template }),
+          });
+          if (!r.ok) {
+            const msg = await r.text();
+            if (statusEl) statusEl.textContent = `Error: ${msg.slice(0, 80)}`;
+            return;
+          }
+          if (statusEl) {
+            statusEl.textContent = `Saved at ${new Date().toLocaleTimeString()}`;
+          }
+          // Re-render so IDs are stable (no more blank placeholders).
+          renderCgEditor();
+        } catch (e) {
+          if (statusEl) statusEl.textContent = `Error: ${e.message}`;
+        }
+      }
+
+      // Expose mutation functions globally so onclick= handlers can reach them.
+      Object.assign(window, { cgAddNode, cgRemoveNode, cgAddEdge, cgRemoveEdge, cgSave });
 
       // ─── History (coherence + git) ───
       async function loadWorkspaceHistory() {

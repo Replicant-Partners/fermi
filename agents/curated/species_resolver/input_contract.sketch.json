@@ -1,0 +1,21 @@
+{
+  "accepts_schema": "abw/taxonomy-query/1",
+  "title": "Taxonomy and species resolution query",
+  "fields": [
+    {
+      "name": "query",
+      "type": "string",
+      "note": "The species or taxon to resolve. Can be a common name ('ashwagandha'), scientific name ('Withania somnifera'), or partial name. The resolver identifies the canonical taxon, GBIF key, and phylogenetic position."
+    },
+    {
+      "name": "include_genome",
+      "type": "boolean?",
+      "note": "Optional. If true, include genome assembly data (chromosome count, estimated size, notable genes) when available from NCBI. Default false."
+    },
+    {
+      "name": "include_conservation",
+      "type": "boolean?",
+      "note": "Optional. If true, include IUCN conservation status and population trend. Default false."
+    }
+  ]
+}

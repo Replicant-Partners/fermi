@@ -98,7 +98,7 @@ pub(crate) use domains::coordination::write_intention;
 // The new types live alongside the legacy ones throughout the migration.
 
 pub mod context;
-mod domains;
+pub(crate) mod domains;
 pub(crate) mod helpers;
 pub mod platform_tool;
 pub mod registry;

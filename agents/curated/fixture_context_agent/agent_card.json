@@ -158,7 +158,8 @@
       "rest-days",
       "factor-x6",
       "world-cup",
-      "fermi-orchestra"
+      "fermi-orchestra",
+      "fleet:fermi"
     ],
     "sample_queries": [
       "What is the host advantage prior for USA at the 2026 World Cup group stage?",

@@ -42,9 +42,10 @@ window.AgentFields = (function () {
   // `path` is how a value is read out of the served profile, which is nested;
   // `key` is what the endpoint takes, which is flat.
   const FIELDS = [
-    // ── intelligence ──────────────────────────────────────────────────
+    // ── intelligence ─────────────────────────────────────────────────────
     { group: "intelligence", key: "llm_provider", path: "substrate.provider",
-      label: "fallback provider", kind: "text",
+      label: "fallback provider", kind: "select",
+      options: ["anthropic", "openai", "openai-azure", "google", "mistral", "local"],
       help: "Used only when no ladder rung matches the caller's tier. Changing it " +
             "without changing the model is how an agent ends up asking Anthropic " +
             "for a GPT model." },
@@ -54,10 +55,25 @@ window.AgentFields = (function () {
             "the highest ladder rung at or below the caller's tier and overwrites " +
             "both fields; this stands only when no rung matches." },
     { group: "intelligence", key: "temperature", path: "substrate.temperature",
-      label: "temperature", kind: "number", step: "0.05", min: "0", max: "2",
+      label: "temperature", kind: "slider", step: "0.05", min: "0", max: "2", mid: "0.5",
       help: "Higher is more varied. An agent under a field contract is being " +
             "asked for retrievable facts, and variance there is noise rather " +
-            "than creativity." },
+            "than creativity. Extended thinking (Anthropic) forces this to 1.0." },
+    // model_params is the provider-specific sampling config. `kind: \"sampling\"`
+    // renders only the params the selected provider actually supports, so authors
+    // cannot set top_k for OpenAI or frequency_penalty for Anthropic.
+    { group: "intelligence", key: "model_params", path: "model_params",
+      label: "sampling parameters", kind: "sampling",
+      members: [
+        { key: "max_tokens" }, { key: "top_p" }, { key: "top_k" },
+        { key: "extended_thinking" }, { key: "thinking_budget_tokens" },
+        { key: "frequency_penalty" }, { key: "presence_penalty" },
+        { key: "repetition_penalty" }, { key: "random_seed" },
+      ],
+      help: "Provider-specific sampling parameters (max_tokens, top-P/K, extended " +
+            "thinking for Anthropic, frequency/presence penalty for OpenAI, " +
+            "repetition penalty for Mistral/local). These are applied on top of " +
+            "temperature by `resolve_sampling_params` at every LLM call." },
     // Its own group, and first. The prompt is not documentation: a substring in
     // it decides whether the agent gets a tool loop at all, so it is the first
     // thing an author needs and it was three panels down inside `Brain`.
@@ -76,6 +92,21 @@ window.AgentFields = (function () {
     { group: "manage", key: "min_tier", path: "min_tier",
       label: "minimum tier", kind: "text",
       help: "The lowest tier of caller allowed to invoke this agent." },
+    // ── competition ─────────────────────────────────────────────────────
+    //
+    // What this agent declares about its participation in open-slot selection.
+    // Authors fill these; the platform computes fidelity and selection rate
+    // from gate history and select_agent_decisions — those are not editable.
+    { group: "competition", key: "competition", path: "competition",
+      label: "competition", kind: "object",
+      help: "How this agent competes for open coordination graph slots. Declare " +
+            "domains and price so select_agent can rank you against alternatives. " +
+            "Fidelity and selection rate are platform-computed from gate history.",
+      members: [
+        { key: "domains", label: "domains", kind: "tags" },
+        { key: "price_credits_per_call", label: "price (credits/call)", kind: "number" },
+        { key: "support_tier", label: "support tier", kind: "text" },
+      ] },
     // ── ports ─────────────────────────────────────────────────────────────
     { group: "ports", key: "accepts", path: "accepts",
       label: "accepts", kind: "tags",
@@ -125,9 +156,66 @@ window.AgentFields = (function () {
   const at = (obj, path) =>
     String(path).split(".").reduce((o, k) => (o == null ? o : o[k]), obj);
 
+  // Provider → which sampling params are relevant.
+  // Mirrors the SamplingParams struct that resolve_sampling_params reads.
+  const SAMPLING_ROWS = [
+    { key: "max_tokens",             label: "max tokens",            type: "number", min: 1,  max: 200000, step: 1,    providers: "*" },
+    { key: "top_p",                  label: "top-P",                 type: "number", min: 0,  max: 1,      step: 0.01, providers: "anthropic openai openai-azure google mistral local" },
+    { key: "top_k",                  label: "top-K",                 type: "number", min: 0,  max: 100,    step: 1,    providers: "anthropic google local" },
+    { key: "extended_thinking",      label: "extended thinking",     type: "bool",                                     providers: "anthropic",
+      note: "Forces temperature to 1.0 — enforced by the platform." },
+    { key: "thinking_budget_tokens", label: "thinking budget (tokens)", type: "number", min: 1024, step: 1024, providers: "anthropic", extBudget: true },
+    { key: "frequency_penalty",      label: "frequency penalty",     type: "number", min: -2, max: 2,      step: 0.01, providers: "openai openai-azure" },
+    { key: "presence_penalty",       label: "presence penalty",      type: "number", min: -2, max: 2,      step: 0.01, providers: "openai openai-azure" },
+    { key: "repetition_penalty",     label: "repetition penalty",    type: "number", min: 0,  max: 2,      step: 0.01, providers: "mistral local" },
+    { key: "random_seed",            label: "seed",                  type: "number", min: 0,               step: 1,    providers: "openai openai-azure google mistral" },
+  ];
+
   function control(f, value) {
     const v = value == null ? "" : value;
     const common = `data-field="${f.key}" data-kind="${f.kind}"`;
+    if (f.kind === "select") {
+      // A dropdown from a known set. Used for provider (so the options are
+      // discoverable) and for any field with a closed vocabulary. Falls back to
+      // a text input for any unknown value already on the agent.
+      const opts = f.options || [];
+      const optHtml = opts.map((o) => {
+        const val = typeof o === "string" ? o : o.value;
+        const lbl = typeof o === "string" ? o : (o.label || o.value);
+        return `<option value="${esc(val)}"${v === val ? " selected" : ""}>${esc(lbl)}</option>`;
+      }).join("");
+      // If current value is not in the list, prepend it as a placeholder option
+      // so the author can see what is set before changing it.
+      const known = opts.map((o) => typeof o === "string" ? o : o.value);
+      const unknownOpt = v && !known.includes(v)
+        ? `<option value="${esc(v)}" selected>${esc(v)} (custom)</option>` : "";
+      return `<select ${common}>${unknownOpt}${optHtml}</select>`;
+    }
+    if (f.kind === "sampling") {
+      // Provider-aware sampling params. Each row carries data-sp-providers so
+      // a change to llm_provider shows/hides the right rows without a page reload.
+      // Rows hidden for the current provider are also excluded from the assembled
+      // model_params object, so switching from anthropic to openai does not
+      // accidentally carry over top_k.
+      const obj = value && typeof value === "object" ? value : {};
+      return `<div class="af-sampling" data-sp-container data-object="${f.key}">${
+        SAMPLING_ROWS.map((p) => {
+          const id = `${f.key}.${p.key}`;
+          const pv = obj[p.key];
+          const field_attrs = `data-field="${esc(id)}" data-kind="${p.type === "bool" ? "bool" : "number"}"`;
+          const inp = p.type === "bool"
+            ? `<input ${field_attrs} type="checkbox"${pv ? " checked" : ""}>`
+            : `<input ${field_attrs} type="number" step="${p.step || 1}"${
+                p.min != null ? ` min="${p.min}"` : ""}${
+                p.max != null ? ` max="${p.max}"` : ""} value="${esc(pv ?? "")}">` ;
+          return `<div class="af-sp-row" data-sp-providers="${esc(p.providers)}"
+                      ${p.extBudget ? "data-sp-ext-budget" : ""}>
+            <label class="af-sp-label">${esc(p.label)}</label>${inp}${
+              p.note ? `<span class="af-sp-note">${esc(p.note)}</span>` : ""}
+          </div>`;
+        }).join("")
+      }</div>`;
+    }
     if (f.kind === "object") {
       // One control per member, each carrying its parent so `read` can rebuild
       // the object. Sub-controls are the members the struct actually has, so a
@@ -196,8 +284,12 @@ window.AgentFields = (function () {
 
   // What the browser holds, as the type the endpoint wants.
   function read(el) {
-    const raw = el.value;
-    switch (el.dataset.kind) {
+    // Checkboxes are a special case: el.value is always "on", el.checked is
+    // the signal. Checked before the kind switch so any kind can be bool.
+    if (el && el.type === "checkbox") return el.checked;
+    const raw = (el && el.value) || "";
+    switch (el && el.dataset && el.dataset.kind) {
+      case "slider":    // range input — same numeric coercion as number
       case "number": {
         if (raw.trim() === "") return null;
         const n = Number(raw);
@@ -319,10 +411,17 @@ window.AgentFields = (function () {
     // An object field's value is assembled from its members at save time, so the
     // diff is computed against the whole object rather than per member — the
     // endpoint takes `valence`, not `valence.arousal`.
-    const objectOf = (key) => fields.find((f) => f.kind === "object" && f.key === key);
+    //
+    // `sampling` is also object-like (same assembly path) but only non-null,
+    // non-false values are included, and rows hidden by the provider filter are
+    // skipped. A hidden row keeps its DOM value; we just do not send it so the
+    // PUT does not carry openai-only params when the provider is anthropic.
+    const objectOf = (key) => fields.find(
+      (f) => (f.kind === "object" || f.kind === "sampling") && f.key === key);
     const assemble = (f, inputs) => {
       const out = {};
       let any = false;
+      const isSampling = f.kind === "sampling";
       // The pad's two axes are members too — they just have one control between
       // them. Listed first so a valence written by hand keeps its key order.
       const keys = (f.pad ? [f.pad.x.key, f.pad.y.key] : [])
@@ -330,9 +429,22 @@ window.AgentFields = (function () {
       keys.forEach((k) => {
         const el = inputs.find((i) => i.dataset.field === `${f.key}.${k}`);
         if (!el) return;
-        const v = read(el);
-        if (v !== null && !(Array.isArray(v) && v.length === 0)) any = true;
-        out[k] = v;
+
+        if (isSampling) {
+          // Skip rows that are hidden for the current provider.
+          const row = el.closest ? el.closest("[data-sp-providers]") : null;
+          if (row && row.dataset.spHidden === "1") return;
+          const v = read(el);
+          // Skip null and false — for model_params, absent means \"use platform
+          // default\"; false on a bool means the same thing.
+          if (v === null || v === false) return;
+          out[k] = v;
+          any = true;
+        } else {
+          const v = read(el);
+          if (v !== null && !(Array.isArray(v) && v.length === 0)) any = true;
+          out[k] = v;
+        }
       });
       // Every member emptied means the author cleared it, which is `null` and
       // not an object of nulls.
@@ -431,6 +543,57 @@ window.AgentFields = (function () {
       const outEl = sl.parentNode && sl.parentNode.querySelector(".af-val");
       if (outEl) sl.addEventListener("input", () => { outEl.textContent = sl.value; });
     });
+
+    // Provider-aware sampling params.
+    //
+    // When llm_provider changes, show only the rows whose data-sp-providers list
+    // includes the new provider. Hidden rows are skipped in assemble() so the PUT
+    // does not carry anthropic-only params when the provider is openai.
+    //
+    // Extended thinking locks temperature at 1.0 (Anthropic enforces this in
+    // resolve_sampling_params). When the checkbox is toggled, update the note and
+    // optionally grey the temperature slider as a visual reminder.
+    const spContainer = el.querySelector("[data-sp-container]");
+    if (spContainer) {
+      const providerInput = inputs.find((i) => i.dataset.field === "llm_provider");
+      const tempInput = inputs.find((i) => i.dataset.field === "temperature");
+
+      const showSamplingRows = (provider) => {
+        spContainer.querySelectorAll("[data-sp-providers]").forEach((row) => {
+          const providers = (row.dataset.spProviders || "").split(" ");
+          const show = providers[0] === "*" || providers.includes(provider);
+          row.style.display = show ? "" : "none";
+          row.dataset.spHidden = show ? "0" : "1";
+        });
+        // Extended thinking budget: only visible when the checkbox is checked.
+        const extEl = inputs.find((i) => i.dataset.field === "model_params.extended_thinking");
+        const budgetRow = spContainer.querySelector("[data-sp-ext-budget]");
+        if (budgetRow && extEl) {
+          const on = extEl.checked;
+          budgetRow.style.display = on ? "" : "none";
+          budgetRow.dataset.spHidden = on ? "0" : "1";
+        }
+        // Visual hint on temperature when extended thinking is locked.
+        if (tempInput) {
+          const extOn = extEl && extEl.checked;
+          tempInput.disabled = extOn;
+          const tempOut = tempInput.parentNode && tempInput.parentNode.querySelector(".af-val");
+          if (tempOut) tempOut.textContent = extOn ? "1 (locked)" : (tempInput.value || "");
+        }
+      };
+
+      if (providerInput) {
+        const onProviderChange = () => showSamplingRows(providerInput.value);
+        providerInput.addEventListener("change", onProviderChange);
+        providerInput.addEventListener("input", onProviderChange);
+        // Extended thinking toggle also updates budget row visibility.
+        const extEl = inputs.find((i) => i.dataset.field === "model_params.extended_thinking");
+        if (extEl) extEl.addEventListener("change", () => showSamplingRows(providerInput.value));
+        // Initialise from the profile's current provider.
+        showSamplingRows(at(profile, "substrate.provider") || "anthropic");
+      }
+    }
+
     const saveBtn = el.querySelector("[data-af-save]");
     const out = el.querySelector("[data-af-out]");
 

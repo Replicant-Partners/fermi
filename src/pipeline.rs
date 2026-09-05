@@ -311,9 +311,13 @@ mod tests {
 
     fn tmpl(stages: Vec<WorkflowStage>) -> WorkflowTemplate {
         WorkflowTemplate {
-            mermaid: String::new(),
+            mermaid: None,
             stages,
             description: None,
+            synthesis: None,
+            selection: None,
+            nodes: vec![],
+            edges: vec![],
         }
     }
 

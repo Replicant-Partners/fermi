@@ -439,7 +439,8 @@
       "microstructure",
       "kelly-sizing",
       "resolution-rules",
-      "arbitrage"
+      "arbitrage",
+      "fleet:weather"
     ],
     "created": "2026-08-13",
     "author": "Fermi Team",

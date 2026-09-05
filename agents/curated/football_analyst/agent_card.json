@@ -920,6 +920,40 @@
           "why": "Permitted, and carries no provenance stamp because a retrieval verdict about a paragraph is a category error. It is not unchecked: `parse_evidence_text` lifts the summary out as the episode's evidence, so a fabrication survives there after every structured field has been cleared. An Elo or a market value recited in this paragraph is the same claim wearing a different hat, and the unsourced blocks above are what it gets checked against."
         }
       }
+    },
+    "input_contract": {
+      "accepts_schema": "fermi/forecast-question/1",
+      "title": "Forecast question",
+      "required": [
+        "question"
+      ],
+      "schema": {
+        "$id": "fermi/forecast-question/1",
+        "title": "Forecast question",
+        "type": "object",
+        "required": [
+          "question"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "description": "The forecast question to answer. Should be a binary or probabilistic question about a future event (e.g. 'Will Arsenal win the Premier League this season?')."
+          },
+          "resolution_criteria": {
+            "type": "string",
+            "description": "Optional. How the question resolves — what observable event determines the outcome."
+          },
+          "context": {
+            "type": "string",
+            "description": "Optional. Additional context: current standings, recent form, injuries, market odds, or any evidence the analyst should weigh."
+          },
+          "deadline": {
+            "type": "string",
+            "description": "Optional. When the question resolves (ISO 8601 date or natural language)."
+          }
+        },
+        "additionalProperties": true
+      }
     }
   },
   "performance": {
@@ -961,7 +995,8 @@
       "fermi-orchestra",
       "factor-x3",
       "factor-x4",
-      "factor-x5"
+      "factor-x5",
+      "fleet:fermi"
     ],
     "sample_queries": [
       "Will Arsenal beat Manchester City in their next Premier League match?",
@@ -1065,6 +1100,7 @@
     }
   },
   "accepts": [
+    "fermi/forecast-question/1",
     "query",
     "team",
     "player",

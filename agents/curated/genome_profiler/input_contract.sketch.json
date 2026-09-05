@@ -1,0 +1,21 @@
+{
+  "accepts_schema": "abw/genome-query/1",
+  "title": "Genome and phylogenetic profile query",
+  "fields": [
+    {
+      "name": "organism",
+      "type": "string",
+      "note": "The organism to profile. Common name or scientific name (e.g. 'Homo sapiens', 'king cobra', 'Arabidopsis thaliana')."
+    },
+    {
+      "name": "focus",
+      "type": "string?",
+      "note": "Optional. Specific aspect to emphasise: 'phylogeny', 'genome', 'conservation', or 'all' (default). Narrows which NCBI / GBIF tool calls are prioritised."
+    },
+    {
+      "name": "context",
+      "type": "string?",
+      "note": "Optional. Research context or specific questions to address (e.g. 'compare to Arabidopsis lyrata for synteny analysis')."
+    }
+  ]
+}

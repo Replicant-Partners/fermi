@@ -334,6 +334,36 @@
     },
     "model_params": {
       "max_tokens": 4096
+    },
+    "input_contract": {
+      "accepts_schema": "abw/simops-query/1",
+      "title": "SimOps workbench query",
+      "required": [
+        "task"
+      ],
+      "schema": {
+        "$id": "abw/simops-query/1",
+        "title": "SimOps workbench query",
+        "type": "object",
+        "required": [
+          "task"
+        ],
+        "properties": {
+          "task": {
+            "type": "string",
+            "description": "The SimOps task or question. Can be a mode name ('price_bom', 'cascade', 'optimise', 'predict', 'narrate', 'scout_sidstreams') or a natural language request about the active process."
+          },
+          "process_context": {
+            "type": "object",
+            "description": "Optional. The active process configuration: process_name, stage_id, current_observations. If omitted, the companion reads from workspace state."
+          },
+          "workspace_id": {
+            "type": "string",
+            "description": "Optional. Target SimOps workspace ID. Resolved from context if absent."
+          }
+        },
+        "additionalProperties": true
+      }
     }
   },
   "performance": {
@@ -405,6 +435,7 @@
     "role": "met_agent"
   },
   "accepts": [
+    "abw/simops-query/1",
     "kask_simops/process_question",
     "kask_simops/edit_request",
     "kask_simops/variation_request",

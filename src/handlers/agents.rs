@@ -912,6 +912,7 @@ pub async fn create_agent_handler(
         valence: None,
         output_contract: req.output_contract.filter(|v| v.is_object()),
         input_contract: None,
+        competition: None,
         taxonomy: Some(derived_taxonomy),
     };
 
@@ -1266,6 +1267,10 @@ pub async fn import_agent_handler(
             .get("capabilities")
             .and_then(|c| c.get("input_contract"))
             .cloned(),
+        competition: card
+            .get("capabilities")
+            .and_then(|c| c.get("competition"))
+            .and_then(|v| serde_json::to_value(v).ok()),
         taxonomy,
     };
 
@@ -2924,6 +2929,148 @@ pub async fn get_agent_dependencies_handler(
 /// Used by `moe_router_strategist` Stage 0 via the `get_agent_calibration` MCP tool.
 pub use fermi::calibration::{brier_skill, CalibrationQuery};
 
+/// GET /api/agents/:id/fidelity
+///
+/// Gate::OutputSchema fidelity for this agent: how often its delegated outputs
+/// validated against its own declared schema. Computed from the gate_decisions
+/// ledger (Retention::Recorded since migration 230).
+///
+/// Returns:
+/// ```json
+/// { "agent": "...", "fidelity": 0.94,
+///   "approved": 847, "refused": 54, "undetermined": 0, "total": 901,
+///   "note": "..." }
+/// ```
+/// `fidelity` is `approved / (approved + refused)`; undetermined rows (no schema
+/// declared, prose-only output, or unsupported schema keywords) are excluded from
+/// the numerator and denominator — they are the absence of a check, not a pass.
+pub async fn agent_fidelity_handler(
+    State(state): State<AppState>,
+    _principal: Option<AuthPrincipal>,
+    Path(agent_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db_agent = resolve_agent(&state, &agent_id).await?;
+    let agent_name = &db_agent.agent_name;
+
+    let row = sqlx::query(
+        "SELECT
+            COUNT(*) FILTER (WHERE decision = 'approved')     AS approved,
+            COUNT(*) FILTER (WHERE decision = 'refused')      AS refused,
+            COUNT(*) FILTER (WHERE decision = 'undetermined') AS undetermined,
+            COUNT(*)                                           AS total
+         FROM gate_decisions
+         WHERE gate = 'output_schema'
+           AND subject = $1",
+    )
+    .bind(agent_name)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let approved: i64 = row.try_get("approved").unwrap_or(0);
+    let refused: i64 = row.try_get("refused").unwrap_or(0);
+    let undetermined: i64 = row.try_get("undetermined").unwrap_or(0);
+    let total: i64 = row.try_get("total").unwrap_or(0);
+    let checkable = approved + refused;
+    let fidelity: Option<f64> = if checkable > 0 {
+        Some((approved as f64) / (checkable as f64))
+    } else {
+        None
+    };
+
+    Ok(Json(json!({
+        "agent": agent_name,
+        "fidelity": fidelity,
+        "approved": approved,
+        "refused": refused,
+        "undetermined": undetermined,
+        "total": total,
+        "note": if total == 0 {
+            "No gate_decisions rows yet for this agent. Gate::OutputSchema was \
+             promoted to Retention::Recorded in migration 230; decisions will \
+             accumulate from this point."
+        } else if checkable == 0 {
+            "All decisions are undetermined (no schema declared or prose-only). \
+             Declare an output_contract to enable fidelity scoring."
+        } else {
+            "approved / (approved + refused). Undetermined rows excluded — they \
+             are the absence of a check, not a passing one."
+        }
+    })))
+}
+
+/// GET /api/agents/:id/competition-stats
+///
+/// How this agent has performed in open-slot selection: how often it was in
+/// the candidate set and how often it was chosen.
+///
+/// Returns:
+/// ```json
+/// { "agent": "...", "considered": 214, "selected": 162,
+///   "selection_rate": 0.757, "top_selection_scope": "workspace" }
+/// ```
+pub async fn agent_competition_stats_handler(
+    State(state): State<AppState>,
+    _principal: Option<AuthPrincipal>,
+    Path(agent_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let db_agent = resolve_agent(&state, &agent_id).await?;
+    let agent_name = &db_agent.agent_name;
+
+    // Considered: rows where this agent appears anywhere in the candidates JSONB.
+    let considered: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM select_agent_decisions
+         WHERE EXISTS (
+             SELECT 1 FROM jsonb_array_elements(candidates) c
+             WHERE c->>'agent' = $1
+         )",
+    )
+    .bind(agent_name)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0);
+
+    let selected: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM select_agent_decisions WHERE selected = $1")
+            .bind(agent_name)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(0);
+
+    let selection_rate: Option<f64> = if considered > 0 {
+        Some((selected as f64) / (considered as f64))
+    } else {
+        None
+    };
+
+    // Most common scope this agent was selected in
+    let top_scope: Option<String> = sqlx::query_scalar(
+        "SELECT scope_level FROM select_agent_decisions
+         WHERE selected = $1
+         GROUP BY scope_level ORDER BY COUNT(*) DESC LIMIT 1",
+    )
+    .bind(agent_name)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+
+    Ok(Json(json!({
+        "agent": agent_name,
+        "considered": considered,
+        "selected": selected,
+        "selection_rate": selection_rate,
+        "top_selection_scope": top_scope,
+        "note": if considered == 0 {
+            "No select_agent_decisions rows yet. Data accumulates as \
+             execute_coordination_graph and select_agent are called."
+        } else {
+            "considered = appearances in any candidate set; \
+             selected = times chosen as the top candidate"
+        }
+    })))
+}
+
 pub async fn get_agent_calibration_handler(
     State(state): State<AppState>,
     // Optional: this route sits under optional_auth_middleware, and the
@@ -3880,6 +4027,7 @@ mod tests {
             valence: None,
             output_contract: None,
             input_contract: None,
+            competition: None,
             taxonomy: None,
         }
     }
@@ -3971,6 +4119,7 @@ mod tests {
             valence: Some(json!({})),
             output_contract: Some(json!({})),
             input_contract: Some(json!({})),
+            competition: Some(json!({})),
             version: Some("1.0.0".into()),
             taxonomy: Some(json!({})),
         };

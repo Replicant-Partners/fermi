@@ -864,6 +864,40 @@
         "type": "object"
       },
       "synthesis": "cep_weighted"
+    },
+    "input_contract": {
+      "accepts_schema": "fermi/forecast-question/1",
+      "title": "Forecast question",
+      "required": [
+        "question"
+      ],
+      "schema": {
+        "$id": "fermi/forecast-question/1",
+        "title": "Forecast question",
+        "type": "object",
+        "required": [
+          "question"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "description": "The forecast question to answer about equities, earnings, or market movements."
+          },
+          "resolution_criteria": {
+            "type": "string",
+            "description": "Optional. The observable event that resolves the question (e.g. 'Q3 earnings report beats consensus EPS estimate')."
+          },
+          "context": {
+            "type": "string",
+            "description": "Optional. Financial context: price history, analyst estimates, macro environment, recent filings."
+          },
+          "deadline": {
+            "type": "string",
+            "description": "Optional. Resolution date or time horizon."
+          }
+        },
+        "additionalProperties": true
+      }
     }
   },
   "performance": {
@@ -901,7 +935,8 @@
       "analyst-estimates",
       "ratios",
       "fmp",
-      "fermi-orchestra"
+      "fermi-orchestra",
+      "fleet:fermi"
     ],
     "sample_queries": [
       "Analyze Apple's financial health and growth trajectory for the next fiscal year",
@@ -1043,6 +1078,7 @@
     }
   },
   "accepts": [
+    "fermi/forecast-question/1",
     "query",
     "symbol",
     "ticker",

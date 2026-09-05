@@ -561,7 +561,8 @@
       "prediction-markets",
       "probabilistic",
       "open-meteo",
-      "era5"
+      "era5",
+      "fleet:weather"
     ],
     "created": "2026-08-13",
     "author": "Fermi Team",

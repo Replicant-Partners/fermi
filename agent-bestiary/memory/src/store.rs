@@ -90,7 +90,7 @@ const AGENT_COLUMNS: &str = r#"
     accepts, produces, workflow_template, prompt_template, requires_secrets,
     model_ladder, min_tier, capability_gates,
     persona_version, fermi_contract, model_params,
-    valence, output_contract, taxonomy, input_contract
+    valence, output_contract, taxonomy, input_contract, competition
 "#;
 
 /// What resolving a composition version actually did.
@@ -653,9 +653,9 @@ impl MemoryStore {
                 accepts, produces, workflow_template, prompt_template, requires_secrets,
                 model_ladder, min_tier, capability_gates,
                 fermi_contract, model_params,
-                valence, output_contract, taxonomy, input_contract
+                valence, output_contract, taxonomy, input_contract, competition
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44)
             ON CONFLICT (agent_name)
              DO UPDATE SET
                  agent_type = EXCLUDED.agent_type,
@@ -686,6 +686,7 @@ impl MemoryStore {
                  output_contract = EXCLUDED.output_contract,
                  taxonomy = EXCLUDED.taxonomy,
                  input_contract = EXCLUDED.input_contract,
+                 competition = EXCLUDED.competition,
                  -- Preserve existing owner; only fill in if currently NULL
                  -- (prevents seed from wiping ownership set by admin/user)
                  user_id = COALESCE(agents.user_id, EXCLUDED.user_id)
@@ -735,6 +736,7 @@ impl MemoryStore {
         .bind(&agent.output_contract)
         .bind(&agent.taxonomy)
         .bind(&agent.input_contract)
+        .bind(&agent.competition)
         .fetch_one(&self.pool)
         .await?;
 
@@ -990,6 +992,10 @@ impl MemoryStore {
             set_clauses.push(format!("input_contract = ${}", param_idx));
             param_idx += 1;
         }
+        if updates.competition.is_some() {
+            set_clauses.push(format!("competition = ${}", param_idx));
+            param_idx += 1;
+        }
         if updates.version.is_some() {
             set_clauses.push(format!("version = ${}", param_idx));
             let _ = param_idx; // last field — no increment needed
@@ -1084,6 +1090,9 @@ impl MemoryStore {
             query = query.bind(v);
         }
         if let Some(ref v) = updates.input_contract {
+            query = query.bind(v);
+        }
+        if let Some(ref v) = updates.competition {
             query = query.bind(v);
         }
         if let Some(ref v) = updates.version {
@@ -1349,6 +1358,7 @@ impl MemoryStore {
             valence: row.try_get("valence").unwrap_or(None),
             output_contract: row.try_get("output_contract").unwrap_or(None),
             input_contract: row.try_get("input_contract").unwrap_or(None),
+            competition: row.try_get("competition").unwrap_or(None),
             taxonomy: row.try_get("taxonomy").unwrap_or(None),
         })
     }
@@ -5273,6 +5283,7 @@ mod tests {
             fermi_contract: None,
             output_contract: None,
             input_contract: None,
+            competition: None,
             model_params: serde_json::Value::Object(serde_json::Map::new()),
             valence: None,
             taxonomy: None,

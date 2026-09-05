@@ -1,0 +1,14 @@
+-- Migration 228: competition column on agents (Typed Coordination Phase 1.1)
+--
+-- Stores an agent's competition declaration: which domains it competes in,
+-- its price per call, and its support tier. Read by select_agent when
+-- ranking candidates for open coordination graph slots.
+--
+-- Self-declared fields only. Fidelity (Gate::OutputSchema history) and
+-- selection_rate (select_agent decisions) are platform-computed and stored
+-- separately — they cannot be self-reported.
+--
+-- NULL means the agent does not actively compete for open slots. It is still
+-- callable by name; it just does not appear in select_agent results unless
+-- its input_schema_id matches.
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS competition jsonb;

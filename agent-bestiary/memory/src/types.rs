@@ -688,6 +688,11 @@ pub struct Agent {
     // for its callers. Symmetric to output_contract. NULL = no input contract.
     #[serde(default)]
     pub input_contract: Option<serde_json::Value>,
+    // Competition declaration (migration 228) — domains, price, support tier.
+    // NULL = not actively competing for open coordination graph slots.
+    // Fidelity and selection_rate are platform-computed, never stored here.
+    #[serde(default)]
+    pub competition: Option<serde_json::Value>,
     // Seven-rank classification (migration 186, SPEC_30). Flat
     // string->string. Previously lived only in the on-disk agent_card.json,
     // which meant agents authored through the API could never be classified
@@ -783,6 +788,8 @@ pub struct AgentUpdate {
     pub output_contract: Option<serde_json::Value>,
     // A2A input contract — compiled input schema this agent declares for callers
     pub input_contract: Option<serde_json::Value>,
+    // Competition declaration — domains, price_credits_per_call, support_tier
+    pub competition: Option<serde_json::Value>,
     // Seven-rank classification (SPEC_30). Editorial ranks are set by a
     // human; derived ranks are recomputed from the agent on write.
     pub taxonomy: Option<serde_json::Value>,

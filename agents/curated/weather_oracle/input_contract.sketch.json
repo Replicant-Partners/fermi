@@ -1,0 +1,26 @@
+{
+  "accepts_schema": "fermi/forecast-question/1",
+  "title": "Forecast question",
+  "fields": [
+    {
+      "name": "question",
+      "type": "string",
+      "note": "The weather market forecast question to answer (e.g. 'Will NYC max temperature exceed 90°F on July 4th?'). Should reference a specific Polymarket weather market or be phrased to match one."
+    },
+    {
+      "name": "resolution_criteria",
+      "type": "string?",
+      "note": "Optional. The settlement station, measurement window, and source table (e.g. KLGA, max temp, NOAA ISD). The oracle will verify this against Polymarket's settlement spec."
+    },
+    {
+      "name": "context",
+      "type": "string?",
+      "note": "Optional. Market context: current Polymarket price, order book depth, existing ensemble forecasts."
+    },
+    {
+      "name": "deadline",
+      "type": "string?",
+      "note": "Optional. Settlement date."
+    }
+  ]
+}

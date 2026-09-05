@@ -37,6 +37,8 @@ pub fn tools() -> Vec<Arc<dyn PlatformTool>> {
         Arc::new(ReadWorkspaceOutput),
         Arc::new(ListWorkspaceOutputs),
         Arc::new(ListWorkspaceAgents),
+        Arc::new(SelectAgent),
+        Arc::new(ExecuteCoordinationGraph),
         Arc::new(WriteWorkspaceFile),
         Arc::new(EvaluateCoherence),
         Arc::new(CoherenceSnapshot),
@@ -158,6 +160,641 @@ impl PlatformTool for ListWorkspaceOutputs {
     async fn execute(&self, input: &Value, ctx: &ToolContext) -> Result<String, String> {
         execute_list_workspace_outputs(input, ctx).await
     }
+}
+
+// ─── select_agent ────────────────────────────────────────────────────────────
+//
+// Rank agents that declare a given input_schema_id, scoring by calibration
+// (Brier), cost, valence fit, and fidelity.
+//
+// Scope controls the candidate pool:
+//   workspace  (default) — agents in this workspace only
+//   fleet:<id>           — agents tagged fleet:<id> (Phase 3, stubbed)
+//   marketplace          — all public ABW agents (Phase 4, stubbed)
+//
+// Each level is a curated subset of the one above. The goal is a fully open
+// marketplace — scoping is a trust and relevance mechanism, not a ceiling.
+
+struct SelectAgent;
+
+#[async_trait]
+impl PlatformTool for SelectAgent {
+    fn name(&self) -> &'static str {
+        "select_agent"
+    }
+
+    fn description(&self) -> &'static str {
+        "Rank agents that declare a given input schema ID, scoring by Brier calibration, \
+         cost, valence fit, and fidelity. Use to fill open slots in a coordination graph.\n\n\
+         `scope.level` controls the candidate pool:\n\
+         · workspace (default) — agents in this workspace\n\
+         · fleet:<id>          — all agents tagged with that fleet (e.g. 'fermi', 'simops')\n\
+         · marketplace         — all public ABW agents (Phase 4, returns workspace scope for now)\n\n\
+         Returns a ranked candidate list with per-criterion breakdown. Route to the top \
+         candidate or reason about the breakdown for unusual queries."
+    }
+
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "input_schema_id": {
+                    "type": "string",
+                    "description": "Schema ID to match against candidates (e.g. 'scro/bom-query/1')."
+                },
+                "scope": {
+                    "type": "object",
+                    "description": "Optional. Candidate pool scope. Default: workspace-scoped.",
+                    "properties": {
+                        "level": {
+                            "type": "string",
+                            "description": "workspace | fleet | marketplace"
+                        },
+                        "fleet_id": {
+                            "type": "string",
+                            "description": "Required when level=fleet. Fleet name tag (e.g. 'fermi', 'simops')."
+                        }
+                    }
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Optional. The query to be sent. Context only — does not affect scoring yet."
+                },
+                "criteria": {
+                    "type": "object",
+                    "description": "Optional scoring weights summing to 1.0. Defaults: brier=0.40, cost=0.20, valence_fit=0.20, fidelity=0.20.",
+                    "properties": {
+                        "brier":       { "type": "number", "description": "Calibration score weight" },
+                        "cost":        { "type": "number", "description": "Price per call weight (lower cost scores higher)" },
+                        "valence_fit": { "type": "number", "description": "Personality complement weight" },
+                        "fidelity":    { "type": "number", "description": "Gate::OutputSchema approval rate weight" }
+                    }
+                }
+            },
+            "required": ["input_schema_id"]
+        })
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Workspace
+    }
+
+    fn requires_workspace(&self) -> bool {
+        true
+    }
+
+    async fn execute(&self, input: &Value, ctx: &ToolContext) -> Result<String, String> {
+        execute_select_agent(input, ctx).await
+    }
+}
+
+pub(crate) async fn execute_select_agent(
+    input: &Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    let workspace_id = ctx.workspace_id.ok_or("Not in a workspace context")?;
+    let pool = ctx.memory_store.pool();
+    let db = ctx
+        .db
+        .as_ref()
+        .ok_or("select_agent requires a database context")?;
+
+    let input_schema_id = input
+        .get("input_schema_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: input_schema_id")?;
+
+    // Scope — determines the candidate pool.
+    //   workspace  (default) — agents in this workspace.
+    //   fleet:<id>           — agents tagged fleet:<id>. Phase 3 (stubbed: falls back to workspace).
+    //   marketplace          — all public ABW agents.   Phase 4 (stubbed: falls back to workspace).
+    let scope_level = input
+        .get("scope")
+        .and_then(|s| s.get("level"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("workspace");
+    let fleet_id = input
+        .get("scope")
+        .and_then(|s| s.get("fleet_id"))
+        .and_then(|v| v.as_str());
+    // Stubs for Phase 3/4 — currently fall back to workspace scope with a note.
+    let scope_note: Option<&str> = match scope_level {
+        "fleet" if fleet_id.is_some() => {
+            Some("fleet scope not yet implemented — returning workspace candidates")
+        }
+        "marketplace" => {
+            Some("marketplace scope not yet implemented — returning workspace candidates")
+        }
+        _ => None,
+    };
+
+    // Criteria weights.
+    //
+    // Priority (highest to lowest):
+    //   1. Explicit criteria in the tool call (the caller knows what they want)
+    //   2. Workspace-level weights (Loop 4B updates these from observed outcomes)
+    //   3. Platform defaults
+    //
+    // Workspace weights are stored in `teams.selection_weights` (migration 231)
+    // and updated by the selection performance consolidation step in Loop 4B.
+    // An explicit call-level override always wins — a strategist that has
+    // reason to weight calibration heavily for this specific query type should
+    // not be overridden by a workspace default.
+    let workspace_weights: Option<serde_json::Value> =
+        sqlx::query_scalar("SELECT selection_weights FROM teams WHERE id = $1")
+            .bind(workspace_id)
+            .fetch_optional(db)
+            .await
+            .ok()
+            .flatten()
+            .flatten();
+    let crit = input.get("criteria");
+    let w_brier = crit
+        .and_then(|c| c.get("brier"))
+        .and_then(|v| v.as_f64())
+        .or_else(|| {
+            workspace_weights
+                .as_ref()
+                .and_then(|w| w.get("brier"))
+                .and_then(|v| v.as_f64())
+        })
+        .unwrap_or(0.40);
+    let w_cost = crit
+        .and_then(|c| c.get("cost"))
+        .and_then(|v| v.as_f64())
+        .or_else(|| {
+            workspace_weights
+                .as_ref()
+                .and_then(|w| w.get("cost"))
+                .and_then(|v| v.as_f64())
+        })
+        .unwrap_or(0.20);
+    let w_valence_fit = crit
+        .and_then(|c| c.get("valence_fit"))
+        .and_then(|v| v.as_f64())
+        .or_else(|| {
+            workspace_weights
+                .as_ref()
+                .and_then(|w| w.get("valence_fit"))
+                .and_then(|v| v.as_f64())
+        })
+        .unwrap_or(0.20);
+    let w_fidelity = crit
+        .and_then(|c| c.get("fidelity"))
+        .and_then(|v| v.as_f64())
+        .or_else(|| {
+            workspace_weights
+                .as_ref()
+                .and_then(|w| w.get("fidelity"))
+                .and_then(|v| v.as_f64())
+        })
+        .unwrap_or(0.20);
+
+    // 1. Candidates: agents whose input_contract.accepts_schema matches, scoped.
+    //
+    // workspace (default) — agents that are members of this workspace.
+    // fleet:<id>          — agents tagged `fleet:<id>` anywhere in the platform.
+    //                       Fleet membership is declared via the `tags` column;
+    //                       a creator joins a fleet by adding `fleet:fermi` etc.
+    //                       Visibility must be 'public' for fleet/marketplace scope.
+    // marketplace         — all public agents (Phase 4 — falls back to workspace).
+    let rows = if scope_level == "fleet" {
+        if let Some(fid) = fleet_id {
+            let fleet_tag = format!("fleet:{fid}");
+            sqlx::query(
+                "SELECT a.agent_id, a.agent_name, a.agent_type, a.description,
+                        a.input_contract->>'accepts_schema'  AS input_schema_id,
+                        a.output_contract->>'produces_schema' AS output_schema_id,
+                        a.competition,
+                        a.valence
+                 FROM agents a
+                 WHERE $1 = ANY(a.tags)
+                   AND a.input_contract->>'accepts_schema' = $2
+                   AND a.visibility = 'public'",
+            )
+            .bind(&fleet_tag)
+            .bind(input_schema_id)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| format!("Fleet query failed: {e}"))?
+        } else {
+            return Err("scope.level 'fleet' requires scope.fleet_id".to_string());
+        }
+    } else {
+        // workspace scope (default) — and the fallback for marketplace (Phase 4).
+        sqlx::query(
+            "SELECT a.agent_id, a.agent_name, a.agent_type, a.description,
+                    a.input_contract->>'accepts_schema'  AS input_schema_id,
+                    a.output_contract->>'produces_schema' AS output_schema_id,
+                    a.competition,
+                    a.valence
+             FROM workspace_agents wa
+             JOIN agents a ON a.agent_id = wa.agent_id
+             WHERE wa.workspace_id = $1
+               AND a.input_contract->>'accepts_schema' = $2",
+        )
+        .bind(workspace_id)
+        .bind(input_schema_id)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("Query failed: {e}"))?
+    };
+
+    if rows.is_empty() {
+        return serde_json::to_string_pretty(&json!({
+            "input_schema_id": input_schema_id,
+            "scope": { "level": scope_level, "fleet_id": fleet_id },
+            "candidates": [],
+            "note": "No agents declare this input schema in the queried scope. \
+                     For workspace scope: add agents that declare \
+                     input_contract.accepts_schema matching this value as workspace members."
+        }))
+        .map_err(|e| e.to_string());
+    }
+
+    // 2a. Workspace valence centroid — used for valence_fit scoring.
+    //
+    // valence_fit measures how much a candidate COMPLEMENTS the workspace's
+    // existing personality distribution. Higher complement distance = more
+    // diverse = better fit (homophily check, same logic as the dreaming audit).
+    //
+    // centroid = (avg arousal, avg valence) over workspace members that have
+    // declared a valence. Candidates with no valence get 0.5 (neutral fit).
+    let centroid: Option<(f64, f64)> = sqlx::query(
+        "SELECT AVG((a.valence->>'arousal')::float)   AS avg_arousal,
+                AVG((a.valence->>'valence')::float)    AS avg_valence
+         FROM workspace_agents wa
+         JOIN agents a ON a.agent_id = wa.agent_id
+         WHERE wa.workspace_id = $1
+           AND a.valence IS NOT NULL
+           AND (a.valence->>'arousal') IS NOT NULL
+           AND (a.valence->>'valence') IS NOT NULL",
+    )
+    .bind(workspace_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .and_then(|r| {
+        let a = r.try_get::<Option<f64>, _>("avg_arousal").ok().flatten();
+        let v = r.try_get::<Option<f64>, _>("avg_valence").ok().flatten();
+        match (a, v) {
+            (Some(a), Some(v)) => Some((a, v)),
+            _ => None,
+        }
+    });
+
+    // 2. Score each candidate
+    let mut scored: Vec<serde_json::Value> = Vec::new();
+
+    for row in &rows {
+        let agent_name: String = row.get("agent_name");
+        let agent_id: uuid::Uuid = row.get("agent_id");
+        let agent_type: String = row.get("agent_type");
+        let description: Option<String> = row.get("description");
+        let input_sid: Option<String> = row.get("input_schema_id");
+        let output_sid: Option<String> = row.get("output_schema_id");
+        let competition: Option<serde_json::Value> = row.try_get("competition").unwrap_or(None);
+
+        // Brier: mean forecast_calibration score from eval_signals (Brier inverted
+        // to 0-1 where higher = better calibrated, consistent with calibration_score).
+        let brier_score: Option<f64> = sqlx::query_scalar(
+            "SELECT AVG(score) FROM eval_signals
+             WHERE agent_id = $1 AND signal_type = 'forecast_calibration'
+               AND score IS NOT NULL",
+        )
+        .bind(agent_id)
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten()
+        .flatten()
+        .map(|b: f64| 1.0 - b); // Brier inverted: lower raw = higher calibration
+
+        // Cost: lower price = higher score. Free (0) → 1.0; 100 credits → 0.0.
+        let price = competition
+            .as_ref()
+            .and_then(|c| c.get("price_credits_per_call"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let cost_score = 1.0 - (price as f64).min(100.0) / 100.0;
+
+        let support_tier = competition
+            .as_ref()
+            .and_then(|c| c.get("support_tier"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("community")
+            .to_string();
+
+        let domains: Vec<String> = competition
+            .as_ref()
+            .and_then(|c| c.get("domains"))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Valence fit: complement distance from the workspace centroid.
+        //
+        // A candidate that sits where the workspace already has coverage adds
+        // less than one who fills a gap. Euclidean distance on the (arousal,
+        // valence) affect plane, normalised to [0, 1] by dividing by the
+        // maximum possible distance (sqrt(2) on a unit square).
+        // Candidates with no declared valence get 0.5 (neutral fit).
+        let valence: Option<serde_json::Value> = row.try_get("valence").unwrap_or(None);
+        let valence_fit_score: f64 = match (centroid, &valence) {
+            (Some((ca, cv)), Some(val)) => {
+                let va = val.get("arousal").and_then(|v| v.as_f64());
+                let vv = val.get("valence").and_then(|v| v.as_f64());
+                match (va, vv) {
+                    (Some(va), Some(vv)) => {
+                        // Euclidean complement distance, normalised
+                        let dist = ((va - ca).powi(2) + (vv - cv).powi(2)).sqrt();
+                        // Max distance on [-1,1]x[0,1] plane ≈ sqrt(4+1)=2.24;
+                        // practical range for arousal[0,1] x valence[-1,1] is sqrt(2)
+                        (dist / std::f64::consts::SQRT_2).min(1.0)
+                    }
+                    _ => 0.5,
+                }
+            }
+            _ => 0.5,
+        };
+
+        // Fidelity: Gate::OutputSchema ledger (Retention::Recorded since mig 230).
+        // approved / (approved + refused). Undetermined rows excluded — they are
+        // the absence of a check, not a pass. Absent = 0.5 prior (no data yet).
+        let fidelity_score: f64 = {
+            let row = sqlx::query(
+                "SELECT
+                    COUNT(*) FILTER (WHERE decision = 'approved') AS approved,
+                    COUNT(*) FILTER (WHERE decision = 'refused')  AS refused
+                 FROM gate_decisions
+                 WHERE gate = 'output_schema' AND subject = $1",
+            )
+            .bind(&agent_name)
+            .fetch_optional(db)
+            .await
+            .ok()
+            .flatten();
+            match row {
+                Some(r) => {
+                    let approved: i64 = r.try_get("approved").unwrap_or(0);
+                    let refused: i64 = r.try_get("refused").unwrap_or(0);
+                    let checkable = approved + refused;
+                    if checkable > 0 {
+                        approved as f64 / checkable as f64
+                    } else {
+                        0.5
+                    }
+                }
+                None => 0.5,
+            }
+        };
+
+        // Composite score: weighted sum over criteria
+        let brier_component = brier_score.unwrap_or(0.5); // 0.5 prior when no data
+        let composite = w_brier * brier_component
+            + w_cost * cost_score
+            + w_valence_fit * valence_fit_score
+            + w_fidelity * fidelity_score;
+
+        scored.push(json!({
+            "agent":       agent_name,
+            "agent_type":  agent_type,
+            "description": description,
+            "score": (composite * 1000.0).round() / 1000.0,
+            "breakdown": {
+                "brier":       brier_score,
+                "brier_note":  if brier_score.is_none() {
+                    Some("no calibration data — using 0.5 prior")
+                } else { None },
+                "cost":        cost_score,
+                "valence_fit": valence_fit_score,
+                "valence_fit_note": if centroid.is_some() && valence.is_some() {
+                    None
+                } else if centroid.is_none() {
+                    Some("no workspace valence centroid — using 0.5 prior (members have no declared valence)")
+                } else {
+                    Some("candidate has no declared valence — using 0.5 prior")
+                },
+                "fidelity":    fidelity_score,
+                "fidelity_note": if fidelity_score == 0.5 {
+                    Some("no gate_decisions rows yet — using 0.5 prior (accrues as delegation hops run)")
+                } else { None }
+            },
+            "input_schema_id":  input_sid,
+            "output_schema_id": output_sid,
+            "competition": {
+                "domains":               domains,
+                "price_credits_per_call": price,
+                "support_tier":           support_tier
+            }
+        }));
+    }
+
+    // Sort by composite score descending
+    scored.sort_by(|a, b| {
+        let sa = a.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let sb = b.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    // Best-effort: write a selection record for competition-stats and Loop 4.
+    // The tool succeeds even if this insert fails — a missed trace row is
+    // not worth failing a coordination graph traversal over.
+    let top_candidate = scored
+        .first()
+        .and_then(|c| c.get("agent"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    if let Some(ref db) = ctx.db {
+        let _ = sqlx::query(
+            "INSERT INTO select_agent_decisions
+             (input_schema_id, scope_level, scope_fleet_id, workspace_id,
+              criteria_weights, candidates, selected, parent_episode_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        )
+        .bind(input_schema_id)
+        .bind(scope_level)
+        .bind(fleet_id)
+        .bind(workspace_id)
+        .bind(serde_json::json!({
+            "brier": w_brier, "cost": w_cost,
+            "valence_fit": w_valence_fit, "fidelity": w_fidelity
+        }))
+        .bind(serde_json::Value::Array(
+            scored
+                .iter()
+                .map(|c| {
+                    json!({
+                        "agent": c.get("agent"),
+                        "score": c.get("score")
+                    })
+                })
+                .collect(),
+        ))
+        .bind(&top_candidate)
+        .bind(ctx.parent_episode_id)
+        .execute(db)
+        .await;
+    }
+
+    serde_json::to_string_pretty(&json!({
+        "input_schema_id": input_schema_id,
+        "scope": {
+            "level": scope_level,
+            "fleet_id": fleet_id,
+            "note": scope_note
+        },
+        "criteria_weights": {
+            "brier":       w_brier,
+            "cost":        w_cost,
+            "valence_fit": w_valence_fit,
+            "fidelity":    w_fidelity
+        },
+        "candidates": scored
+    }))
+    .map_err(|e| e.to_string())
+}
+
+// ─── execute_coordination_graph ───────────────────────────────────────────────
+//
+// Traverses a typed coordination graph (workflow_template.nodes + edges)
+// without LLM narration. Calls select_agent for open slots, execute_agent
+// for each bound node, and returns a CoordinationTrace.
+//
+// Strategist agents call this instead of manually looping over execute_agent
+// calls. The LLM handles failures and recovery; the executor handles traversal.
+
+struct ExecuteCoordinationGraph;
+
+#[async_trait]
+impl PlatformTool for ExecuteCoordinationGraph {
+    fn name(&self) -> &'static str {
+        "execute_coordination_graph"
+    }
+
+    fn description(&self) -> &'static str {
+        "Traverse a typed coordination graph (workflow_template.nodes + edges) and \
+         return a CoordinationTrace. For each node: open slots are filled by \
+         select_agent, bound nodes execute directly via execute_agent. Stops at \
+         the first failure and reports what completed.\n\n\
+         You handle failures and recovery. The executor handles traversal order, \
+         schema validation at each hop, and agent selection for open slots."
+    }
+
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "entry_input": {
+                    "type": "string",
+                    "description": "The query or JSON payload to send to the first node in the graph."
+                },
+                "workflow_template": {
+                    "type": "object",
+                    "description": "Optional. Override the composition's declared workflow_template. If absent, reads from the current composition."
+                }
+            },
+            "required": ["entry_input"]
+        })
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Workspace
+    }
+
+    fn requires_workspace(&self) -> bool {
+        true
+    }
+
+    async fn execute(&self, input: &Value, ctx: &ToolContext) -> Result<String, String> {
+        execute_execute_coordination_graph(input, ctx).await
+    }
+}
+
+async fn execute_execute_coordination_graph(
+    input: &Value,
+    ctx: &ToolContext,
+) -> Result<String, String> {
+    use crate::agent_backend::agent_card::WorkflowTemplate;
+    use crate::agent_backend::coordination_graph::execute_coordination_graph;
+
+    let workspace_id = ctx.workspace_id.ok_or("Not in a workspace context")?;
+
+    let entry_input = input
+        .get("entry_input")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: entry_input")?;
+
+    // Resolve the workflow_template to traverse.
+    //
+    // Priority:
+    //   1. Explicit `workflow_template` parameter (caller passes it, e.g. after
+    //      calling get_workflow_template) — always wins.
+    //   2. Auto-read from the workspace composition: look up
+    //      `teams.coordination_strategist_id`, fetch that agent's
+    //      `agents.workflow_template`, deserialise. This is the path a
+    //      strategist agent takes when it calls the tool without a template
+    //      argument — it just says "execute my composition's graph".
+    //   3. Empty template — the executor returns an informative error.
+    let template: WorkflowTemplate = if let Some(tpl) = input.get("workflow_template") {
+        serde_json::from_value(tpl.clone()).map_err(|e| {
+            format!("Invalid workflow_template: {e}. Ensure it has `nodes` and `edges` arrays.")
+        })?
+    } else if let Some(ref db) = ctx.db {
+        // Auto-read: workspace → composition strategist → agent card's workflow_template
+        let strategist_template: Option<serde_json::Value> = sqlx::query_scalar(
+            "SELECT a.workflow_template
+             FROM teams t
+             JOIN agents a ON a.agent_id = t.coordination_strategist_id
+             WHERE t.id = $1
+               AND t.coordination_strategist_id IS NOT NULL",
+        )
+        .bind(workspace_id)
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten()
+        .flatten();
+        match strategist_template {
+            Some(v) => serde_json::from_value(v).unwrap_or_else(|_| WorkflowTemplate {
+                mermaid: None,
+                stages: vec![],
+                description: None,
+                synthesis: None,
+                selection: None,
+                nodes: vec![],
+                edges: vec![],
+            }),
+            None => WorkflowTemplate {
+                mermaid: None,
+                stages: vec![],
+                description: None,
+                synthesis: None,
+                selection: None,
+                nodes: vec![],
+                edges: vec![],
+            },
+        }
+    } else {
+        WorkflowTemplate {
+            mermaid: None,
+            stages: vec![],
+            description: None,
+            synthesis: None,
+            selection: None,
+            nodes: vec![],
+            edges: vec![],
+        }
+    };
+
+    let trace = execute_coordination_graph(&template, entry_input, ctx).await;
+
+    serde_json::to_string_pretty(&trace).map_err(|e| e.to_string())
 }
 
 // ─── list_workspace_agents ────────────────────────────────────────────────────
@@ -810,8 +1447,8 @@ mod tests {
     }
 
     #[test]
-    fn tool_count_is_eight() {
-        assert_eq!(tools().len(), 8);
+    fn tool_count_is_ten() {
+        assert_eq!(tools().len(), 10);
     }
 
     #[test]

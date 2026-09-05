@@ -554,6 +554,225 @@ impl ConsolidationWorker {
         result
     }
 
+    /// Loop 4B: consolidate selection performance into a SemanticRule.
+    ///
+    /// Queries `select_agent_decisions` for recent rows where this agent was
+    /// selected, joins against `gate_decisions` for post-selection fidelity,
+    /// and stores the aggregate as a `SemanticRule` that rides into the
+    /// agent’s next dreaming prompt.
+    ///
+    /// Why a semantic rule rather than a fact or entity: rules are the one
+    /// artefact the consolidation pipeline injects into every extraction
+    /// system prompt (`compose_system_prompt`). A rule that says “my output
+    /// fidelity after selection is 94%” gives the knowledge extractor concrete
+    /// ground-truth when it evaluates whether this agent’s routing is working,
+    /// rather than having it guess from prose about success rates.
+    ///
+    /// Non-fatal: errors are logged and the consolidation continues.
+    async fn consolidate_selection_performance(&self, agent_id: Uuid) {
+        if let Err(e) = self.consolidate_selection_performance_inner(agent_id).await {
+            tracing::debug!(
+                agent_id = %agent_id,
+                error = %e,
+                "[loop4b] selection performance consolidation skipped (non-fatal)"
+            );
+        }
+    }
+
+    async fn consolidate_selection_performance_inner(&self, agent_id: Uuid) -> Result<()> {
+        use sqlx::Row as _; // needed for .try_get() on PgRow
+        let pool = self.store.pool();
+
+        // Resolve the agent name — gate_decisions.subject and
+        // select_agent_decisions.selected are both keyed by agent_name.
+        let agent_name: Option<String> =
+            sqlx::query_scalar("SELECT agent_name FROM agents WHERE agent_id = $1")
+                .bind(agent_id)
+                .fetch_optional(pool)
+                .await
+                .map_err(|e| MemoryError::InternalError(e.to_string()))?;
+
+        let Some(agent_name) = agent_name else {
+            return Ok(());
+        };
+
+        // How many times was this agent selected in the last 30 days?
+        let times_selected: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM select_agent_decisions
+             WHERE selected = $1
+               AND created_at > NOW() - INTERVAL '30 days'",
+        )
+        .bind(&agent_name)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| MemoryError::InternalError(e.to_string()))?
+        .flatten()
+        .unwrap_or(0);
+
+        if times_selected < 3 {
+            // Not enough selection data to be informative.
+            return Ok(());
+        }
+
+        // How often was this agent’s output valid in the last 30 days?
+        // (Gate::OutputSchema, Retention::Recorded since migration 230.)
+        let fidelity_row = sqlx::query(
+            "SELECT
+                COUNT(*) FILTER (WHERE decision = 'approved') AS approved,
+                COUNT(*) FILTER (WHERE decision = 'refused')  AS refused
+             FROM gate_decisions
+             WHERE gate = 'output_schema'
+               AND subject = $1
+               AND created_at > NOW() - INTERVAL '30 days'",
+        )
+        .bind(&agent_name)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| MemoryError::InternalError(e.to_string()))?;
+
+        let (approved, refused) = match fidelity_row {
+            Some(r) => {
+                let a: i64 = r.try_get("approved").unwrap_or(0);
+                let rf: i64 = r.try_get("refused").unwrap_or(0);
+                (a, rf)
+            }
+            None => (0i64, 0i64),
+        };
+
+        let checkable = approved + refused;
+        let fidelity_pct = if checkable > 0 {
+            format!("{:.0}%", (approved as f64 / checkable as f64) * 100.0)
+        } else {
+            "unmeasured".to_string()
+        };
+
+        // What schema IDs did the selections target? (top 3)
+        let schema_rows = sqlx::query(
+            "SELECT input_schema_id, COUNT(*) AS n
+             FROM select_agent_decisions
+             WHERE selected = $1
+               AND created_at > NOW() - INTERVAL '30 days'
+             GROUP BY input_schema_id
+             ORDER BY n DESC
+             LIMIT 3",
+        )
+        .bind(&agent_name)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+        let schema_rows: Vec<(Option<String>, i64)> = schema_rows
+            .iter()
+            .map(|r| {
+                let sid: Option<String> = r.try_get("input_schema_id").unwrap_or(None);
+                let n: i64 = r.try_get("n").unwrap_or(0);
+                (sid, n)
+            })
+            .collect();
+
+        let schema_summary = schema_rows
+            .iter()
+            .map(|(s, n)| format!("{} ({n}×)", s.as_deref().unwrap_or("untyped")))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        // Store as a SemanticRule so it rides into the next dreaming prompt.
+        let rule_content = format!(
+            "Loop 4B selection performance (last 30 days): selected {times_selected} time(s) \
+             for schemas: {schema_summary}. Post-selection output fidelity: \
+             {fidelity_pct} ({approved} Gate::OutputSchema approved, {refused} refused). \
+             Use this to calibrate routing expectations and compare against peers."
+        );
+
+        let rule = SemanticRule {
+            rule_id: Uuid::new_v4(),
+            agent_id,
+            rule_content,
+            rule_description: Some(
+                "Auto-generated by Loop 4B (selection performance consolidation)".to_string(),
+            ),
+            confidence_score: 0.75,
+            verification_status: VerificationStatus::Pending,
+            verification_method: None,
+            source_episode_cluster: vec![],
+            episode_count: times_selected as i32,
+            embedding: None,
+            is_active: true,
+            created_at: Utc::now(),
+            extracted_by: None,
+            // Provenance floor: derived from structured DB data (not model prose),
+            // so this is tool_verified in spirit, but we have no episode to cite.
+            // `model_inference` is the conservative floor.
+            provenance_floor: Some("model_inference".to_string()),
+            provenance_floor_basis: Some(serde_json::json!({
+                "source": "select_agent_decisions + gate_decisions",
+                "window": "30 days",
+                "times_selected": times_selected,
+                "approved": approved,
+                "refused": refused,
+            })),
+        };
+
+        self.store
+            .store_semantic_rule_with_provenance(rule, None, None)
+            .await
+            .map_err(|e| MemoryError::InternalError(e.to_string()))?;
+
+        // Update workspace selection weights based on observed fidelity.
+        //
+        // This is the Loop 4B feedback: if this agent's fidelity is consistently
+        // high, increase the fidelity weight in the workspace's selection criteria
+        // so future select_agent calls favour agents with proven output quality.
+        //
+        // Weight adjustment rules (conservative — 10% nudge, capped at [0.05, 0.60]):
+        //   fidelity > 0.85 → nudge fidelity_weight up by 0.02
+        //   fidelity < 0.60 → nudge fidelity_weight down by 0.02
+        //   times_selected < 5 → no adjustment (not enough data)
+        //
+        // Best-effort: failure to update workspace weights does not fail the consolidation.
+        if times_selected >= 5 && checkable > 0 {
+            let fidelity_f = approved as f64 / checkable as f64;
+            let nudge: f64 = if fidelity_f > 0.85 {
+                0.02
+            } else if fidelity_f < 0.60 {
+                -0.02
+            } else {
+                0.0
+            };
+            if nudge.abs() > 0.001 {
+                // Find workspaces where this agent is a member and update their weights.
+                // Best-effort — log errors but don't fail consolidation.
+                let _ = sqlx::query(
+                    "UPDATE teams t
+                     SET selection_weights = jsonb_build_object(
+                         'brier',       COALESCE((t.selection_weights->>'brier')::float, 0.40),
+                         'cost',        COALESCE((t.selection_weights->>'cost')::float, 0.20),
+                         'valence_fit', COALESCE((t.selection_weights->>'valence_fit')::float, 0.20),
+                         'fidelity',    GREATEST(0.05, LEAST(0.60,
+                             COALESCE((t.selection_weights->>'fidelity')::float, 0.20) + $1))
+                     )
+                     FROM workspace_agents wa
+                     WHERE wa.workspace_id = t.id
+                       AND wa.agent_id = $2",
+                )
+                .bind(nudge)
+                .bind(agent_id)
+                .execute(pool)
+                .await;
+            }
+        }
+
+        tracing::info!(
+            agent_id = %agent_id,
+            agent_name = %agent_name,
+            times_selected,
+            approved,
+            refused,
+            "[loop4b] selection performance rule stored"
+        );
+
+        Ok(())
+    }
+
     /// Successful episodes ordered by authority, capped at `budget`.
     ///
     /// Extraction can only afford to send a bounded number of episodes to the
@@ -886,6 +1105,21 @@ impl ConsolidationWorker {
         // work and not the rest, with nothing anywhere saying which. Doing it
         // here makes that class of divergence unrepresentable.
         self.write_extraction_call_episodes(agent_id, job_id).await;
+
+        // Step 8c: Loop 4B — consolidate selection performance.
+        //
+        // Reads `select_agent_decisions` (the typed selection trace populated by
+        // the `select_agent` workspace tool) to learn how often this agent was
+        // selected for open coordination graph slots and what fidelity its
+        // outputs achieved afterward. The result is stored as a SemanticRule so
+        // it flows into the agent’s next dreaming prompt via
+        // `learned_rules_guidance`, giving the KG a concrete signal about
+        // routing accuracy without any LLM call.
+        //
+        // Non-fatal: if `select_agent_decisions` doesn’t exist yet (e.g. in
+        // test environments that predate migration 229) the error is logged and
+        // the consolidation continues normally.
+        self.consolidate_selection_performance(agent_id).await;
 
         // Step 9: Complete job
         self.store
@@ -2078,6 +2312,7 @@ mod tests {
             fermi_contract: None,
             output_contract: None,
             input_contract: None,
+            competition: None,
             model_params: serde_json::Value::Object(serde_json::Map::new()),
             valence: None,
         };

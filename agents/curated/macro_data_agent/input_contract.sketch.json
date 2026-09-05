@@ -1,0 +1,26 @@
+{
+  "accepts_schema": "fermi/forecast-question/1",
+  "title": "Forecast question",
+  "fields": [
+    {
+      "name": "question",
+      "type": "string",
+      "note": "The macroeconomic forecast question (e.g. 'Will US CPI exceed 3% in Q2?', 'Will the Fed cut rates before July?')."
+    },
+    {
+      "name": "resolution_criteria",
+      "type": "string?",
+      "note": "Optional. The data release or official measurement that resolves the question."
+    },
+    {
+      "name": "context",
+      "type": "string?",
+      "note": "Optional. Macro context: current indicators, central bank guidance, market pricing, recent data releases."
+    },
+    {
+      "name": "deadline",
+      "type": "string?",
+      "note": "Optional. Resolution date."
+    }
+  ]
+}

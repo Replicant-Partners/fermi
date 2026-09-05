@@ -1,0 +1,26 @@
+{
+  "accepts_schema": "fermi/forecast-question/1",
+  "title": "Forecast question",
+  "fields": [
+    {
+      "name": "question",
+      "type": "string",
+      "note": "The forecast question to answer. Should be a binary or probabilistic question about a future event (e.g. 'Will Arsenal win the Premier League this season?')."
+    },
+    {
+      "name": "resolution_criteria",
+      "type": "string?",
+      "note": "Optional. How the question resolves — what observable event determines the outcome."
+    },
+    {
+      "name": "context",
+      "type": "string?",
+      "note": "Optional. Additional context: current standings, recent form, injuries, market odds, or any evidence the analyst should weigh."
+    },
+    {
+      "name": "deadline",
+      "type": "string?",
+      "note": "Optional. When the question resolves (ISO 8601 date or natural language)."
+    }
+  ]
+}

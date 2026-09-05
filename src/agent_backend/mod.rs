@@ -53,6 +53,11 @@ pub mod ncbi_tools;
 // in the execute_agent result is preserved.
 pub mod envelope;
 
+// Typed coordination graph executor. Traverses WorkflowTemplate graphs
+// (nodes + edges) without LLM narration. Called by the
+// `execute_coordination_graph` workspace tool.
+pub mod coordination_graph;
+
 #[allow(ambiguous_glob_reexports)]
 pub use agent_card::*;
 pub use executor::*;

@@ -85,8 +85,9 @@
 </p>
 
 <div class="controls">
-  <input id="ws"    placeholder="Workspace ID (UUID)" />
-  <input id="token" type="password" placeholder="API token (ferm_...)" />
+  <input id="base-url" placeholder="ABW base URL (default: agent-bestiary.world)" style="width:300px" value="" />
+  <input id="ws"       placeholder="Workspace ID (UUID)" />
+  <input id="token"    type="password" placeholder="API token (ferm_...)" />
   <button onclick="runComparison()">Compare across EU / US / CN</button>
 </div>
 
@@ -100,7 +101,11 @@
   This is the complete integration — not a trimmed example.
 */
 
-const BASE = 'https://agent-bestiary.world';
+// BASE is configurable: set ?base=https://your-abw-instance.com in the URL,
+// or enter it in the input below. Third parties point this at their ABW instance.
+const BASE = new URLSearchParams(window.location.search).get('base')
+  || localStorage.getItem('abw_base')
+  || 'https://agent-bestiary.world';
 
 async function runComparison() {
   const wsId  = document.getElementById('ws').value.trim();
@@ -120,7 +125,10 @@ async function runComparison() {
   // runs the grounding gate, builds the comparison, and returns structured JSON.
   // You don't need to know anything about EU Regulation 1924/2006 or GB 28050.
   //
-  const res = await fetch(`${BASE}/api/workspaces/${wsId}/actions/compare_lenses`, {
+  const inputBase = document.getElementById('base-url').value.trim();
+  const effectiveBase = inputBase || BASE;
+  if (inputBase) localStorage.setItem('abw_base', inputBase);
+  const res = await fetch(`${effectiveBase}/api/workspaces/${wsId}/actions/compare_lenses`, {
     method:  'POST',
     headers: {
       'Content-Type':  'application/json',
@@ -242,6 +250,10 @@ function render(apiResponse) {
 
   document.getElementById('output').innerHTML = table + appendix;
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('base-url').value = BASE;
+});
 
 function esc(s) {
   return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');

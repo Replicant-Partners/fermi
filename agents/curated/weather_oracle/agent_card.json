@@ -619,9 +619,44 @@
         "type": "object"
       },
       "synthesis": "pipeline"
+    },
+    "input_contract": {
+      "accepts_schema": "fermi/forecast-question/1",
+      "title": "Forecast question",
+      "required": [
+        "question"
+      ],
+      "schema": {
+        "$id": "fermi/forecast-question/1",
+        "title": "Forecast question",
+        "type": "object",
+        "required": [
+          "question"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "description": "The weather market forecast question to answer (e.g. 'Will NYC max temperature exceed 90°F on July 4th?'). Should reference a specific Polymarket weather market or be phrased to match one."
+          },
+          "resolution_criteria": {
+            "type": "string",
+            "description": "Optional. The settlement station, measurement window, and source table (e.g. KLGA, max temp, NOAA ISD). The oracle will verify this against Polymarket's settlement spec."
+          },
+          "context": {
+            "type": "string",
+            "description": "Optional. Market context: current Polymarket price, order book depth, existing ensemble forecasts."
+          },
+          "deadline": {
+            "type": "string",
+            "description": "Optional. Settlement date."
+          }
+        },
+        "additionalProperties": true
+      }
     }
   },
   "accepts": [
+    "fermi/forecast-question/1",
     "forecast-question",
     "market-question",
     "evidence-set"
@@ -765,7 +800,8 @@
       "ensemble",
       "calibration",
       "fermi-orchestra",
-      "compound"
+      "compound",
+      "fleet:weather"
     ],
     "created": "2026-08-13",
     "author": "Fermi Team",

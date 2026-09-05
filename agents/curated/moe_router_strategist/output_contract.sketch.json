@@ -1,0 +1,65 @@
+{
+  "domain": "coordination",
+  "produces_schema": "abw/coordination-trace/1",
+  "title": "Coordination trace — MoE routing",
+  "synthesis": "selection",
+  "calibration": {
+    "signal": "hitl_review",
+    "comparison": "routing_accuracy"
+  },
+  "blocks": [
+    {
+      "name": "selected_agents",
+      "description": "Which agents were selected for each slot, and why.",
+      "source": {
+        "status": "sourced",
+        "tool": "select_agent",
+        "response_field": "ranked agent list with scores, node_id, input_schema_id, output_schema_id",
+        "coverage": "complete"
+      },
+      "why": "Derived from the select_agent ranked output — the scores are computed by the platform from calibration history, cost, fidelity, and valence. The selection decision itself is the strategist's: it picks from the top of the ranked list and may override for unusual queries.",
+      "fields": {
+        "node_id": "string",
+        "agent": "string",
+        "selected_by": "string",
+        "score": "number?",
+        "input_schema_id": "string?",
+        "output_schema_id": "string?"
+      }
+    },
+    {
+      "name": "steps",
+      "description": "Per-step execution trace.",
+      "source": {
+        "status": "sourced",
+        "tool": "execute_agent",
+        "response_field": "execution envelope per delegation hop: agent, gate_input, gate_output, duration_ms, failure",
+        "coverage": "complete"
+      },
+      "why": "Each step records which agent ran, what input schema was validated, what output schema was produced, and whether the gate approved. Derived from the envelope at each delegation hop — not inferred by the strategist.",
+      "fields": {
+        "node_id": "string",
+        "agent": "string",
+        "gate_input": "string",
+        "gate_output": "string",
+        "duration_ms": "number?",
+        "failure": "string?"
+      }
+    },
+    {
+      "name": "synthesis",
+      "description": "How member outputs were combined.",
+      "source": {
+        "status": "inferred",
+        "from": "steps outputs + declared synthesis protocol on the coordination graph"
+      },
+      "why": "The synthesis protocol (selection/aggregation/cep_weighted) is declared on the coordination graph; the strategist applies it to the step outputs. This is a judgement over the collected evidence, not a retrieval.",
+      "fields": {
+        "protocol": "string",
+        "final_output_schema": "string?",
+        "open_slots": "string[]?",
+        "failure_at": "string?"
+      }
+    }
+  ]
+}

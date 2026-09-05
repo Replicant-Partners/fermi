@@ -1,0 +1,21 @@
+{
+  "accepts_schema": "abw/simops-query/1",
+  "title": "SimOps workbench query",
+  "fields": [
+    {
+      "name": "task",
+      "type": "string",
+      "note": "The SimOps task or question. Can be a mode name ('price_bom', 'cascade', 'optimise', 'predict', 'narrate', 'scout_sidstreams') or a natural language request about the active process."
+    },
+    {
+      "name": "process_context",
+      "type": "object?",
+      "note": "Optional. The active process configuration: process_name, stage_id, current_observations. If omitted, the companion reads from workspace state."
+    },
+    {
+      "name": "workspace_id",
+      "type": "string?",
+      "note": "Optional. Target SimOps workspace ID. Resolved from context if absent."
+    }
+  ]
+}

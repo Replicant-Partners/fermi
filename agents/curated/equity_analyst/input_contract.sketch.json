@@ -1,0 +1,26 @@
+{
+  "accepts_schema": "fermi/forecast-question/1",
+  "title": "Forecast question",
+  "fields": [
+    {
+      "name": "question",
+      "type": "string",
+      "note": "The forecast question to answer about equities, earnings, or market movements."
+    },
+    {
+      "name": "resolution_criteria",
+      "type": "string?",
+      "note": "Optional. The observable event that resolves the question (e.g. 'Q3 earnings report beats consensus EPS estimate')."
+    },
+    {
+      "name": "context",
+      "type": "string?",
+      "note": "Optional. Financial context: price history, analyst estimates, macro environment, recent filings."
+    },
+    {
+      "name": "deadline",
+      "type": "string?",
+      "note": "Optional. Resolution date or time horizon."
+    }
+  ]
+}

@@ -69,10 +69,100 @@ pub struct AgentCard {
 /// Workflow template for compound agents — static mermaid diagram + stage definitions
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowTemplate {
-    pub mermaid: String,
+    // Legacy fields — still required on cards authored before the typed graph.
+    #[serde(default)]
+    pub mermaid: Option<String>,
+    #[serde(default)]
     pub stages: Vec<WorkflowStage>,
     #[serde(default)]
     pub description: Option<String>,
+
+    // ── Phase 2: typed coordination graph (additive, backward compatible) ──────────
+    //
+    // `nodes` and `edges` are the typed graph. When present, the platform executor
+    // (`execute_coordination_graph`) traverses the graph instead of the LLM narrating
+    // it. `stages` remains for cards that predate the typed graph; the executor
+    // falls back to `stages` if `nodes` is empty.
+    //
+    // `synthesis` and `selection` belong HERE, not on specialist agent cards.
+    // A specialist does not know how a coordinator combines its outputs.
+    /// Synthesis protocol for combining member outputs.
+    /// `pipeline` | `aggregation` | `selection` | `max_risk` | `cep_weighted`
+    #[serde(default)]
+    pub synthesis: Option<String>,
+
+    /// Selection criteria for open slots. Passed to `select_agent` at runtime.
+    #[serde(default)]
+    pub selection: Option<CoordinationSelection>,
+
+    /// Typed graph nodes. Each declares a schema-typed slot.
+    /// A node with `agent: None` is an open slot filled by `select_agent`.
+    #[serde(default)]
+    pub nodes: Vec<CoordinationNode>,
+
+    /// Typed edges — seams between nodes, each carrying a schema ID.
+    #[serde(default)]
+    pub edges: Vec<CoordinationEdge>,
+}
+
+/// Selection criteria for open coordination graph slots.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CoordinationSelection {
+    /// Candidate pool scope: `"workspace"` (default) | `"fleet"` | `"marketplace"`
+    #[serde(default = "default_coordination_scope")]
+    pub scope: String,
+    /// Fleet name when `scope == "fleet"` (e.g. `"fermi"`, `"simops"`).
+    #[serde(default)]
+    pub fleet_id: Option<String>,
+    /// Scoring weights. Must sum to 1.0. Defaults per `select_agent` tool.
+    #[serde(default)]
+    pub criteria: Option<SelectionCriteria>,
+}
+
+fn default_coordination_scope() -> String {
+    "workspace".to_string()
+}
+
+/// Scoring weights for `select_agent`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SelectionCriteria {
+    pub brier: Option<f64>,
+    pub cost: Option<f64>,
+    pub valence_fit: Option<f64>,
+    pub fidelity: Option<f64>,
+}
+
+/// A schema-typed slot in a coordination graph.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoordinationNode {
+    /// Unique ID within this graph (referenced by `CoordinationEdge`).
+    pub id: String,
+    /// Bound agent name. `None` = open slot, filled by `select_agent` at runtime.
+    #[serde(default)]
+    pub agent: Option<String>,
+    /// If `true`, the bound agent is never replaced by `select_agent` even if a
+    /// higher-scoring candidate exists.
+    #[serde(default)]
+    pub pinned: bool,
+    /// Schema ID this node expects as input.
+    #[serde(default)]
+    pub input_schema: Option<String>,
+    /// Schema ID this node produces as output.
+    #[serde(default)]
+    pub output_schema: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+/// A typed seam between two nodes in a coordination graph.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoordinationEdge {
+    pub from: String,
+    pub to: String,
+    /// Schema ID carried on this edge. Validated against the upstream node’s
+    /// `output_schema` and the downstream node’s `input_schema` at seam-check time.
+    #[serde(default)]
+    pub schema: Option<String>,
 }
 
 /// A single stage in a compound agent's workflow pipeline
@@ -377,12 +467,51 @@ pub struct AgentCapabilities {
     #[serde(default)]
     pub input_contract: Option<serde_json::Value>,
 
+    /// Competition declaration — how this agent participates in open-slot
+    /// selection within a coordination graph.
+    ///
+    /// A specialist that declares an `input_contract` and wants to be a
+    /// candidate for `select_agent` also fills this block. Authors declare
+    /// `domains`, `price_credits_per_call`, and `support_tier`. The platform
+    /// computes `fidelity` (Gate::OutputSchema history) and `selection_rate`
+    /// (select_agent decisions) — those are never self-declared.
+    ///
+    /// `None` means the agent is still callable by name but does not appear
+    /// in `select_agent` results unless its `input_schema_id` matches.
+    #[serde(default)]
+    pub competition: Option<CompetitionDeclaration>,
+
     /// Provider-agnostic sampling configuration. Keys override the legacy
     /// `temperature` field and add provider-specific params (top_p, top_k,
     /// extended_thinking, thinking_budget_tokens, frequency_penalty, etc.).
     /// `apply_tier_resolution()` merges the selected rung's `params` on top.
     #[serde(default = "default_json_object")]
     pub model_params: serde_json::Value,
+}
+
+/// How an agent participates in open-slot selection within a coordination graph.
+///
+/// Authors fill this on their agent card. The platform reads it in `select_agent`
+/// alongside platform-computed signals (fidelity, Brier, selection rate) that
+/// cannot be self-declared.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CompetitionDeclaration {
+    /// Domain tags this agent competes in.
+    /// e.g. ["supply-chain", "bom-pricing"]. Used for domain-match scoring.
+    #[serde(default)]
+    pub domains: Vec<String>,
+    /// Platform credits charged per successful `execute_agent` call.
+    /// `None` = free (the default for curated platform agents).
+    #[serde(default)]
+    pub price_credits_per_call: Option<u32>,
+    /// Owner's support commitment. Self-declared; unverified initially.
+    /// Values: "community" (default) | "standard" | "enterprise".
+    #[serde(default = "default_competition_support_tier")]
+    pub support_tier: String,
+}
+
+fn default_competition_support_tier() -> String {
+    "community".to_string()
 }
 
 /// CEP finding labels an orchestra agent is expected to emit.
@@ -654,6 +783,7 @@ impl AgentCard {
                 fermi_contract: None,
                 output_contract: None,
                 input_contract: None,
+                competition: None,
                 model_params: serde_json::Value::Object(serde_json::Map::new()),
             },
             performance: AgentPerformance {

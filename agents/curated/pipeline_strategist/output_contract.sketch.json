@@ -1,0 +1,66 @@
+{
+  "domain": "coordination",
+  "produces_schema": "abw/coordination-trace/1",
+  "title": "Coordination trace — pipeline execution",
+  "synthesis": "pipeline",
+  "calibration": {
+    "signal": "hitl_review",
+    "comparison": "pipeline_completion_rate"
+  },
+  "blocks": [
+    {
+      "name": "seam_check",
+      "description": "Pre-execution seam validation across adjacent pipeline nodes.",
+      "source": {
+        "status": "sourced",
+        "tool": "get_workflow_template",
+        "response_field": "nodes, edges, input_schema_id, output_schema_id per node, from list_workspace_agents",
+        "coverage": "partial"
+      },
+      "why": "Each adjacent pair is classified as SCHEMA MATCH (output_schema_id == input_schema_id — verified typed compatibility), LABEL MATCH (labels correspond but no typed schema — author assertion), UNMATCHED, or OPEN SLOT. Derived from the declared graph topology and agent schema IDs — not inferred. Coverage is partial because not all nodes declare schema IDs.",
+      "fields": {
+        "from_node": "string",
+        "to_node": "string",
+        "seam_type": "string",
+        "from_schema": "string?",
+        "to_schema": "string?"
+      }
+    },
+    {
+      "name": "steps",
+      "description": "Per-stage execution trace.",
+      "source": {
+        "status": "sourced",
+        "tool": "execute_agent",
+        "response_field": "execution envelope per delegation hop: agent, gate_input, gate_output, duration_ms, failure",
+        "coverage": "complete"
+      },
+      "why": "Derived from envelope at each hop. If a stage fails, execution stops and subsequent steps are absent — the trace is honest about the boundary, not padded to look complete.",
+      "fields": {
+        "node_id": "string",
+        "agent": "string",
+        "gate_input": "string",
+        "gate_output": "string",
+        "duration_ms": "number?",
+        "failure": "string?"
+      }
+    },
+    {
+      "name": "summary",
+      "description": "Assessment of whether the pipeline shape fit the mission.",
+      "source": {
+        "status": "inferred",
+        "from": "steps + seam_check"
+      },
+      "why": "Inferred from the execution trace — which stages completed, where failure entered, whether an OPEN SLOT prevented execution. The 'better strategy' recommendation is the strategist's judgement.",
+      "fields": {
+        "final_output_schema": "string?",
+        "completed_stages": "number?",
+        "total_stages": "number?",
+        "failure_at": "string?",
+        "open_slots": "string[]?",
+        "better_strategy": "string?"
+      }
+    }
+  ]
+}

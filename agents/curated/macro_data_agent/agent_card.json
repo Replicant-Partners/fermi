@@ -406,6 +406,40 @@
         "type": "object"
       },
       "synthesis": "cep_weighted"
+    },
+    "input_contract": {
+      "accepts_schema": "fermi/forecast-question/1",
+      "title": "Forecast question",
+      "required": [
+        "question"
+      ],
+      "schema": {
+        "$id": "fermi/forecast-question/1",
+        "title": "Forecast question",
+        "type": "object",
+        "required": [
+          "question"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "description": "The macroeconomic forecast question (e.g. 'Will US CPI exceed 3% in Q2?', 'Will the Fed cut rates before July?')."
+          },
+          "resolution_criteria": {
+            "type": "string",
+            "description": "Optional. The data release or official measurement that resolves the question."
+          },
+          "context": {
+            "type": "string",
+            "description": "Optional. Macro context: current indicators, central bank guidance, market pricing, recent data releases."
+          },
+          "deadline": {
+            "type": "string",
+            "description": "Optional. Resolution date."
+          }
+        },
+        "additionalProperties": true
+      }
     }
   },
   "performance": {
@@ -440,7 +474,8 @@
       "country-data",
       "factor-x1",
       "world-cup",
-      "fermi-orchestra"
+      "fermi-orchestra",
+      "fleet:fermi"
     ],
     "sample_queries": [
       "Fetch the X1 socioeconomic indicators for Argentina (ARG).",
@@ -497,6 +532,7 @@
     }
   },
   "accepts": [
+    "fermi/forecast-question/1",
     "country-code",
     "country-list",
     "indicator-request",

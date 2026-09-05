@@ -466,7 +466,8 @@
       "brier-scoring",
       "prediction-markets",
       "variance-inflation",
-      "crps"
+      "crps",
+      "fleet:weather"
     ],
     "created": "2026-08-13",
     "author": "Fermi Team",
