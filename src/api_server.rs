@@ -5904,6 +5904,55 @@ async fn seed_apps_to_database(db: &sqlx::PgPool) {
         }
     };
 
+    // Helper: find manifest.json files nested inside `dir` (up to two levels deep).
+    // Handles both apps/my-app/manifest.json and apps/vendor/my-app/manifest.json.
+    // The flat apps/*.json walk below is kept separately so existing manifests
+    // (kask_simops.json, fermi_forecast.json, kask_wild.json, …) keep working.
+    fn find_manifests(dir: &str) -> Vec<std::path::PathBuf> {
+        let mut found = Vec::new();
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return found;
+        };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                // One level of recursion is enough for our layout.
+                if let Ok(sub) = std::fs::read_dir(&p) {
+                    for sub_entry in sub.flatten() {
+                        let sp = sub_entry.path();
+                        if sp
+                            .file_name()
+                            .map(|n| n == "manifest.json")
+                            .unwrap_or(false)
+                        {
+                            found.push(sp);
+                        } else if sp.is_dir() {
+                            // apps/vendor/app-name/manifest.json (two levels deep)
+                            if let Ok(sub2) = std::fs::read_dir(&sp) {
+                                for sub2_entry in sub2.flatten() {
+                                    let sp2 = sub2_entry.path();
+                                    if sp2
+                                        .file_name()
+                                        .map(|n| n == "manifest.json")
+                                        .unwrap_or(false)
+                                    {
+                                        found.push(sp2);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        found
+    }
+
+    // Collect manifest paths from both sources:
+    // 1. Flat: apps/*.json  (existing behaviour — kask_simops.json, fermi_forecast.json, etc.)
+    // 2. Nested: apps/*/manifest.json or apps/*/*/manifest.json
+    let mut all_paths: Vec<std::path::PathBuf> = Vec::new();
+
     let entries = match std::fs::read_dir(apps_dir) {
         Ok(e) => e,
         Err(e) => {
@@ -5911,12 +5960,19 @@ async fn seed_apps_to_database(db: &sqlx::PgPool) {
             return;
         }
     };
-
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("json") {
-            continue;
+        if path.extension().and_then(|e| e.to_str()) == Some("json") {
+            all_paths.push(path);
         }
+    }
+    all_paths.extend(find_manifests(apps_dir));
+
+    // Deduplicate (e.g. if a flat apps/manifest.json also appears via find_manifests).
+    all_paths.sort();
+    all_paths.dedup();
+
+    for path in all_paths {
         let content = match std::fs::read_to_string(&path) {
             Ok(c) => c,
             Err(e) => {
@@ -5931,6 +5987,42 @@ async fn seed_apps_to_database(db: &sqlx::PgPool) {
                 continue;
             }
         };
+
+        // Resolve initial_files source references.
+        // Manifests may declare initial_files with a `source` key (a path to
+        // a file on disk) instead of `content` (the inline string). The spawn
+        // handler reads `content` only — so we resolve source → content here
+        // at seeding time, before storing the workspace_template in the DB.
+        let mut manifest = manifest;
+        if let Some(files) = manifest
+            .pointer_mut("/workspace_template/initial_files")
+            .and_then(|v| v.as_array_mut())
+        {
+            for file in files.iter_mut() {
+                if file.get("content").is_some() {
+                    continue; // already has content
+                }
+                if let Some(source) = file.get("source").and_then(|v| v.as_str()) {
+                    let source_path = source.to_string();
+                    match std::fs::read_to_string(&source_path) {
+                        Ok(content) => {
+                            if let Some(obj) = file.as_object_mut() {
+                                obj.insert(
+                                    "content".to_string(),
+                                    serde_json::Value::String(content),
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "Could not read initial_file source {:?}: {}",
+                                source_path, e
+                            );
+                        }
+                    }
+                }
+            }
+        }
 
         let slug = match manifest["slug"].as_str() {
             Some(s) => s.to_string(),
