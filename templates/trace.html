@@ -819,26 +819,39 @@
   //
   // Same rule the shelf already follows: green means zero ERRORS, not zero
   // pending. `required` is what the agent was actually asked to fill.
-  function emptiness(fs) {
-    let total = 0, empty = 0, excused = 0;
-    const walk = (v, into) => {
-      const bump = n => { if (into) { total += n; } else { excused += n; } };
-      if (v === null || v === undefined) { bump(1); if (into) empty++; return; }
-      if (Array.isArray(v)) {
-        if (!v.length) { bump(1); } else v.forEach(x => walk(x, into));
-        return;
-      }
-      if (typeof v === "object") { Object.values(v).forEach(x => walk(x, into)); return; }
-      bump(1);
-      if (into && v === "") empty++;
+  // **Served, not recomputed.**
+  //
+  // This walked the field values in JavaScript: excused `unsourced` and
+  // `derived`, counted the rest. That was a second implementation of
+  // `completeness::assess`, and the weaker one — it cannot see the run record,
+  // so it could not tell a tool that was ASKED and had nothing from one that was
+  // never called. Both are empty fields; only the second is the agent's.
+  //
+  // On the stag beetle that was the whole finding: four null genome fields with
+  // `ncbi_genome_search` called and 229 bytes back, which the row legend calls
+  // "a capability gap and nobody's fault" — counted here, in red, against the
+  // agent. The page contradicted its own rows because this function could not
+  // see what the rows could.
+  //
+  // `Gate::Completeness` now computes it server-side and the verdict is on the
+  // payload. A display that disagrees with the gate it draws is worse than one
+  // that draws nothing, so there is one computation and this reads it.
+  //
+  // Falls back to zeroes rather than to the old walk: an older episode served
+  // without the block should say "nothing examined", which is true, instead of
+  // reviving a rule the platform has stopped using.
+  function emptiness(d) {
+    const c = (d && d.completeness) || {};
+    return {
+      // What the agent was asked for, and what it owes. `owed` is the count
+      // that is somebody's fault; `no_data` is the world's and is reported
+      // beside it rather than folded in.
+      total: c.asked_for || 0,
+      empty: (c.owed || []).length,
+      no_data: (c.no_data || []).length,
+      excused: c.excused || 0,
+      owed: c.owed || [],
     };
-    (fs || []).forEach(f => {
-      // `unsourced` must be null and `derived` is ours to fill, so neither
-      // absence is the agent's. Everything else the agent was asked for.
-      const required = f.kind !== "unsourced" && f.kind !== "derived";
-      walk(f.value, required);
-    });
-    return { total, empty, excused };
   }
 
   // Which checkpoint answers a question, and whether it could act on the answer.
@@ -916,13 +929,26 @@ declare it">${esc(id)}</span>`;
   function questions(d) {
     const a = readArtifact(d);
     const fs = d.fields || [];
-    const e = emptiness(fs);
+    const e = emptiness(d);
     const byStrength = s => fs.filter(f => (f.strength ?? 0) === s).length;
     // A retrieval claim with no retrieval behind it — the only way this question
-    // is somebody's fault. `advanced_metrics.xg` is the case: `sourced`, and the
-    // block it sits in graded `unavailable_no_tool_source`.
+    // is somebody's fault.
+    //
+    // `strength 0` alone is not that. `tool_no_match` is strength 0 and means
+    // the tool was ASKED and had nothing, which is honest: on the stag beetle
+    // all six `genome` fields sat at zero because NCBI has no assembly for it,
+    // and Q4 went red for a run that did everything right. Nulling a field the
+    // world cannot supply is the contract working.
+    //
+    // What is a fault is a sourced field at zero whose tool was never called —
+    // the same distinction question three makes, from the same served
+    // assessment, so the two cells cannot disagree about whose gap it is.
+    const neverCalled = new Set(
+      (((d.completeness || {}).owed) || [])
+        .filter(g => g.why === "tool_never_called").map(g => g.path));
     const weakSourced = fs.filter(
-      f => f.kind === "sourced" && (f.strength ?? 0) === 0).length;
+      f => f.kind === "sourced" && (f.strength ?? 0) === 0
+        && neverCalled.has(f.name)).length;
 
     const ran = a.by.credit || a.by.rate_limit;
     const got = a.by.attachment || a.by.input_binding;
@@ -959,19 +985,31 @@ declare it">${esc(id)}</span>`;
       // `Gate::Completeness` now stands behind it, so the cell names a gate like
       // every other cell and the `no gate` sentence below the strip disappears
       // because it stopped being true.
+      // `owed` is the only count that is somebody's fault. A tool that was
+      // asked and had nothing is the world's gap and sits in `no_data`, said
+      // beside the verdict rather than inside it — which is the difference
+      // between `4 of 22 empty` in red and `all 18 filled` on the same run.
       { short: "did the work",
         tok: e.total === 0
           ? "nothing examined"
           : e.empty === 0
-            ? `all ${e.total} filled`
-            : `${e.empty} of ${e.total} empty`,
+            ? `all ${e.total - e.no_data} filled`
+            : `${e.empty} of ${e.total} owed`,
         ans: e.total === 0
           ? "Nothing it returned was examined."
           : (e.empty === 0
-              ? `Yes — all ${e.total} value(s) it was asked for came back filled in.`
-              : `<b>No — ${e.empty} of ${e.total} value(s) it was asked for came back \
-                 empty.</b> The agent produced the shape of an answer without the \
-                 content.`)
+              ? `Yes — every value it was asked for and could get came back filled in.`
+              : `<b>No — ${e.empty} of ${e.total} value(s) the agent owed came back \
+                 empty.</b> ` + e.owed.map(g =>
+                   `<code>${esc(g.path)}</code> (${esc(
+                     g.why === "tool_never_called"
+                       ? "the contract names a tool and the record shows it was \
+                          never called"
+                       : "commissioned work, and none came back")})`).join(", ") + ".")
+            + (e.no_data
+                ? ` ${e.no_data} more are empty because the named tool was asked and \
+                   had nothing — a capability gap, and nobody's fault.`
+                : "")
             + (e.excused
                 ? ` A further ${e.excused} are absent because the contract requires \
                    it — no tool exists for them, or the platform fills them — and \
@@ -997,10 +1035,12 @@ declare it">${esc(id)}</span>`;
           : `${byStrength(2)} from a tool or citation, ${byStrength(1)} from the model's \
              own judgement, ${byStrength(0)} from nothing that could be checked`
              + (weakSourced
-                 ? `. <b>${weakSourced} of those claim retrieval and have none</b>, which \
-                    is the finding here.`
-                 : ` — and none of those claims to be retrieved, so nothing is \
-                    overstating itself.`),
+                 ? `. <b>${weakSourced} of those name a tool that was never called</b>, \
+                    which is the finding here.`
+                 : ` — and none of those is a retrieval that went unattempted, so \
+                    nothing is overstating itself. A tool asked and empty scores \
+                    zero and should: there is nothing to rely on, and the contract \
+                    says so.`),
         // Strength 0 is CORRECT for a field the contract says nothing can
         // source: there is nothing to rely on and the contract says so. Red for
         // that alone painted three compliant `conservation` fields and a prose

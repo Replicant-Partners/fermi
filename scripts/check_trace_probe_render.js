@@ -237,6 +237,26 @@ const TRACE = {
       },
     },
   ],
+  // Served by `completeness::assess`, not recomputed here. Derived from FIELDS
+  // above against the tools CALL() records: `call_football_api` was called, so
+  // its five empty fields are the world's gap; `summary` names
+  // `scan_nearby_creatures`, which was never called, so that one is the
+  // agent's; the unsourced and the derived field are excused.
+  completeness: {
+    asked_for: 8,
+    filled: 2,
+    owed: [
+      { path: "summary", why: "tool_never_called", tool: "scan_nearby_creatures" },
+    ],
+    no_data: [
+      "fixtures",
+      "head_to_head",
+      "injuries",
+      "match_statistics",
+      "advanced_metrics.xg",
+    ],
+    excused: 2,
+  },
   belt_route: [],
   caveats: [],
   contract: { declared: [], undeclared: [] },
@@ -590,30 +610,59 @@ const P = mod.exports;
   // configuration shelf said "nothing unresolvable" — and eight of the nine
   // nulls were the contract being obeyed. A headline that says nine cannot
   // point at the one that is real.
-  const e = P.emptiness(P.LAST_TRACE.fields);
-  ok(e.excused > 0,
-    "no absence was excused, so the fixture no longer contains a field whose " +
-    "emptiness the contract requires and this check is vacuous");
-  ok(e.total + e.excused > e.total,
-    "excused values are being counted in the denominator again");
-  // `ratings.elo_current` is unsourced+null and `advanced_metrics.xgd` is
-  // derived+null. Neither is the agent's to answer.
-  ok(e.excused === 2,
-    `${e.excused} absence(s) excused; expected the unsourced and the derived one`);
+  // Read from the SERVED assessment, not recomputed. The JS version could not
+  // see the run record, so it could not tell a tool that was asked and had
+  // nothing from one that was never called — and counted both against the
+  // agent, which is how a compliant run scored `4 of 22 empty` in red.
+  const e = P.emptiness(P.LAST_TRACE);
+  ok(e.total === 8 && e.excused === 2,
+    `asked_for/excused came back ${e.total}/${e.excused}, expected 8/2 — the ` +
+    "strip is not reading the served block, or the fixture has drifted");
+  ok(e.empty === 1 && e.no_data === 5,
+    `owed/no_data came back ${e.empty}/${e.no_data}, expected 1/5. Folding the ` +
+    "world's gap into the agent's is the whole defect this replaced");
 
   const qs = P.questions(P.LAST_TRACE);
   const strip = typeof qs === "string" ? qs : JSON.stringify(qs);
+  ok(/1 of 8 value\(s\) the agent owed/.test(strip),
+    "question three does not count what the agent OWED, so an honest capability " +
+    "gap is still charged to it");
+  ok(/never called/.test(strip),
+    "question three does not say WHY the owed field is owed — without that it " +
+    "is a grade rather than a direction");
+  ok(/capability gap, and nobody's fault/.test(strip),
+    "question three does not report the tool-asked-and-empty fields beside the " +
+    "verdict, so they vanish instead of standing as a request for a source");
   ok(/contract requires/.test(strip),
     "question three does not say that some absences are required, so a " +
     "compliant agent still reads as having skipped the work");
 
-  // Question four: strength 0 is CORRECT for a field nothing can source. Red
-  // for that alone painted three compliant `conservation` fields as a fault.
-  // What is a fault is a `sourced` field with no retrieval behind it — which
-  // this fixture has, so the tone must still be bad and must say why.
-  ok(/claim retrieval and have none/.test(strip),
-    "question four does not distinguish a retrieval claim with nothing behind " +
-    "it from a field the contract says nothing can source");
+  // Question four: strength 0 is CORRECT both for a field nothing can source
+  // and for a tool that was asked and had nothing. The fault is a sourced field
+  // at zero whose tool was NEVER CALLED — the same distinction question three
+  // makes, from the same served assessment, so the two cannot disagree.
+  ok(/name a tool that was never called/.test(strip),
+    "question four does not distinguish an unattempted retrieval from a tool " +
+    "that was asked and had nothing");
+
+  // The stag beetle, and the case that makes the check above falsifiable.
+  //
+  // Every sourced empty was ASKED: `ncbi_genome_search` was called and NCBI has
+  // no assembly for the European stag beetle, so all six `genome` fields sat at
+  // strength 0 and question four went red for a run that did everything right.
+  // Keying on strength alone cannot tell that from an unattempted retrieval,
+  // and with `owed` empty there is nothing for anyone to fix.
+  const savedC = P.LAST_TRACE.completeness;
+  P.LAST_TRACE.completeness = Object.assign({}, savedC, { owed: [] });
+  const clean = JSON.stringify(P.questions(P.LAST_TRACE));
+  P.LAST_TRACE.completeness = savedC;
+  ok(/none of those is a retrieval that went unattempted/.test(clean),
+    "question four still finds a fault when every sourced empty was asked and " +
+    "had nothing. Strength 0 is the CORRECT score for a tool that answered " +
+    "with nothing, and red there accuses a compliant run");
+  ok(!/name a tool that was never called/.test(clean),
+    "question four reports an unattempted retrieval on a run where every tool " +
+    "was called");
 
   // ── The derived row ───────────────────────────────────────────
   const xgd = P.FIELD_BY_PATH["advanced_metrics.xgd"];

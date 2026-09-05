@@ -798,6 +798,34 @@ pub async fn episode_trace_handler(
         }
     }
 
+    // Question three, answered by the gate's own function rather than by the
+    // page. It needs the run record, which is why the trace could never have
+    // computed it honestly on its own: `no data there` and `never asked` are the
+    // same empty field and different owners.
+    //
+    // Extracted from `context.tool_invocations` here rather than reused from
+    // `tool_calls` below, and the difference is not cosmetic: that list is
+    // `.take(40)` because it carries per-call inputs a reader can replay from.
+    // Deriving the tool NAMES from a truncated list would report a tool as
+    // never called because it happened to be the forty-first, which is a false
+    // accusation and exactly the direction of error this gate exists to avoid.
+    let tools_called_owned: Vec<String> = row
+        .try_get::<Option<Value>, _>("context")
+        .ok()
+        .flatten()
+        .and_then(|c| c.get("tool_invocations").cloned())
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|t| {
+            t.get("tool_name")
+                .and_then(|n| n.as_str())
+                .map(str::to_string)
+        })
+        .collect();
+    let tools_called: Vec<&str> = tools_called_owned.iter().map(String::as_str).collect();
+    let completeness = fermi::completeness::assess(&graded, &tools_called);
+
     let (fields, floor) = fermi::artifact_trace::fields(&agent_name, &graded);
 
     // What this agent has declared, so the empty case has a sourced cause rather
@@ -1096,6 +1124,19 @@ pub async fn episode_trace_handler(
         // is carried, because "the tool answered with nothing" and "the tool
         // answered at length and the agent dropped it" are different findings.
         "tool_calls": tool_calls,
+        // Question three, from the one function that answers it.
+        //
+        // The strip used to re-derive this in JavaScript: it walked the field
+        // values, excused `unsourced` and `derived`, and counted the rest. That
+        // was a **second implementation** of `completeness::assess` — and it was
+        // already the weaker one, because it cannot see the run record and so
+        // could not tell a tool that was asked and had nothing from one that was
+        // never called. Both are empty fields; only one is the agent's.
+        //
+        // Served instead, so the number the page prints and the verdict
+        // `Gate::Completeness` filed are the same computation. A display that
+        // disagrees with the gate it draws is worse than one that draws nothing.
+        "completeness": completeness,
         "response": {
             "text": response_text.as_deref().map(|t| {
                 t.chars().take(RESPONSE_CHARS).collect::<String>()
