@@ -165,6 +165,244 @@ fn every_declared_gate_is_recorded_somewhere() {
     );
 }
 
+/// Every `Retention::Recorded` gate must record **what it decided about**.
+///
+/// # The incident
+///
+/// `gate_decisions` held 42 grounding rows in production and every one of them
+/// had `subject = NULL`. The ledger could not say which agent any decision
+/// concerned, so `gate_api::GATE_DOORS` handed a reviewer a refusal with no
+/// way to find the thing refused, and `gate_decision_reviews` sat at zero rows
+/// for the life of the table. The cause was one hardcoded `None` in
+/// `decided_for_episode` with the agent slug in scope one line above it.
+///
+/// Fixing that one writer fixed one gate. This check is why it does not
+/// recur: `coherence` and `admission` were in the identical state and nobody
+/// had noticed, because their paths are cold — an agent-wide intervention is a
+/// rare operator action and the curated corpus does not go through the publish
+/// pipeline. Neither had ever written a row, so the defect was invisible and
+/// the first row either produced would have been anonymous.
+///
+/// **A cold defect is still a defect.** A `Counted` gate may be anonymous
+/// forever, because it never becomes a row anybody opens. A `Recorded` gate's
+/// whole purpose is to be reviewed later, and a row with no subject cannot be.
+///
+/// # Why the entry points are derived rather than listed
+///
+/// The same reason [`reports_a_decision`] gives, and the same incident twice
+/// over: a hardcoded list of `decided_*` names went stale the moment somebody
+/// added one, and failed in the direction that reads as "this gate records
+/// nothing". So which entry points carry a subject is read out of
+/// `gate_trust.rs`'s own signatures. Add a fifth entry point with a `subject`
+/// parameter and it is understood here without an edit.
+#[test]
+fn every_recorded_gate_names_what_it_decided_about() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    let carrying = subject_carrying_entry_points(repo);
+    assert!(
+        carrying.iter().any(|e| e == "decided_about"),
+        "no entry point in gate_trust.rs takes a `subject`, so this check \
+         cannot distinguish anything: {carrying:?}"
+    );
+
+    let sites = decision_sites_in_src(repo);
+    assert!(
+        sites.len() > 5,
+        "found {} decision sites; a scan over an empty set passes for ever",
+        sites.len()
+    );
+
+    let problems = anonymous_recorded(&sites, &carrying);
+    assert!(
+        problems.is_empty(),
+        "\n{} Recorded gate decision(s) are written with no subject:\n  {}\n\n\
+         A `Recorded` gate becomes a row in `gate_decisions` that a reviewer is \
+         asked to judge. With `subject` null they cannot tell whose refusal it \
+         is, which is the state all 42 production grounding rows are in and the \
+         reason the review door had never been used. Call a `decided_*` entry \
+         point that takes a subject. If this decision genuinely has no subject, \
+         the gate should not be `Recorded`.\n",
+        problems.len(),
+        problems.join("\n  ")
+    );
+}
+
+/// Which `decided_*` entry points take a `subject`, read from their signatures.
+fn subject_carrying_entry_points(repo: &Path) -> Vec<String> {
+    let body = std::fs::read_to_string(repo.join("src/gate_trust.rs")).expect("gate_trust.rs");
+    let mut out = Vec::new();
+    let mut rest = body.as_str();
+    while let Some(at) = rest.find("pub fn decided") {
+        let after = &rest[at + "pub fn ".len()..];
+        let name: String = after
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        // The parameter list: from the first `(` to the matching `)`. Depth
+        // counted rather than searched for, because `Option<&str>` and
+        // `fn() -> bool` both contain parentheses in real signatures.
+        if let Some(open) = after.find('(') {
+            let mut depth = 0usize;
+            let mut end = None;
+            for (i, c) in after[open..].char_indices() {
+                match c {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = Some(open + i);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(end) = end {
+                if after[open..end].contains("subject") {
+                    out.push(name);
+                }
+            }
+        }
+        rest = &rest[at + "pub fn ".len()..];
+    }
+    out
+}
+
+/// Pair each `decided_*(` call with the `Gate::X` it names.
+///
+/// Over the file **text**, not line by line, because the shape that hid the
+/// defect spans lines:
+///
+/// ```text
+/// crate::gate_trust::decided(
+///     crate::gate_trust::Gate::Admission,
+/// ```
+///
+/// A line-based scan sees the entry point and the gate on different lines and
+/// pairs neither with the other. That is how `admission` kept a subjectless
+/// writer while the sibling check in this very file reported it as recorded.
+fn decision_sites(text: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while let Some(at) = text[i..].find("decided") {
+        let start = i + at;
+        let after = &text[start + "decided".len()..];
+        let ident: usize = after
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .map(char::len_utf8)
+            .sum();
+        if after[ident..].starts_with('(') {
+            let entry = format!("decided{}", &after[..ident]);
+            // The gate is the first argument in every entry point, so a short
+            // window is enough and a long one would reach the NEXT call.
+            let span_end = (after.len()).min(ident + 400);
+            let span = &after[ident..span_end];
+            if let Some(g) = span.find("Gate::") {
+                let gate: String = span[g + "Gate::".len()..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .collect();
+                if !gate.is_empty() {
+                    out.push((entry, gate));
+                }
+            }
+        }
+        i = start + "decided".len();
+    }
+    out
+}
+
+/// [`decision_sites`] over every source file, minus the declaration file.
+fn decision_sites_in_src(repo: &Path) -> Vec<(String, String)> {
+    let mut files = Vec::new();
+    rust_sources(&repo.join("src"), &mut files);
+    files
+        .iter()
+        .filter(|p| !p.ends_with("gate_trust.rs"))
+        .filter_map(|p| std::fs::read_to_string(p).ok())
+        .flat_map(|body| decision_sites(&body))
+        .collect()
+}
+
+/// Recorded gates written through an entry point that carries no subject.
+fn anonymous_recorded(sites: &[(String, String)], carrying: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for (entry, gate) in sites {
+        let Some(spec) = GATES.iter().find(|g| format!("{:?}", g.gate) == *gate) else {
+            continue;
+        };
+        if spec.retention != fermi::gate_trust::Retention::Recorded {
+            continue;
+        }
+        if !carrying.iter().any(|c| c == entry) {
+            out.push(format!("{} via `{}` (no subject parameter)", spec.id, entry));
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The pairing scan must survive the shape that hid the defect, and must
+/// actually fire on a subjectless Recorded write.
+///
+/// Both halves matter. The first is the multi-line call: a scan that only reads
+/// one line at a time pairs nothing in `publish_pipeline.rs` and therefore
+/// reports no problem there, which is exactly how the anonymous `admission`
+/// writer survived. The second is the fault itself — with every gate now
+/// correct, a check that could not fail on a hand-built bad case would be
+/// green for the wrong reason.
+#[test]
+fn the_pairing_sees_a_multiline_call_and_an_anonymous_recorded_write() {
+    // The literal shape from `src/workflows/publish_pipeline.rs`, gate on its
+    // own line, entry point on the one above.
+    let multiline = "\
+    crate::gate_trust::decided(
+        crate::gate_trust::Gate::Admission,
+        Decision::Refused,
+    );";
+    assert_eq!(
+        decision_sites(multiline),
+        vec![("decided".to_string(), "Admission".to_string())],
+        "the scan cannot pair an entry point with a gate on a later line, which \
+         is the shape it exists to read"
+    );
+
+    // A subject-carrying call on the same gate is not a problem.
+    let carrying = vec!["decided_about".to_string(), "decided_for_episode".to_string()];
+    assert!(
+        anonymous_recorded(
+            &[("decided_about".into(), "Admission".into())],
+            &carrying
+        )
+        .is_empty(),
+        "a Recorded gate recorded WITH a subject must not be reported"
+    );
+
+    // The bare one is.
+    let found = anonymous_recorded(&[("decided".into(), "Admission".into())], &carrying);
+    assert_eq!(
+        found.len(),
+        1,
+        "the check did not fire on a Recorded gate written through an entry \
+         point with no subject — the exact production defect: {found:?}"
+    );
+    assert!(
+        found[0].contains("admission"),
+        "the finding must name the gate so it can be fixed: {found:?}"
+    );
+
+    // And a Counted gate through the same bare entry point is fine, because it
+    // never becomes a row anybody opens.
+    assert!(
+        anonymous_recorded(&[("decided".into(), "RateLimit".into())], &carrying).is_empty(),
+        "a Counted gate has no ledger row to be anonymous in; reporting it \
+         would make this check noise and it would be switched off"
+    );
+}
+
 /// The scan must not be satisfiable by a declaration.
 ///
 /// A guard on this file, written because its sibling failed exactly here: it

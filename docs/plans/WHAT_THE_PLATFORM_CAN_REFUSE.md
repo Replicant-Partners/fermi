@@ -161,10 +161,36 @@ reachable state**, and migration 216 predicted this exactly: *"the ledger does
 not record enough to review its own decisions."* It was right, and it was
 written before the writer existed to be checked against.
 
-And it is worse than one gate. `gate_decisions` contains **only grounding
+And it is not one gate. `gate_decisions` contains **only grounding
 rows**. `coherence` and `admission` are both `Recorded`, both have a declared
 door, and neither has ever written a row — so two of the three doors lead to a
 guaranteed 404. The door count was never the measure of the review path.
+
+Worse: both were writing the **same anonymous row**. `decided(Gate::Coherence,
+…)` with `agent` loaded twelve lines above it; `decided(Gate::Admission, …)`
+with `agent.agent_name` in scope. Their reasons were fine — admission's is
+`failing: typed_interface, …`, which is genuinely judgeable — and both would
+have produced a row no reviewer could attach to an agent. The defect was
+invisible because the paths are **cold**: an agent-wide intervention is a rare
+operator action, and the curated corpus is loaded from disk rather than
+published through the pipeline.
+
+> A cold defect is still a defect. A `Counted` gate may be anonymous for ever,
+> because it never becomes a row anybody opens. A `Recorded` gate exists in
+> order to be reviewed later, and a row with no subject cannot be.
+
+All three now record through a subject-carrying entry point, and
+`gate_trust_coverage::every_recorded_gate_names_what_it_decided_about` keeps it
+that way — it reads which `decided_*` entry points take a `subject` out of
+`gate_trust.rs`'s own signatures, so a fifth entry point is understood without
+an edit. `agent_name` and never `agent_id`, so the column holds one kind of
+thing: a ledger whose `subject` is sometimes a slug and sometimes a UUID cannot
+be grouped, sorted or read.
+
+That scan had to read the file as text rather than line by line, because the
+shape that hid `admission` spans lines — entry point on one, `Gate::Admission`
+on the next. The sibling check in the same file reported admission as
+*recorded*, and it was: recorded anonymously.
 
 > A gate that records **that** it refused, but not **what** it refused, cannot
 > be reviewed — and a control that cannot be reviewed cannot be promoted. The
@@ -202,17 +228,26 @@ artifact.
 
 #### Still missing, and now unblocked
 
-This makes a decision **judgeable**. It does not make one **judged**. Two things
-remain before *overturned / decided* is a number:
+This makes a decision **judgeable**. It does not make one **judged**. What
+remains before *overturned / decided* is a number is **rows written under the
+new writer**. The 42 existing rows are retrospectively unjudgeable and stay that
+way — `subject` and `reason` are not backfillable, because what was stripped was
+never recorded. The denominator starts from the next pulse, and the honest
+reading of the old rows is `unclear`.
 
-1. **A queue.** The door takes a `decision_id`; nothing lists the refusals
-   worth opening. `LEDGER_SQL` orders refusals first for exactly this reader,
-   and no surface calls it.
-2. **Rows written under the new writer.** The 42 existing rows are
-   retrospectively unjudgeable and stay that way — `subject` and `reason` are
-   not backfillable, because what was stripped was never recorded. The
-   denominator starts from the next pulse, and the honest reading of the old
-   rows is `unclear`.
+**The queue was already built, and finding that out was the point of looking.**
+The obvious next task read *"nothing lists the refusals worth opening"*. It
+does: `nav → /gates → /gate/:gate_id` renders every decision for a gate with
+`review: null` marking the unjudged, a standing summary, and a review form
+(`templates/gate.html`, `handlers::loops`). The whole path is reachable from the
+navigation bar.
+
+So building a cross-gate queue would have been a **new surface over seven
+unjudgeable rows** — this document's own disease, committed while writing the
+document about it. The blocker on §4.2 was never the absence of a queue; it was
+that the rows in it could not be judged. That is fixed, and the next honest
+move is §4.6, which produces decisions worth reviewing rather than another
+place to look at the ones that are not.
 
 Note the shape of this, because it is the same shape as §4.4: the work that
 looked like *build the review door* turned out to be *make the ledger worth
@@ -325,6 +360,16 @@ published agents                     110
   accepts, none textual               47   42.7%   <- promotion would REFUSE these
 ```
 
+**It has since gone to 48**, and the ratchet is what made that visible.
+`regulatory_lens_translator` was authored in the same pattern — `accepts`
+listing the slots its prompt needs told, nothing textual — and the guard failed
+on the commit that added it. Nothing is wrong with that card, and that is
+precisely the finding: this is what agents on this platform naturally do, the
+pattern is still spreading, and **every new one makes the gate less promotable
+rather than more**. The rise is recorded in the guard's own comment, naming the
+card, because a ratchet that absorbs rises silently is the thing it exists to
+prevent.
+
 And the refused list is working agents:
 
 ```
@@ -347,7 +392,7 @@ true a mismatch count is not evidence about callers at all. Resolving it is the
 ports rung's question (`docs/plans/PORTS_RUNG_EDITOR.md`), not this one's.
 
 Held by `port_trust::promoting_input_binding_to_a_control_would_refuse_half_the_corpus`,
-which pins 47 of 102 as a ratchet that may fall freely and not rise — so the
+which pins the count as a ratchet that may fall freely and not rise — so the
 promotion cannot be argued for again without meeting the number.
 
 **This is what step 2 of the plan was for**, and it is the outcome that
@@ -395,6 +440,8 @@ consequence of it.
 | a dirty report always says something to the ledger | `falsification_registry` — the `grounding_trust::refusal_reason` pair |
 | an episode decision cannot be recorded anonymously | the compiler — `decided_for_episode` takes `subject: &str` |
 | what reaches the queue names its agent and its fault | `gate_trust::tests::an_episode_decision_reaches_the_queue_naming_its_agent_and_its_fault` |
+| every `Recorded` gate records what it decided **about** | `gate_trust_coverage::every_recorded_gate_names_what_it_decided_about` |
+| that scan reads multi-line calls and fires on a real one | `gate_trust_coverage::the_pairing_sees_a_multiline_call_and_an_anonymous_recorded_write` |
 | question three names `completeness` and never `grounding` | `trace_verification_fold::the_question_with_no_gate_is_found_rather_than_named` |
 | the `no gate` note finds its subject instead of asserting one | same test |
 

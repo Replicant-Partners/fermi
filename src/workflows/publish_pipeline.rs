@@ -142,7 +142,15 @@ pub async fn publish_agent(
     //
     // A forced publish is recorded as `undetermined`: the gate did not approve
     // and did not refuse, it was skipped.
-    crate::gate_trust::decided(
+    //
+    // `decided_about`, because `Admission` is `Retention::Recorded` and a row
+    // with no subject cannot be reviewed. "failing: typed_interface" is a good
+    // reason and a useless row without the agent it is about: the whole point
+    // of `why_manual` on this gate's door is that an author refused for a
+    // checker bug and an author refused for a bad card get the same message,
+    // and only a reviewer reading the refusal AGAINST THE CARD can separate
+    // them. They cannot find the card from an anonymous row.
+    crate::gate_trust::decided_about(
         crate::gate_trust::Gate::Admission,
         if force {
             crate::gate_trust::Decision::Undetermined
@@ -161,6 +169,7 @@ pub async fn publish_agent(
                 format!("failing: {}", failing.join(", "))
             })
             .as_deref(),
+        Some(agent.agent_name.as_str()),
     );
 
     if blocked {

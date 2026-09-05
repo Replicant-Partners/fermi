@@ -362,14 +362,35 @@ mod tests {
             total > 80,
             "only {total} card(s) scanned — this guard is going vacuous"
         );
-        // 47 of 102 when measured. A ratchet, not a target.
+        // 47 of 102 when first measured; 48 of 102 after
+        // `regulatory_lens_translator` was authored. A ratchet, not a target.
+        //
+        // **The rise is recorded rather than absorbed.** This number may fall
+        // freely and may not rise, and it rose once — so here is the reason, in
+        // the place a reader meets the number.
+        //
+        // `regulatory_lens_translator` declares `accepts` and nothing textual,
+        // which is the 48th instance of the pattern that blocks this gate: an
+        // agent listing the semantic slots its prompt needs told rather than a
+        // transport shape it can be handed. It is not a badly authored card and
+        // nothing here asks its author to change it. That is the point — the
+        // pattern is what agents on this platform naturally do, it is still
+        // spreading, and each new one makes `Gate::InputBinding` less
+        // promotable rather than more.
+        //
+        // A rise weakens the case for promotion, so absorbing one silently
+        // would be the failure this ratchet exists to prevent. If it reaches 50
+        // the honest reading is that `accepts` has settled into meaning "what
+        // my prompt needs", and `why_not_control` should stop describing the
+        // mismatch rate as a threshold at all.
         assert!(
-            mismatch.len() <= 47,
-            "{} of {total} cards declare inputs and none textual, up from 47. \
+            mismatch.len() <= 48,
+            "{} of {total} cards declare inputs and none textual, up from 48. \
              Every one of these would be REFUSED if `Gate::InputBinding` were \
              promoted, and they are not caller errors — they are agents using \
              `accepts` as a list of what their prompt needs told. Adding one \
-             makes the gate less promotable, not more:\n  {}",
+             makes the gate less promotable, not more. Raise this only with the \
+             new card NAMED in the comment above, as 48 was:\n  {}",
             mismatch.len(),
             mismatch.join("\n  ")
         );

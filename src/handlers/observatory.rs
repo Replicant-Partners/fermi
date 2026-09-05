@@ -486,14 +486,33 @@ pub async fn record_hitl_action_handler(
     //
     // `Undetermined` is recorded as neither approved nor refused, because it is
     // neither: the gate declined to form an opinion.
+    // `decided_about` rather than `decided`, and the subject is the point.
+    //
+    // This gate is `Retention::Recorded`, so every call here is meant to become
+    // a row in `gate_decisions` that a reviewer can open from
+    // `gate_api::GATE_DOORS`. It was writing `subject: NULL` — the same defect
+    // that left all 42 grounding rows unreviewable — and it is latent here only
+    // because applying an agent-wide intervention is a rare operator action, so
+    // the path has never run since the gate began recording. A cold defect is
+    // still a defect: the first row this ever writes would have been anonymous.
+    //
+    // `agent_name` and not `agent_id`, so the column holds one kind of thing.
+    // Grounding records the slug, and a ledger whose `subject` is sometimes a
+    // name and sometimes a UUID cannot be grouped, sorted or read.
     {
-        use fermi::gate_trust::{decided, Decision, Gate};
+        use fermi::gate_trust::{decided_about, Decision, Gate};
+        let about = Some(agent.agent_name.as_str());
         match &gate_result {
             Ok(o) if o.verdict == agent_bestiary_coherence_gate::GateVerdict::Undetermined => {
-                decided(Gate::Coherence, Decision::Undetermined, None)
+                decided_about(Gate::Coherence, Decision::Undetermined, None, about)
             }
-            Ok(_) => decided(Gate::Coherence, Decision::Approved, None),
-            Err(e) => decided(Gate::Coherence, Decision::Refused, Some(&e.to_string())),
+            Ok(_) => decided_about(Gate::Coherence, Decision::Approved, None, about),
+            Err(e) => decided_about(
+                Gate::Coherence,
+                Decision::Refused,
+                Some(&e.to_string()),
+                about,
+            ),
         }
     }
 
