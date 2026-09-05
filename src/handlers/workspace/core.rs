@@ -302,11 +302,18 @@ pub async fn list_workspace_agents_handler(
     // Run counts from the rollup view, for the same reason as
     // `get_workspace_handler` above: `agents.total_executions` is never
     // written. See migrations/192 and src/rollup_trust.rs.
+    // Include typed interface schema IDs (from input_contract / output_contract)
+    // so the Team tab can show what each member accepts and produces, and surface
+    // schema compatibility between members without requiring a second fetch.
     let rows = sqlx::query(
         "SELECT a.agent_id, a.agent_name, a.agent_type, a.description,
                 COALESCE(x.executions, 0) AS executions,
                 a.display_alias, a.model,
-                wa.relationship, wa.added_by, wa.added_at
+                wa.relationship, wa.added_by, wa.added_at,
+                a.input_contract->>'accepts_schema'   AS input_schema_id,
+                a.output_contract->>'produces_schema'  AS output_schema_id,
+                a.accepts,
+                a.produces
          FROM workspace_agents wa
          JOIN agents a ON a.agent_id = wa.agent_id
          LEFT JOIN agent_execution_rollup x ON x.agent_id = a.agent_id
@@ -328,12 +335,19 @@ pub async fn list_workspace_agents_handler(
                 "agent_type": r.try_get::<String, _>("agent_type").unwrap_or_default(),
                 "model": r.try_get::<String, _>("model").unwrap_or_default(),
                 "description": r.try_get::<Option<String>, _>("description").unwrap_or(None),
-                // bigint from the rollup — see the note in
-                // `get_workspace_handler` on why this must not be i32.
+                // bigint from the rollup.
                 "total_executions": r.try_get::<i64, _>("executions").unwrap_or(0),
                 "relationship": r.try_get::<String, _>("relationship").unwrap_or_default(),
                 "added_by": r.try_get::<String, _>("added_by").unwrap_or_default(),
                 "added_at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("added_at").ok(),
+                // Typed interface — compiled from input_contract / output_contract.
+                // null means the agent has not declared a typed interface yet.
+                "input_schema_id": r.try_get::<Option<String>, _>("input_schema_id").unwrap_or(None),
+                "output_schema_id": r.try_get::<Option<String>, _>("output_schema_id").unwrap_or(None),
+                // Raw port labels (may include schema IDs if the agent has typed
+                // its accepts/produces, or plain labels if not).
+                "accepts": r.try_get::<Option<Vec<String>>, _>("accepts").unwrap_or(None).unwrap_or_default(),
+                "produces": r.try_get::<Option<Vec<String>>, _>("produces").unwrap_or(None).unwrap_or_default(),
             })
         })
         .collect();

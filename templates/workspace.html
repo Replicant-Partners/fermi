@@ -1010,6 +1010,65 @@
         color: var(--fg0);
       }
 
+      /* ─── Team tab ───────────────────────────────────────────────────── */
+      .team-section-title { font-size:0.72rem; color:var(--aqua); text-transform:uppercase;
+        letter-spacing:0.5px; margin-bottom:4px; }
+      .team-section-sub { font-size:0.7rem; color:var(--fg4); margin-bottom:12px;
+        line-height:1.55; font-style:italic; }
+      /* Coordinator */
+      .team-coord-current { display:flex; gap:12px; align-items:flex-start;
+        background:var(--bg0); border:1px solid var(--bg2); padding:12px; }
+      .team-coord-icon { font-size:1.4rem; flex-shrink:0; line-height:1; }
+      .team-coord-name { font-size:0.82rem; color:var(--fg1); font-weight:600;
+        margin-bottom:2px; }
+      .team-coord-tagline { font-size:0.72rem; color:var(--aqua); margin-bottom:4px; }
+      .team-coord-signal { font-size:0.66rem; color:var(--fg4); line-height:1.45; }
+      .team-coord-change { margin-left:auto; font-size:0.66rem; font-family:inherit;
+        background:none; border:1px solid var(--bg3); color:var(--fg4);
+        cursor:pointer; padding:2px 8px; flex-shrink:0; }
+      .team-coord-change:hover { border-color:var(--aqua); color:var(--aqua); }
+      .team-coord-empty { font-size:0.75rem; color:var(--fg3); padding:8px 0; }
+      /* Coordinator wizard */
+      .team-wizard-title { font-size:0.72rem; color:var(--fg3); text-transform:uppercase;
+        letter-spacing:0.4px; margin-bottom:8px; }
+      .team-choice { display:flex; gap:10px; align-items:flex-start;
+        padding:10px; border:1px solid var(--bg2); margin-bottom:6px;
+        cursor:pointer; background:var(--bg0); transition:border-color 0.12s; }
+      .team-choice:hover { border-color:var(--yellow); }
+      .team-choice-icon { font-size:1.2rem; flex-shrink:0; line-height:1.2; }
+      .team-choice-name { font-size:0.78rem; color:var(--fg1); font-weight:600;
+        margin-bottom:2px; }
+      .team-choice-tagline { font-size:0.7rem; color:var(--aqua); margin-bottom:4px; }
+      .team-choice-when { font-size:0.66rem; color:var(--fg4); line-height:1.45; }
+      .team-choice-cancel { background:none; border:none; color:var(--fg4);
+        font-size:0.68rem; cursor:pointer; padding:4px 0; font-family:inherit; }
+      .team-choice-cancel:hover { color:var(--fg2); }
+      /* Capability matrix */
+      .team-cap-empty { font-size:0.72rem; color:var(--fg4); padding:8px 0;
+        line-height:1.55; }
+      .team-cap-row { padding:8px 0; border-top:1px solid var(--bg2);
+        display:flex; flex-direction:column; gap:4px; }
+      .team-cap-name { font-size:0.78rem; color:var(--aqua);
+        text-decoration:none; font-weight:600; }
+      .team-cap-name:hover { text-decoration:underline; }
+      .team-cap-type { font-size:0.64rem; color:var(--fg4); text-transform:uppercase;
+        letter-spacing:0.05em; }
+      .team-cap-schemas { display:flex; gap:6px; align-items:center; flex-wrap:wrap;
+        margin-top:2px; }
+      .team-cap-label { font-size:0.6rem; color:var(--fg4); text-transform:uppercase;
+        letter-spacing:0.05em; flex-shrink:0; }
+      .team-cap-arrow { color:var(--fg4); flex-shrink:0; font-size:0.7rem; }
+      .team-schema-chip { font-size:0.64rem; padding:1px 6px;
+        border:1px solid var(--bg3); }
+      .team-schema-chip.typed { border-color:var(--aqua); color:var(--aqua);
+        font-family:monospace; font-size:0.6rem; }
+      .team-schema-chip.label { color:var(--fg3); }
+      .team-schema-chip.none { color:var(--fg4); border-style:dashed; }
+      .team-cap-compat { display:flex; gap:6px; flex-wrap:wrap; }
+      .team-compat-from, .team-compat-to { font-size:0.64rem; padding:1px 6px;
+        border:1px solid var(--bg2); color:var(--fg4); }
+      .team-compat-to { color:var(--green); border-color:var(--green);
+        opacity:0.8; }
       /* ─── Composition graph editor ─────────────────────────────────────────── */
       .cg-section { margin-bottom: 18px; }
       .cg-section-head {
@@ -1220,11 +1279,10 @@
           </button>
           <button
             class="center-tab"
-            id="tab-graph"
-            onclick="switchTab('graph')"
-            style="display:none"
+            id="tab-team"
+            onclick="switchTab('team')"
           >
-            △ Graph
+            Team
           </button>
         </div>
 
@@ -1310,17 +1368,10 @@
           </div>
         </div>
 
-        <!-- Composition graph editor panel -->
-        <!-- Shown when the workspace has a coordination strategist.
-             Authors edit nodes/edges/synthesis here; saves via PUT
-             to the strategist agent's workflow_template. -->
-        <div id="panel-graph" style="display:none;flex:1;flex-direction:column;min-width:0;overflow:hidden">
-          <div style="padding:10px 16px;border-bottom:1px solid var(--bg2);display:flex;justify-content:space-between;align-items:center">
-            <span style="font-size:0.8rem;color:var(--fg3)">Typed coordination graph</span>
-            <span id="cg-status" style="font-size:0.7rem;color:var(--fg4)"></span>
-          </div>
-          <div id="cg-body" style="flex:1;overflow:auto;padding:16px">
-            <div style="color:var(--fg3);text-align:center;padding:40px 0">Loading…</div>
+        <!-- Team panel: coordinator selection + member capability matrix -->
+        <div id="panel-team" style="display:none;flex:1;flex-direction:column;min-width:0;overflow:auto">
+          <div id="team-body" style="padding:16px;max-width:760px">
+            <div style="color:var(--fg3);padding:20px 0">Loading team…</div>
           </div>
         </div>
 
@@ -1771,9 +1822,7 @@
               chipEl.style.display = "";
               chipEl.title = "Coordination strategist: " + ws.coordination_strategist_name;
             }
-            // Reveal the △ Graph tab and record strategist info for the editor.
-            const tabGraph = document.getElementById("tab-graph");
-            if (tabGraph) tabGraph.style.display = "";
+            // Record the coordinator so the Team tab can show it.
             window._wsStrategistName = ws.coordination_strategist_name;
             window._wsStrategistId   = ws.coordination_strategist_id;
           }
@@ -3350,25 +3399,21 @@
 
       // ─── Tab switching ───
       function switchTab(tab) {
-        document.getElementById("tab-chat")
-          .classList.toggle("active", tab === "chat");
-        document.getElementById("tab-files")
-          .classList.toggle("active", tab === "files");
-        document.getElementById("tab-workflow")
-          .classList.toggle("active", tab === "workflow");
-        const tabGraph = document.getElementById("tab-graph");
-        if (tabGraph) tabGraph.classList.toggle("active", tab === "graph");
+        ["chat","files","workflow","team"].forEach(t => {
+          const btn = document.getElementById("tab-" + t);
+          if (btn) btn.classList.toggle("active", t === tab);
+        });
         document.getElementById("panel-chat")
           .classList.toggle("hidden", tab !== "chat");
         document.getElementById("panel-files")
           .classList.toggle("active", tab === "files");
         const wfPanel = document.getElementById("panel-workflow");
         wfPanel.style.display = tab === "workflow" ? "flex" : "none";
-        const cgPanel = document.getElementById("panel-graph");
-        if (cgPanel) cgPanel.style.display = tab === "graph" ? "flex" : "none";
+        const teamPanel = document.getElementById("panel-team");
+        if (teamPanel) teamPanel.style.display = tab === "team" ? "flex" : "none";
         if (tab === "files" && !filesLoaded) loadFiles();
         if (tab === "workflow" && !workflowLoaded) loadWorkflow();
-        if (tab === "graph" && !cgLoaded) loadCompositionGraph();
+        if (tab === "team" && !teamLoaded) loadTeam();
       }
 
       // ─── Files panel ───
@@ -3832,262 +3877,233 @@
         }
       }
 
-      // ─── Composition graph editor ───
+      // ─── Team tab ───
       //
-      // A form-based editor for the typed workflow_template (nodes/edges/
-      // synthesis/selection). Reads from the workspace's coordination
-      // strategist agent card and saves back via PUT /api/agents/:name.
+      // Two sections:
+      //   1. Coordinator — which strategist runs this workspace, with a guided
+      //      selection wizard if none is set or the author wants to change.
+      //   2. Team capabilities — what each member accepts and produces, with
+      //      schema compatibility indicators between members.
       //
-      // Phase 1: list-based form. Phase 2 will add a canvas-based visual graph.
+      // No graph editor. The coordinator decides how to route at runtime;
+      // the typed interfaces are the measurement surface, not a wiring diagram.
 
-      let cgLoaded = false;
+      let teamLoaded = false;
+      let teamAgents = [];
 
-      // Unique id counter for new nodes created in-session.
-      let _cgNodeSeq = 0;
-      const cgNewId = () => `node_${++_cgNodeSeq}`;
-
-      // Escaping for inline HTML.
-      const cgEsc = s => String(s ?? "").replace(/[&<>"']/g, c =>
+      const tEsc = s => String(s ?? "").replace(/[&<>"']/g, c =>
         ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
-      // Current in-memory graph state.
-      let cgNodes = []; // [{id,agent,pinned,input_schema,output_schema}]
-      let cgEdges = []; // [{from,to,schema}]
-      let cgSynthesis = "selection";
-      let cgScope = "workspace";
+      // The five coordination strategies. The coordinator choice is the most
+      // important decision in a workspace — it should be guided, not a dropdown.
+      const STRATEGISTS = [
+        {
+          id: "cohere_and_coordinate",
+          icon: "☸",
+          name: "Cohere & Coordinate",
+          tagline: "Coherent collective analysis",
+          when: "Members need to reason together. Outputs should form a unified whole: research synthesis, integrated analysis, hypothesis evaluation.",
+          signal: "TEC coherence score. How well are members building on each other’s reasoning?",
+        },
+        {
+          id: "moe_router_strategist",
+          icon: "⇌",
+          name: "MoE Router",
+          tagline: "Route each query to the best specialist",
+          when: "Different members are genuinely better at different sub-domains. Outputs are independently accurate rather than collectively coherent.",
+          signal: "Brier calibration per member. Which specialist was right more often for this query type?",
+        },
+        {
+          id: "pipeline_strategist",
+          icon: "→",
+          name: "Pipeline",
+          tagline: "Fixed sequence, each stage feeds the next",
+          when: "Steps are known in advance. Each stage’s output is the next stage’s input. Legibility matters more than adaptivity.",
+          signal: "Stage completion rate. Which stages fail? Which seams break?",
+        },
+        {
+          id: "debate_strategist",
+          icon: "⚡",
+          name: "Debate",
+          tagline: "Surface disagreement before committing",
+          when: "The team is converging too fast, or a plan needs stress-testing. Assigns opposition roles to force genuine challenge.",
+          signal: "Verdict quality scored against outcomes. Which members argue well?",
+        },
+        {
+          id: "vote_strategist",
+          icon: "◎",
+          name: "Vote",
+          tagline: "Consensus from independent answers",
+          when: "One question, several members with standing to answer. The spread of answers is itself informative — you want to see the disagreement.",
+          signal: "Member vote scores against resolved outcomes. Who predicts well?",
+        },
+      ];
 
-      async function loadCompositionGraph() {
-        const body = document.getElementById("cg-body");
-        const status = document.getElementById("cg-status");
+      const SCHEMA_ID_RE = /^[a-z][a-z0-9-]*\/[a-z][a-z0-9-]*\/[0-9]+$/;
+
+      async function loadTeam() {
+        const body = document.getElementById("team-body");
         if (!body) return;
-
-        const name = window._wsStrategistName;
-        if (!name) {
-          body.innerHTML = `<div class="cg-empty">
-            No coordination strategist assigned to this workspace.<br>
-            Set one via  <code>POST /api/workspaces/${wsId}/composition/identity</code>.
-          </div>`;
-          cgLoaded = true;
-          return;
-        }
-
         try {
-          const res = await fetch(`/api/specimen/${encodeURIComponent(name)}`);
+          const res = await fetch(`/api/workspaces/${wsId}/agents`);
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const data = await res.json();
-          const wt = data.profile && data.profile.workflow_template
-            ? data.profile.workflow_template : {};
-
-          cgNodes = (wt.nodes || []).map(n => ({ ...n }));
-          cgEdges = (wt.edges || []).map(e => ({ ...e }));
-          cgSynthesis = wt.synthesis || "selection";
-          cgScope = (wt.selection && wt.selection.scope) || "workspace";
-
-          // Initialise the node sequence counter above any existing IDs.
-          cgNodes.forEach(n => {
-            const m = /^node_(\d+)$/.exec(n.id);
-            if (m) _cgNodeSeq = Math.max(_cgNodeSeq, +m[1]);
-          });
-
-          renderCgEditor();
-          if (status) status.textContent = `strategist: ${name}`;
-          cgLoaded = true;
+          teamAgents = data.agents || [];
+          renderTeam();
+          teamLoaded = true;
         } catch (e) {
-          body.innerHTML = `<div class="cg-empty">Could not load graph: ${cgEsc(e.message)}</div>`;
-          cgLoaded = true;
+          body.innerHTML = `<div style="color:var(--fg3);padding:20px 0">Could not load team: ${tEsc(e.message)}</div>`;
+          teamLoaded = true;
         }
       }
 
-      function renderCgEditor() {
-        const body = document.getElementById("cg-body");
+      function renderTeam() {
+        const body = document.getElementById("team-body");
         if (!body) return;
 
-        const SYNTHESIS_OPTIONS = [
-          ["selection",   "selection — pick the best output"],
-          ["aggregation", "aggregation — merge all outputs"],
-          ["pipeline",    "pipeline — each feeds the next"],
-          ["cep_weighted","cep_weighted — calibration-weighted"],
-          ["max_risk",    "max_risk — worst finding wins"],
-        ];
-        const SCOPE_OPTIONS = [
-          ["workspace",   "workspace"],
-          ["fleet",       "fleet"],
-          ["marketplace", "marketplace (stub)"],
-        ];
+        // ─── Coordinator section ───
+        const strategistName = window._wsStrategistName || null;
+        const current = strategistName
+          ? STRATEGISTS.find(s => s.id === strategistName) || { id: strategistName, name: strategistName, icon: "⚙", tagline: "", when: "", signal: "" }
+          : null;
 
-        const synOpts = SYNTHESIS_OPTIONS.map(([v,l]) =>
-          `<option value="${v}"${cgSynthesis===v?" selected":""}>${cgEsc(l)}</option>`).join("");
-        const scopeOpts = SCOPE_OPTIONS.map(([v,l]) =>
-          `<option value="${v}"${cgScope===v?" selected":""}>${cgEsc(l)}</option>`).join("");
+        const coordHtml = current
+          ? `<div class="team-coord-current">
+              <span class="team-coord-icon">${tEsc(current.icon)}</span>
+              <div>
+                <div class="team-coord-name">${tEsc(current.name)}</div>
+                <div class="team-coord-tagline">${tEsc(current.tagline)}</div>
+                <div class="team-coord-signal">${tEsc(current.signal)}</div>
+              </div>
+              <button class="team-coord-change" onclick="showCoordWizard()">Change</button>
+            </div>`
+          : `<div class="team-coord-empty">
+              <div>No coordinator assigned. Choose one to activate coordination.</div>
+              <button class="btn" style="margin-top:10px;font-size:0.72rem" onclick="showCoordWizard()">Choose coordinator</button>
+            </div>`;
 
-        const nodesHtml = cgNodes.length === 0
-          ? `<div class="cg-empty-hint">No nodes yet. Add one below.</div>`
-          : cgNodes.map((n, i) => `
-            <div class="cg-node-row" data-idx="${i}">
-              <div class="cg-node-id">
-                <label class="cg-lbl">id</label>
-                <input class="cg-input" data-f="id" value="${cgEsc(n.id)}" placeholder="node_1">
+        // Wizard (hidden by default, shown on click)
+        const wizardHtml = `<div id="team-coord-wizard" style="display:none;margin-top:12px">
+          <div class="team-wizard-title">What shape is the work?</div>
+          ${STRATEGISTS.map(s => `
+            <div class="team-choice" onclick="setCoordinator('${tEsc(s.id)}')" data-id="${tEsc(s.id)}">
+              <span class="team-choice-icon">${tEsc(s.icon)}</span>
+              <div class="team-choice-body">
+                <div class="team-choice-name">${tEsc(s.name)}</div>
+                <div class="team-choice-tagline">${tEsc(s.tagline)}</div>
+                <div class="team-choice-when">${tEsc(s.when)}</div>
               </div>
-              <div class="cg-node-agent">
-                <label class="cg-lbl">agent <span class="cg-hint">(blank = open slot)</span></label>
-                <input class="cg-input" data-f="agent" value="${cgEsc(n.agent||"")}" placeholder="leave blank for select_agent">
-              </div>
-              <div class="cg-node-schema">
-                <label class="cg-lbl">input schema</label>
-                <input class="cg-input" data-f="input_schema" value="${cgEsc(n.input_schema||"")}" placeholder="fermi/forecast-question/1">
-              </div>
-              <div class="cg-node-schema">
-                <label class="cg-lbl">output schema</label>
-                <input class="cg-input" data-f="output_schema" value="${cgEsc(n.output_schema||"")}" placeholder="fermi/football-evidence/1">
-              </div>
-              <label class="cg-pin" title="Pinned agents are never replaced by select_agent">
-                <input type="checkbox" data-f="pinned"${n.pinned?" checked":""}> pin
-              </label>
-              <button class="cg-rm" onclick="cgRemoveNode(${i})">×</button>
-            </div>`).join("");
+            </div>`).join("")}
+          <button class="team-choice-cancel" onclick="hideCoordWizard()">Cancel</button>
+        </div>`;
 
-        const nodeIdOptions = cgNodes.map(n =>
-          `<option value="${cgEsc(n.id)}">${cgEsc(n.id)}</option>`).join("");
+        // ─── Capabilities section ───
+        // Build a map: output_schema_id → [agent_name] so we can show
+        // which agents' output is consumed by which other agents.
+        const producerMap = {};
+        teamAgents.forEach(a => {
+          const sid = a.output_schema_id;
+          if (sid) (producerMap[sid] = producerMap[sid] || []).push(a.agent_name);
+        });
 
-        const edgesHtml = cgEdges.length === 0
-          ? `<div class="cg-empty-hint">No edges — all nodes receive the same input (MoE fan-out).</div>`
-          : cgEdges.map((e, i) => `
-            <div class="cg-edge-row" data-idx="${i}">
-              <select class="cg-select" data-f="from">
-                ${cgNodes.map(n => `<option value="${cgEsc(n.id)}"${e.from===n.id?" selected":""}>${cgEsc(n.id)}</option>`).join("")}
-              </select>
-              <span class="cg-arrow">→</span>
-              <select class="cg-select" data-f="to">
-                ${cgNodes.map(n => `<option value="${cgEsc(n.id)}"${e.to===n.id?" selected":""}>${cgEsc(n.id)}</option>`).join("")}
-              </select>
-              <input class="cg-input" data-f="schema" value="${cgEsc(e.schema||"")}" placeholder="schema ID (optional)" style="flex:2">
-              <button class="cg-rm" onclick="cgRemoveEdge(${i})">×</button>
-            </div>`).join("");
+        const capRows = teamAgents.length === 0
+          ? `<div class="team-cap-empty">No agents in this workspace yet.<br>
+             Hire agents using the + Hire button at the bottom of the members panel.</div>`
+          : teamAgents.map(a => {
+              const name = a.display_alias || a.agent_name;
+              const isid = a.input_schema_id;
+              const osid = a.output_schema_id;
+
+              // Compatibility: who produces what this agent accepts?
+              const feedsFrom = isid && producerMap[isid]
+                ? producerMap[isid].filter(n => n !== a.agent_name)
+                : [];
+              // Compatibility: who accepts what this agent produces?
+              const feedsTo = teamAgents.filter(b =>
+                b.agent_name !== a.agent_name && b.input_schema_id && b.input_schema_id === osid);
+
+              const isidChip = isid
+                ? `<span class="team-schema-chip typed" title="Typed input interface">${tEsc(isid)}</span>`
+                : (a.accepts && a.accepts.length
+                    ? `<span class="team-schema-chip label">${tEsc(a.accepts.slice(0,2).join(", "))}</span>`
+                    : `<span class="team-schema-chip none">no typed input</span>`);
+              const osidChip = osid
+                ? `<span class="team-schema-chip typed">${tEsc(osid)}</span>`
+                : (a.produces && a.produces.length
+                    ? `<span class="team-schema-chip label">${tEsc(a.produces.slice(0,2).join(", "))}</span>`
+                    : `<span class="team-schema-chip none">no typed output</span>`);
+
+              const compat = [
+                ...feedsFrom.map(n => `<span class="team-compat-from" title="Produces what this agent accepts">← ${tEsc(n)}</span>`),
+                ...feedsTo.map(b => `<span class="team-compat-to" title="Accepts what this agent produces">→ ${tEsc(b.display_alias || b.agent_name)}</span>`),
+              ].join("");
+
+              return `<div class="team-cap-row">
+                <a class="team-cap-name" href="/specimen/${encodeURIComponent(a.agent_name)}" target="_blank">${tEsc(name)}</a>
+                <div class="team-cap-type">${tEsc(a.agent_type)}</div>
+                <div class="team-cap-schemas">
+                  <span class="team-cap-label">accepts</span>${isidChip}
+                  <span class="team-cap-arrow">→</span>
+                  <span class="team-cap-label">produces</span>${osidChip}
+                </div>
+                ${compat ? `<div class="team-cap-compat">${compat}</div>` : ""}
+              </div>`;
+            }).join("");
 
         body.innerHTML = `
-          <div class="cg-section">
-            <div class="cg-row">
-              <div>
-                <label class="cg-lbl">Synthesis protocol</label>
-                <select class="cg-select" id="cg-synthesis">${synOpts}</select>
-              </div>
-              <div>
-                <label class="cg-lbl">Candidate scope</label>
-                <select class="cg-select" id="cg-scope">${scopeOpts}</select>
-              </div>
-            </div>
+          <div class="team-section">
+            <div class="team-section-title">Coordinator</div>
+            <div class="team-section-sub">The coordinator reasons about how to use the team to accomplish the mission. It is an agent because it learns from past runs.</div>
+            ${coordHtml}
+            ${wizardHtml}
           </div>
-
-          <div class="cg-section">
-            <div class="cg-section-head">
-              Nodes
-              <span class="cg-hint">blank agent = open slot (filled by select_agent at runtime)</span>
-            </div>
-            <div id="cg-nodes">${nodesHtml}</div>
-            <button class="cg-add-btn" onclick="cgAddNode()">+ Add node</button>
-          </div>
-
-          <div class="cg-section">
-            <div class="cg-section-head">
-              Edges
-              <span class="cg-hint">empty = MoE fan-out (all nodes receive the same input)</span>
-            </div>
-            <div id="cg-edges">${edgesHtml}</div>
-            <button class="cg-add-btn" onclick="cgAddEdge()">+ Add edge</button>
-          </div>
-
-          <div class="cg-section cg-footer">
-            <button class="btn btn-primary cg-save-btn" onclick="cgSave()">Save composition graph</button>
-            <span id="cg-save-status" style="font-size:0.7rem;color:var(--fg4)"></span>
+          <div class="team-section" style="margin-top:24px">
+            <div class="team-section-title">Team capabilities</div>
+            <div class="team-section-sub">What each member accepts and produces. The coordinator uses this at runtime to decide how to route — you don’t wire these together manually.</div>
+            <div id="team-caps">${capRows}</div>
           </div>`;
       }
 
-      function cgCollect() {
-        // Collect current node values from the DOM.
-        const nodeRows = document.querySelectorAll("#cg-nodes .cg-node-row");
-        cgNodes = [...nodeRows].map(row => ({
-          id:            row.querySelector('[data-f="id"]').value.trim() || cgNewId(),
-          agent:         row.querySelector('[data-f="agent"]').value.trim() || null,
-          input_schema:  row.querySelector('[data-f="input_schema"]').value.trim() || null,
-          output_schema: row.querySelector('[data-f="output_schema"]').value.trim() || null,
-          pinned:        row.querySelector('[data-f="pinned"]').checked,
-        }));
-        const edgeRows = document.querySelectorAll("#cg-edges .cg-edge-row");
-        cgEdges = [...edgeRows].map(row => ({
-          from:   row.querySelector('[data-f="from"]').value,
-          to:     row.querySelector('[data-f="to"]').value,
-          schema: row.querySelector('[data-f="schema"]').value.trim() || null,
-        })).filter(e => e.from && e.to);
-        cgSynthesis = document.getElementById("cg-synthesis")?.value || "selection";
-        cgScope     = document.getElementById("cg-scope")?.value || "workspace";
+      function showCoordWizard() {
+        const w = document.getElementById("team-coord-wizard");
+        if (w) w.style.display = "";
+      }
+      function hideCoordWizard() {
+        const w = document.getElementById("team-coord-wizard");
+        if (w) w.style.display = "none";
       }
 
-      function cgAddNode() {
-        cgCollect();
-        cgNodes.push({ id: cgNewId(), agent: null, input_schema: null, output_schema: null, pinned: false });
-        renderCgEditor();
-      }
-
-      function cgRemoveNode(idx) {
-        cgCollect();
-        cgNodes.splice(idx, 1);
-        renderCgEditor();
-      }
-
-      function cgAddEdge() {
-        cgCollect();
-        const first = cgNodes[0]?.id || "";
-        const second = cgNodes[1]?.id || first;
-        cgEdges.push({ from: first, to: second, schema: null });
-        renderCgEditor();
-      }
-
-      function cgRemoveEdge(idx) {
-        cgCollect();
-        cgEdges.splice(idx, 1);
-        renderCgEditor();
-      }
-
-      async function cgSave() {
-        cgCollect();
-        const statusEl = document.getElementById("cg-save-status");
-        const name = window._wsStrategistName;
-        if (!name) {
-          if (statusEl) statusEl.textContent = "No strategist assigned";
-          return;
-        }
-        if (statusEl) statusEl.textContent = "Saving…";
-
-        const workflow_template = {
-          synthesis: cgSynthesis,
-          selection: { scope: cgScope },
-          nodes: cgNodes,
-          edges: cgEdges,
-        };
-
+      async function setCoordinator(strategistId) {
+        const statusEl = document.createElement("div");
+        statusEl.style.cssText = "font-size:0.7rem;color:var(--fg4);margin-top:6px";
         try {
-          const r = await fetch(`/api/agents/${encodeURIComponent(name)}`, {
-            method: "PUT",
+          const r = await fetch(`/api/workspaces/${wsId}/composition/identity`, {
+            method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ workflow_template }),
+            body: JSON.stringify({ coordination_strategist_id: strategistId }),
           });
-          if (!r.ok) {
-            const msg = await r.text();
-            if (statusEl) statusEl.textContent = `Error: ${msg.slice(0, 80)}`;
-            return;
-          }
-          if (statusEl) {
-            statusEl.textContent = `Saved at ${new Date().toLocaleTimeString()}`;
-          }
-          // Re-render so IDs are stable (no more blank placeholders).
-          renderCgEditor();
+          if (!r.ok) throw new Error(await r.text());
+          // Update local state and re-render
+          window._wsStrategistName = strategistId;
+          window._wsStrategistId = strategistId;
+          // Also update the header chip
+          const chipEl = document.getElementById("ws-strategist-chip");
+          if (chipEl) { chipEl.textContent = "⚙ " + strategistId; chipEl.style.display = ""; }
+          const identityEl = document.getElementById("ws-composition-identity");
+          if (identityEl) identityEl.style.display = "flex";
+          hideCoordWizard();
+          renderTeam();
         } catch (e) {
-          if (statusEl) statusEl.textContent = `Error: ${e.message}`;
+          alert("Could not set coordinator: " + e.message);
         }
       }
 
-      // Expose mutation functions globally so onclick= handlers can reach them.
-      Object.assign(window, { cgAddNode, cgRemoveNode, cgAddEdge, cgRemoveEdge, cgSave });
+      Object.assign(window, { showCoordWizard, hideCoordWizard, setCoordinator });
+
+      // (Graph editor removed — the coordinator decides routing at runtime;
+      // the typed interfaces on agent cards are the measurement surface.)
+
+      // (Graph editor removed — see COMPOSITION_UI_PHASE2.md for the visual editor plan)
 
       // ─── History (coherence + git) ───
       async function loadWorkspaceHistory() {
