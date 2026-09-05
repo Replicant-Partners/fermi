@@ -197,24 +197,38 @@ impl Pulse {
         // nothing.
         let claimed = raw.and_then(crate::agent_backend::envelope::extract_json);
         let mut enforced = claimed.clone();
-        // `grounding_trust::enforce_from_output_contract` — enforcement from the
-        // agent's own compiled `output_contract.grounding` rather than from the
-        // hand-written `FIELD_CONTRACTS` table — is in flight on another working
-        // tree and is not on `main`. This call site is the seam it lands on, and
-        // `output_contract` is threaded through the fourteen callers now so they
-        // do not churn twice. Until it lands, enforcement runs from the
-        // registered contract, which is what every path did before this module
-        // existed.
+        // The compiled path, finally wired.
         //
-        // Committed once already, in the same commit that consolidated this
-        // module, and it broke the release build: `main` called a function that
-        // exists only in an uncommitted file. A local `cargo check` passed
-        // because the working tree held that file — which is the whole hazard of
-        // a tree with two authors, and is why `main` gets verified against what
-        // is committed rather than against what is on disk.
-        let _ = output_contract;
+        // This read `let _ = output_contract;` under a comment saying
+        // `enforce_from_output_contract` "is in flight on another working tree
+        // and is not on `main`". It has been on `main` for some time and
+        // `envelope::build` — the delegation hop — has been calling it all
+        // along. The comment outlived the code it described, which is the third
+        // time that has happened in this subsystem: the stream's `AMENDS_LATER`
+        // exemption and the trace's "Question 3 has no gate" sentence were the
+        // other two, and all three were true when written.
+        //
+        // The cost of the stale comment was the familiar asymmetry: an agent
+        // with a compiled contract had it enforced when another AGENT called it
+        // and ignored when a PERSON did. Ten agents are in that state, two of
+        // them among the busiest on the platform (`simops_companion` at 113
+        // pulses, `supply_chain_oracle` at 83), and all ten recorded
+        // `Gate::Grounding` as `undetermined` — "no contract" — while carrying
+        // one the platform already knew how to apply.
+        //
+        // `FIELD_CONTRACTS` still wins where it exists; the precedence and the
+        // reason for it live on `enforce_from_output_contract`, which measured
+        // what preferring the card map costs `genome_profiler`.
+        //
+        // The blast radius was measured before this was wired. Across the ten,
+        // 46 blocks: 24 `sourced`, 14 `inferred`, 7 `narrative`, and exactly
+        // **one** `unavailable` — `species_resolver.conservation`. Only
+        // `unavailable` nulls anything, so nine of the ten can only gain
+        // provenance stamps.
         let report = match enforced.as_mut() {
-            Some(doc) => grounding_trust::enforce(agent_slug, doc),
+            Some(doc) => {
+                grounding_trust::enforce_from_output_contract(agent_slug, output_contract, doc)
+            }
             None => Report::default(),
         };
         // Every contracted field with its grade and the claim behind it,
@@ -248,7 +262,33 @@ impl Pulse {
         //
         // So it tracks `enforce`. When the compiled path lands here, this reads
         // both, and the two lines move together.
-        let has_contract = grounding_trust::contracts_for(agent_slug).next().is_some();
+        //
+        // **They have now moved together.** `enforce_from_output_contract`
+        // above reads the registered table first and the card's compiled
+        // `grounding` map second, so this asks the same two questions in the
+        // same order. The hazard the paragraph above describes is gone in the
+        // only way that made it safe to close: the check that would have been
+        // falsely reported as passing is now actually running. Reading the card
+        // here while `enforce` could not see it would have recorded `approved`
+        // for a check that never ran — a false approval, indistinguishable from
+        // a real one — which is why this deliberately lagged.
+        //
+        // Still `has_contract` and not `is_clean`: an agent with neither home
+        // populated is `undetermined`, because "a control that almost never
+        // engages" and "a control that has never needed to fire" are different
+        // findings with different remedies.
+        let has_contract = grounding_trust::contracts_for(agent_slug).next().is_some()
+            || output_contract
+                .and_then(|oc| oc.get("grounding"))
+                .and_then(|g| g.as_object())
+                .is_some_and(|g| {
+                    // The compiled map carries its own `_provenance` siblings,
+                    // and a map of nothing but those declares no block. Same
+                    // filter `enforce_from_grounding_map` applies, for the same
+                    // reason: otherwise an empty contract reads as a contract
+                    // and the gate reports `approved` over no checked blocks.
+                    g.keys().any(|k| !k.ends_with("_provenance"))
+                });
         gate_trust::decided_for_episode(
             Gate::Grounding,
             if !has_contract {

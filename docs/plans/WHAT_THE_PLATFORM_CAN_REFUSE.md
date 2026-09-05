@@ -410,12 +410,114 @@ is Loop 2, which is starved because `anomaly_events` is its only input and most
 episodes raise nothing. That is the real ceiling on all of this and it is a much
 larger piece of work.
 
-### 4.6 Coverage
+### 4.6 Coverage — **the contracts existed; the execute path threw them away**
 
-26 of 42 grounding decisions are `undetermined` — agents with no contract at
-all. Enforcement on 15 typed agents while 100+ run ungoverned is a control with
-a very small blast radius. Coverage is a prerequisite for enforcement, not a
-consequence of it.
+26 of 42 grounding decisions were `undetermined` — which reads as *"agents with
+no contract at all"*, and that reading was wrong for ten of them.
+
+`Pulse::grade` took an `output_contract` argument and discarded it:
+
+```rust
+let _ = output_contract;
+let report = grounding_trust::enforce(agent_slug, doc);
+```
+
+Under a comment saying `enforce_from_output_contract` *"is in flight on another
+working tree and is not on `main`"*. It had been on `main` for some time, and
+`envelope::build` — the delegation hop — had been calling it all along.
+
+**Third instance of the same disease in this subsystem.** The stream's
+`AMENDS_LATER` exemption and the trace's "Question 3 has no gate" sentence were
+the other two. All three were true when written; all three were load-bearing
+after they stopped being true.
+
+And the cost was the familiar asymmetry, one layer up from §1: a compiled
+contract was enforced when another **agent** called the agent and ignored when a
+**person** did. `grounding_execute_coverage`'s own opening paragraph describes
+exactly this defect for the `FIELD_CONTRACTS` agents and fixes it there — ten
+more were in the same state through the card path, including two of the busiest
+on the platform.
+
+#### Where coverage actually stood
+
+| home | agents | enforced on execute, before |
+|---|---|---|
+| `FIELD_CONTRACTS` (per-field, Rust) | 11 | yes |
+| compiled card `output_contract.grounding` (per-block) | 10 more | **no** |
+| nothing | 81 | n/a |
+
+So it was 11 of 102, not 27, and the gap was a discarded argument rather than
+unwritten contracts.
+
+#### Blast radius, measured before wiring
+
+Across the ten card-only agents, 46 blocks:
+
+```
+sourced      24     stamp only
+inferred     14     stamp only
+narrative     7     no stamp at all
+unavailable   1     <- the only status that nulls anything
+```
+
+The one is `species_resolver.conservation`. Nine of the ten cannot lose a value
+to this change.
+
+#### It also fixes schema validity, which was the surprise
+
+These compiled contracts declare their `_provenance` siblings **required**, with
+an `enum` drawn from the platform's own vocabulary:
+
+```
+required:           [items, items_provenance, risks, risks_provenance, summary, summary_provenance]
+items_provenance:   enum [tool_verified, tool_no_match, unavailable_no_tool_source]
+```
+
+Only the stamper can legitimately write those — the platform's verdict
+overwrites whatever the model emitted. So while the seam was open the document
+was **necessarily invalid against its own declared schema**, three required
+properties absent on every pulse, and the execute path reported exactly that to
+nobody in particular. 39 required keys across nine agents were in that state.
+
+That makes this the rare coverage change with no trade: enforcement engages
+**and** schema validity improves, because the missing keys were the platform's
+to supply. `additionalProperties: false` on all ten made this worth checking
+before wiring rather than after — the stamps are only safe because the compiler
+emits the `_provenance` properties into the schema alongside them.
+
+#### `has_contract` moved with it, and had to
+
+The comment on it said: *"So it tracks `enforce`. When the compiled path lands
+here, this reads both, and the two lines move together."* They now do.
+
+The lag was deliberate and correct: reading the card while `enforce` could not
+apply it would have recorded `approved` for a check that never ran — a false
+approval, indistinguishable from a real one, which is worse than the
+three-state problem the block exists to solve. The hazard is gone in the only
+way that made it safe to close, which is that the check now actually runs.
+
+#### One contradiction this exposes, and does not fix
+
+`species_resolver.conservation` is declared `unavailable` in the grounding map
+and `{"const": "unavailable"}` in the schema — the *grounding status* leaked
+into the schema as the block's required **value**. Enforcement nulls the block;
+the schema then demands the literal string. The two checks cannot both pass.
+
+It is one card of 102, it is committed on `main`, and it is already happening at
+the delegation hop. Schema validation on execute **reports** rather than
+refuses (there is no `Gate::OutputSchema` on `agent.execute`), so the effect is
+a truthful `validation_status: "invalid"` naming the contradiction rather than a
+broken response. Left as found: the fix belongs to the sketch compiler, and
+special-casing it here would be a silent exemption.
+
+#### What is still uncovered
+
+81 agents have no contract in either home, and that is now the honest number.
+The per-field trace grain does not extend to the card path either —
+`graded_fields` reads `FIELD_CONTRACTS` only, so those ten agents get
+enforcement and a gate verdict but no per-field rows on the artifact trace. That
+is a real gap and a genuine design question (the card map is per-**block**; the
+trace is built around fields), deliberately not answered here.
 
 ## 5. The guards
 
@@ -441,6 +543,7 @@ consequence of it.
 | an episode decision cannot be recorded anonymously | the compiler — `decided_for_episode` takes `subject: &str` |
 | what reaches the queue names its agent and its fault | `gate_trust::tests::an_episode_decision_reaches_the_queue_naming_its_agent_and_its_fault` |
 | every `Recorded` gate records what it decided **about** | `gate_trust_coverage::every_recorded_gate_names_what_it_decided_about` |
+| a compiled card contract is enforced on execute, and its stamps satisfy the card's own schema | `grounding_execute_coverage::a_compiled_card_contract_is_enforced_and_satisfies_its_own_schema` |
 | that scan reads multi-line calls and fires on a real one | `gate_trust_coverage::the_pairing_sees_a_multiline_call_and_an_anonymous_recorded_write` |
 | question three names `completeness` and never `grounding` | `trace_verification_fold::the_question_with_no_gate_is_found_rather_than_named` |
 | the `no gate` note finds its subject instead of asserting one | same test |

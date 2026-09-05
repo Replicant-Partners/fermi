@@ -549,6 +549,184 @@ fn the_boundary_caller_scan_can_actually_fail() {
     );
 }
 
+/// **A compiled card contract is enforced on the execute path, and stamping it
+/// is what makes the document satisfy its own schema.**
+///
+/// # The seam that was open
+///
+/// `Pulse::grade` took an `output_contract` argument and discarded it:
+/// `let _ = output_contract;`, under a comment saying
+/// `enforce_from_output_contract` "is in flight on another working tree and is
+/// not on `main`". It had been on `main` for some time, and `envelope::build`
+/// — the delegation hop — had been calling it all along.
+///
+/// So this file's own opening paragraph applied again, one layer up. It
+/// describes five agents whose "output was checked when another agent called
+/// them and unchecked when a person did", and fixes that for the agents with a
+/// **`FIELD_CONTRACTS`** entry. Ten more were in exactly that state via the
+/// **card** path, including `simops_companion` (113 pulses) and
+/// `supply_chain_oracle` (83) — and all ten recorded `Gate::Grounding` as
+/// `undetermined`, meaning *no contract*, while carrying one the platform
+/// already knew how to apply.
+///
+/// # Why the schema is the assertion, not the provenance stamp
+///
+/// Asserting "a stamp appeared" would pass on a stamp of any value, and the
+/// interesting failure is a stamp the card's own schema rejects. These
+/// contracts declare their `_provenance` siblings **required**, with an `enum`
+/// drawn from the platform's own vocabulary:
+///
+/// ```text
+/// required:           [items, items_provenance, risks, risks_provenance, summary, summary_provenance]
+/// items_provenance:   enum [tool_verified, tool_no_match, unavailable_no_tool_source]
+/// ```
+///
+/// Only the stamper can legitimately write those, and the platform's verdict
+/// overwrites whatever the model emitted. So while the seam was open, the
+/// document was **necessarily invalid against its own declared schema** — three
+/// required properties absent on every pulse — and the execute path reported
+/// exactly that, to nobody in particular.
+///
+/// That makes this the rare coverage change with no trade: enforcement engages
+/// AND schema validity improves, because the missing keys were the platform's
+/// to supply.
+#[test]
+fn a_compiled_card_contract_is_enforced_and_satisfies_its_own_schema() {
+    let card: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/agents/curated/supply_chain_oracle/agent_card.json"
+        ))
+        .expect("supply_chain_oracle card"),
+    )
+    .expect("the card must parse");
+
+    let output_contract = card
+        .pointer("/capabilities/output_contract")
+        .expect("this agent's coverage comes from its compiled card contract");
+    let schema = output_contract
+        .get("schema")
+        .expect("the contract must declare a schema for this test to mean anything");
+
+    // Chosen because it is a real, busy, card-only agent with no `unavailable`
+    // block: the only thing enforcement can do here is stamp, so a failure is
+    // unambiguously about the seam and not about a strip.
+    assert!(
+        output_contract
+            .pointer("/grounding/items")
+            .and_then(|g| g.get("status"))
+            .and_then(|s| s.as_str())
+            == Some("sourced"),
+        "the fixture assumes `items` is a sourced block; the card changed and \
+         this test is now asserting something else"
+    );
+
+    // What the model returns: the three declared blocks, and none of the
+    // `_provenance` keys its schema requires. That absence is the point.
+    let raw = serde_json::json!({
+        "items": { "name": "ashwagandha root", "unit": "kg", "currency": "USD",
+                   "unit_cost": 12.5, "risk_flags": ["seasonal"] },
+        "risks": { "item": "ashwagandha root", "flag": "seasonal",
+                   "severity": "medium", "description": "monsoon-dependent harvest" },
+        "summary": { "currency": "USD", "total_bom_cost": 12.5,
+                     "oracle_note": "single supplier region" }
+    })
+    .to_string();
+
+    // The model's own document does not satisfy the contract it declares.
+    let before = fermi::schema_validate::validate(
+        schema,
+        &serde_json::from_str::<serde_json::Value>(&raw).unwrap(),
+    );
+    assert!(
+        !before.is_valid(),
+        "the fixture is supposed to be missing the required `_provenance` keys, \
+         so that the stamper is what supplies them. If this document is already \
+         valid the test proves nothing."
+    );
+
+    let pulse = fermi::episode_boundary::Pulse::after_the_fact(
+        uuid::Uuid::nil(),
+        "a card-contract coverage fixture",
+    );
+    let graded = pulse.grade("supply_chain_oracle", Some(output_contract), Some(&raw));
+
+    let enforced = graded
+        .enforced
+        .as_ref()
+        .expect("a parseable document must survive grading");
+
+    // The stamps the schema requires, with the values its enums allow.
+    assert_eq!(
+        enforced.get("items_provenance").and_then(|v| v.as_str()),
+        Some(fermi::grounding_trust::PROV_TOOL),
+        "a `sourced` block with content must be stamped `tool_verified`; the \
+         compiled path did not run, so `output_contract` is being discarded \
+         again"
+    );
+    assert_eq!(
+        enforced.get("risks_provenance").and_then(|v| v.as_str()),
+        Some(fermi::grounding_trust::PROV_INFERRED),
+        "an `inferred` block must be stamped `model_inference`"
+    );
+
+    // And the whole document now satisfies the schema it declares.
+    let after = fermi::schema_validate::validate(schema, enforced);
+    assert!(
+        after.is_valid(),
+        "the enforced document still fails its own declared schema: {:?}\n\
+         Enforcement and schema validation must not disagree — the execute path \
+         validates the ENFORCED document, so a stamp the schema rejects turns \
+         every pulse of this agent invalid.",
+        after
+            .violations
+            .iter()
+            .map(|v| format!("{}: {}", v.path, v.message))
+            .collect::<Vec<_>>()
+    );
+
+    // And the coverage claim itself: the gate now has an opinion.
+    //
+    // This is what `undetermined` meant on all ten of these agents — not "the
+    // gate looked and found nothing wrong" but "no contract, nothing to
+    // check". `has_contract` in `Pulse::grade` read only `FIELD_CONTRACTS`,
+    // so a card-only agent recorded no-contract on every pulse while its
+    // contract sat in the card being enforced at the delegation hop.
+    //
+    // Draining is safe here: every other test in this file is a source scan
+    // and none of them reaches a gate.
+    let queued = fermi::gate_trust::drain();
+    let grounding: Vec<_> = queued.iter().filter(|d| d.gate == "grounding").collect();
+    assert_eq!(
+        grounding.len(),
+        1,
+        "one graded document is one grounding decision; got {:?}",
+        queued.iter().map(|d| d.gate).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        grounding[0].decision, "approved",
+        "the gate recorded `{}` for an agent whose card carries a grounding \
+         map. `undetermined` here means NO CONTRACT, which is what all ten \
+         card-only agents reported while the seam was open — so `has_contract` \
+         is still reading only FIELD_CONTRACTS.",
+        grounding[0].decision
+    );
+    assert_eq!(
+        grounding[0].subject.as_deref(),
+        Some("supply_chain_oracle"),
+        "the decision must name the agent it was about, or the row cannot be \
+         reviewed"
+    );
+
+    // Nothing was stripped: no block here is `unavailable`.
+    assert!(
+        graded.report.violations.is_empty(),
+        "enforcement removed something from an agent whose contract declares no \
+         `unavailable` block: {:?}",
+        graded.report.refusal_reason()
+    );
+}
+
 #[test]
 fn the_scan_can_actually_fail() {
     let sentinel = "grounding_trust::enforce_a_call_that_does_not_exist";
