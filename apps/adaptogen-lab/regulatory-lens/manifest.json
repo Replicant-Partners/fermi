@@ -3,7 +3,7 @@
   "name": "Adaptogen Lab — Regulatory Lens Translator",
   "tagline": "Same product. Same composition. Rendered compliantly for three markets.",
   "owner_user_id": "sys",
-  "homepage_url": "https://kask.bio/projects/adaptogen-lab/regulatory-lens",
+  "homepage_url": "https://agent-bestiary.world/static/adaptogen-lab/index.html",
   "description": "The Regulatory Lens Translator takes a real product composition and renders it as a legitimately compliant label for the EU, US, and Chinese markets — showing not where one regime is stricter, but where regulatory philosophies actually differ. The educational content is the divergence itself: positive-list vs. risk-based vs. two-track categorical. Built on the same grounding architecture that prevents fabricated claims — the same honesty that stops a bad claim also produces a correctly different valid claim depending on where you're standing.\n\nSynthetic-but-structurally-representative rulesets. Verify against primary sources before commercial use. Japan and Korea named as roadmap lenses, not delivered in this build.",
   "composition_slug": "regulatory_lens_fleet",
   "schema_slug": "adaptogen-lab-regulatory/1",
@@ -96,7 +96,7 @@
     }
   },
   "auto_hire": ["regulatory_lens_translator"],
-  "visibility": "private",
+  "visibility": "public",
   "spawn_defaults": {
     "workspace_name": "Regulatory Lens — {product_name}",
     "initial_message": "I have the Precision Kombucha Hibiscus Cold F2 composition loaded. Which regulatory lens would you like to run first — EU, US, or China? Or ask me to run all three side by side and show you where they diverge."
