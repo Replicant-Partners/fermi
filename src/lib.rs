@@ -467,6 +467,11 @@ pub mod coordination_note;
 // binding as if it were a finding. Canonical implementation lives here so
 // the server can verify rather than transcribe.
 pub mod port_trust;
+// What a caller may rely on, in one token, derived from the verdicts the
+// gates already produced. The prerequisite for promoting any of them to a
+// Control: callers must already branch on this field before a refusal can
+// appear in it.
+pub mod reliance;
 pub mod route_trust;
 
 // Card-declared contracts — the typing and field-to-tool rules an agent

@@ -294,6 +294,86 @@ fn the_schema_is_checked_against_the_enforced_document() {
 /// The deltas remain raw and cannot be otherwise — a token is gone once
 /// yielded. `grounding.amended` on the terminal frame is how a client that
 /// concatenated them can tell it is holding the claim rather than the artifact.
+/// **Both HTTP execute routes must tell a caller what they may rely on, in the
+/// same word, from the same function.**
+///
+/// # What this closes
+///
+/// `WHAT_THE_PLATFORM_CAN_REFUSE.md` §4.1 says a refusal contract has to exist
+/// *before* anything is promoted to `Control`, because refusal introduced
+/// alongside the contract that describes it is refusal callers route around.
+///
+/// The response already carried the parts — the enforced `document`,
+/// `grounding.stripped`, `completeness.owed`, `validation.status` — and no
+/// conclusion. A caller asking *can I use this?* had to combine four
+/// vocabularies and reimplement the platform's own judgement, in a process we
+/// cannot inspect. `reliance::reliance` is the single producer; this asserts
+/// both routes read it rather than each deciding for itself.
+///
+/// # Why the derivation is asserted, not just the field
+///
+/// A route could emit `"reliance"` with a hand-rolled string and satisfy a
+/// naive scan while disagreeing with its own `grounding` block — which is
+/// exactly what the artifact trace did when it re-derived in JavaScript the
+/// gate it was drawing. So the call to the shared function is what is required.
+///
+/// The delegation hop is deliberately exempt: it has `payload_status` and a
+/// full envelope of its own, aimed at a composing agent rather than a person,
+/// and collapsing the two vocabularies is a separate decision from making the
+/// HTTP pair agree.
+#[test]
+fn both_http_execute_routes_report_the_same_reliance() {
+    const HTTP_ROUTES: &[&str] = &[
+        "src/handlers/execution.rs",
+        "src/handlers/execution_stream.rs",
+    ];
+
+    for file in HTTP_ROUTES {
+        let src = code(&read(file));
+        assert!(
+            src.contains("reliance::reliance("),
+            "{file} does not call `reliance::reliance`, so this route answers \
+             `can I use this?` differently from its sibling — or not at all. \
+             The pair has diverged twice already (the enforced body, then \
+             completeness) and both times the unchecked route became the one \
+             callers used."
+        );
+        assert!(
+            src.contains("\"reliance\""),
+            "{file} computes a reliance token and does not put it in the \
+             response. A verdict the caller cannot see is the same defect as a \
+             gate whose decision is discarded."
+        );
+        assert!(
+            src.contains("reliance::why("),
+            "{file} reports a reliance token without its legend. The reason \
+             belongs to the state, said once, keyed by the token the response \
+             carries — otherwise every consumer invents its own gloss."
+        );
+    }
+
+    // And nobody hand-rolls the vocabulary. A literal token in a handler is a
+    // second implementation of `reliance`, and the two disagree the moment the
+    // precedence changes.
+    for file in HTTP_ROUTES {
+        let src = code(&read(file));
+        // `"amended"` is deliberately absent: it is the NAME of the existing
+        // `grounding.amended` boolean, which predates this and says something
+        // narrower ("the body was repaired") than the reliance token does
+        // ("repair is the headline for this whole answer"). Banning it would
+        // fail on a field these routes are required to carry. The three below
+        // are reliance values and nothing else.
+        for token in ["\"unchecked\"", "\"malformed\"", "\"unusable\""] {
+            assert!(
+                !src.contains(token),
+                "{file} spells the reliance token {token} itself instead of \
+                 taking it from `reliance::reliance`. One producer, or the \
+                 response and the module drift."
+            );
+        }
+    }
+}
+
 #[test]
 fn every_route_that_grades_also_returns_what_grading_produced() {
     /// Routes that grade and cannot yet amend, with the reason. Empty, and it

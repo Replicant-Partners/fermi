@@ -111,14 +111,90 @@ sentence was false: something did stop the claims, and it was this gate.
 
 ## 4. What is still missing, in order
 
-### 4.1 A refusal contract for callers — *before* any refusal
+### 4.1 A refusal contract for callers — **the parts existed; the conclusion did not**
 
-If the platform refuses, the caller receives **what**? The delegation hop has an
-envelope — `payload_status`, `violations`, the partial payload. HTTP has none.
+If the platform refuses, the caller receives **what**? Without an answer to
+that, refusal converts a degraded answer into no answer, callers route around
+it, and a control people route around gets switched off. This has to exist
+before anything is promoted, not after.
 
-Without it, refusal converts a degraded answer into no answer, callers route
-around it, and a control people route around gets switched off. This has to
-exist before anything is promoted, not after.
+This section used to say *"the delegation hop has an envelope — `payload_status`,
+`violations`, the partial payload. HTTP has none."* That is no longer true, and
+the way it stopped being true is the point. The execute response now carries
+the enforced `document`, `grounding.stripped`, `completeness.owed`, and
+`validation.status` with its violations. There is plenty there.
+
+What there was not is **one thing to branch on**. A caller asking the only
+question a caller has — *can I use this answer?* — had to read four sub-objects
+in four vocabularies:
+
+```
+status              Success | Failed                     did the RUN finish
+validation.status   valid | invalid | unverified_*        does it match its type
+grounding.amended   bool, plus stripped[]                 did we remove fabrication
+completeness.owed   [{path, why}]                         did the agent skip work
+```
+
+…and then implement the platform's own judgement about how they combine.
+
+That is the defect this repository keeps finding in its own surfaces. The trace
+strip re-derived in JavaScript the gate it was drawing; the page computed
+question three from the values because no checkpoint computed it. Both were
+fixed by having **one** producer of the verdict and everything else read it. A
+caller recombining four fields is the same shape one process further out, where
+we cannot see them get it wrong — and cannot fix it when we change the
+precedence.
+
+#### `src/reliance.rs`
+
+One derived token, worst-first, declared in the order it is evaluated so the
+vocabulary and the precedence cannot drift:
+
+| token | means |
+|---|---|
+| `unusable` | no structured document at all — prose, or nothing |
+| `malformed` | a document that contradicts the type the agent declared |
+| `amended` | the platform removed values no tool could have supplied |
+| `incomplete` | the agent did not fill fields it was asked for |
+| `unchecked` | a document, and **no contract was applied** — not a pass |
+| `clean` | applied, nothing stripped, nothing owed, matches its type |
+
+Derived from the verdicts the route already computed, never recomputed, so it
+cannot disagree with the blocks it summarises. Both HTTP routes call the same
+function and carry `reliance.status` plus `reliance.why` — the sentence said
+once, keyed by the token, rather than glossed by each consumer.
+
+Three of these rankings are arguable and so they are argued in the module:
+
+- **`amended` outranks `incomplete`** because an absent field is a gap while an
+  invented one is evidence about the model, and a caller may reasonably trust
+  the rest of *that* document less.
+- **`malformed` outranks `amended`** because a caller that planned its parse
+  around `produces_schema` is already wrong, which is worse than a missing value.
+- **`unverified_*` does not lower reliance at all.** Most cards declare no
+  schema; a token that read "nothing was checked" as a fault would report
+  almost the whole corpus as malformed and be switched off within a day. Absent
+  must look different from bad.
+
+#### There is deliberately no `refused`
+
+A refusal envelope with no refusal behind it would be a claim that the platform
+can refuse, which is false. Inventing the shape now is precisely how the three
+stale claims in this subsystem got written — the same defect wearing optimism
+instead of age.
+
+`the_vocabulary_has_no_refusal_it_cannot_emit` holds the line, and it is keyed
+to the ladder rather than to prose: it reads `command_registry` for the three
+gates `reliance` summarises (`grounding`, `completeness`, `output_schema`) and
+fails the moment one of them starts refusing. `credit`, `rate_limit` and
+`attachment` are excluded because they are already `Control` and always will be
+— they refuse before there is an answer, so the caller gets a status code and no
+body to carry a token.
+
+So the promotion sequence is now: add `refused` to `RELIANCE`, delete that
+assertion, and change the enforcement rung — in one commit. Callers are already
+branching on the field before the value appears in it, which is the whole of
+what this section was asking for.
 
 ### 4.2 A measured false-positive rate — **the door was not the missing piece**
 
@@ -544,6 +620,10 @@ trace is built around fields), deliberately not answered here.
 | what reaches the queue names its agent and its fault | `gate_trust::tests::an_episode_decision_reaches_the_queue_naming_its_agent_and_its_fault` |
 | every `Recorded` gate records what it decided **about** | `gate_trust_coverage::every_recorded_gate_names_what_it_decided_about` |
 | a compiled card contract is enforced on execute, and its stamps satisfy the card's own schema | `grounding_execute_coverage::a_compiled_card_contract_is_enforced_and_satisfies_its_own_schema` |
+| both HTTP execute routes report the same reliance, from the same function | `execute_path_parity::both_http_execute_routes_report_the_same_reliance` |
+| the reliance vocabulary promises no refusal the platform cannot make | `reliance::tests::the_vocabulary_has_no_refusal_it_cannot_emit` |
+| when several readings are true, the caller is told the worst | `reliance::tests::the_worst_available_reading_wins` |
+| nothing checked is not the same as checked and wrong | `reliance::tests::nothing_checked_is_not_the_same_as_checked_and_wrong` |
 | that scan reads multi-line calls and fires on a real one | `gate_trust_coverage::the_pairing_sees_a_multiline_call_and_an_anonymous_recorded_write` |
 | question three names `completeness` and never `grounding` | `trace_verification_fold::the_question_with_no_gate_is_found_rather_than_named` |
 | the `no gate` note finds its subject instead of asserting one | same test |

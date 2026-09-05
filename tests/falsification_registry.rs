@@ -819,6 +819,48 @@ const FALSIFICATIONS: &[Falsification] = &[
                  cannot express that one, because no input makes a correct \
                  implementation forget to name a path.",
     },
+    Falsification {
+        check: "reliance::reliance",
+        owner: "src/reliance.rs",
+        // Permissive reading: "this answer can be relied on as-is."
+        passes: || {
+            let clean = fermi::grounding_trust::Report::default();
+            fermi::reliance::reliance(fermi::reliance::Answer {
+                document: true,
+                contract_applied: true,
+                report: &clean,
+                completeness: None,
+                validation: "valid",
+            }) == "clean"
+        },
+        fires: || {
+            let stripped = fermi::grounding_trust::Report {
+                violations: vec![fermi::grounding_trust::Violation {
+                    path: "genome.ploidy".into(),
+                    removed: serde_json::json!("diploid"),
+                    kind: fermi::grounding_trust::ViolationKind::UngroundedField,
+                }],
+                provenance: vec![],
+            };
+            fermi::reliance::reliance(fermi::reliance::Answer {
+                document: true,
+                contract_applied: true,
+                report: &stripped,
+                completeness: None,
+                validation: "valid",
+            }) == "clean"
+        },
+        models: "The execute endpoint returned the raw model text — fabrication \
+                 included — for the whole life of the route, while the enforced \
+                 document sat beside it and was used only to check a schema. A \
+                 repaired answer reading as a clean one is that defect moved \
+                 into the summary: the caller is told it may rely on a document \
+                 the platform had to take values out of. `unchecked` is the \
+                 same argument on the other axis — 81 of 102 agents have no \
+                 contract in either home, and reporting silence as consent \
+                 would tell every one of their callers the answer had passed \
+                 something.",
+    },
     // ── native_evaluators ───────────────────────────────────────────────
     Falsification {
         check: "native_evaluators::Verdict::is_failing",
@@ -2187,6 +2229,14 @@ const EXEMPT: &[(&str, &str)] = &[
          above with the tests that answer it.",
     ),
     (
+        "reliance::why",
+        "A lookup over the `RELIANCE` const table — it returns the sentence \
+         stored beside a token and weighs no evidence, the same argument as \
+         `grounding_trust::kind`. That every token HAS one, that no two share a \
+         name, and that each is reachable through this function are asserted \
+         directly by `reliance::tests::every_token_is_unique_and_explained`.",
+    ),
+    (
         "grounding_trust::id",
         "`ViolationKind::id` is a total mapping from three variants to three \
          tokens, one arm each, and the compiler rejects a missing one — the \
@@ -2558,6 +2608,7 @@ const TRUST_MODULES: &[&str] = &[
     "artifact_trace",
     "artifact_hash",
     "surface",
+    "reliance",
 ];
 
 // ── assertions ──────────────────────────────────────────────────────────

@@ -873,9 +873,41 @@ pub async fn execute_agent_handler(
     }
 
     // 8. Return result
+    // One token for the only question a caller has: can I use this?
+    //
+    // Derived from the verdicts already computed above — never recomputed — so
+    // it cannot disagree with the `grounding`, `completeness` and `validation`
+    // blocks it summarises. Before this, answering that question meant reading
+    // four sub-objects in four vocabularies and reimplementing the platform's
+    // judgement about how they combine, in a process we cannot see.
+    let reliance = fermi::reliance::reliance(fermi::reliance::Answer {
+        document: graded.enforced.is_some(),
+        contract_applied: fermi::grounding_trust::contracts_for(&db_agent.agent_name)
+            .next()
+            .is_some()
+            || card
+                .capabilities
+                .output_contract
+                .as_ref()
+                .and_then(|oc| oc.get("grounding"))
+                .and_then(|g| g.as_object())
+                .is_some_and(|g| g.keys().any(|k| !k.ends_with("_provenance"))),
+        report: &graded.report,
+        completeness: Some(&completeness),
+        validation: validation_status,
+    });
+
     Ok(Json(json!({
         "agent_id": agent_id,
         "stored_episode_id": stored_episode_id,
+        // What may be relied on, and why, said once. `status` above is whether
+        // the RUN finished; this is whether the ANSWER can be used, and the two
+        // are independent — a successful run routinely returns an amended
+        // document.
+        "reliance": {
+            "status": reliance,
+            "why": fermi::reliance::why(reliance),
+        },
         "status": format!("{:?}", output.status),
         "confidence": output.confidence,
         "execution_time_ms": output.execution_time_ms,

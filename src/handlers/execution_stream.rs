@@ -333,6 +333,12 @@ pub async fn execute_agent_stream_handler(
                 // pins an unsourceable field cannot reject a document grounding
                 // was about to clean, and the agent cannot be blamed for
                 // something the platform fixed.
+                // Hoisted out of the block below rather than recomputed at the
+                // terminal frame. `reliance` needs this token, and a second
+                // `schema_validate::validate` call would be a second opinion
+                // that can disagree with the one the gate recorded — which is
+                // the defect the trace strip was fixed for, inside one handler.
+                let validation_status: &'static str;
                 {
                     let doc = graded.enforced.as_ref();
                     let schema = declared_output_contract
@@ -380,6 +386,7 @@ pub async fn execute_agent_stream_handler(
                         )
                         .await;
                     }
+                    validation_status = status;
                 }
                 // Verify the asking against the card — see execution.rs. Both
                 // execute endpoints must check, or the unchecked one becomes
@@ -690,7 +697,30 @@ pub async fn execute_agent_stream_handler(
                     .iter()
                     .map(|v| v.path.as_str())
                     .collect();
+                // The same token its sibling returns, from the same function.
+                // These two routes have diverged twice — once on the enforced
+                // body, once on completeness — and both times the unchecked one
+                // became the one callers used. `execute_path_parity` holds it.
+                let reliance = fermi::reliance::reliance(fermi::reliance::Answer {
+                    document: graded.enforced.is_some(),
+                    contract_applied: fermi::grounding_trust::contracts_for(&agent_name)
+                        .next()
+                        .is_some()
+                        || declared_output_contract
+                            .as_ref()
+                            .and_then(|oc| oc.get("grounding"))
+                            .and_then(|g| g.as_object())
+                            .is_some_and(|g| g.keys().any(|k| !k.ends_with("_provenance"))),
+                    report: &graded.report,
+                    completeness: Some(&completeness),
+                    validation: validation_status,
+                });
+
                 let response = json!({
+                    "reliance": {
+                        "status": reliance,
+                        "why": fermi::reliance::why(reliance),
+                    },
                     "agent_id": output.agent_name,
                     "confidence": output.confidence,
                     "credits_charged": total_charged,
