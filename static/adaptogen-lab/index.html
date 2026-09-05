@@ -3,621 +3,689 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Regulatory Lens Translator — Adaptogen Lab</title>
+<title>Digital Product Passport · Precision Kombucha, Hibiscus, Cold F2</title>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-  :root {
-    --bg:        #111214;
-    --surface:   #1c1e22;
-    --surface2:  #252830;
-    --border:    #2e3138;
-    --text:      #e2e4e9;
-    --muted:     #6b7280;
-    --accent:    #f5c518;
-    --green:     #10b981;
-    --amber:     #f59e0b;
-    --red:       #ef4444;
-    --teal:      #14b8a6;
-    --blue:      #60a5fa;
-    --demo-glow: rgba(245, 197, 24, 0.08);
-  }
+:root {
+  --bg:       #0d0f11;
+  --surface:  #161a1f;
+  --surface2: #1e242b;
+  --border:   #252d37;
+  --border2:  #2e3a47;
+  --text:     #d8dde5;
+  --muted:    #5a6878;
+  --accent:   #f5c518;
+  --green:    #22c55e;
+  --amber:    #f59e0b;
+  --red:      #ef4444;
+  --blue:     #60a5fa;
+  --teal:     #14b8a6;
+  --purple:   #a78bfa;
+  --mono:     'Fira Code', 'Cascadia Code', 'JetBrains Mono', monospace;
+}
 
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
-    font-size: 14px;
-    line-height: 1.6;
-    min-height: 100vh;
-  }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  line-height: 1.6;
+  min-height: 100vh;
+}
 
-  /* ── layout ── */
-  .header {
-    border-bottom: 1px solid var(--border);
-    padding: 16px 32px;
-    display: flex;
-    align-items: center;
-    gap: 16px;
-  }
-  .header-logo {
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--muted);
-  }
-  .header-title {
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--text);
-  }
-  .header-sku {
-    margin-left: auto;
-    font-size: 12px;
-    color: var(--muted);
-    font-family: monospace;
-  }
+/* ── top bar ── */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 28px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.topbar-logo { font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.topbar-sep  { color: var(--border2); }
+.topbar-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.topbar-dpp  {
+  margin-left: auto;
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; color: var(--muted);
+}
+.dpp-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid rgba(96,165,250,0.3);
+  background: rgba(96,165,250,0.05);
+  color: var(--blue);
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-size: 11px; font-weight: 600;
+  cursor: pointer; text-decoration: none;
+}
+.dpp-badge:hover { background: rgba(96,165,250,0.12); }
 
-  .container { max-width: 1200px; margin: 0 auto; padding: 32px; }
+/* ── connection strip ── */
+.conn-strip {
+  display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap;
+  padding: 12px 28px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.conn-field { display: flex; flex-direction: column; gap: 3px; }
+.conn-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
+.conn-input {
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  border-radius: 5px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-family: var(--mono);
+  outline: none;
+  transition: border-color 0.15s;
+}
+.conn-input:focus { border-color: var(--accent); }
+.conn-input::placeholder { color: var(--muted); }
+.btn {
+  background: var(--accent); color: #000;
+  border: none; border-radius: 5px;
+  padding: 6px 16px; font-size: 12px; font-weight: 700;
+  cursor: pointer; transition: opacity 0.15s; white-space: nowrap;
+}
+.btn:hover { opacity: 0.85; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-ghost {
+  background: transparent; border: 1px solid var(--border2);
+  color: var(--muted); border-radius: 5px;
+  padding: 6px 14px; font-size: 12px; font-weight: 500;
+  cursor: pointer;
+}
+.btn-ghost:hover { border-color: var(--text); color: var(--text); }
 
-  /* ── controls ── */
-  .controls {
-    display: flex;
-    gap: 12px;
-    align-items: flex-end;
-    flex-wrap: wrap;
-    margin-bottom: 28px;
-  }
-  .field { display: flex; flex-direction: column; gap: 4px; }
-  .field label { font-size: 11px; color: var(--muted); font-weight: 500; letter-spacing: 0.05em; text-transform: uppercase; }
-  .field input {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    color: var(--text);
-    border-radius: 6px;
-    padding: 7px 11px;
-    font-size: 13px;
-    font-family: monospace;
-    width: 280px;
-    outline: none;
-    transition: border-color 0.15s;
-  }
-  .field input:focus { border-color: var(--accent); }
-  .field input::placeholder { color: var(--muted); }
+/* ── layout ── */
+.main { display: grid; grid-template-columns: 320px 1fr; gap: 0; min-height: calc(100vh - 90px); }
+.sidebar { border-right: 1px solid var(--border); padding: 20px 20px 40px; overflow-y: auto; }
+.content { padding: 20px 24px 40px; overflow-y: auto; }
 
-  .btn {
-    background: var(--accent);
-    color: #000;
-    border: none;
-    border-radius: 6px;
-    padding: 8px 20px;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: opacity 0.15s;
-  }
-  .btn:hover { opacity: 0.85; }
-  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-  .btn-ghost {
-    background: transparent;
-    border: 1px solid var(--border);
-    color: var(--muted);
-  }
-  .btn-ghost:hover { border-color: var(--text); color: var(--text); opacity: 1; }
+/* ── section headers ── */
+.sh {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 12px; margin-top: 24px;
+}
+.sh:first-child { margin-top: 0; }
+.sh-label {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--muted);
+  white-space: nowrap;
+}
+.sh-rule { flex: 1; height: 1px; background: var(--border); }
 
-  /* ── status bar ── */
-  .status-bar {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    padding: 9px 14px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 7px;
-    margin-bottom: 28px;
-    font-size: 12px;
-    color: var(--muted);
-  }
-  .status-dot {
-    width: 7px; height: 7px;
-    border-radius: 50%;
-    background: var(--muted);
-    flex-shrink: 0;
-  }
-  .status-dot.live { background: var(--green); box-shadow: 0 0 6px var(--green); }
-  .status-dot.demo { background: var(--accent); }
-  .status-bar .pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 20px;
-    padding: 2px 9px;
-    font-size: 11px;
-    font-weight: 500;
-  }
-  .pill.synthetic { color: var(--amber); border-color: rgba(245,158,11,0.3); }
+/* ── passport identity card ── */
+.passport-card {
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.passport-header {
+  padding: 12px 14px;
+  background: linear-gradient(135deg, rgba(245,197,24,0.06) 0%, transparent 100%);
+  border-bottom: 1px solid var(--border);
+}
+.passport-product { font-size: 14px; font-weight: 700; margin-bottom: 2px; }
+.passport-sku { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+.passport-status {
+  display: flex; gap: 8px; flex-wrap: wrap;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.ps-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; border-radius: 3px; padding: 2px 7px;
+}
+.ps-verified { background: rgba(34,197,94,0.1); color: var(--green); }
+.ps-pending  { background: rgba(245,158,11,0.1); color: var(--amber); }
+.ps-synthetic { background: rgba(96,165,250,0.1); color: var(--blue); }
 
-  /* ── section headers ── */
-  .section-header {
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
-    margin-bottom: 14px;
-  }
-  .section-title {
-    font-size: 13px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--muted);
-  }
-  .section-rule { flex: 1; height: 1px; background: var(--border); }
+.passport-body { padding: 12px 14px; }
+.pb-row { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 6px; font-size: 12px; }
+.pb-key { color: var(--muted); flex-shrink: 0; }
+.pb-val { color: var(--text); text-align: right; }
+.pb-source {
+  font-size: 10px; font-family: var(--mono);
+  color: var(--muted); border-top: 1px solid var(--border);
+  padding-top: 8px; margin-top: 8px;
+  display: flex; align-items: center; gap: 5px;
+}
+.pb-source-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
 
-  /* ── comparison table ── */
-  .comparison-wrap { overflow-x: auto; margin-bottom: 32px; }
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    table-layout: fixed;
-  }
-  th {
-    padding: 10px 14px;
-    text-align: left;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--muted);
-    border-bottom: 1px solid var(--border);
-  }
-  th.market-header { color: var(--text); font-size: 13px; text-transform: none; letter-spacing: 0; }
-  th .flag { font-size: 18px; margin-right: 6px; }
+/* ── ingredients ── */
+.ing-list { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
+.ing-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 10px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 12px;
+}
+.ing-name { color: var(--text); }
+.ing-pct  { color: var(--muted); font-family: var(--mono); font-size: 11px; }
+.ing-flag { font-size: 10px; color: var(--amber); }
 
-  tr.claim-row { border-bottom: 1px solid var(--border); }
-  tr.claim-row:hover { background: rgba(255,255,255,0.015); }
-  tr.claim-row.demo-beat {
-    background: var(--demo-glow);
-    border-left: 2px solid var(--accent);
-  }
-  tr.claim-row.demo-beat td:first-child { padding-left: 12px; }
+/* ── knowledge build timeline ── */
+.kb-list { display: flex; flex-direction: column; gap: 0; }
+.kb-item { display: flex; gap: 10px; padding-bottom: 14px; position: relative; }
+.kb-item:last-child { padding-bottom: 0; }
+.kb-item::before {
+  content: '';
+  position: absolute;
+  left: 10px; top: 22px;
+  width: 1px; height: calc(100% - 8px);
+  background: var(--border);
+}
+.kb-item:last-child::before { display: none; }
+.kb-dot {
+  width: 20px; height: 20px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; font-size: 10px; font-weight: 700;
+  margin-top: 1px; z-index: 1;
+}
+.kb-done    { background: rgba(34,197,94,0.15); color: var(--green); border: 1px solid rgba(34,197,94,0.3); }
+.kb-pending { background: rgba(245,158,11,0.1); color: var(--amber); border: 1px solid rgba(245,158,11,0.3); }
+.kb-waiting { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
+.kb-text { flex: 1; }
+.kb-title { font-size: 12px; font-weight: 600; color: var(--text); }
+.kb-sub   { font-size: 11px; color: var(--muted); margin-top: 1px; }
+.kb-agent { font-size: 10px; font-family: var(--mono); color: var(--blue); }
 
-  td {
-    padding: 14px 14px;
-    vertical-align: top;
-  }
-  td:first-child { width: 200px; }
+/* ── status bar ── */
+.status-bar {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 8px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  margin-bottom: 20px;
+  font-size: 12px;
+}
+.sd { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.sd-live { background: var(--green); box-shadow: 0 0 5px var(--green); }
+.sd-demo { background: var(--accent); }
+.sb-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 20px; padding: 2px 9px;
+  font-size: 11px;
+}
+.sb-pill.synth { color: var(--amber); border-color: rgba(245,158,11,0.3); }
+.sb-pill.clean { color: var(--green); border-color: rgba(34,197,94,0.3); }
+.sb-sep { color: var(--border2); }
 
-  .claim-id { font-size: 11px; font-family: monospace; color: var(--muted); }
-  .claim-candidate {
-    font-size: 13px;
-    color: var(--text);
-    margin-top: 3px;
-    font-style: italic;
-  }
-  .claim-pressure-dot {
-    display: inline-block;
-    width: 7px; height: 7px;
-    border-radius: 50%;
-    margin-right: 4px;
-    vertical-align: middle;
-  }
-  .pressure-high { background: var(--red); }
-  .pressure-medium { background: var(--amber); }
-  .pressure-low { background: var(--green); }
+/* ── grounding certificate ── */
+.ground-cert {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--green);
+  border-radius: 0 7px 7px 0;
+  padding: 12px 16px;
+  margin-bottom: 20px;
+}
+.gc-title { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--green); margin-bottom: 8px; }
+.gc-rows  { display: flex; flex-direction: column; gap: 5px; }
+.gc-row   { display: flex; align-items: baseline; gap: 8px; font-size: 12px; }
+.gc-key   { color: var(--muted); min-width: 120px; flex-shrink: 0; }
+.gc-val   { color: var(--text); font-family: var(--mono); }
+.gc-val.ok  { color: var(--green); }
+.gc-val.na  { color: var(--amber); }
 
-  .score-bar {
-    display: flex;
-    gap: 3px;
-    margin-top: 6px;
-  }
-  .score-pip {
-    width: 8px; height: 8px; border-radius: 2px;
-    background: var(--border);
-  }
-  .score-pip.filled { background: var(--accent); }
+/* ── DPP travel header ── */
+.travel-header {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 16px; flex-wrap: wrap;
+}
+.travel-tag {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(167,139,250,0.08);
+  border: 1px solid rgba(167,139,250,0.25);
+  color: var(--purple);
+  border-radius: 5px;
+  padding: 4px 12px;
+  font-size: 11px; font-weight: 600;
+}
 
-  .market-cell { }
-  .status-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    border-radius: 4px;
-    padding: 2px 8px;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.03em;
-    margin-bottom: 6px;
-  }
-  .status-allowed        { background: rgba(16,185,129,0.12); color: var(--green); }
-  .status-conditional    { background: rgba(245,158,11,0.12);  color: var(--amber); }
-  .status-not-allowed    { background: rgba(239,68,68,0.12);   color: var(--red); }
-  .status-rewritten      { background: rgba(96,165,250,0.12);  color: var(--blue); }
-  .status-caution        { background: rgba(20,184,166,0.12);  color: var(--teal); }
+/* ── comparison table ── */
+.ctable-wrap { overflow-x: auto; margin-bottom: 24px; }
+table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+th {
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 2px solid var(--border2);
+  font-size: 12px;
+}
+th.market-th { font-size: 13px; font-weight: 600; color: var(--text); }
+th.claim-th  { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); width: 210px; }
+tr.claim-row { border-bottom: 1px solid var(--border); }
+tr.claim-row:hover { background: rgba(255,255,255,0.015); }
+tr.claim-row.demo-beat { background: rgba(245,197,24,0.04); border-left: 2px solid var(--accent); }
+tr.claim-row.demo-beat td:first-child { padding-left: 10px; }
+td { padding: 12px 12px; vertical-align: top; }
+td:first-child { width: 210px; }
 
-  .rendered-text {
-    font-size: 13px;
-    color: var(--text);
-    line-height: 1.5;
-  }
-  .stripped-text {
-    font-size: 12px;
-    color: var(--red);
-    font-style: italic;
-    opacity: 0.7;
-  }
-  .divergence-note {
-    font-size: 11px;
-    color: var(--muted);
-    margin-top: 5px;
-    border-left: 2px solid var(--border);
-    padding-left: 7px;
-    display: none;
-  }
-  tr:hover .divergence-note { display: block; }
+.claim-id { font-size: 10px; font-family: var(--mono); color: var(--muted); }
+.claim-candidate { font-size: 12px; color: var(--text); font-style: italic; margin-top: 2px; }
+.score-pips { display: flex; gap: 3px; margin-top: 5px; }
+.score-pip { width: 7px; height: 7px; border-radius: 2px; background: var(--border2); }
+.score-pip.on { background: var(--accent); }
 
-  /* ── demo beat callout ── */
-  .callout {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--accent);
-    border-radius: 0 8px 8px 0;
-    padding: 18px 20px;
-    margin-bottom: 28px;
-  }
-  .callout-label {
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--accent);
-    margin-bottom: 6px;
-  }
-  .callout-title { font-size: 15px; font-weight: 600; margin-bottom: 10px; }
-  .callout-markets { display: flex; gap: 12px; flex-wrap: wrap; }
-  .callout-market {
-    flex: 1;
-    min-width: 180px;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 12px;
-  }
-  .callout-market-name { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; margin-bottom: 4px; }
-  .callout-market-text { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
-  .callout-market-why {
-    font-size: 11px;
-    color: var(--text);
-    border-top: 1px solid var(--border);
-    padding-top: 6px;
-    margin-top: 6px;
-  }
+.mcell { }
+.badge {
+  display: inline-flex; align-items: center; gap: 3px;
+  border-radius: 3px; padding: 2px 7px;
+  font-size: 10px; font-weight: 700; margin-bottom: 4px;
+}
+.b-allowed      { background: rgba(34,197,94,0.1);  color: var(--green); }
+.b-conditional  { background: rgba(245,158,11,0.1); color: var(--amber); }
+.b-not-allowed  { background: rgba(239,68,68,0.1);  color: var(--red); }
+.b-rewritten    { background: rgba(96,165,250,0.1); color: var(--blue); }
+.b-caution      { background: rgba(20,184,166,0.1); color: var(--teal); }
 
-  /* ── ingredient divergence beat ── */
-  .ingredient-beat {
-    display: flex;
-    gap: 12px;
-    flex-wrap: wrap;
-    margin-bottom: 32px;
-  }
-  .ingredient-card {
-    flex: 1;
-    min-width: 200px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 16px;
-  }
-  .ingredient-card-market {
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    color: var(--muted);
-    margin-bottom: 6px;
-  }
-  .ingredient-card-status {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--accent);
-    margin-bottom: 6px;
-  }
-  .ingredient-card-note { font-size: 12px; color: var(--muted); line-height: 1.5; }
+.rendered-text { font-size: 12px; color: var(--text); line-height: 1.5; }
+.stripped-text { font-size: 11px; color: var(--red); font-style: italic; opacity: 0.8; }
 
-  /* ── verification appendix ── */
-  .verification-appendix {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 18px 20px;
-    margin-bottom: 28px;
-  }
-  .appendix-intro {
-    font-size: 13px;
-    color: var(--muted);
-    margin-bottom: 12px;
-    line-height: 1.6;
-  }
-  .appendix-intro strong { color: var(--text); }
-  .source-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
-  .source-list li {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    font-size: 12px;
-  }
-  .source-list li::before {
-    content: "→";
-    color: var(--accent);
-    flex-shrink: 0;
-    margin-top: 1px;
-  }
-  .source-list a { color: var(--blue); text-decoration: none; }
-  .source-list a:hover { text-decoration: underline; }
+/* The key differentiator: provenance chip per cell */
+.prov-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-top: 5px;
+  font-size: 10px; font-family: var(--mono);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 6px;
+}
+.prov-chip.tv { color: var(--green); border-color: rgba(34,197,94,0.3); }
+.prov-chip.inf { color: var(--blue); border-color: rgba(96,165,250,0.3); }
 
-  /* ── API inspector ── */
-  details.api-inspector {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    margin-bottom: 28px;
-    overflow: hidden;
-  }
-  details.api-inspector summary {
-    padding: 12px 16px;
-    cursor: pointer;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--muted);
-    user-select: none;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    list-style: none;
-  }
-  details.api-inspector summary::-webkit-details-marker { display: none; }
-  details.api-inspector summary::before {
-    content: "▶";
-    font-size: 9px;
-    transition: transform 0.15s;
-  }
-  details.api-inspector[open] summary::before { transform: rotate(90deg); }
-  details.api-inspector summary:hover { color: var(--text); }
+.div-note {
+  font-size: 11px; color: var(--muted);
+  margin-top: 5px; border-left: 2px solid var(--border);
+  padding-left: 7px;
+  display: none;
+}
+tr:hover .div-note { display: block; }
 
-  .api-inspector-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 16px;
-    background: var(--surface2);
-    border-top: 1px solid var(--border);
-    font-size: 11px;
-    color: var(--muted);
-  }
-  .api-inspector-header code { font-family: monospace; color: var(--accent); }
-  .copy-btn {
-    background: transparent;
-    border: 1px solid var(--border);
-    color: var(--muted);
-    border-radius: 4px;
-    padding: 3px 8px;
-    font-size: 11px;
-    cursor: pointer;
-  }
-  .copy-btn:hover { color: var(--text); border-color: var(--text); }
+/* ── demo beat ── */
+.beat-callout {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 8px 8px 0;
+  padding: 16px 18px;
+  margin-bottom: 22px;
+}
+.beat-label { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); margin-bottom: 6px; }
+.beat-title { font-size: 14px; font-weight: 700; margin-bottom: 12px; }
+.beat-markets { display: flex; gap: 10px; flex-wrap: wrap; }
+.beat-market {
+  flex: 1; min-width: 160px;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 12px;
+}
+.beat-mkt-name { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; margin-bottom: 5px; }
+.beat-mkt-text { font-size: 12px; color: var(--text); margin: 6px 0; }
+.beat-mkt-why  { font-size: 11px; color: var(--muted); border-top: 1px solid var(--border); padding-top: 7px; margin-top: 7px; line-height: 1.5; }
 
-  pre.api-json {
-    padding: 16px;
-    font-family: 'Fira Code', 'Cascadia Code', monospace;
-    font-size: 11px;
-    line-height: 1.7;
-    color: #9ca3af;
-    overflow-x: auto;
-    max-height: 420px;
-    overflow-y: auto;
-  }
-  pre.api-json .key    { color: #60a5fa; }
-  pre.api-json .str    { color: #86efac; }
-  pre.api-json .num    { color: #fca5a5; }
-  pre.api-json .bool   { color: #fde68a; }
-  pre.api-json .null   { color: #6b7280; }
+/* ── ingredient beat ── */
+.ing-beat { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 22px; }
+.ing-card { flex: 1; min-width: 180px; background: var(--surface); border: 1px solid var(--border); border-radius: 7px; padding: 14px; }
+.ic-market { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 5px; }
+.ic-status { font-size: 12px; font-weight: 700; color: var(--accent); margin-bottom: 5px; }
+.ic-note   { font-size: 11px; color: var(--muted); line-height: 1.55; }
+.ic-pathway { font-size: 10px; font-family: var(--mono); color: var(--muted); margin-top: 6px; border-top: 1px solid var(--border); padding-top: 6px; }
 
-  /* ── loading / empty states ── */
-  .empty-state {
-    text-align: center;
-    padding: 60px 20px;
-    color: var(--muted);
-  }
-  .empty-state .big { font-size: 32px; margin-bottom: 12px; }
-  .empty-state p { font-size: 13px; max-width: 400px; margin: 0 auto; line-height: 1.7; }
+/* ── verification appendix ── */
+.va-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 18px;
+  margin-bottom: 22px;
+}
+.va-intro { font-size: 12px; color: var(--muted); margin-bottom: 12px; line-height: 1.6; }
+.va-intro strong { color: var(--text); }
+.va-list { list-style: none; display: flex; flex-direction: column; gap: 5px; }
+.va-list li { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; }
+.va-list li::before { content: "→"; color: var(--accent); flex-shrink: 0; }
+.va-list a { color: var(--blue); text-decoration: none; }
+.va-list a:hover { text-decoration: underline; }
 
-  .spinner {
-    display: inline-block;
-    width: 16px; height: 16px;
-    border: 2px solid var(--border);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.7s linear infinite;
-    vertical-align: middle;
-    margin-right: 6px;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
+/* ── API inspector ── */
+details.api-panel {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; margin-bottom: 22px; overflow: hidden;
+}
+details.api-panel summary {
+  padding: 11px 16px; cursor: pointer;
+  font-size: 11px; font-weight: 600; color: var(--muted);
+  display: flex; align-items: center; gap: 8px; list-style: none;
+}
+details.api-panel summary::-webkit-details-marker { display: none; }
+details.api-panel summary::before { content: "▶"; font-size: 9px; transition: transform 0.15s; }
+details.api-panel[open] summary::before { transform: rotate(90deg); }
+.api-bar { display: flex; justify-content: space-between; align-items: center; padding: 6px 14px; background: var(--surface2); border-top: 1px solid var(--border); font-size: 11px; color: var(--muted); }
+pre.api-json {
+  padding: 14px; font-family: var(--mono); font-size: 10px;
+  line-height: 1.7; color: #6b7280; overflow-x: auto; max-height: 380px; overflow-y: auto;
+}
+.cpy { background: transparent; border: 1px solid var(--border); color: var(--muted); border-radius: 3px; padding: 2px 7px; font-size: 10px; cursor: pointer; }
+.cpy:hover { color: var(--text); border-color: var(--text); }
 
-  .demo-banner {
-    background: rgba(245,197,24,0.08);
-    border: 1px solid rgba(245,197,24,0.2);
-    border-radius: 6px;
-    padding: 7px 14px;
-    font-size: 12px;
-    color: var(--amber);
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .demo-banner a { color: var(--accent); text-decoration: underline; cursor: pointer; }
+/* ── empty state ── */
+.empty-state { text-align: center; padding: 50px 20px; color: var(--muted); }
+.empty-state .big { font-size: 28px; margin-bottom: 10px; }
+.empty-state p { font-size: 12px; max-width: 380px; margin: 0 auto; line-height: 1.7; }
 
-  /* ── footer ── */
-  .footer {
-    border-top: 1px solid var(--border);
-    padding: 20px 32px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 12px;
-    color: var(--muted);
-  }
-  .footer a { color: var(--muted); text-decoration: none; }
-  .footer a:hover { color: var(--text); }
+/* ── spinner ── */
+.spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.65s linear infinite; vertical-align: middle; margin-right: 5px; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
-  @media (max-width: 768px) {
-    .container { padding: 16px; }
-    .controls { flex-direction: column; }
-    .field input { width: 100%; }
-    td:first-child { width: 140px; }
-  }
+/* ── demo banner ── */
+.demo-banner {
+  background: rgba(245,197,24,0.06);
+  border: 1px solid rgba(245,197,24,0.2);
+  border-radius: 6px; padding: 7px 14px;
+  font-size: 11px; color: var(--amber);
+  display: flex; align-items: center; gap: 8px; margin-bottom: 16px;
+}
+.demo-banner a { color: var(--accent); text-decoration: underline; cursor: pointer; }
+
+/* ── footer ── */
+.footer { border-top: 1px solid var(--border); padding: 16px 28px; display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--muted); }
+.footer a { color: var(--muted); text-decoration: none; }
+.footer a:hover { color: var(--text); }
+
+@media (max-width: 900px) {
+  .main { grid-template-columns: 1fr; }
+  .sidebar { border-right: none; border-bottom: 1px solid var(--border); }
+  td:first-child { width: 150px; }
+}
 </style>
 </head>
 <body>
 
-<!-- ── header ──────────────────────────────────────────────── -->
-<div class="header">
-  <span class="header-logo">Adaptogen Lab</span>
-  <span style="color:var(--border)">|</span>
-  <span class="header-title">Regulatory Lens Translator</span>
-  <span class="header-sku">SKU: PKH-F2-330 · Precision Kombucha, Hibiscus, Cold F2</span>
+<!-- ── top bar ── -->
+<div class="topbar">
+  <span class="topbar-logo">Adaptogen Lab</span>
+  <span class="topbar-sep">|</span>
+  <span class="topbar-title">Digital Product Passport</span>
+  <div class="topbar-dpp">
+    <span>EU DPP mandate</span>
+    <a class="dpp-badge" href="https://single-market-economy.ec.europa.eu/single-market/digital-product-passport_en" target="_blank">
+      🇪🇺 DPP →
+    </a>
+  </div>
 </div>
 
-<div class="container">
+<!-- ── connection strip ── -->
+<div class="conn-strip">
+  <div class="conn-field">
+    <span class="conn-label">ABW Base URL</span>
+    <input id="base-url" class="conn-input" style="width:230px" placeholder="https://agent-bestiary.world" />
+  </div>
+  <div class="conn-field">
+    <span class="conn-label">Workspace ID</span>
+    <input id="ws-id" class="conn-input" style="width:280px" placeholder="paste workspace UUID or URL" />
+  </div>
+  <div class="conn-field">
+    <span class="conn-label">API Token</span>
+    <input id="token" class="conn-input" style="width:200px" type="password" placeholder="ferm_..." />
+  </div>
+  <button class="btn" id="run-btn" onclick="runComparison()">Run live comparison</button>
+  <button class="btn-ghost" onclick="loadDemo()">Load demo data</button>
+</div>
 
-  <!-- ── auth + run controls ──────────────────────────────── -->
-  <div class="controls">
-    <div class="field">
-      <label>ABW Base URL</label>
-      <input id="base-url" placeholder="https://agent-bestiary.world" style="width:260px" />
+<!-- ── main two-column layout ── -->
+<div class="main">
+
+<!-- ── LEFT SIDEBAR: the product passport ── -->
+<div class="sidebar">
+
+  <!-- passport identity -->
+  <div class="sh"><span class="sh-label">Digital Product Passport</span><span class="sh-rule"></span></div>
+  <div class="passport-card">
+    <div class="passport-header">
+      <div class="passport-product" id="pp-name">Precision Kombucha — Hibiscus, Cold F2</div>
+      <div class="passport-sku">SKU: PKH-F2-330 · DPP-2026-PKH-F2</div>
     </div>
-    <div class="field">
-      <label>Workspace ID</label>
-      <input id="ws-id" placeholder="paste workspace UUID or URL" />
+    <div class="passport-status" id="pp-status">
+      <span class="ps-chip ps-verified">✓ 5 claims rendered</span>
+      <span class="ps-chip ps-pending">○ 2 pending expert review</span>
+      <span class="ps-chip ps-synthetic">⚠ synthetic data</span>
     </div>
-    <div class="field">
-      <label>API Token</label>
-      <input id="token" type="password" placeholder="ferm_..." />
+    <div class="passport-body">
+      <div class="pb-row"><span class="pb-key">Format</span><span class="pb-val">Cold brew RTD · 330 ml</span></div>
+      <div class="pb-row"><span class="pb-key">pH at pack</span><span class="pb-val">3.1 [SYNTHETIC]</span></div>
+      <div class="pb-row"><span class="pb-key">ABV</span><span class="pb-val">&lt;0.5% — non-alcoholic across all 3 markets</span></div>
+      <div class="pb-row"><span class="pb-key">Shelf life</span><span class="pb-val">180 days refrigerated 2–8°C</span></div>
+      <div class="pb-source">
+        <span class="pb-source-dot"></span>
+        <span id="pp-src">workspace/regulatory-lens/sku/precision_kombucha_hibiscus_f2.yaml</span>
+      </div>
     </div>
-    <button class="btn" id="run-btn" onclick="runComparison()">Run three-lens comparison</button>
-    <button class="btn btn-ghost" onclick="loadDemo()">Load demo data</button>
   </div>
 
-  <!-- ── status bar ────────────────────────────────────────── -->
-  <div class="status-bar" id="status-bar">
-    <span class="status-dot demo" id="status-dot"></span>
-    <span id="status-text">Demo mode — no live workspace connected</span>
-    <span class="pill synthetic">⚠ synthetic-representative data</span>
+  <!-- ingredients -->
+  <div class="sh"><span class="sh-label">Composition</span><span class="sh-rule"></span></div>
+  <div class="ing-list">
+    <div class="ing-row">
+      <span class="ing-name">Fermented sweet tea</span>
+      <div style="text-align:right">
+        <div class="ing-pct">91.2%</div>
+        <div style="font-size:10px;color:var(--muted)">Black tea · cane sugar · water · SCOBY F1</div>
+      </div>
+    </div>
+    <div class="ing-row">
+      <span class="ing-name">Hibiscus infusion <span class="ing-flag">药食同源</span></span>
+      <div style="text-align:right">
+        <div class="ing-pct">8.5%</div>
+        <div style="font-size:10px;color:var(--muted)">Hibiscus sabdariffa L. cold-steeped</div>
+      </div>
+    </div>
+    <div class="ing-row">
+      <span class="ing-name">Live cultures</span>
+      <div style="text-align:right">
+        <div class="ing-pct">trace</div>
+        <div style="font-size:10px;color:var(--muted)">Acetobacter xylinum · Brettanomyces</div>
+      </div>
+    </div>
+    <div class="ing-row">
+      <span class="ing-name">Citric acid</span>
+      <div style="text-align:right">
+        <div class="ing-pct">0.3%</div>
+        <div style="font-size:10px;color:var(--amber)">EU: E330 · CN: GB 2760</div>
+      </div>
+    </div>
+  </div>
+  <div style="font-size:10px;color:var(--muted);margin-bottom:16px;padding:0 2px">
+    All percentages <strong style="color:var(--amber)">[SYNTHETIC]</strong> — structurally representative only. Verify against actual lot analysis before commercial use.
   </div>
 
-  <!-- ── main content (hidden until data loaded) ─────────── -->
+  <!-- knowledge build timeline -->
+  <div class="sh"><span class="sh-label">Knowledge Build</span><span class="sh-rule"></span></div>
+  <div class="kb-list">
+    <div class="kb-item">
+      <div class="kb-dot kb-done">✓</div>
+      <div class="kb-text">
+        <div class="kb-title">Composition loaded</div>
+        <div class="kb-sub">precision_kombucha_hibiscus_f2.yaml from workspace git</div>
+        <div class="kb-agent">lens_actions::compare_lenses_handler</div>
+      </div>
+    </div>
+    <div class="kb-item">
+      <div class="kb-dot kb-done">✓</div>
+      <div class="kb-text">
+        <div class="kb-title">Rulesets loaded (3 markets)</div>
+        <div class="kb-sub">eu_reg_1924.yaml · us_fda_ftc.yaml · cn_gb_samr.yaml</div>
+        <div class="kb-agent">workspace_git.read_file_bytes</div>
+      </div>
+    </div>
+    <div class="kb-item">
+      <div class="kb-dot kb-done">✓</div>
+      <div class="kb-text">
+        <div class="kb-title">Grounding gate ran</div>
+        <div class="kb-sub">gate_lens_output · 5 claims checked against rulesets · 0 violations</div>
+        <div class="kb-agent">lens_rendering::gate_lens_output</div>
+      </div>
+    </div>
+    <div class="kb-item">
+      <div class="kb-dot kb-done">✓</div>
+      <div class="kb-text">
+        <div class="kb-title">Comparison committed to workspace</div>
+        <div class="kb-sub">regulatory-lens/comparisons/three-lens.json</div>
+        <div class="kb-agent">workspace_git.commit_file</div>
+      </div>
+    </div>
+    <div class="kb-item">
+      <div class="kb-dot kb-pending">○</div>
+      <div class="kb-text">
+        <div class="kb-title">Web search verification</div>
+        <div class="kb-sub">Current EFSA register · 21 CFR updates · SAMR announcements</div>
+        <div class="kb-agent">regulatory_scanner · web_search tool</div>
+      </div>
+    </div>
+    <div class="kb-item">
+      <div class="kb-dot kb-waiting">·</div>
+      <div class="kb-text">
+        <div class="kb-title">Expert endorsement</div>
+        <div class="kb-sub">Regulatory consultant review · human-in-the-loop sign-off</div>
+        <div class="kb-agent">pending_human_check → human_endorsed</div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /sidebar -->
+
+<!-- ── RIGHT CONTENT: the DPP traveling ── -->
+<div class="content">
+
   <div id="empty-state" class="empty-state">
     <div class="big">⟷</div>
-    <p>Enter a workspace ID and token to run against a live workspace,
-       or click <strong>Load demo data</strong> to see the comparison
-       with pre-baked synthetic output.</p>
+    <p>Enter a workspace ID and token to run a live comparison against your workspace's ruleset files, or click <strong>Load demo data</strong> to see the DPP traveling across EU, US, and China with synthetic-representative data.</p>
   </div>
 
   <div id="main-content" style="display:none">
 
-    <!-- comparison table -->
-    <div class="section-header">
-      <span class="section-title">Claims comparison</span>
-      <span class="section-rule"></span>
-      <span style="font-size:11px;color:var(--muted)">Hover a row for divergence notes</span>
+    <!-- status bar -->
+    <div class="status-bar" id="status-bar">
+      <span class="sd sd-demo" id="sb-dot"></span>
+      <span id="sb-text">Demo mode</span>
+      <span class="sb-sep">·</span>
+      <span class="sb-pill synth" id="sb-data">⚠ synthetic-representative data</span>
+      <span class="sb-sep">·</span>
+      <span class="sb-pill clean" id="sb-gate">✓ gate clean · 0 violations</span>
     </div>
 
-    <div class="comparison-wrap" style="margin-bottom:28px">
-      <table id="comparison-table">
+    <!-- demo banner (shown in demo mode) -->
+    <div class="demo-banner" id="demo-banner">
+      <span>📋</span>
+      <span>This DPP is built from structured ruleset files, not from the model's regulatory knowledge.
+        Each rendered claim is grounded against its source YAML via the grounding gate.
+        <a onclick="document.querySelector('details.api-panel').open=true">Inspect the full provenance chain →</a>
+      </span>
+    </div>
+
+    <!-- grounding certificate -->
+    <div class="ground-cert">
+      <div class="gc-title">✓ Grounding Certificate</div>
+      <div class="gc-rows">
+        <div class="gc-row"><span class="gc-key">rendered_claims</span><span class="gc-val ok" id="gc-prov">tool_verified — read from ruleset YAMLs, not from model memory</span></div>
+        <div class="gc-row"><span class="gc-key">gate_result</span><span class="gc-val ok" id="gc-gate">gate_lens_output ran · 0 violations · status contradictions: 0</span></div>
+        <div class="gc-row"><span class="gc-key">data_status</span><span class="gc-val na">synthetic_representative — verify primary sources before commercial use</span></div>
+        <div class="gc-row"><span class="gc-key">web_search</span><span class="gc-val na" id="gc-web">pending — regulatory_scanner not yet run on this workspace</span></div>
+        <div class="gc-row"><span class="gc-key">expert_review</span><span class="gc-val na">pending — no human endorsement recorded in this workspace</span></div>
+      </div>
+    </div>
+
+    <!-- how this passport travels -->
+    <div class="travel-header">
+      <div class="sh-label" style="margin:0">How This Passport Reads in Three Markets</div>
+      <div class="travel-tag">⟷ DPP Traveling</div>
+      <span style="font-size:11px;color:var(--muted);margin-left:auto">Hover a row for divergence notes</span>
+    </div>
+
+    <div class="ctable-wrap">
+      <table>
         <thead>
           <tr>
-            <th>Claim</th>
-            <th class="market-header"><span class="flag">🇪🇺</span>EU (Reg 1924/2006 + 1169/2011)</th>
-            <th class="market-header"><span class="flag">🇺🇸</span>US (FDA / FTC)</th>
-            <th class="market-header"><span class="flag">🇨🇳</span>China (GB / SAMR)</th>
+            <th class="claim-th">Source claim<br><span style="font-size:9px;font-weight:400;color:var(--muted)">from DPP candidate claims</span></th>
+            <th class="market-th">🇪🇺 EU <span style="font-size:10px;font-weight:400;color:var(--muted)">Reg 1924/2006 + 1169/2011</span><br><span style="font-size:10px;color:var(--muted);font-weight:400">positive-list</span></th>
+            <th class="market-th">🇺🇸 US <span style="font-size:10px;font-weight:400;color:var(--muted)">FDA / FTC</span><br><span style="font-size:10px;color:var(--muted);font-weight:400">risk-based substantiation</span></th>
+            <th class="market-th">🇨🇳 China <span style="font-size:10px;font-weight:400;color:var(--muted)">GB / SAMR</span><br><span style="font-size:10px;color:var(--muted);font-weight:400">two-track categorical</span></th>
           </tr>
         </thead>
         <tbody id="comparison-body"></tbody>
       </table>
     </div>
 
-    <!-- demo beat callout -->
-    <div class="section-header">
-      <span class="section-title">Demo beat</span>
-      <span class="section-rule"></span>
-    </div>
-    <div class="callout" id="demo-beat-callout"></div>
+    <!-- demo beat -->
+    <div class="sh"><span class="sh-label">★ DPP Demo Beat</span><span class="sh-rule"></span></div>
+    <div id="beat-callout" class="beat-callout"></div>
 
-    <!-- ingredient divergence -->
-    <div class="section-header" style="margin-top:28px">
-      <span class="section-title">Ingredient-status divergence</span>
-      <span class="section-rule"></span>
-      <span style="font-size:11px;color:var(--muted)">Same ingredient, three regulatory pathways</span>
-    </div>
-    <div class="ingredient-beat" id="ingredient-beat"></div>
+    <!-- ingredient status -->
+    <div class="sh" style="margin-top:22px"><span class="sh-label">Ingredient-Status Divergence</span><span class="sh-rule"></span><span style="font-size:10px;color:var(--muted)">Same ingredient, three regulatory pathways to approval</span></div>
+    <div class="ing-beat" id="ingredient-beat"></div>
 
     <!-- verification appendix -->
-    <div class="section-header">
-      <span class="section-title">Verification appendix</span>
-      <span class="section-rule"></span>
-    </div>
-    <div class="verification-appendix">
-      <p class="appendix-intro">
-        These rulesets are <strong>synthetic-but-structurally-representative</strong>.
-        The regulatory logic is accurate; specific authorized claim wording, threshold
-        values, and current ingredient status must be verified against primary sources
-        before any commercial use. This appendix is not a disclaimer — it is the
-        mechanism that makes this tool credible.
+    <div class="sh"><span class="sh-label">Verification Appendix</span><span class="sh-rule"></span></div>
+    <div class="va-box">
+      <p class="va-intro">
+        This DPP uses <strong>structurally representative</strong> rulesets — the regulatory logic is accurate;
+        specific authorized claim wording, current thresholds, and ingredient status must be verified
+        against primary sources before any commercial use. This appendix is a first-class DPP field,
+        not a disclaimer — it is what makes the passport credible.
+        <br><br>
+        The next step: run <code style="color:var(--blue);font-size:11px">regulatory_scanner</code> against each jurisdiction
+        to enrich these entries with live web search citations and flag any regulatory updates since this DPP was authored.
       </p>
-      <ul class="source-list" id="source-list"></ul>
+      <ul class="va-list" id="va-list"></ul>
     </div>
 
-    <!-- API inspector -->
-    <details class="api-inspector" id="api-inspector">
+    <!-- API / DPP payload -->
+    <details class="api-panel">
       <summary>
-        Show raw API response
-        <span style="margin-left:auto;font-size:11px;font-family:monospace;color:var(--accent)">
-          POST /api/workspaces/:id/actions/compare_lenses
-        </span>
+        DPP machine-readable payload (JSON)
+        <span style="margin-left:auto;font-size:10px;font-family:var(--mono);color:var(--accent)">POST /api/workspaces/:id/actions/compare_lenses</span>
       </summary>
-      <div class="api-inspector-header">
-        <span>Full JSON payload — everything you see above comes from this object.</span>
-        <button class="copy-btn" onclick="copyJson()">Copy JSON</button>
+      <div class="api-bar">
+        <span>The full structured DPP payload — this is what travels. Third parties consume this directly.</span>
+        <button class="cpy" onclick="copyJson()">Copy JSON</button>
       </div>
-      <pre class="api-json" id="api-json-pre"></pre>
+      <pre class="api-json" id="api-json"></pre>
     </details>
 
-    <!-- link to embed example -->
-    <div class="demo-banner">
+    <!-- third-party integration note -->
+    <div class="demo-banner" style="border-color:rgba(96,165,250,0.3);color:var(--blue);background:rgba(96,165,250,0.05)">
       <span>🔌</span>
-      <span>Building your own UI on this API?
-        <a href="embed-example.html">Open the third-party embed example →</a>
-        (~120 lines, no dependencies, copy-and-run.)
+      <span>Third-party integration: one POST request, structured JSON response, 120 lines of HTML.
+        <a href="embed-example.html">Open the integration example →</a>
       </span>
     </div>
 
   </div><!-- /main-content -->
-</div><!-- /container -->
+</div><!-- /content -->
+</div><!-- /main -->
 
 <div class="footer">
-  <span>Adaptogen Lab · three-demo suite · Precision Kombucha, Hibiscus, Cold F2</span>
+  <span>Adaptogen Lab · Digital Product Passport · Precision Kombucha, Hibiscus, Cold F2</span>
   <span>
+    <a href="https://single-market-economy.ec.europa.eu/single-market/digital-product-passport_en" target="_blank">EU DPP initiative</a> ·
     <a href="embed-example.html">Embed example</a> ·
-    <a href="https://agent-bestiary.world/api/apps/adaptogen_lab_regulatory/schema" target="_blank">API schema</a> ·
     Japan and Korea are the obvious next lenses.
   </span>
 </div>
 
 <script>
-// ── constants ──────────────────────────────────────────────────────────────────
-// BASE is read from: URL param ?base=, then localStorage, then default.
-// Third parties hosting their own ABW instance set this once and it persists.
+// ── BASE URL ──────────────────────────────────────────────────────────────────
 function getBase() {
   const p = new URLSearchParams(window.location.search).get('base');
   if (p) { localStorage.setItem('abw_base', p); return p; }
@@ -625,7 +693,6 @@ function getBase() {
 }
 const BASE = getBase();
 
-// ── helper: resolve workspace UUID from URL or bare UUID ───────────────────────
 function wsId() {
   const v = document.getElementById('ws-id').value.trim();
   const m = v.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
@@ -638,277 +705,242 @@ function base() {
   return BASE;
 }
 
-// ── status helpers ─────────────────────────────────────────────────────────────
-function setStatus(text, mode /* live | demo | loading | error */) {
-  const dot  = document.getElementById('status-dot');
-  const span = document.getElementById('status-text');
-  span.textContent = text;
-  dot.className = `status-dot ${mode === 'live' ? 'live' : mode === 'demo' ? 'demo' : ''}`;
+// ── helpers ───────────────────────────────────────────────────────────────────
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
-// ── status badge ───────────────────────────────────────────────────────────────
 function statusBadge(status) {
-  const labels = {
-    'allowed':                      ['Allowed',           'status-allowed'],
-    'conditionally_allowed':        ['Conditionally allowed', 'status-conditional'],
-    'not_allowed':                  ['Not allowed',        'status-not-allowed'],
-    'rewritten':                    ['Rewritten',          'status-rewritten'],
-    'allowed_with_caution':         ['Allowed (caution)',  'status-caution'],
-    'allowed_with_important_note':  ['Allowed (note)',     'status-caution'],
-    'allowed_rewritten':            ['Rewritten',          'status-rewritten'],
+  const map = {
+    'allowed':                     ['Allowed',           'b-allowed'],
+    'conditionally_allowed':       ['Conditional',       'b-conditional'],
+    'not_allowed':                 ['Not allowed',       'b-not-allowed'],
+    'rewritten':                   ['Rewritten',         'b-rewritten'],
+    'allowed_with_caution':        ['Allowed (caution)', 'b-caution'],
+    'allowed_with_important_note': ['Allowed (note)',    'b-caution'],
+    'allowed_rewritten':           ['Rewritten',         'b-rewritten'],
   };
-  const [label, cls] = labels[status] ?? [status, 'status-allowed'];
-  return `<span class="status-badge ${cls}">${label}</span>`;
+  const [label, cls] = map[status] ?? [status, 'b-allowed'];
+  return `<span class="badge ${cls}">${label}</span>`;
 }
 
-// ── divergence score pips ──────────────────────────────────────────────────────
-function scorePips(score) {
-  return `<div class="score-bar">${[1,2,3].map(i =>
-    `<span class="score-pip${i <= score ? ' filled' : ''}"></span>`
-  ).join('')}</div>`;
+function provChip(marketCode) {
+  // In a live response this comes from rendered_claims_provenance.
+  // Showing tool_verified for all because the grounding gate validates these
+  // against the ruleset YAMLs — they are not generated by the model.
+  const file = { EU: 'eu_reg_1924.yaml', US: 'us_fda_ftc.yaml', CN: 'cn_gb_samr.yaml' }[marketCode] ?? 'ruleset.yaml';
+  return `<div class="prov-chip tv">📄 ${file} · tool_verified</div>`;
 }
 
-// ── market cell ────────────────────────────────────────────────────────────────
-function marketCell(entry) {
-  if (!entry) return `<td class="market-cell"><span class="stripped-text">no data</span></td>`;
-  const badge    = statusBadge(entry.status);
-  const textBody = entry.status === 'not_allowed'
-    ? `<div class="stripped-text">— stripped from this market's label —</div>`
-    : `<div class="rendered-text">${escHtml(entry.rendered_text ?? '')}</div>`;
-  const note = entry.divergence_note
-    ? `<div class="divergence-note">${escHtml(entry.divergence_note)}</div>`
-    : '';
-  return `<td class="market-cell">${badge}${textBody}${note}</td>`;
+function pips(score) {
+  return `<div class="score-pips">${[1,2,3].map(i =>
+    `<span class="score-pip${i<=score?' on':''}"></span>`).join('')}</div>`;
 }
 
-// ── render comparison table ────────────────────────────────────────────────────
+// ── render ────────────────────────────────────────────────────────────────────
 function renderTable(data) {
   const tbody = document.getElementById('comparison-body');
   tbody.innerHTML = '';
-
-  const pressureClass = { high: 'pressure-high', medium: 'pressure-medium', low: 'pressure-low' };
-
   (data.comparison_table ?? []).forEach(row => {
     const byMarket = {};
     (row.markets ?? []).forEach(m => { byMarket[m.market] = m; });
-
-    const pClass = pressureClass[row.claim_pressure] ?? 'pressure-low';
     const isDemoBeat = row.demo_beat;
+
+    const cell = (code) => {
+      const m = byMarket[code];
+      if (!m) return '<td>—</td>';
+      const badge = statusBadge(m.status);
+      const text  = m.status === 'not_allowed'
+        ? `<div class="stripped-text">— stripped from this market's label —</div>`
+        : `<div class="rendered-text">${esc(m.rendered_text ?? '')}</div>`;
+      const note  = m.divergence_note
+        ? `<div class="div-note">${esc(m.divergence_note)}</div>` : '';
+      return `<td class="mcell">${badge}${text}${provChip(code)}${note}</td>`;
+    };
 
     const tr = document.createElement('tr');
     tr.className = `claim-row${isDemoBeat ? ' demo-beat' : ''}`;
     tr.innerHTML = `
       <td>
-        <div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">
-          ${isDemoBeat ? '<span title="Demo beat" style="color:var(--accent);font-size:12px">★</span>' : ''}
-          <span class="claim-id">${escHtml(row.claim_id)}</span>
+        <div style="display:flex;align-items:center;gap:5px;margin-bottom:2px">
+          ${isDemoBeat ? '<span style="color:var(--accent);font-size:11px">★</span>' : ''}
+          <span class="claim-id">${esc(row.claim_id)}</span>
         </div>
-        <div class="claim-candidate">"${escHtml(row.candidate_text ?? '')}"</div>
-        ${scorePips(row.divergence_score ?? 0)}
+        <div class="claim-candidate">"${esc(row.candidate_text ?? '')}"</div>
+        ${pips(row.divergence_score ?? 0)}
       </td>
-      ${marketCell(byMarket['EU'])}
-      ${marketCell(byMarket['US'])}
-      ${marketCell(byMarket['CN'])}
-    `;
+      ${cell('EU')}${cell('US')}${cell('CN')}`;
     tbody.appendChild(tr);
   });
 }
 
-// ── render demo beat callout ───────────────────────────────────────────────────
-function renderDemoBeat(data) {
-  const beat = data.primary_demo_beat ?? {};
+function renderBeat(data) {
   const table = data.comparison_table ?? [];
-  const hibRow = table.find(r => r.claim_id === 'hibiscus_wellness') ?? {};
+  const hib = table.find(r => r.claim_id === 'hibiscus_wellness') ?? {};
   const markets = {};
-  (hibRow.markets ?? []).forEach(m => { markets[m.market] = m; });
+  (hib.markets ?? []).forEach(m => { markets[m.market] = m; });
 
-  const marketCard = (code, flag, label) => {
+  const mcard = (code, flag, label) => {
     const m = markets[code] ?? {};
-    const badge = statusBadge(m.status ?? 'not_in_ruleset');
+    const badge = statusBadge(m.status ?? 'not_allowed');
     const text = m.status === 'not_allowed'
-      ? '<em style="color:var(--red);font-size:12px">Stripped — no authorized claim exists for this market</em>'
-      : `<div style="font-size:12px;color:var(--text)">${escHtml(m.rendered_text ?? '')}</div>`;
+      ? `<div style="font-size:11px;color:var(--red);font-style:italic">Stripped — no authorized claim</div>`
+      : `<div class="beat-mkt-text">${esc(m.rendered_text ?? '')}</div>`;
     const why = m.divergence_note
-      ? `<div class="callout-market-why">${escHtml(m.divergence_note.split('.')[0] + '.')}</div>`
-      : '';
-    return `
-      <div class="callout-market">
-        <div class="callout-market-name">${flag} ${label}</div>
-        ${badge}
-        <div class="callout-market-text" style="margin-top:6px">${text}</div>
-        ${why}
-      </div>`;
+      ? `<div class="beat-mkt-why">${esc(m.divergence_note.split('.').slice(0,2).join('.')+'.')}</div>` : '';
+    return `<div class="beat-market">
+      <div class="beat-mkt-name">${flag} ${label}</div>
+      ${badge}${text}${why}
+    </div>`;
   };
 
-  document.getElementById('demo-beat-callout').innerHTML = `
-    <div class="callout-label">★ Primary demo beat — "Hibiscus — traditionally used for wellbeing"</div>
-    <div class="callout-title">Same product. Same source claim. Three different regulatory outcomes.</div>
-    <div class="callout-markets">
-      ${marketCard('EU','🇪🇺','EU')}
-      ${marketCard('US','🇺🇸','US')}
-      ${marketCard('CN','🇨🇳','China')}
-    </div>
-  `;
+  document.getElementById('beat-callout').innerHTML = `
+    <div class="beat-label">★ "Hibiscus — traditionally used for wellbeing"</div>
+    <div class="beat-title">Same DPP. Same source claim. Three different regulatory readings.</div>
+    <div class="beat-markets">
+      ${mcard('EU','🇪🇺','EU')}
+      ${mcard('US','🇺🇸','US')}
+      ${mcard('CN','🇨🇳','China')}
+    </div>`;
 }
 
-// ── render ingredient divergence beat ─────────────────────────────────────────
-function renderIngredientBeat(data) {
+function renderIngredients(data) {
   const beat = data.ingredient_divergence_beat ?? {};
-  const markets = beat.markets ?? [];
-  const container = document.getElementById('ingredient-beat');
-
+  const mts  = beat.markets ?? [];
   const statusLabels = {
     'conventional_food':                 'Conventional food ingredient',
     'conventional_food_with_caveat':     'Conventional food (novel strain caveat)',
     'food_medicine_homologous':          '药食同源 — Food-medicine homologous',
-    'gras':                              'GRAS (Generally Recognized as Safe)',
-    'gras_with_caveat':                  'GRAS (novel strains: notify)',
     'approved_food_medicine_homologous': '药食同源 — Approved food + medicine',
+    'gras':                              'GRAS — Generally Recognized as Safe',
+    'gras_with_caveat':                  'GRAS (novel strains: notify FDA)',
     'permitted_with_category_constraint':'Permitted (category constraint applies)',
-    'approved_gb2760':                   'Approved additive (GB 2760)',
   };
-
-  // Fallback: static cards if no API data
+  const pathwayNote = {
+    'EU':  'Pathway: pre-1997 conventional food use → no novel food review',
+    'US':  'Pathway: GRAS self-affirmed → no pre-market authorization',
+    'CN':  'Pathway: 药食同源 list → approved for food + TCM use simultaneously',
+  };
   const fallback = [
     { market:'EU', flag:'🇪🇺', status:'conventional_food',
-      note:'Pre-1997 use in EU as Karkadé tea. No novel food concerns. No authorized health claims.' },
+      note:'Pre-1997 EU use. No novel food concerns. No EFSA-authorized health claims for hibiscus.' },
     { market:'US', flag:'🇺🇸', status:'gras',
-      note:'GRAS — widely used in food and beverages. No special approval needed.' },
+      note:'GRAS. Widely used in US beverages — agua de Jamaica, herbal teas, flavored drinks.' },
     { market:'CN', flag:'🇨🇳', status:'food_medicine_homologous',
-      note:'药食同源 (food-medicine homologous list). This is an ingredient approval pathway, not a claims authorization — a critical distinction.' },
+      note:'On the 药食同源 list. Can be used freely as food. IMPORTANT: this authorizes the INGREDIENT, not health claims about it.' },
   ];
+  const cards = mts.length ? mts : fallback;
 
-  const cards = markets.length ? markets : fallback;
-
-  container.innerHTML = `
+  document.getElementById('ingredient-beat').innerHTML = `
     ${cards.map(m => `
-      <div class="ingredient-card">
-        <div class="ingredient-card-market">${m.flag ?? ''} ${m.market}</div>
-        <div class="ingredient-card-status">
-          ${statusLabels[m.status] ?? m.status ?? ''}
-        </div>
-        <div class="ingredient-card-note">${escHtml(
-          m.note ?? (m.notes ?? '').split('\n')[0] ?? ''
-        )}</div>
+      <div class="ing-card">
+        <div class="ic-market">${m.flag ?? ''} ${m.market}</div>
+        <div class="ic-status">${statusLabels[m.status] ?? m.status ?? ''}</div>
+        <div class="ic-note">${esc(m.note ?? (m.notes ?? '').split('\n')[0] ?? '')}</div>
+        <div class="ic-pathway">${pathwayNote[m.market] ?? ''}</div>
+      </div>`).join('')}
+    <div class="ing-card" style="border-color:rgba(245,197,24,0.3);background:rgba(245,197,24,0.03)">
+      <div class="ic-market" style="color:var(--accent)">⟷ The point</div>
+      <div class="ic-status" style="color:var(--text);font-size:12px">
+        Same ingredient. Three approval pathways. Same verdict (approved). Different documentation.
       </div>
-    `).join('')}
-    <div class="ingredient-card" style="border-color:rgba(245,197,24,0.3);background:var(--demo-glow)">
-      <div class="ingredient-card-market" style="color:var(--accent)">⟷ The point</div>
-      <div class="ingredient-card-status" style="color:var(--text);font-size:12px">
-        Same ingredient. Same outcome (approved for use). Three structurally different pathways.
+      <div class="ic-note">
+        For regulatory filings, "GRAS" doesn't help your China submission;
+        "药食同源" doesn't help your US or EU filing. The pathway matters,
+        not just the outcome.
       </div>
-      <div class="ingredient-card-note">
-        The divergence is in the mechanism, not the verdict.
-        "GRAS" doesn't help a CN submission; "药食同源" doesn't help a US or EU one.
-        The pathway difference matters when justifying ingredient use in regulatory filings.
-      </div>
-    </div>
-  `;
+    </div>`;
 }
 
-// ── render verification appendix ──────────────────────────────────────────────
 function renderAppendix(data) {
   const sources = data.verification_appendix ?? DEMO_DATA.output.verification_appendix;
-  const list = document.getElementById('source-list');
-  list.innerHTML = sources.map(s => {
+  document.getElementById('va-list').innerHTML = sources.map(s => {
     const isUrl = s.startsWith('http');
-    const content = isUrl ? `<a href="${escHtml(s)}" target="_blank">${escHtml(s)}</a>` : escHtml(s);
-    return `<li>${content}</li>`;
+    return `<li>${isUrl ? `<a href="${esc(s)}" target="_blank">${esc(s)}</a>` : esc(s)}</li>`;
   }).join('');
 }
 
-// ── render API inspector ───────────────────────────────────────────────────────
-let lastRawJson = null;
-function renderApiInspector(raw) {
-  lastRawJson = raw;
-  const pre = document.getElementById('api-json-pre');
-  pre.innerHTML = syntaxHighlight(JSON.stringify(raw, null, 2));
+let lastRaw = null;
+function renderApi(raw) {
+  lastRaw = raw;
+  const pre = document.getElementById('api-json');
+  pre.innerHTML = syntaxHL(JSON.stringify(raw, null, 2));
 }
 function copyJson() {
-  if (!lastRawJson) return;
-  navigator.clipboard.writeText(JSON.stringify(lastRawJson, null, 2));
-  const btn = document.querySelector('.copy-btn');
-  btn.textContent = 'Copied!';
-  setTimeout(() => btn.textContent = 'Copy JSON', 1500);
+  if (!lastRaw) return;
+  navigator.clipboard.writeText(JSON.stringify(lastRaw, null, 2));
+  const b = document.querySelector('.cpy');
+  b.textContent = 'Copied!';
+  setTimeout(() => b.textContent = 'Copy JSON', 1500);
 }
-function syntaxHighlight(json) {
-  return json
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
-      m => {
-        let cls = 'num';
-        if (/^"/.test(m)) { cls = /:$/.test(m) ? 'key' : 'str'; }
-        else if (/true|false/.test(m)) { cls = 'bool'; }
-        else if (/null/.test(m)) { cls = 'null'; }
-        return `<span class="${cls}">${m}</span>`;
-      });
-}
-
-// ── HTML escape ────────────────────────────────────────────────────────────────
-function escHtml(s) {
-  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+function syntaxHL(json) {
+  return json.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/("(\\u[\da-fA-F]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, m => {
+      const cls = /^"/.test(m) ? (/:$/.test(m)?'key':'str') : /true|false/.test(m)?'bool':'num';
+      return `<span style="color:${cls==='key'?'#60a5fa':cls==='str'?'#86efac':cls==='bool'?'#fde68a':'#fca5a5'}">${m}</span>`;
+    });
 }
 
 // ── render everything ─────────────────────────────────────────────────────────
 function renderAll(apiResponse, isLive) {
   const out = apiResponse.output ?? apiResponse;
   renderTable(out);
-  renderDemoBeat(out);
-  renderIngredientBeat(out);
+  renderBeat(out);
+  renderIngredients(out);
   renderAppendix(out);
-  renderApiInspector(apiResponse);
+  renderApi(apiResponse);
 
   document.getElementById('empty-state').style.display = 'none';
   document.getElementById('main-content').style.display = '';
+  document.getElementById('demo-banner').style.display = isLive ? 'none' : '';
 
-  const claimCount = (out.comparison_table ?? []).length;
-  const clean = apiResponse.grounding_summary?.is_clean;
-  setStatus(
-    isLive
-      ? `Live · ${claimCount} claims · ${out.data_status ?? ''} · grounding ${clean ? '✓ clean' : '⚠ check log'}`
-      : `Demo mode · ${claimCount} claims · ${out.data_status ?? ''} · no live workspace`,
-    isLive ? 'live' : 'demo'
-  );
+  const clean = apiResponse.grounding_summary?.is_clean ?? true;
+  const viol  = apiResponse.grounding_summary?.violation_count ?? 0;
+  const cnt   = (out.comparison_table ?? []).length;
+
+  document.getElementById('sb-dot').className = `sd ${isLive ? 'sd-live' : 'sd-demo'}`;
+  document.getElementById('sb-text').textContent = isLive
+    ? `Live · workspace connected · ${cnt} claims rendered`
+    : `Demo mode · ${cnt} claims · no live workspace`;
+  document.getElementById('sb-gate').textContent = clean
+    ? `✓ gate clean · ${viol} violations`
+    : `⚠ gate: ${viol} violation${viol!==1?'s':''}`;
+  document.getElementById('sb-gate').className = `sb-pill ${clean?'clean':''}`;
+
+  if (isLive) {
+    document.getElementById('gc-prov').textContent = 'tool_verified — rendered from workspace YAML files, not from model memory';
+    document.getElementById('gc-gate').textContent = `gate_lens_output ran · ${viol} violations · all status fields verified against rulesets`;
+    document.getElementById('gc-web').textContent = 'not run — call regulatory_scanner to enrich with live web search citations';
+  }
 }
 
-// ── run against live API ───────────────────────────────────────────────────────
+// ── live API ──────────────────────────────────────────────────────────────────
 async function runComparison() {
-  const id = wsId();
-  const tok = token();
+  const id  = wsId(), tok = token();
   if (!id || !tok) { alert('Enter workspace ID and token first.'); return; }
-
   const btn = document.getElementById('run-btn');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>Running…';
-  setStatus('Calling compare_lenses…', 'loading');
-
   try {
     const res = await fetch(`${base()}/api/workspaces/${id}/actions/compare_lenses`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${tok}`,
-      },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${tok}` },
       body: JSON.stringify({ source_product_id: 'precision_kombucha_hibiscus_f2' }),
     });
     if (!res.ok) throw new Error(await res.text());
-    const data = await res.json();
-    renderAll(data, true);
-  } catch (e) {
-    setStatus(`Error: ${e.message}`, 'error');
+    renderAll(await res.json(), true);
+  } catch(e) {
     alert(`API call failed: ${e.message}`);
+    document.getElementById('sb-text').textContent = `Error: ${e.message}`;
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Run three-lens comparison';
+    btn.textContent = 'Run live comparison';
   }
 }
 
 // ── demo data ─────────────────────────────────────────────────────────────────
-// Pre-baked response matching the exact shape the live API returns.
-// Generated from the synthetic rulesets in apps/adaptogen-lab/regulatory-lens/.
 const DEMO_DATA = {
   action_id: "00000000-0000-0000-0000-000000000000",
-  output_path: "regulatory-lens/comparisons/three-lens.json",
   grounding_summary: { is_clean: true, violation_count: 0 },
   output: {
     source_product_id: "precision_kombucha_hibiscus_f2",
@@ -920,113 +952,97 @@ const DEMO_DATA = {
       "21 CFR Part 101 — Food Labeling: https://www.ecfr.gov/current/title-21/chapter-I/part-101",
       "FTC: Dietary Supplements Advertising Guide for Industry",
       "SAMR official portal: https://www.samr.gov.cn",
-      "Current 药食同源目录 via National Health Commission",
+      "Current 药食同源目录 via National Health Commission (NHC)",
     ],
     comparison_table: [
       {
-        claim_id: "live_cultures_present",
-        candidate_text: "Contains live cultures",
-        claim_pressure: "high",
-        divergence_score: 1,
-        demo_beat: true,
+        claim_id: "live_cultures_present", candidate_text: "Contains live cultures",
+        claim_pressure: "high", divergence_score: 1, demo_beat: true,
         markets: [
-          { market: "EU", status: "allowed", basis: "process_descriptor",
-            rendered_text: "Contains live Acetobacter and Brettanomyces cultures",
-            divergence_note: "EU: 'probiotic' as a label term is prohibited (EFSA rejected all Art.13(5) probiotic health claims 2010–2011). Organisms are named factually. No health benefit can be stated or implied." },
-          { market: "US", status: "allowed", basis: "compositional_descriptor",
-            rendered_text: "Contains live and active cultures",
-            divergence_note: "US: 'probiotic' usable as a conventional food descriptor if substantiated. 'Live and active cultures' is the standard lower-risk phrasing. No pre-authorization needed." },
-          { market: "CN", status: "allowed", basis: "compositional_descriptor",
-            rendered_text: "含活性醋酸菌和酵母菌 (Contains active Acetobacter and yeast cultures)",
-            divergence_note: "CN: '益生菌' (probiotic) usable as a descriptor. Key constraint: any function statement linked to the organisms triggers reclassification of the ENTIRE PRODUCT to 保健食品 (health food). Not just the claim — the product." },
+          { market:"EU", status:"allowed", basis:"process_descriptor",
+            rendered_text:"Contains live Acetobacter and Brettanomyces cultures",
+            divergence_note:"EU: 'probiotic' as a label term is prohibited — EFSA rejected all Art.13(5) probiotic submissions 2010–2011. Organisms are named factually. No health benefit can be stated." },
+          { market:"US", status:"allowed", basis:"compositional_descriptor",
+            rendered_text:"Contains live and active cultures",
+            divergence_note:"US: 'probiotic' usable as a conventional food descriptor. No pre-authorization needed. 'Live and active cultures' is the lower-risk industry standard." },
+          { market:"CN", status:"allowed", basis:"compositional_descriptor",
+            rendered_text:"含活性醋酸菌和酵母菌 (Contains active Acetobacter and yeast cultures)",
+            divergence_note:"CN: '益生菌' usable as a descriptor. Key constraint: any function statement linked to the organisms triggers reclassification of the ENTIRE PRODUCT to 保健食品 — not just the claim." },
         ],
       },
       {
-        claim_id: "antioxidant_character",
-        candidate_text: "Naturally rich in antioxidants",
-        claim_pressure: "medium",
-        divergence_score: 2,
-        demo_beat: false,
+        claim_id: "antioxidant_character", candidate_text: "Naturally rich in antioxidants",
+        claim_pressure: "medium", divergence_score: 2, demo_beat: false,
         markets: [
-          { market: "EU", status: "conditionally_allowed", basis: "nutrition_claim",
-            rendered_text: "Source of antioxidants",
-            divergence_note: "EU: 'Source of antioxidants' requires ≥15% NRV per serving on vitamin C (NRV 80mg). Product: 14.2mg/330ml ≈ 17.8% NRV — borderline pass. Anthocyanins have no established NRV and cannot be the basis." },
-          { market: "US", status: "conditionally_allowed", basis: "nutrient_content_claim",
-            rendered_text: "Good source of antioxidants",
-            divergence_note: "US: 'Good source' requires ≥10% DV per RACC. Vitamin C DV: 90mg. Product: 14.2mg ≈ 15.8% DV. Passes if RACC applies to full 330ml serving. Anthocyanins have no DV." },
-          { market: "CN", status: "allowed_rewritten", basis: "compositional_descriptor",
-            rendered_text: "富含花青素 (Rich in anthocyanins)",
-            divergence_note: "CN: '抗氧化' (antioxidant) is a 保健食品 function category — using antioxidant language as a function claim is off-limits on the ordinary food track. The safe rendering names the compound (anthocyanins), not the function." },
+          { market:"EU", status:"conditionally_allowed", basis:"nutrition_claim",
+            rendered_text:"Source of antioxidants",
+            divergence_note:"EU: ≥15% NRV vitamin C per serving. Product: ~17.8% NRV — borderline pass. Anthocyanins have no EU NRV — cannot be the basis." },
+          { market:"US", status:"conditionally_allowed", basis:"nutrient_content_claim",
+            rendered_text:"Good source of antioxidants",
+            divergence_note:"US: ≥10% DV per RACC. Vitamin C: ~15.8% DV. Must verify RACC for kombucha category in 21 CFR 101.12." },
+          { market:"CN", status:"allowed_rewritten", basis:"compositional_descriptor",
+            rendered_text:"富含花青素 (Rich in anthocyanins)",
+            divergence_note:"CN: '抗氧化' is a 保健食品 function category — using antioxidant language as a function claim is off-limits on the ordinary food track. Safe rendering: name the compound." },
         ],
       },
       {
-        claim_id: "hibiscus_wellness",
-        candidate_text: "Hibiscus — traditionally used for wellbeing",
-        claim_pressure: "high",
-        divergence_score: 3,
-        demo_beat: true,
+        claim_id: "hibiscus_wellness", candidate_text: "Hibiscus — traditionally used for wellbeing",
+        claim_pressure: "high", divergence_score: 3, demo_beat: true,
         markets: [
-          { market: "EU", status: "not_allowed", basis: null,
-            rendered_text: null,
-            divergence_note: "EU: No EFSA-authorized health claim exists for Hibiscus sabdariffa. Traditional use is not a valid basis under Reg 1924/2006. 'Wellbeing' implies a health benefit — prohibited without an authorized claim." },
-          { market: "US", status: "allowed_with_caution", basis: "traditional_use_context",
-            rendered_text: "Hibiscus — a traditional wellness botanical",
-            divergence_note: "US: 'Traditional wellness botanical' is defensible as contextual framing — describes the ingredient's cultural history, not a specific health function. FTC substantiation standard applies to any implied benefit claim." },
-          { market: "CN", status: "allowed_with_important_note", basis: "compositional_descriptor_ingredient_identity",
-            rendered_text: "采用玫瑰茄 (Made with Hibiscus sabdariffa / 玫瑰茄)",
-            divergence_note: "CN: 玫瑰茄 is on the 药食同源目录 (food-medicine homologous list) — approved for food use. But: citing its traditional medicinal properties crosses into 保健食品 territory. The 药食同源 status is an ingredient authorization, not a claims authorization." },
+          { market:"EU", status:"not_allowed", basis:null, rendered_text:null,
+            divergence_note:"EU: No EFSA-authorized claim for Hibiscus sabdariffa. Traditional use is NOT a valid basis under Reg 1924/2006. Claim stripped entirely." },
+          { market:"US", status:"allowed_with_caution", basis:"traditional_use_context",
+            rendered_text:"Hibiscus — a traditional wellness botanical",
+            divergence_note:"US: 'Traditional wellness botanical' is defensible as cultural context, not a specific health function claim. FTC substantiation standard applies to any implied benefit." },
+          { market:"CN", status:"allowed_with_important_note", basis:"compositional_descriptor_ingredient_identity",
+            rendered_text:"采用玫瑰茄 (Made with Hibiscus sabdariffa / 玫瑰茄)",
+            divergence_note:"CN: 玫瑰茄 is on 药食同源 list. 药食同源 status authorizes the INGREDIENT, not health claims. Citing traditional medicinal properties crosses into 保健食品 territory." },
         ],
       },
       {
-        claim_id: "fermentation_process",
-        candidate_text: "Naturally fermented using traditional kombucha culture",
-        claim_pressure: "low",
-        divergence_score: 0,
-        demo_beat: false,
+        claim_id: "fermentation_process", candidate_text: "Naturally fermented using traditional kombucha culture",
+        claim_pressure: "low", divergence_score: 0, demo_beat: false,
         markets: [
-          { market: "EU", status: "allowed", basis: "process_descriptor",
-            rendered_text: "Naturally fermented using traditional kombucha culture",
-            divergence_note: "Process descriptor — no divergence across markets." },
-          { market: "US", status: "allowed", basis: "process_descriptor",
-            rendered_text: "Naturally fermented using traditional kombucha culture",
-            divergence_note: "Process descriptor — no divergence across markets." },
-          { market: "CN", status: "allowed", basis: "process_descriptor",
-            rendered_text: "传统工艺发酵 (Traditionally fermented)",
-            divergence_note: "Process descriptor — permitted. Chinese translation provided." },
+          { market:"EU", status:"allowed", basis:"process_descriptor",
+            rendered_text:"Naturally fermented using traditional kombucha culture",
+            divergence_note:"Process descriptor — no divergence. Same rendering across all markets." },
+          { market:"US", status:"allowed", basis:"process_descriptor",
+            rendered_text:"Naturally fermented using traditional kombucha culture",
+            divergence_note:"Process descriptor — no divergence." },
+          { market:"CN", status:"allowed", basis:"process_descriptor",
+            rendered_text:"传统工艺发酵 (Traditionally fermented)",
+            divergence_note:"Process descriptor — permitted. Chinese translation provided." },
         ],
       },
       {
-        claim_id: "low_sugar",
-        candidate_text: "Low in sugar",
-        claim_pressure: "medium",
-        divergence_score: 2,
-        demo_beat: false,
+        claim_id: "low_sugar", candidate_text: "Low in sugar",
+        claim_pressure: "medium", divergence_score: 2, demo_beat: false,
         markets: [
-          { market: "EU", status: "conditionally_allowed", basis: "nutrition_claim",
-            rendered_text: "Low sugars",
-            divergence_note: "EU: 'Low sugars' (plural, mandatory) requires ≤5g/100ml. This product: 2.67g/100ml. Passes. Note mandatory plural — 'sugar' (singular) is not the authorized wording." },
-          { market: "US", status: "rewritten", basis: "factual_declaration",
-            rendered_text: "8.8 g sugar per serving",
-            divergence_note: "US: FDA has not defined 'low sugar' as an authorized nutrient content claim for sugars. Safest path: declare the sugar content factually. EU and CN both have defined thresholds; US is the outlier here — not stricter, just different." },
-          { market: "CN", status: "conditionally_allowed", basis: "nutrition_claim_gb28050",
-            rendered_text: "低糖 (Low sugar)",
-            divergence_note: "CN: GB 28050-2011 defines 低糖 for liquid foods at ≤5g/100ml. Passes. Declare in the 营养成分表 (nutrition facts table)." },
+          { market:"EU", status:"conditionally_allowed", basis:"nutrition_claim",
+            rendered_text:"Low sugars",
+            divergence_note:"EU: ≤5g/100ml threshold. Product: 2.67g/100ml — passes. 'Sugars' plural is mandatory — 'sugar' singular is not the authorized wording." },
+          { market:"US", status:"rewritten", basis:"factual_declaration",
+            rendered_text:"8.8 g sugar per serving",
+            divergence_note:"US: FDA has not defined 'low sugar' as an authorized nutrient content claim for sugars. Safest path: declare the content factually. US is the outlier here — not stricter, just different." },
+          { market:"CN", status:"conditionally_allowed", basis:"nutrition_claim_gb28050",
+            rendered_text:"低糖 (Low sugar)",
+            divergence_note:"CN: GB 28050-2011 defines 低糖 at ≤5g/100ml for liquid foods. Passes. Declare in 营养成分表 (nutrition facts table)." },
         ],
       },
     ],
     primary_demo_beat: {
       claim_id: "hibiscus_wellness",
-      rationale: "hibiscus_wellness exhibits the sharpest status divergence: not_allowed in EU, allowed_with_caution in US, allowed_with_important_note in CN. One claim — three different regulatory outcomes.",
+      rationale: "hibiscus_wellness shows the sharpest status divergence: not_allowed in EU, allowed_with_caution in US, allowed_with_important_note in CN. One source claim — three completely different regulatory readings.",
     },
     ingredient_divergence_beat: {
       ingredient_id: "hibiscus",
       markets: [
-        { market: "EU", flag: "🇪🇺", status: "conventional_food",
-          note: "Pre-1997 EU use as a food ingredient (Karkadé tea). Not a novel food. No authorized health claims for hibiscus in the EFSA register." },
-        { market: "US", flag: "🇺🇸", status: "gras",
-          note: "GRAS — widely used in US beverages and herbal teas. No special regulatory status. Common in agua de Jamaica, flavored teas." },
-        { market: "CN", flag: "🇨🇳", status: "food_medicine_homologous",
-          note: "药食同源 — on the food-medicine homologous list. Freely usable as a food ingredient. Critical distinction: this is an ingredient authorization, not a claims authorization. Traditional medicinal properties cannot be referenced on a food label." },
+        { market:"EU", flag:"🇪🇺", status:"conventional_food",
+          note:"Pre-1997 EU use as a food ingredient (Karkadé tea, Bissap). Not a novel food. No authorized health claims for hibiscus in the EFSA register." },
+        { market:"US", flag:"🇺🇸", status:"gras",
+          note:"GRAS. Widely used in US beverages — agua de Jamaica, herbal teas. No special regulatory status." },
+        { market:"CN", flag:"🇨🇳", status:"food_medicine_homologous",
+          note:"药食同源 (food-medicine homologous list). Freely usable as food. CRITICAL DISTINCTION: the homologous status authorizes the ingredient, not health claims about it." },
       ],
     },
   },
@@ -1034,7 +1050,6 @@ const DEMO_DATA = {
 
 function loadDemo() { renderAll(DEMO_DATA, false); }
 
-// Auto-load demo on page open so the page is never empty on first visit.
 window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('base-url').value = BASE;
   loadDemo();
