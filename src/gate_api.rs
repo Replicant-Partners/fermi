@@ -75,19 +75,26 @@ use crate::surface::{Caveat, Door};
 /// a convenience on top of the measurement; it is the only instrument that can
 /// see the failure the measurement is blind to.
 ///
-/// # Why only the two `Retention::Recorded` gates
+/// # Why only the `Retention::Recorded` gates
 ///
 /// A review is a judgement about *one decision*, so it needs a decision to point
-/// at, and only `Recorded` gates write one. `coherence` and `admission` have a
-/// ledger; the other five are in-memory counters whose individual decisions do
-/// not survive the process, and a door offering to review a row that does not
-/// exist is the 404-after-the-belief this module's router scan exists to prevent.
+/// at, and only `Recorded` gates write one. The rest are in-memory counters
+/// whose individual decisions do not survive the process, and a door offering to
+/// review a row that does not exist is the 404-after-the-belief this module's
+/// router scan exists to prevent.
 ///
-/// That is a real limitation and worth stating rather than hiding: **five of the
-/// seven gates cannot be reviewed at all**, because nothing recorded what they
+/// That is a real limitation and worth stating rather than hiding: **six of the
+/// ten gates cannot be reviewed at all**, because nothing records what they
 /// decided. Promoting one to `Recorded` is the way in, and `gate_trust::GATES`
 /// is where that argument belongs — migration 214's comment on why a rate-limit
 /// tick is deliberately not recorded is the shape of the counter-argument.
+///
+/// This list does not grow by choice. `a_review_door_only_exists_where_the
+/// _decisions_do` asserts **both** directions, so a promotion in
+/// `gate_trust::GATES` fails the build until a door exists — which is how
+/// `output_schema` got one. That is deliberate: the promotion is the moment the
+/// gate starts writing rows somebody is meant to read, and a ledger with no
+/// reviewer is the state the platform was in for its whole life.
 ///
 /// # The rule, unchanged
 ///
@@ -124,6 +131,28 @@ pub const GATE_DOORS: &[Door] = &[
                      passed. Only a reader comparing the claim against the \
                      source closes that gap, which is why this gate is the one \
                      whose refusals most need a second opinion.",
+    },
+    Door {
+        subject: "output_schema",
+        method: "POST",
+        path: "/api/gates/:gate_id/decisions/:decision_id/review",
+        does: "Record whether this document really failed the type it declared, \
+               or whether the declared type was wrong. Does not re-validate and \
+               does not edit the card.",
+        why_manual: "Because a schema mismatch has two causes and the validator \
+                     cannot tell them apart. Either the agent produced a bad \
+                     document, or **the schema is wrong** — the card declares \
+                     something the agent cannot or should not produce — and the \
+                     two need opposite remedies while presenting as the same \
+                     `invalid`. `species_resolver.conservation` is the case: its \
+                     grounding status leaked into the schema as the block's \
+                     required VALUE, `{\"const\": \"unavailable\"}`, so \
+                     enforcement nulls the block and the schema then demands the \
+                     literal string. The two checks cannot both pass, no \
+                     document can satisfy it, and every automated reading of \
+                     that agent says the OUTPUT is invalid. Only a reader \
+                     comparing the failure against the card sees that the \
+                     contract is.",
     },
     Door {
         subject: "admission",
