@@ -279,20 +279,27 @@ fn the_schema_is_checked_against_the_enforced_document() {
 /// there: *"the endpoint a third party calls reports fabrication rather than
 /// preventing it."*
 ///
-/// So: a route that grades must also *deliver* what grading produced.
-/// `execute/stream` is exempt and the exemption is declared rather than
-/// implied — a stream has already sent its tokens by the time the document is
-/// gradeable, and amending it needs a terminal frame instead. When that lands,
-/// remove it from `AMENDS_LATER` and this test starts holding it too.
+/// So: a route that grades must also *deliver* what grading produced. **All
+/// three do**, and `AMENDS_LATER` is empty.
+///
+/// It held one entry for exactly one commit: `execute/stream`, on the reason
+/// that a stream has already sent its tokens by the time the document is
+/// gradeable. That is true of the `progress` deltas and was never true of the
+/// route — it emits a terminal `complete` frame, after grading, carrying the
+/// same payload shape as `POST /execute`, and that frame is what a client reads
+/// for the final answer. The exemption had outlived the code it described,
+/// which is what an exemption list is for: writing the reason down is what let
+/// it be checked and found stale one commit later.
+///
+/// The deltas remain raw and cannot be otherwise — a token is gone once
+/// yielded. `grounding.amended` on the terminal frame is how a client that
+/// concatenated them can tell it is holding the claim rather than the artifact.
 #[test]
 fn every_route_that_grades_also_returns_what_grading_produced() {
-    /// Routes that grade and cannot yet amend, with the reason.
-    const AMENDS_LATER: &[(&str, &str)] = &[(
-        "src/handlers/execution_stream.rs",
-        "a stream has already sent its tokens by the time the document can be \
-         graded; amending needs a terminal frame carrying the enforced document \
-         and a consumer that prefers it over the concatenated deltas",
-    )];
+    /// Routes that grade and cannot yet amend, with the reason. Empty, and it
+    /// may only stay so: an addition means a route that hands a caller a
+    /// document the platform knows is wrong.
+    const AMENDS_LATER: &[(&str, &str)] = &[];
 
     let mut amending = 0usize;
     for file in GROUNDED_ROUTES {
@@ -323,10 +330,19 @@ fn every_route_that_grades_also_returns_what_grading_produced() {
         );
         amending += 1;
     }
+    assert_eq!(
+        amending,
+        GROUNDED_ROUTES.len(),
+        "{amending} of {} grading route(s) amend. AMENDS_LATER is empty, so \
+         every route that grades must deliver what grading produced — either \
+         this count is wrong or a route stopped amending.",
+        GROUNDED_ROUTES.len()
+    );
     assert!(
-        amending > 0,
-        "no route amends, so this guard is vacuous — GROUNDED_ROUTES and \
-         AMENDS_LATER have drifted apart"
+        AMENDS_LATER.is_empty(),
+        "a route has been exempted from amending again. It hands a caller a \
+         document the platform already knows is wrong; say why at length or fix \
+         the route."
     );
 }
 

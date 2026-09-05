@@ -936,16 +936,18 @@ mod tests {
         // assumption two comments in this file made, and the guard caught it.
         assert_eq!(
             checked,
-            7,
-            "expected 7 rungs across {} commands (5 on `agent.execute`, 2 on \
+            8,
+            "expected 8 rungs across {} commands (5 on `agent.execute`, 3 on \
              `agent.execute_stream`). A different number means a gate was added \
              or removed from a belt, which is a change to what the platform \
              claims it checks -- update this and say which.\n\
-             Six until `Gate::Completeness` joined `agent.execute`: question \
-             three on this very surface, which was computed from the values \
-             because no checkpoint computed it, and rendered `no gate` in a \
-             dotted box that read as the agent bypassing something rather than \
-             as our own missing check.",
+             Six, then seven, then eight. `Gate::Completeness` joined \
+             `agent.execute` first -- question three on this very surface, which \
+             was computed from the values because no checkpoint computed it, and \
+             rendered `no gate` in a dotted box that read as the agent bypassing \
+             something rather than as our own missing check -- and then joined \
+             the streaming route with it, so the two execute paths answer the \
+             same five questions.",
             EXECUTE_COMMANDS.len()
         );
     }

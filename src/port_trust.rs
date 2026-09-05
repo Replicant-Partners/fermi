@@ -281,4 +281,106 @@ mod tests {
             }
         );
     }
+
+    /// **`is_mismatch` does not measure caller error, and promoting this gate
+    /// to a Control would refuse half the corpus.**
+    ///
+    /// `command_registry` declares `Gate::InputBinding` a `Metric` on
+    /// `agent.execute` and says the mismatch RATE is *"the number that would
+    /// justify making it fatal"*. It was never computed. Here it is, over the
+    /// cards on disk — and it justifies the opposite.
+    ///
+    /// `bind_input` is a pure function of the agent's own `accepts`: it asks
+    /// whether any declared label *looks like free text*, and never looks at
+    /// the query. So `NoTextInput` does not mean "a caller sent the wrong
+    /// thing". It means **this agent's `accepts` lists the semantic slots its
+    /// prompt needs rather than a transport shape**:
+    ///
+    /// ```text
+    /// enemy_sensor     [creature_id, species_data, location_context]      62 pulses
+    /// prey_locator     [...]                                              94 pulses
+    /// naturalist       [creature_name, scientific_name, species_group]     47 pulses
+    /// species_resolver [species-name, common-name, taxonomic-group]        15 pulses
+    /// ```
+    ///
+    /// None of those is refusing prose. They are describing what their prompt
+    /// wants *told*, and they are invoked with a query like everything else.
+    /// Refusing them would break working agents with hundreds of pulses between
+    /// them.
+    ///
+    /// **So the gate is blocked on a vocabulary question, not on a threshold.**
+    /// `accepts` is doing two jobs — what an agent can be *handed*, and what its
+    /// prompt needs to *know* — and until it means one thing, a mismatch count
+    /// is not evidence about callers. That is the ports rung's problem
+    /// (`docs/plans/PORTS_RUNG_EDITOR.md`), and this test is here so the
+    /// promotion cannot be argued for without meeting the number first.
+    ///
+    /// The count may FALL freely: every agent that adopts a text label is
+    /// progress. It may not rise without somebody saying why.
+    #[test]
+    fn promoting_input_binding_to_a_control_would_refuse_half_the_corpus() {
+        let mut mismatch = Vec::new();
+        let mut total = 0usize;
+        for tier in std::fs::read_dir("agents").expect("agents/").flatten() {
+            if !tier.path().is_dir() {
+                continue;
+            }
+            for agent in std::fs::read_dir(tier.path()).expect("tier").flatten() {
+                let card = agent.path().join("agent_card.json");
+                if !card.exists() {
+                    continue;
+                }
+                let raw = std::fs::read_to_string(&card).expect("read");
+                let v: serde_json::Value = match serde_json::from_str(&raw) {
+                    Ok(v) => v,
+                    // A card this crate cannot parse is another test's finding.
+                    Err(_) => continue,
+                };
+                let accepts: Vec<String> = v
+                    .get("accepts")
+                    .and_then(|a| a.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                total += 1;
+                if bind_input(&accepts).is_mismatch() {
+                    mismatch.push(
+                        agent
+                            .path()
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_default(),
+                    );
+                }
+            }
+        }
+
+        assert!(
+            total > 80,
+            "only {total} card(s) scanned — this guard is going vacuous"
+        );
+        // 47 of 102 when measured. A ratchet, not a target.
+        assert!(
+            mismatch.len() <= 47,
+            "{} of {total} cards declare inputs and none textual, up from 47. \
+             Every one of these would be REFUSED if `Gate::InputBinding` were \
+             promoted, and they are not caller errors — they are agents using \
+             `accepts` as a list of what their prompt needs told. Adding one \
+             makes the gate less promotable, not more:\n  {}",
+            mismatch.len(),
+            mismatch.join("\n  ")
+        );
+        assert!(
+            mismatch.len() * 3 > total,
+            "the mismatch share has fallen below a third of the corpus ({} of \
+             {total}). That is the direction that unblocks promotion — recount, \
+             lower the ceiling above, and revisit `why_not_control` on \
+             `agent.execute`, which currently says the rate is the number that \
+             would justify making it fatal.",
+            mismatch.len()
+        );
+    }
 }

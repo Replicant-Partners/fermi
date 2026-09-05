@@ -262,11 +262,18 @@ pub const COMMANDS: &[Command] = &[
                 Gate::InputBinding,
                 "port_trust::bind_input, from handlers::execution",
                 "Declared advisory: `is_mismatch()` guards a warning and control \
-                 flow is identical either way. Here so the mismatch RATE is \
-                 visible, which is the number that would justify making it fatal. \
-                 Also the one place on this route where genuine PREVENTION is \
-                 available and unused — a malformed input can be refused before a \
-                 credit is spent, which protects the payer rather than the reader.",
+                 flow is identical either way. It looked like the one place on \
+                 this route where genuine PREVENTION is available — a malformed \
+                 input refused before a credit is spent, protecting the payer \
+                 rather than the reader. Then the rate got measured and it says \
+                 the opposite: 47 of 102 cards would be REFUSED. `bind_input` is \
+                 pure over the agent's own `accepts` and never sees the query, so \
+                 `NoTextInput` does not mean a caller sent the wrong thing — it \
+                 means the agent lists the slots its PROMPT needs told \
+                 (`enemy_sensor`: creature_id, species_data, location_context, at \
+                 62 pulses). The blocker is that `accepts` does two jobs at once, \
+                 not a threshold. See \
+                 port_trust::promoting_input_binding_to_a_control_would_refuse_half_the_corpus.",
             ),
             report(
                 Gate::Completeness,
@@ -292,17 +299,26 @@ pub const COMMANDS: &[Command] = &[
         route: "POST /api/agents/:agent_id/execute/stream",
         gates: &[
             control(Gate::Credit, "handlers::execution_stream"),
-            metric(
+            amend(
                 Gate::Grounding,
-                "episode_boundary::Pulse::grade, from handlers::execution_stream",
-                "Still un-amended, and the asymmetry is now with its own sibling \
-                 rather than with the delegation hop: `agent.execute` returns the \
-                 enforced document and this route does not. A stream has already \
-                 sent its tokens by the time the document is gradeable, so \
-                 amending the body is not the same edit — it needs a terminal \
-                 frame carrying the enforced document and a consumer that prefers \
-                 it over the concatenated deltas. Named here so the gap is a \
-                 declared to-do rather than a difference nobody noticed.",
+                "episode_boundary::Pulse::grade + envelope::amend_document, \
+                 from handlers::execution_stream",
+                "Cannot refuse, for the same reason as its sibling: grounding is \
+                 unknowable before the model writes. It amends the terminal \
+                 `complete` frame, which is emitted after grading and carries the \
+                 same payload shape as the non-streaming route. The streamed \
+                 `progress` deltas are the raw claim and cannot be otherwise — a \
+                 token is gone once yielded — so `grounding.amended` on the final \
+                 frame is how a client that concatenated them can tell it holds \
+                 the claim rather than the artifact.",
+            ),
+            report(
+                Gate::Completeness,
+                "episode_boundary::Pulse::assess_completeness, from \
+                 handlers::execution_stream",
+                "Same reasoning as `agent.execute`: nothing to strip from a field \
+                 the agent left empty, and refusing would deny the caller the \
+                 fields it did fill. Reported on the terminal frame.",
             ),
         ],
         ungated_because: None,
@@ -578,24 +594,29 @@ mod tests {
     /// green has not been pointed at anything. Every pair here is a verb whose
     /// caller cannot tell the gate from its absence.
     ///
-    /// **Three, then two.** `("agent.execute", "grounding")` came off the list
-    /// when that route started returning the enforced document instead of the
-    /// raw one — the caller can now tell the gate from its absence, because the
-    /// fabricated field is gone and `grounding.stripped` names it. That is the
-    /// ratchet doing the only thing it is for.
+    /// **Three, then two, then one.**
     ///
-    /// The two that remain are both real and both named in their
-    /// `why_not_control`: the stream cannot amend a body it has already sent,
-    /// and `input_binding` is the one place genuine PREVENTION is available and
-    /// unused — a malformed input could be refused before a credit is spent.
+    /// `("agent.execute", "grounding")` came off when that route began returning
+    /// the enforced document instead of the raw one. `("agent.execute_stream",
+    /// "grounding")` came off one commit later, when its terminal `complete`
+    /// frame started carrying the enforced document too — the exemption said a
+    /// stream has already sent its tokens, which is true of the deltas and was
+    /// never true of the frame a client actually reads.
+    ///
+    /// One remains, and it is not going anywhere soon. `input_binding` looked
+    /// like the cheapest promotion on the platform — genuine prevention, before
+    /// a credit is spent — until the rate was measured: **47 of 102 cards would
+    /// be refused**, including `prey_locator` at 94 pulses and `enemy_sensor` at
+    /// 62. `bind_input` never sees the query, so `NoTextInput` is not a caller
+    /// error; it is an agent using `accepts` to list what its prompt needs told.
+    /// The blocker is that `accepts` does two jobs, and that is the ports rung's
+    /// question. See
+    /// `port_trust::promoting_input_binding_to_a_control_would_refuse_half_the_corpus`.
     #[test]
     fn the_discarded_gate_verdicts_are_the_ones_we_know_about() {
         assert_eq!(
             gates_computed_and_discarded(),
-            vec![
-                ("agent.execute", "input_binding"),
-                ("agent.execute_stream", "grounding"),
-            ],
+            vec![("agent.execute", "input_binding")],
             "the set of verbs whose gate verdict is thrown away has changed. It \
              may only shrink. Promoting one to Control is the fix; adding one is \
              a regression that needs its cost written into `why_not_control`."
@@ -620,7 +641,7 @@ mod tests {
     /// asymmetry worth watching: same platform, same contract, two different
     /// answers depending on which endpoint you call.
     #[test]
-    fn grounding_amends_on_execute_and_still_does_not_on_the_stream() {
+    fn grounding_amends_on_both_execute_routes() {
         let g = |id: &str| {
             command(id)
                 .unwrap_or_else(|| panic!("{id} not declared"))
@@ -651,12 +672,18 @@ mod tests {
              claiming to prevent what it can only repair."
         );
 
+        // The stream held out for exactly one commit, on the reason that its
+        // tokens are already sent by the time the document is gradeable. True
+        // of the `progress` deltas and never true of the route: `complete` is
+        // emitted after grading and is what a client reads for the answer. The
+        // exemption had outlived the code it described.
         assert_eq!(
             g("agent.execute_stream"),
-            Enforcement::Metric,
-            "the stream now amends too — good, and this test is stale. Its \
-             `why_not_control` says what that change requires (a terminal frame \
-             carrying the enforced document); update both together."
+            Enforcement::Amend,
+            "the streaming route stopped amending its terminal frame. That frame \
+             is what a client reads for the final answer; a Metric there means \
+             the stream reports fabrication while its sibling prevents it, which \
+             is the asymmetry both were fixed out of."
         );
     }
 

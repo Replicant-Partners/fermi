@@ -60,8 +60,15 @@ The reachable ceiling is stopping the bad part from **travelling**.
 |---|---|---|
 | **prevent** — refuse to run | before | `credit`, `rate_limit`, `attachment` ✅ |
 | **prevent** — refuse the input | before | `input_binding` — declared Metric, *could* be Control |
-| **amend** — strip and deliver the rest | after | delegation hop ✅ · execute ✅ *(this change)* · stream ✗ |
+| **amend** — strip and deliver the rest | after | delegation hop ✅ · execute ✅ · stream ✅ |
+| **report** — verdict to the caller | after | `completeness` ✅ |
 | **refuse** — deliver nothing | after | nobody, and see §4 |
+
+Every route that grades now delivers what grading produced. `AMENDS_LATER` is
+empty and may only stay so.
+
+**The discarded-verdict ratchet: 3 → 2 → 1.** The one that remains is
+§4.4, and it is not moving soon.
 
 ## 3. What changed
 
@@ -171,12 +178,50 @@ So `gates_computed_and_discarded` is keyed on `reaches_the_caller()` rather than
 `alters_the_artifact()`. Declaring completeness a `Metric` would have grown that
 list from two to three and reported a brand-new visible check as a regression.
 
-### 4.4 `input_binding` is free prevention, unused
+### 4.4 `input_binding` — measured, and **blocked**
 
-Declared a Metric because *"`is_mismatch()` guards a warning and control flow is
-identical either way."* It is the one place genuine **prevention** is available:
-a malformed input can be refused before a single credit is spent. Cheaper than
-everything above, and it protects the payer rather than the reader.
+This was the cheapest promotion on the platform: refuse a malformed input before
+a credit is spent, protecting the payer rather than the reader. Its
+`why_not_control` said the mismatch **rate** was *"the number that would justify
+making it fatal."* Nobody had computed it.
+
+Computed:
+
+```
+published agents                     110
+  declared a text input               54   49.1%
+  no accepts at all                    9    8.2%
+  accepts, none textual               47   42.7%   <- promotion would REFUSE these
+```
+
+And the refused list is working agents:
+
+```
+prey_locator      94 pulses
+enemy_sensor      62 pulses    accepts: creature_id, species_data, location_context
+naturalist        47 pulses    accepts: creature_name, scientific_name, species_group
+species_resolver  15 pulses
+forage_scout      15 pulses
+```
+
+**`bind_input` never sees the query.** It is pure over the agent's own
+`accepts`, and asks only whether some declared label *looks like free text*. So
+`NoTextInput` does not mean a caller sent the wrong thing — it means this agent
+lists **the semantic slots its prompt needs told**, not a transport shape. None
+of those agents refuses prose; every one is invoked with a query.
+
+So the blocker is not a threshold. **`accepts` is doing two jobs** — what an
+agent can be *handed*, and what its prompt needs to *know* — and while that is
+true a mismatch count is not evidence about callers at all. Resolving it is the
+ports rung's question (`docs/plans/PORTS_RUNG_EDITOR.md`), not this one's.
+
+Held by `port_trust::promoting_input_binding_to_a_control_would_refuse_half_the_corpus`,
+which pins 47 of 102 as a ratchet that may fall freely and not rise — so the
+promotion cannot be argued for again without meeting the number.
+
+**This is what step 2 of the plan was for**, and it is the outcome that
+justifies having done it: the cheapest-looking work on the list turned out to be
+the most blocked, and the measurement cost one read-only query.
 
 ### 4.5 The ceiling
 

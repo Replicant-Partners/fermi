@@ -315,6 +315,16 @@ pub async fn execute_agent_stream_handler(
                     output.raw_response.as_deref(),
                 );
 
+                // Question three, filed here because `pulse` is consumed by
+                // `close` further down and the terminal frame that reports this
+                // is emitted after that. Computed once, carried to the frame.
+                let tools_called: Vec<&str> = output
+                    .tool_invocations
+                    .iter()
+                    .map(|t| t.tool_name.as_str())
+                    .collect();
+                let completeness = pulse.assess_completeness(&graded, &tools_called);
+
                 // Does the document match the type the agent declared?
                 //
                 // Enforce first, then verify what remains. The ordering is held
@@ -650,7 +660,36 @@ pub async fn execute_agent_stream_handler(
                     }
                 }
 
-                // ── Event: complete ────────────────────────────────
+                // ── Event: complete ────────────────────────
+                //
+                // The terminal frame carries the ENFORCED document, same as the
+                // non-streaming route.
+                //
+                // This was the one entry in `AMENDS_LATER`, and the reason
+                // recorded there was that a stream has already sent its tokens
+                // by the time the document is gradeable. True of the `progress`
+                // deltas and irrelevant here: `complete` is emitted after
+                // grading, carries the same payload shape as `POST
+                // /execute`, and is what a client reads for the final answer.
+                // The reason had outlived the code it described.
+                //
+                // The deltas are still raw and cannot be otherwise — a token is
+                // gone once yielded. A client that reconstructs an answer by
+                // concatenating them is reading the claim, not the artifact, and
+                // `grounding.amended` on this frame is how it can tell.
+                let amended_reasoning: Option<String> =
+                    match (&output.metadata.reasoning, graded.enforced.as_ref()) {
+                        (Some(text), Some(enforced)) => {
+                            fermi::agent_backend::envelope::amend_document(text, enforced)
+                        }
+                        _ => None,
+                    };
+                let stripped_paths: Vec<&str> = graded
+                    .report
+                    .violations
+                    .iter()
+                    .map(|v| v.path.as_str())
+                    .collect();
                 let response = json!({
                     "agent_id": output.agent_name,
                     "confidence": output.confidence,
@@ -668,9 +707,29 @@ pub async fn execute_agent_stream_handler(
                     "metadata": {
                         "model_used": output.metadata.model_used,
                         "provider": output.metadata.provider,
-                        "reasoning": output.metadata.reasoning,
+                        "reasoning": amended_reasoning.clone()
+                            .or_else(|| output.metadata.reasoning.clone()),
                         "failure_reason": output.metadata.failure_reason,
                         "stop_reason": output.metadata.stop_reason,
+                    },
+                    // The artifact, enforced. Read this rather than
+                    // concatenating the `progress` deltas.
+                    "document": graded.enforced,
+                    "grounding": {
+                        "amended": amended_reasoning.is_some(),
+                        "stripped": stripped_paths,
+                        "violations": graded.report.violations.len(),
+                        "note": "Fields with no possible source are nulled before \
+                                 this frame is sent. The streamed deltas are the \
+                                 raw claim and are not amended — a token cannot be \
+                                 recalled once yielded.",
+                    },
+                    "completeness": {
+                        "asked_for": completeness.asked_for,
+                        "filled": completeness.filled,
+                        "owed": completeness.owed,
+                        "no_data": completeness.no_data,
+                        "excused": completeness.excused,
                     },
                     // Mirrored at the top level so a streaming client can
                     // branch on the failure without reaching into metadata.
