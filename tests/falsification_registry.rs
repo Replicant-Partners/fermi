@@ -861,6 +861,143 @@ const FALSIFICATIONS: &[Falsification] = &[
                  would tell every one of their callers the answer had passed \
                  something.",
     },
+    // ── port_trust ─────────────────────────────────────────
+    Falsification {
+        check: "port_trust::is_text_input",
+        owner: "src/port_trust.rs",
+        // Permissive reading: "this label can be handed free text."
+        passes: || fermi::port_trust::is_text_input("query"),
+        fires: || fermi::port_trust::is_text_input("creature_id"),
+        models: "The census found eight labels reported as text inputs that are \
+                 not — identifiers and structured payloads binding as prose. A \
+                 matcher loose enough to accept `creature_id` reports the whole \
+                 corpus as cleanly bound and the mismatch rate as zero, which \
+                 is the number §4.4 turned on.",
+    },
+    Falsification {
+        check: "port_trust::is_mismatch",
+        owner: "src/port_trust.rs",
+        // Permissive reading: "the asking matched the declaration."
+        passes: || {
+            !fermi::port_trust::bind_input(&["query".to_string()]).is_mismatch()
+        },
+        fires: || {
+            !fermi::port_trust::bind_input(&["creature_id".to_string()]).is_mismatch()
+        },
+        models: "`Undeclared` and `NoTextInput` are different findings and only \
+                 one is a mismatch: an agent that declared no ports has not \
+                 contradicted anything. Collapsing them counted 9 cards with no \
+                 `accepts` as caller errors.",
+    },
+    Falsification {
+        check: "port_trust::bind_input",
+        owner: "src/port_trust.rs",
+        // Permissive reading: "this agent binds a free-text ask cleanly."
+        passes: || {
+            matches!(
+                fermi::port_trust::bind_input(&["query".to_string()]),
+                fermi::port_trust::InputBinding::Declared { .. }
+            )
+        },
+        fires: || {
+            matches!(
+                fermi::port_trust::bind_input(&[
+                    "creature_id".to_string(),
+                    "species_data".to_string(),
+                    "location_context".to_string(),
+                ]),
+                fermi::port_trust::InputBinding::Declared { .. }
+            )
+        },
+        models: "`enemy_sensor`, at 62 pulses, declares exactly those three and \
+                 no textual port. It is invoked with a query like everything \
+                 else, so the `fires` world is a real working agent rather than \
+                 a malformed one — which is why promoting this gate to a Control \
+                 would refuse 48 of 102 cards.",
+    },
+    Falsification {
+        check: "port_trust::substitutes",
+        owner: "src/port_trust.rs",
+        // Permissive reading: "knowing this label narrows the fleet."
+        passes: || {
+            matches!(
+                fermi::port_trust::substitutes(8, 102),
+                fermi::port_trust::Substitutes::Cohort(_)
+            )
+        },
+        fires: || {
+            matches!(
+                fermi::port_trust::substitutes(24, 102),
+                fermi::port_trust::Substitutes::Cohort(_)
+            )
+        },
+        models: "The two real labels this classification exists to separate. \
+                 `workspace-state` is accepted by 8 of 102 cards, every one a \
+                 coordination or coherence agent, and is a genuine set of \
+                 substitutes. `query` is accepted by 24 and is the platform's \
+                 calling convention: reporting it as a cohort tells a navigator \
+                 two dozen agents are interchangeable for any ask, which is \
+                 true and useless.",
+    },
+    // ── completeness ────────────────────────────────────
+    Falsification {
+        check: "completeness::assess",
+        owner: "src/completeness.rs",
+        // Permissive reading: "the agent owes nothing."
+        passes: || {
+            let filled = gt::GradedField {
+                path: "genome.assembly_name",
+                block: "genome",
+                value: serde_json::json!("GCA_963576545.1"),
+                provenance: "tool_verified",
+                settleable_by: Some("ncbi_genome_search"),
+                kind: gt::GroundingKind::Sourced,
+            };
+            fermi::completeness::assess(&[filled], &["ncbi_genome_search"])
+                .owed
+                .is_empty()
+        },
+        fires: || {
+            let empty = gt::GradedField {
+                path: "genome.assembly_name",
+                block: "genome",
+                value: serde_json::Value::Null,
+                provenance: "tool_verified",
+                settleable_by: Some("ncbi_genome_search"),
+                kind: gt::GroundingKind::Sourced,
+            };
+            // Same document, and the tool was never called.
+            fermi::completeness::assess(&[empty], &[]).owed.is_empty()
+        },
+        models: "`Lucanus cervus`: four `genome` fields null while the block was \
+                 stamped `tool_verified`, because grounding asks whether a tool \
+                 COULD supply a field and never whether it was called. The two \
+                 worlds here are the same document and differ only in the run \
+                 record, which is why this could not live in `enforce` — no \
+                 inspection of the document can tell them apart.",
+    },
+    Falsification {
+        check: "completeness::is_undetermined",
+        owner: "src/completeness.rs",
+        // Permissive reading: "there was something to check."
+        passes: || {
+            let asked = gt::GradedField {
+                path: "genome.ploidy",
+                block: "genome",
+                value: serde_json::Value::Null,
+                provenance: "tool_verified",
+                settleable_by: Some("ncbi_genome_search"),
+                kind: gt::GroundingKind::Sourced,
+            };
+            !fermi::completeness::assess(&[asked], &[]).is_undetermined()
+        },
+        fires: || !fermi::completeness::assess(&[], &[]).is_undetermined(),
+        models: "A contract with nothing the agent was asked for must not read \
+                 as a pass. `Decision::Undetermined` exists for the same \
+                 reason: counting an empty ask as `all filled` would report the \
+                 81 agents with no contract as complete, which is the \
+                 three-state problem that made the grounding gate honest.",
+    },
     // ── native_evaluators ───────────────────────────────────────────────
     Falsification {
         check: "native_evaluators::Verdict::is_failing",
@@ -2236,6 +2373,17 @@ const EXEMPT: &[(&str, &str)] = &[
          name, and that each is reachable through this function are asserted \
          directly by `reliance::tests::every_token_is_unique_and_explained`.",
     ),
+    ("port_trust::as_tag", ACCESSOR),
+    (
+        "port_trust::answerers",
+        "Walks the cards and groups them by `accepts` label. The classification \
+         it applies to each group — bespoke, cohort, universal — is \
+         `port_trust::substitutes`, registered above with the two real labels \
+         that separate its readings. Grouping a table has nothing to falsify \
+         that the classification does not already hold, and the corpus-backed \
+         assertions live in `query_is_not_a_cohort_and_workspace_state_is`.",
+    ),
+    ("completeness::as_str", ACCESSOR),
     (
         "grounding_trust::id",
         "`ViolationKind::id` is a total mapping from three variants to three \
@@ -2609,6 +2757,8 @@ const TRUST_MODULES: &[&str] = &[
     "artifact_hash",
     "surface",
     "reliance",
+    "port_trust",
+    "completeness",
 ];
 
 // ── assertions ──────────────────────────────────────────────────────────

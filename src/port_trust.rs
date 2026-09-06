@@ -144,6 +144,137 @@ pub fn bind_input(accepts: &[String]) -> InputBinding {
     }
 }
 
+// ─── substitutability ──────────────────────────────────────────
+
+/// How much a shared `accepts` label narrows the fleet.
+///
+/// # Why this is three states and not a count
+///
+/// A label everybody answers to is not a seam, it is the platform's calling
+/// convention. `query` is accepted by 24 of 102 cards; knowing an ask is a
+/// `query` excludes nothing and recommending "any of these 24" is not
+/// navigation. Meanwhile `workspace-state` is accepted by 8 — every one of them
+/// a coordination or coherence agent — and that genuinely is a set of
+/// substitutes.
+///
+/// Same shape as `gate_trust`'s readings, for the same reason: a measurement
+/// that fires on almost everything has to say so itself, or a reader takes the
+/// count for a finding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Substitutes {
+    /// One agent answers to this label. There is no substitute — which is a
+    /// true and useful answer, not a missing one.
+    Bespoke,
+    /// A real set of interchangeable answerers.
+    Cohort(usize),
+    /// So many agents accept it that the label describes the calling
+    /// convention rather than a specialisation.
+    Universal(usize),
+}
+
+/// Above this share of the corpus, a shared label stops narrowing anything.
+///
+/// A tenth, and the argument is not the number: if more than one agent in ten
+/// answers to a label, the label is describing how the platform is CALLED
+/// rather than what any of them is FOR. `query` sits at 24%, `workspace-state`
+/// at 8%, and the gap between those two is the whole distinction.
+///
+/// Held by `query_is_not_a_cohort_and_workspace_state_is`. If a domain label
+/// ever crosses this line the guard fails, which is the intended outcome: it
+/// means a specialisation has become a convention and somebody should decide
+/// whether that was on purpose.
+pub const UNIVERSAL_SHARE: f64 = 0.10;
+
+/// Classify one label from the number of agents accepting it.
+pub fn substitutes(accepting: usize, corpus: usize) -> Substitutes {
+    if accepting <= 1 {
+        return Substitutes::Bespoke;
+    }
+    if corpus > 0 && (accepting as f64) / (corpus as f64) > UNIVERSAL_SHARE {
+        return Substitutes::Universal(accepting);
+    }
+    Substitutes::Cohort(accepting)
+}
+
+/// Who else answers the same ask.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Answerers {
+    /// The `accepts` label, as declared.
+    pub question: String,
+    /// Agent ids, sorted, so the set reads the same on every call.
+    pub agents: Vec<String>,
+    pub reading: Substitutes,
+}
+
+/// **Which agents are interchangeable for a given ask.**
+///
+/// # What this is, and what it deliberately is not
+///
+/// It is the half of "composability" that is computable from cards today, and
+/// the only fleet claim about composition that `xaman_ek` can make without
+/// asserting anything: *"five agents answer this question, here they are."*
+///
+/// It is **not** chainability — whether one agent's artifact can feed another's
+/// input. That is not in the labels and cannot be derived from them. Measured
+/// over every hand-off that has actually happened in production, the declared
+/// ports predict **none** of them:
+///
+/// ```text
+/// weather_oracle -> weather_ensemble_forecaster   produces fermi/weather_market_call
+///                                                 accepts  forecast-question
+///                                                 overlap  NONE            (4 hops)
+/// ```
+///
+/// That is not drift. `produces` converged on *the artifact I make* and
+/// `accepts` on *the question I answer* — in the twelve fully typed agents,
+/// 100% of produces labels are namespaced and none of them appears on any
+/// accepts. The cards describe **request/response**, so a caller poses a
+/// question and a callee returns an artifact, and the two vocabularies are not
+/// supposed to meet. Looking for a pipe finds nothing and the nothing means
+/// the query was wrong.
+///
+/// Chainability lives in `episodes.parent_episode_id` — observed rather than
+/// declared, which is the right shape for a fleet that reconfigures itself.
+///
+/// # The counter-intuitive part
+///
+/// Typing made accepts labels **less** shared, not more. A namespaced request
+/// type is per-agent by construction (`abw/genome-query/1` is genome_profiler's
+/// alone), so of twelve namespaced accepts labels in the corpus exactly one is
+/// shared. The cohorts live in the organic, untyped vocabulary that agents
+/// converged on without being told to — `workspace-state`, `location_context`,
+/// `creature_name`.
+///
+/// `fermi/forecast-question/1` is the exception and the pattern worth copying:
+/// a namespaced question type deliberately shared, answered by five agents. It
+/// is the only place the typed vocabulary expresses a cohort, and it does it
+/// well.
+pub fn answerers(cards: &[(String, Vec<String>)]) -> Vec<Answerers> {
+    use std::collections::BTreeMap;
+    let corpus = cards.len();
+    let mut by_label: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for (agent, accepts) in cards {
+        for label in accepts {
+            by_label
+                .entry(label.as_str())
+                .or_default()
+                .push(agent.as_str());
+        }
+    }
+    by_label
+        .into_iter()
+        .map(|(question, mut agents)| {
+            agents.sort_unstable();
+            agents.dedup();
+            Answerers {
+                question: question.to_string(),
+                reading: substitutes(agents.len(), corpus),
+                agents: agents.into_iter().map(str::to_string).collect(),
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -403,5 +534,165 @@ mod tests {
              would justify making it fatal.",
             mismatch.len()
         );
+    }
+
+    // ── substitutability ─────────────────────────────────────
+
+    /// Every card on disk, as `answerers` wants them.
+    fn corpus() -> Vec<(String, Vec<String>)> {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("agents/curated");
+        let mut out = Vec::new();
+        for entry in std::fs::read_dir(&dir).expect("agents/curated") {
+            let Ok(entry) = entry else { continue };
+            let card = entry.path().join("agent_card.json");
+            let Ok(body) = std::fs::read_to_string(&card) else {
+                continue;
+            };
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) else {
+                continue;
+            };
+            let id = entry.file_name().to_string_lossy().into_owned();
+            let accepts = v
+                .get("accepts")
+                .and_then(|a| a.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            out.push((id, accepts));
+        }
+        assert!(
+            out.len() > 80,
+            "found {} cards; a scan over an empty set passes for ever",
+            out.len()
+        );
+        out
+    }
+
+    fn reading_of(rows: &[Answerers], label: &str) -> Option<Substitutes> {
+        rows.iter().find(|r| r.question == label).map(|r| r.reading)
+    }
+
+    /// **The distinction the whole thing turns on.**
+    ///
+    /// `query` is accepted by roughly a quarter of the corpus. Reporting those
+    /// as a set of substitutes would tell a navigator that two dozen agents
+    /// are interchangeable for any free-text ask, which is true and useless —
+    /// it is the platform's calling convention, not a specialisation.
+    ///
+    /// `workspace-state` is accepted by eight, every one a coordination or
+    /// coherence agent, and that is a real cohort.
+    ///
+    /// Both readings are asserted against the cards on disk rather than a
+    /// fixture, because a fixture would let the threshold drift away from the
+    /// corpus it is supposed to describe.
+    #[test]
+    fn query_is_not_a_cohort_and_workspace_state_is() {
+        let rows = answerers(&corpus());
+
+        assert!(
+            matches!(reading_of(&rows, "query"), Some(Substitutes::Universal(_))),
+            "`query` is not reading as Universal: {:?}. It is accepted by a \
+             quarter of the fleet; if it reads as a cohort then every ask \
+             returns two dozen interchangeable agents and the signal is gone.",
+            reading_of(&rows, "query")
+        );
+
+        assert!(
+            matches!(
+                reading_of(&rows, "workspace-state"),
+                Some(Substitutes::Cohort(_))
+            ),
+            "`workspace-state` is not reading as a Cohort: {:?}. Either the \
+             label stopped being shared, or it crossed UNIVERSAL_SHARE — and \
+             the second means a specialisation became a convention, which is \
+             worth someone deciding on rather than absorbing.",
+            reading_of(&rows, "workspace-state")
+        );
+    }
+
+    /// A label only one agent accepts has no substitute, and that is an answer.
+    ///
+    /// `Bespoke` rather than absent, for the reason this module's sibling
+    /// `InputBinding::Undeclared` exists: nobody-answers-this and
+    /// nobody-declared-anything are different findings, and collapsing them
+    /// makes a navigator say "I don't know" where it could say "only this one".
+    #[test]
+    fn a_label_with_one_answerer_is_bespoke_not_missing() {
+        let rows = answerers(&corpus());
+        let bespoke = rows
+            .iter()
+            .filter(|r| r.reading == Substitutes::Bespoke)
+            .count();
+        assert!(
+            bespoke > 100,
+            "only {bespoke} bespoke labels across the corpus, which does not \
+             match a fleet where 231 of 243 accepts labels are unshared. The \
+             classification is collapsing distinct labels."
+        );
+
+        // And the typed request types are the clearest case: a namespaced
+        // query type belongs to the one agent that answers it.
+        assert_eq!(
+            reading_of(&rows, "abw/genome-query/1"),
+            Some(Substitutes::Bespoke),
+            "a namespaced per-agent request type must read Bespoke; if it is a \
+             cohort, two agents now claim the same typed question and one of \
+             them is wrong"
+        );
+    }
+
+    /// The one designed shared question type must keep working.
+    ///
+    /// `fermi/forecast-question/1` is the only namespaced accepts label in the
+    /// corpus that more than one agent answers — five do. It is the pattern
+    /// worth propagating: precision and sharing at once, which every other
+    /// typed port gets only the first half of.
+    ///
+    /// Pinned as a floor rather than an equality: agents answering it may grow.
+    #[test]
+    fn the_shared_question_type_is_the_pattern_that_works() {
+        let rows = answerers(&corpus());
+        let row = rows
+            .iter()
+            .find(|r| r.question == "fermi/forecast-question/1")
+            .expect(
+                "`fermi/forecast-question/1` is gone. It was the only typed \
+                 question type expressing a cohort; losing it means the typed \
+                 vocabulary no longer expresses substitutability anywhere.",
+            );
+        assert!(
+            row.agents.len() >= 5,
+            "{} agents answer the shared forecast question, down from 5: {:?}",
+            row.agents.len(),
+            row.agents
+        );
+        assert!(
+            matches!(row.reading, Substitutes::Cohort(_)),
+            "the shared forecast question reads {:?} rather than a cohort",
+            row.reading
+        );
+    }
+
+    /// The three readings partition, and the threshold is what separates two
+    /// of them.
+    #[test]
+    fn the_readings_partition_and_the_threshold_bites() {
+        assert_eq!(substitutes(0, 100), Substitutes::Bespoke);
+        assert_eq!(substitutes(1, 100), Substitutes::Bespoke);
+        assert_eq!(substitutes(2, 100), Substitutes::Cohort(2));
+        assert_eq!(substitutes(10, 100), Substitutes::Cohort(10));
+        assert_eq!(
+            substitutes(11, 100),
+            Substitutes::Universal(11),
+            "one agent past a tenth of the corpus must tip to Universal, or \
+             UNIVERSAL_SHARE is not doing anything"
+        );
+        // A one-agent corpus cannot have a cohort, and must not divide by zero
+        // into one either.
+        assert_eq!(substitutes(1, 1), Substitutes::Bespoke);
+        assert_eq!(substitutes(5, 0), Substitutes::Cohort(5));
     }
 }

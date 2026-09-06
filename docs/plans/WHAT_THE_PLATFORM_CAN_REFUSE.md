@@ -586,6 +586,86 @@ restricts a cross-check to episodes produced by the prompt the agent
 `sha256(system_prompt)`. For an agent whose fleet knowledge **is** its prompt,
 that is exactly the right scope, and it was built for something else.
 
+#### Composability splits in two, and only one half was ever hard
+
+The obvious move for a navigator is to compute whether one agent can feed
+another. It is wrong, and the measurement says so more sharply than the
+argument: **every hand-off that has actually happened in production has zero
+declared label overlap.**
+
+```
+weather_oracle -> weather_ensemble_forecaster   produces fermi/weather_market_call
+                                                accepts  forecast-question
+                                                overlap  NONE          (4 hops)
+weather_oracle -> weather_calibrator                     NONE          (1 hop)
+simops_companion -> supply_chain_oracle                  NONE          (1 hop)
+```
+
+A computed compatibility check would have a **100% false-negative rate** on the
+topology that exists. That is the third appearance of one finding: a check over
+a vocabulary that has not converged refuses working behaviour. §4.4 measured it
+at 48 of 102 cards for `input_binding`; here it is 3 of 3 compositions.
+
+But the vocabulary **has** converged — into a shape where equality is the wrong
+relation. Across the twelve fully typed agents:
+
+| side | form | examples |
+|---|---|---|
+| `produces` | **the artifact I make** — 100% namespaced | `fermi/weather_market_call`, `rabble/species_card` |
+| `accepts` | **the question I answer** | `abw/genome-query/1`, `scro/bom-query/1` |
+| `accepts` | …or slots the prompt needs told | `ticker`, `company`, `species-name` |
+
+Those are different kinds of thing and will never string-match, by design.
+`weather_oracle` does not pipe a market call into the forecaster; it **asks the
+forecaster a question** and receives an artifact. The cards encode
+**request/response**, and looking for a pipe finds nothing — the nothing means
+the query was wrong.
+
+So:
+
+- **Substitutability** — who else answers the same ask — is computable from
+  cards **today**. `src/port_trust.rs::answerers`.
+- **Chainability** — whether X's artifact answers Y's question — is not in the
+  labels and cannot be derived from them. It lives in
+  `episodes.parent_episode_id`: **observed** rather than declared, which is the
+  right shape for a fleet that reconfigures itself. Computing it as a `Control`
+  is the a-priori-determinism trap; as a `Report` it costs adaptation nothing
+  and says something true — that the manifest has drifted from the behaviour.
+
+#### `Substitutes`, and why it is three states
+
+A label everybody answers to is not a seam, it is the calling convention:
+
+```
+query              24 of 102   Universal   — excludes nothing
+workspace-state     8 of 102   Cohort      — all coordination/coherence agents
+location_context    6 of 102   Cohort      — all spatial/creature agents
+abw/genome-query/1  1 of 102   Bespoke     — genome_profiler's alone
+```
+
+`UNIVERSAL_SHARE` is a tenth, and the argument is not the number: if more than
+one agent in ten answers to a label, the label describes how the platform is
+**called** rather than what any of them is **for**. Pinned from both sides —
+loosened to 0.50 and `query` becomes a cohort; tightened to 0.05 and
+`workspace-state` stops being one. Both go red.
+
+#### The counter-intuitive result
+
+**Typing made `accepts` labels less shared, not more.** A namespaced request
+type is per-agent by construction, so of twelve namespaced accepts labels in the
+corpus exactly **one** is shared. The cohorts live in the organic untyped
+vocabulary agents converged on without being told to.
+
+`fermi/forecast-question/1` is the exception and the pattern worth copying: a
+namespaced question type deliberately shared, answered by five agents. It is the
+only place the typed vocabulary expresses a cohort, and it does it well.
+
+A note on how this was nearly got wrong: partitioning by `TYPED_TIER_EXEMPT`
+said the post-contract cohort was no better than the legacy one. It was the
+wrong partition — 16 of those 29 agents are off the exemption list and never
+typed their ports at all. The signal only appeared against the twelve
+typed-only agents, and those are exactly the ones that compose.
+
 #### Correction owed on §4.6
 
 Coverage went 11 → 21 agents on the execute path, and **20 of those are real.**
@@ -737,6 +817,10 @@ trace is built around fields), deliberately not answered here.
 | when several readings are true, the caller is told the worst | `reliance::tests::the_worst_available_reading_wins` |
 | nothing checked is not the same as checked and wrong | `reliance::tests::nothing_checked_is_not_the_same_as_checked_and_wrong` |
 | the fleet listing can answer what the navigator got wrong | `platform::tests::the_fleet_listing_answers_what_the_navigator_got_wrong` |
+| a universal label is not a cohort, and a domain label is | `port_trust::tests::query_is_not_a_cohort_and_workspace_state_is` |
+| one answerer is `Bespoke`, not missing | `port_trust::tests::a_label_with_one_answerer_is_bespoke_not_missing` |
+| the one shared question type keeps working | `port_trust::tests::the_shared_question_type_is_the_pattern_that_works` |
+| `port_trust` and `completeness` decisions are registered at all | `falsification_registry::every_decision_function_is_registered_or_exempted` |
 | that scan reads multi-line calls and fires on a real one | `gate_trust_coverage::the_pairing_sees_a_multiline_call_and_an_anonymous_recorded_write` |
 | question three names `completeness` and never `grounding` | `trace_verification_fold::the_question_with_no_gate_is_found_rather_than_named` |
 | the `no gate` note finds its subject instead of asserting one | same test |
