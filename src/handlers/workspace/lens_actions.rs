@@ -46,23 +46,43 @@ fn parse_market(s: &str) -> Result<Market, (StatusCode, String)> {
 }
 
 /// Read and parse a ruleset from the workspace git.
+/// Read a ruleset, trying the workspace git first then falling back to the
+/// platform apps directory. The fallback means workspaces don't need to be
+/// pre-seeded with ruleset files — the canonical copies in
+/// `apps/adaptogen-lab/regulatory-lens/rulesets/` are used if the workspace
+/// hasn't overridden them. A workspace-local copy takes precedence, which
+/// allows per-product ruleset customisation in the future.
 async fn read_ruleset(
     state: &AppState,
     slug: &str,
     market: Market,
 ) -> Result<Ruleset, (StatusCode, String)> {
-    let path = format!("regulatory-lens/rulesets/{}", market.ruleset_filename());
+    let ws_path = format!("regulatory-lens/rulesets/{}", market.ruleset_filename());
+    let platform_path = format!(
+        "apps/adaptogen-lab/regulatory-lens/rulesets/{}",
+        market.ruleset_filename()
+    );
     let git = state.workspace_git.clone();
-    let slug = slug.to_string();
-    let bytes = tokio::task::spawn_blocking(move || git.read_file_bytes(&slug, &path))
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .map_err(|e| {
-            (
-                StatusCode::NOT_FOUND,
-                format!("{market} ruleset not found: {e}"),
-            )
-        })?;
+    let slug_s = slug.to_string();
+    let bytes = tokio::task::spawn_blocking(move || {
+        // Try workspace git first.
+        git.read_file_bytes(&slug_s, &ws_path).or_else(|_| {
+            // Fall back to the platform apps directory.
+            std::fs::read(&platform_path).map_err(|e| {
+                agent_bestiary_ontology::OntologyError::RepoNotFound(format!(
+                    "platform fallback not found at {platform_path}: {e}"
+                ))
+            })
+        })
+    })
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(|e| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("{market} ruleset not found in workspace or platform: {e}"),
+        )
+    })?;
     Ruleset::from_yaml(&bytes).map_err(|e| {
         (
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -264,11 +284,23 @@ pub async fn render_lens_handler(
 
 // ─── 2. compare_lenses ───────────────────────────────────────────────────────
 
+/// A single overridden source claim — replaces or adds a claim in the
+/// composition's source_claims array for this comparison only.
+/// The override is not persisted; call mutate_document separately to save it.
+#[derive(Deserialize)]
+pub struct OverrideClaim {
+    pub id: String,
+    pub candidate_text: String,
+    /// Optional: claim_pressure hint ("high" | "medium" | "low"). Defaults to "medium".
+    pub claim_pressure: Option<String>,
+}
+
 #[derive(Deserialize)]
 pub struct CompareLensesRequest {
     pub source_product_id: Option<String>,
     pub markets: Option<Vec<String>>,
     pub claim_id: Option<String>,
+    pub override_source_claims: Option<Vec<OverrideClaim>>,
     pub source_message_id: Option<String>,
 }
 
@@ -294,20 +326,27 @@ pub async fn compare_lenses_handler(
         .as_deref()
         .unwrap_or("precision_kombucha_hibiscus_f2")
         .to_string();
-    let composition_path = format!("regulatory-lens/sku/{product_id}.yaml");
+    let ws_comp_path = format!("regulatory-lens/sku/{product_id}.yaml");
+    let platform_comp_path = format!("apps/adaptogen-lab/regulatory-lens/sku/{product_id}.yaml");
     let git = state.workspace_git.clone();
     let slug_c = slug.clone();
-    let comp_path_c = composition_path.clone();
-    let comp_bytes =
-        tokio::task::spawn_blocking(move || git.read_file_bytes(&slug_c, &comp_path_c))
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-            .map_err(|e| {
-                (
-                    StatusCode::NOT_FOUND,
-                    format!("Product composition not found: {e}"),
-                )
-            })?;
+    let comp_bytes = tokio::task::spawn_blocking(move || {
+        git.read_file_bytes(&slug_c, &ws_comp_path).or_else(|_| {
+            std::fs::read(&platform_comp_path).map_err(|e| {
+                agent_bestiary_ontology::OntologyError::RepoNotFound(format!(
+                    "platform fallback not found at {platform_comp_path}: {e}"
+                ))
+            })
+        })
+    })
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(|e| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("Product composition not found in workspace or platform: {e}"),
+        )
+    })?;
 
     let composition: Value = serde_yaml::from_slice(&comp_bytes).map_err(|e| {
         (
@@ -316,11 +355,44 @@ pub async fn compare_lenses_handler(
         )
     })?;
 
-    let source_claims = composition
-        .get("source_claims")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
+    let source_claims: Vec<serde_json::Value> =
+        if let Some(ref overrides) = req.override_source_claims {
+            // When overrides are provided, use them instead of (or merged with) the
+            // composition's source_claims. This allows the UI to test a modified claim
+            // without writing it back to the YAML first.
+            //
+            // Merge strategy: start from the composition's source_claims, then apply
+            // overrides by matching `id`. New ids (not in composition) are appended.
+            let mut base: Vec<serde_json::Value> = composition
+                .get("source_claims")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+
+            for ov in overrides {
+                let pressure = ov.claim_pressure.as_deref().unwrap_or("medium");
+                let replacement = serde_json::json!({
+                    "id": ov.id,
+                    "candidate_text": ov.candidate_text,
+                    "claim_pressure": pressure,
+                });
+                if let Some(existing) = base
+                    .iter_mut()
+                    .find(|c| c.get("id").and_then(|v| v.as_str()) == Some(&ov.id))
+                {
+                    *existing = replacement;
+                } else {
+                    base.push(replacement);
+                }
+            }
+            base
+        } else {
+            composition
+                .get("source_claims")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default()
+        };
 
     // Determine which markets are in scope.
     let active_markets: Vec<Market> = req
