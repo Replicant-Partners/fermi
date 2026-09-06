@@ -939,6 +939,32 @@ const FALSIFICATIONS: &[Falsification] = &[
                  two dozen agents are interchangeable for any ask, which is \
                  true and useless.",
     },
+    Falsification {
+        check: "port_trust::seam_agreement",
+        owner: "src/port_trust.rs",
+        // Permissive reading: "the cards account for this hand-off."
+        passes: || {
+            fermi::port_trust::seam_agreement(
+                &["fermi/weather_market_call".to_string()],
+                &["fermi/weather_market_call".to_string()],
+            ) == fermi::port_trust::SeamAgreement::Declared
+        },
+        fires: || {
+            // The real pair, with the labels both cards actually declare.
+            fermi::port_trust::seam_agreement(
+                &["fermi/weather_market_call".to_string()],
+                &["forecast-question".to_string()],
+            ) == fermi::port_trust::SeamAgreement::Declared
+        },
+        models: "`weather_oracle -> weather_ensemble_forecaster`, four hops in \
+                 production and no declared label in common. Every observed \
+                 hand-off on the platform is in that state, so a comparison \
+                 that always answered `Declared` would agree with none of them \
+                 and a comparison that always answered `Undeclared` would agree \
+                 with all three while proving nothing. The `passes` world is \
+                 the one the corpus does not currently contain, which is why it \
+                 has to be constructed.",
+    },
     // ── completeness ────────────────────────────────────
     Falsification {
         check: "completeness::assess",

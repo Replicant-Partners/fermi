@@ -275,6 +275,65 @@ pub fn answerers(cards: &[(String, Vec<String>)]) -> Vec<Answerers> {
         .collect()
 }
 
+// ─── chainability, observed ───────────────────────────────────
+
+/// **Which agents have actually fed which**, from the run record.
+///
+/// The other half of composability, and the half that cannot come from cards.
+/// [`answerers`] says who answers the same ask; this says what actually
+/// composed. Declared ports predict none of it — measured over every hand-off
+/// in production, the overlap between caller `produces` and callee `accepts` is
+/// empty in every case — because the two vocabularies describe
+/// request/response rather than a pipe.
+///
+/// # Why observed rather than computed
+///
+/// A computed compatibility check would refuse the entire real topology, and
+/// as an authority it would also freeze a fleet whose whole point is that it
+/// reconfigures itself. Observation has neither problem: it cannot refuse
+/// anything, and it describes what the system became rather than what someone
+/// predicted it would.
+///
+/// `parent_episode_id` arrived with migration 198 for a different reason — a
+/// delegated run writes its own episode instead of folding its tokens into its
+/// caller's — and the topology is a free consequence of that decision.
+///
+/// # Read-only, and joined through `agents` deliberately
+///
+/// Returns names rather than ids because a seam is read by a person or quoted
+/// by a navigator, and a uuid pair is not an answer to *"what feeds what"*.
+/// Agents that have since been deleted drop out of the join, which is correct:
+/// a seam whose endpoint no longer exists is not a seam anyone can use.
+pub const OBSERVED_SEAMS_SQL: &str = "SELECT pa.agent_name AS caller,                                              ca.agent_name AS callee,                                              count(*)::bigint AS hops,                                              max(c.created_at) AS last_seen                                         FROM episodes c                                         JOIN episodes p ON p.episode_id = c.parent_episode_id                                         JOIN agents ca ON ca.agent_id = c.agent_id                                         JOIN agents pa ON pa.agent_id = p.agent_id                                        WHERE c.parent_episode_id IS NOT NULL                                     GROUP BY 1, 2                                     ORDER BY hops DESC, caller, callee";
+
+/// Does the declared vocabulary account for a seam that happened?
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeamAgreement {
+    /// The caller produces a label the callee accepts. The manifest describes
+    /// the behaviour.
+    Declared,
+    /// They composed and no declared label connects them. **A finding about the
+    /// cards, not about the composition** — the run succeeded.
+    Undeclared,
+}
+
+/// Compare one observed hand-off against what the two cards declare.
+///
+/// Pure over the two label sets so it can be checked without a database, and
+/// deliberately not a verdict on the composition: the only thing an
+/// `Undeclared` seam tells you is that the ports do not describe a hand-off
+/// that demonstrably works. Every seam in the corpus reads `Undeclared` today.
+pub fn seam_agreement(caller_produces: &[String], callee_accepts: &[String]) -> SeamAgreement {
+    if caller_produces
+        .iter()
+        .any(|p| callee_accepts.iter().any(|a| a == p))
+    {
+        SeamAgreement::Declared
+    } else {
+        SeamAgreement::Undeclared
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -694,5 +753,120 @@ mod tests {
         // into one either.
         assert_eq!(substitutes(1, 1), Substitutes::Bespoke);
         assert_eq!(substitutes(5, 0), Substitutes::Cohort(5));
+    }
+
+    // ── chainability, observed ───────────────────────────────
+
+    /// Ports a card declares, for the seam comparisons below.
+    fn card_ports(agent: &str) -> (Vec<String>, Vec<String>) {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("agents/curated")
+            .join(agent)
+            .join("agent_card.json");
+        let body = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{agent}: {e}"));
+        let v: serde_json::Value = serde_json::from_str(&body).expect("card parses");
+        let get = |k: &str| {
+            v.get(k)
+                .and_then(|a| a.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(str::to_string))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        };
+        (get("accepts"), get("produces"))
+    }
+
+    /// **Every hand-off that has actually happened is undeclared.**
+    ///
+    /// The three pairs below are the entire observed topology of the platform,
+    /// read from `episodes.parent_episode_id`. Not one of them has a declared
+    /// label in common, and all three ran successfully — `weather_oracle` has
+    /// asked the ensemble forecaster four times.
+    ///
+    /// This is what makes computing chainability from labels a non-starter: as
+    /// a check it would have a 100% false-negative rate on the real topology,
+    /// and as an authority it would refuse the compositions the platform
+    /// actually performs.
+    ///
+    /// # This test going red would be good news
+    ///
+    /// It asserts a defect, which is unusual, so the direction matters. If a
+    /// pair here becomes `Declared` the port vocabulary has started describing
+    /// real hand-offs — update the expectation and say which pair converged.
+    /// The failure to be alarmed by is the opposite one: a pair disappearing,
+    /// which means the seam stopped being exercised.
+    #[test]
+    fn every_observed_seam_is_undeclared() {
+        // (caller, callee) — the observed topology, hops in the comment.
+        const OBSERVED: &[(&str, &str)] = &[
+            ("weather_oracle", "weather_ensemble_forecaster"), // 4 hops
+            ("weather_oracle", "weather_calibrator"),          // 1
+            ("simops_companion", "supply_chain_oracle"),       // 1
+        ];
+
+        for (caller, callee) in OBSERVED {
+            let (_, produces) = card_ports(caller);
+            let (accepts, _) = card_ports(callee);
+            assert!(
+                !produces.is_empty() && !accepts.is_empty(),
+                "{caller} -> {callee}: one side declares no ports, so this pair \
+                 cannot demonstrate anything about the vocabulary"
+            );
+            assert_eq!(
+                seam_agreement(&produces, &accepts),
+                SeamAgreement::Undeclared,
+                "{caller} -> {callee} now has a declared label in common. That \
+                 is the port vocabulary starting to describe real hand-offs, \
+                 which is the outcome the ports rung is for — update this \
+                 expectation and name the pair that converged.\n  \
+                 produces: {produces:?}\n  accepts:  {accepts:?}"
+            );
+        }
+    }
+
+    /// The comparison must be able to see agreement when it exists.
+    ///
+    /// Without this the assertion above is satisfied by a function that always
+    /// returns `Undeclared`, which would agree with the corpus and prove
+    /// nothing — the vacuity that made the trace's 6,000-character window pass
+    /// for months.
+    #[test]
+    fn the_seam_comparison_can_see_a_match() {
+        let produces = vec!["fermi/weather_market_call".to_string()];
+        assert_eq!(
+            seam_agreement(&produces, &["fermi/weather_market_call".to_string()]),
+            SeamAgreement::Declared
+        );
+        assert_eq!(
+            seam_agreement(&produces, &["forecast-question".to_string()]),
+            SeamAgreement::Undeclared
+        );
+        // An empty side cannot agree with anything.
+        assert_eq!(seam_agreement(&produces, &[]), SeamAgreement::Undeclared);
+        assert_eq!(seam_agreement(&[], &produces), SeamAgreement::Undeclared);
+    }
+
+    /// The topology query reads and joins, and never writes.
+    #[test]
+    fn the_seam_query_is_read_only_and_names_both_ends() {
+        let q = OBSERVED_SEAMS_SQL.to_ascii_lowercase();
+        assert!(q.trim_start().starts_with("select"));
+        for w in ["insert", "update ", "delete", "drop", "alter", "truncate"] {
+            assert!(!q.contains(w), "the seam query contains `{w}`");
+        }
+        assert!(
+            q.contains("parent_episode_id is not null"),
+            "without the parent filter every episode joins to nothing and the \
+             topology reads as empty rather than as unrecorded"
+        );
+        for end in ["caller", "callee"] {
+            assert!(
+                q.contains(end),
+                "the query does not name `{end}`; a uuid pair is not an answer \
+                 to what feeds what"
+            );
+        }
     }
 }

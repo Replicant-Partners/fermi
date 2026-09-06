@@ -666,6 +666,87 @@ wrong partition — 16 of those 29 agents are off the exemption list and never
 typed their ports at all. The signal only appeared against the twelve
 typed-only agents, and those are exactly the ones that compose.
 
+#### The observed topology is readable now
+
+`port_trust::OBSERVED_SEAMS_SQL` — caller, callee, hops, last seen — plus
+`seam_agreement`, which compares one observed hand-off against what the two
+cards declare. The const was executed against production, not just written:
+
+```
+caller            callee                       hops  last_seen
+weather_oracle    weather_ensemble_forecaster     4   2026-08-28
+simops_companion  supply_chain_oracle             1   2026-08-19
+weather_oracle    weather_calibrator              1   2026-08-18
+```
+
+`every_observed_seam_is_undeclared` pins all three, and **that test going red
+would be good news**: it asserts a defect, so the direction matters. A pair
+becoming `Declared` means the port vocabulary has started describing real
+hand-offs. The failure to worry about is a pair *disappearing*, which means the
+seam stopped being exercised. `the_seam_comparison_can_see_a_match` stops the
+whole thing being satisfied by a function that always returns `Undeclared` — the
+vacuity that let the trace's 6,000-character window pass for months.
+
+#### `xaman_ek` cannot be contracted yet, and the reason is not a missing contract
+
+It emits **prose**. Of 18 recorded responses, 4 contain even a brace, and
+`extract_json` finds no document in the rest — so `claimed` is `None`, the report
+is empty, and a field contract over it would enforce nothing.
+
+That is the same failure this rung has removed four times already: a `Derived`
+field with no production caller, `grade` discarding the contract it was handed,
+`simops_companion`'s inert `narrative` block, and `output_schema` recorded with
+no door. Writing a contract for `xaman_ek` today would be the fifth, authored
+deliberately.
+
+**The blocker is an agent change, not a platform one:** the navigator has to
+emit a document before its claims can be typed. That is a product decision about
+a conversational agent — `AGENT_MODEL.md` §3.3 already argues its weight should
+be distributed to surface-resident agents — and it is not one to make from
+inside the grounding subsystem.
+
+What *is* now true is that every source such a contract would name exists:
+demographics and artifacts from the widened `list_agents`, substitutability from
+`answerers`, chainability from `OBSERVED_SEAMS_SQL`. The order was deliberate.
+
+#### `fermi` is the meta agent that can be contracted today
+
+Measured over agents with recorded responses:
+
+```
+agents with responses      42
+  emit document-like text  28   (290 pulses)
+  prose only               14   (125 pulses)
+```
+
+And among document-emitting agents that are still uncovered, ranked by traffic:
+
+```
+fermi                    49 pulses, 34 document-like   <- the meta agent to start with
+cohere_and_coordinate    10
+energy_advisor            5
+regulatory_scanner        4  (4 of 4 document-like)
+… 19 agents, 135 pulses total
+```
+
+So the meta-agent contract starts with **`fermi`**, not `xaman_ek`: it produces
+FPL programs and forecasts, two thirds of its retained responses are
+document-shaped, and its claims are about the platform's own model of a question
+— checkable in exactly the way §4.5's inversion describes.
+
+#### And the coverage backlog is much smaller than "81 agents"
+
+§4.6 counted 81 uncovered cards. The number that matters is **19 agents and 135
+pulses** — those that actually emit documents, actually run, and have no
+contract. The rest are either prose-only, where grounding has nothing to operate
+on, or cold.
+
+This also corrects a stale comment: `prose_has_no_floor_above_ungrounded` says
+*"74 of 100 curated agents return prose only"*. Against recorded responses it is
+14 of 42. The comment may be counting cards without typed fields rather than
+observed output, but as written it overstates the ceiling by a wide margin — the
+fourth stale claim this rung has turned up, and the least consequential.
+
 #### Correction owed on §4.6
 
 Coverage went 11 → 21 agents on the execute path, and **20 of those are real.**
