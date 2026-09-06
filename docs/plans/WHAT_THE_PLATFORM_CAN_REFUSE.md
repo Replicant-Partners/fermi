@@ -486,6 +486,118 @@ is Loop 2, which is starved because `anomaly_events` is its only input and most
 episodes raise nothing. That is the real ceiling on all of this and it is a much
 larger piece of work.
 
+#### The meta agents invert it
+
+Everything above silently assumes **the canonical record is elsewhere** — GBIF,
+NCBI, a weather API — so contradicting a claim means an external round trip, a
+queue, and Loop 2. For `xaman_ek`, `fermi` and `simops_companion` it is not.
+Their subject matter is *this platform*, and the truth is one local `SELECT`.
+
+So the agents easiest to dismiss as "prose, nothing to ground" are the ones
+where `ContradictsCanonical` — the only kind that says **wrong** rather than
+**unsourceable** — is cheapest. Four agents carry a `cross_check_sql` today and
+all four reach for external truth. The agents whose subject we own carry none.
+
+#### The incident
+
+Asked which model a free-tier creature would use for `biotech_analyst`,
+`xaman_ek` answered:
+
+> *"**biotech_analyst does not have a declared `model_ladder`** in its agent
+> card. This means it is **tier-agnostic** — your free-tier creature will run it
+> at the **card's default model**. The default model for biotech_analyst is
+> **Claude Haiku**."*
+
+| claimed | actual |
+|---|---|
+| no `model_ladder` declared | three rungs: premium, standard, free |
+| tier-agnostic, runs the card default | free resolves to `openrouter/free` |
+| default is Claude Haiku | default is `claude-sonnet-4-5` |
+
+Three claims, all false, all one query from being checked. A user asking about
+their own cost and quality tradeoff was told the opposite of the truth.
+
+**And it could not have answered correctly.** Its two sources of fleet knowledge
+were a one-line prose digest per agent in its own system prompt, which carries
+no model information at all, and `list_agents`, which returned
+`{id, type, description, skills}` and no model information either. The question
+was unanswerable from every source it can reach, so confabulating something
+specific and plausible was the only way to answer at all.
+
+> A meta agent's grounding problem is not that it fabricates. It is that the
+> platform hands it **prose about its fleet instead of structured access to
+> it**, and then fabrication is the only way to answer.
+
+#### Encyclopedic where the design says ecological
+
+`docs/architecture/AKP-ecology-design-doc` §7 is explicit: *"The meta-agent does
+not attempt to know everything every agent knows. Its awareness is ecological —
+it understands the shape, dynamics, and health of the agent ecosystem."* And
+`AGENT_MODEL.md` §3.3 already diagnoses the symptom: *"The current
+unsatisfying-ness of xamanEK is a symptom of it carrying weight that should be
+distributed to surface-resident agents."*
+
+The mechanism by which it carries that weight is a **string**. Every one of 102
+agents is pasted into its system prompt, kept in sync by
+`test_all_agents_registered_with_xaman_ek`, which asserts each `agent_id`
+appears as `**agent_id**`. That test institutionalises the encyclopedic model:
+every agent added makes the prompt longer, the digest lossier, and the test
+redder. It is red right now, for `regulatory_lens_translator`.
+
+It is enforcing the invariant the design moved past — the same shape as every
+other stale claim in this document, except that this one is a *test*, which is
+why nobody reads it as a claim at all.
+
+#### What changed here, and what deliberately did not
+
+`list_agents` now returns what a navigator is actually asked about: `model`,
+`provider`, `min_tier`, `model_ladder` as tier → model, `accepts`, `produces`,
+`produces_schema`, and `tools`. The projection is a pure function,
+`platform::fleet_entry`, so it can be checked against a real card without a
+registry.
+
+`the_fleet_listing_answers_what_the_navigator_got_wrong` asserts
+**recoverability, not strings**: from what the tool returns, a caller must be
+able to establish that a ladder exists and that the free rung differs from the
+card default. Pinning `openrouter/free` would go red every time a model is
+swapped — routine — while saying nothing about whether the question is
+answerable. Mutated twice: back to the original four fields, and with the ladder
+present but always empty (the plausible half-fix). Both red.
+
+**No contract for `xaman_ek` yet, on purpose.** Marking these claims `Sourced`
+against a tool that could not supply them would declare a check the platform
+cannot run — which is the exact failure this rung spent its whole length
+removing, from `Derived` fields with no caller to `grade` discarding the
+contract it was handed. The source has to exist before the contract can name it.
+
+#### The kind these claims want
+
+Not `Sourced`: that asserts only that *a tool could answer*, and the whole
+`Antaxius beieri` lesson is how weak a claim that is when the model can call the
+tool and answer from memory anyway. Platform-state claims are **`Derived`** —
+computed by us or checked by us, never merely asserted — which is already
+enforced by `every_derived_field_is_computed_or_checked`, and which the parallel
+work adopted the same week for `regulatory_lens_translator`'s
+handler-computed fields.
+
+The scoping machinery for the staleness half also exists: `COHORT_PREDICATE`
+restricts a cross-check to episodes produced by the prompt the agent
+*currently* has, by comparing `card_prompt_hash` against
+`sha256(system_prompt)`. For an agent whose fleet knowledge **is** its prompt,
+that is exactly the right scope, and it was built for something else.
+
+#### Correction owed on §4.6
+
+Coverage went 11 → 21 agents on the execute path, and **20 of those are real.**
+`simops_companion` — 113 pulses, third busiest on the platform — has a contract
+of exactly one block, `action`, marked `narrative`. On the card path `narrative`
+gets no provenance stamp and the `NARRATIVE_LEAKS` scan is a TODO, so nothing
+is checked. Nominal coverage.
+
+Its `action` block is also the wrong kind: a structured dispatch instruction is
+not prose, and `regulatory_lens_translator` — the same dispatcher shape — marks
+its handler-computed output `Derived`.
+
 ### 4.6 Coverage — **the contracts existed; the execute path threw them away**
 
 26 of 42 grounding decisions were `undetermined` — which reads as *"agents with
@@ -624,6 +736,7 @@ trace is built around fields), deliberately not answered here.
 | the reliance vocabulary promises no refusal the platform cannot make | `reliance::tests::the_vocabulary_has_no_refusal_it_cannot_emit` |
 | when several readings are true, the caller is told the worst | `reliance::tests::the_worst_available_reading_wins` |
 | nothing checked is not the same as checked and wrong | `reliance::tests::nothing_checked_is_not_the_same_as_checked_and_wrong` |
+| the fleet listing can answer what the navigator got wrong | `platform::tests::the_fleet_listing_answers_what_the_navigator_got_wrong` |
 | that scan reads multi-line calls and fires on a real one | `gate_trust_coverage::the_pairing_sees_a_multiline_call_and_an_anonymous_recorded_write` |
 | question three names `completeness` and never `grounding` | `trace_verification_fold::the_question_with_no_gate_is_found_rather_than_named` |
 | the `no gate` note finds its subject instead of asserting one | same test |

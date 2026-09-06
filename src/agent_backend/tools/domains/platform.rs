@@ -799,25 +799,115 @@ async fn execute_delegate_to_agent(
     })
 }
 
+/// The fleet, as a navigator is actually asked about it.
+///
+/// # Why this returns more than a description
+///
+/// It returned `{id, type, description, skills}` — four fields — and
+/// `xaman_ek`, the platform's navigator, is the main caller. Asked which model
+/// a free-tier creature would use for `biotech_analyst`, it answered:
+///
+/// > *"**biotech_analyst does not have a declared `model_ladder`** in its agent
+/// > card. This means it is **tier-agnostic** — your free-tier creature will run
+/// > it at the **card's default model**. The default model for biotech_analyst
+/// > is **Claude Haiku**."*
+///
+/// Three claims, all false. The card carries a three-rung `model_ladder`; the
+/// free rung resolves to `openrouter/free`, not the card default; and the
+/// default is `claude-sonnet-4-5`. A user asking about their own cost and
+/// quality tradeoff was told the opposite of the truth.
+///
+/// **The interesting part is that it could not have answered correctly.** Its
+/// only two sources of fleet knowledge were a one-line prose digest per agent
+/// in its own system prompt — which carries no model information at all — and
+/// this tool, which did not return any either. The question was unanswerable
+/// from every source it can reach, so confabulating a specific and plausible
+/// answer was the only way to answer at all.
+///
+/// That is the meta-agent shape of the `Antaxius beieri` defect, and it is
+/// worse in one respect: a bush-cricket reported as a beetle needs GBIF to
+/// contradict it, whereas every claim above is one local `SELECT` from being
+/// checked. `docs/architecture/AKP-ecology-design-doc` §7 says the meta-agent's
+/// awareness should be *ecological* — *"does not attempt to know everything
+/// every agent knows"* — and giving it a prose digest of 102 agents is the
+/// encyclopedic opposite: lossy, stale, and unbounded in the fleet's size.
+///
+/// So the fields below are chosen by what the navigator is asked, not by what
+/// is cheap to serialise. **This is a prerequisite for contracting `xaman_ek`
+/// rather than a substitute for it:** a grounding contract marking these claims
+/// `Sourced` against a tool that could not supply them would declare a check
+/// the platform cannot run, which is the failure mode the grounding subsystem
+/// spent this whole rung removing.
 async fn execute_list_agents(ctx: &ToolContext) -> Result<String, String> {
     let cards = ctx
         .registry
         .list_cards()
         .map_err(|e| format!("Failed to list agents: {}", e))?;
 
-    let agents: Vec<serde_json::Value> = cards
-        .iter()
-        .map(|c| {
-            json!({
-                "id": c.agent_id,
-                "type": c.agent_type,
-                "description": c.metadata.description,
-                "skills": c.capabilities.skills,
-            })
-        })
-        .collect();
+    let agents: Vec<serde_json::Value> = cards.iter().map(fleet_entry).collect();
 
     serde_json::to_string_pretty(&agents).map_err(|e| format!("Serialization error: {}", e))
+}
+
+/// One agent, as the fleet listing describes it.
+///
+/// Pure over the card and separated from [`execute_list_agents`] so the
+/// projection can be tested against a real card without a registry — the
+/// decision is which facts a navigator needs, and the `async fn` above is the
+/// carriage.
+pub(crate) fn fleet_entry(c: &crate::agent_backend::agent_card::AgentCard) -> serde_json::Value {
+    json!({
+        "id": c.agent_id,
+        "type": c.agent_type,
+        "description": c.metadata.description,
+        "skills": c.capabilities.skills,
+        // Which model actually runs, and on which tier. The three
+        // fields the `biotech_analyst` answer got wrong.
+        //
+        // `model_ladder` is returned as tier -> model rather than the
+        // full rung: a navigator answers "what will MY tier get", and
+        // `eval_score`/`benchmarked_at`/`note` are the evaluation
+        // rung's business. An empty ladder is returned as an empty
+        // object rather than omitted, because "no ladder declared" is
+        // the true answer to a question that was asked and must be
+        // distinguishable from "I was not told".
+        "model": c.capabilities.model,
+        "provider": c.capabilities.provider,
+        "min_tier": c.capabilities.min_tier,
+        "model_ladder": c
+            .capabilities
+            .model_ladder
+            .iter()
+            .map(|r| {
+                (
+                    serde_json::to_value(&r.tier)
+                        .ok()
+                        .and_then(|v| v.as_str().map(str::to_string))
+                        .unwrap_or_else(|| format!("{:?}", &r.tier)),
+                    json!({ "provider": r.provider, "model": r.model }),
+                )
+            })
+            .collect::<serde_json::Map<String, serde_json::Value>>(),
+        // The interface. A composition plan that names an agent whose
+        // ports cannot carry what the previous stage produces is the
+        // other class of confident wrong answer this tool enables.
+        "accepts": c.accepts,
+        "produces": c.produces,
+        "produces_schema": c
+            .capabilities
+            .output_contract
+            .as_ref()
+            .and_then(|oc| oc.get("produces_schema")),
+        // What it can actually do, by name, so "which agent reads a
+        // workspace file" is answerable from the fleet rather than
+        // from memory.
+        "tools": c
+            .capabilities
+            .mcp_tools
+            .iter()
+            .map(|t| t.name.clone())
+            .collect::<Vec<_>>(),
+    })
 }
 
 pub(crate) async fn execute_web_search(input: &serde_json::Value) -> Result<String, String> {
@@ -1263,6 +1353,90 @@ mod tests {
                     assert!(!flag, "tool `{}` should NOT require workspace", name);
                 }
             }
+        }
+    }
+
+    /// **The fleet listing must be able to answer the question it got wrong.**
+    ///
+    /// Asked which model a free-tier creature would use for `biotech_analyst`,
+    /// `xaman_ek` said the card declares no `model_ladder`, that it is
+    /// therefore tier-agnostic, and that the default is Claude Haiku. All
+    /// three are false: there is a three-rung ladder, the free rung resolves
+    /// somewhere other than the default, and the default is a Sonnet.
+    ///
+    /// It could not have done better. Its two sources of fleet knowledge were a
+    /// one-line prose digest per agent in its own system prompt, which carries
+    /// no model information, and `list_agents`, which returned four fields and
+    /// none of them either. **A confident wrong answer was the only answer
+    /// available.**
+    ///
+    /// So this asserts recoverability rather than a string: from what the tool
+    /// now returns, a caller must be able to establish that a ladder exists and
+    /// that the free rung is not the card default. Pinning `openrouter/free`
+    /// or a model name would go red every time a model is swapped, which is
+    /// routine, and would say nothing about whether the question is answerable.
+    #[test]
+    fn the_fleet_listing_answers_what_the_navigator_got_wrong() {
+        let raw = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/agents/curated/biotech_analyst/agent_card.json"
+        ))
+        .expect("biotech_analyst card");
+        let card = crate::agent_backend::agent_card::AgentCard::from_json(&raw)
+            .expect("the card must parse");
+
+        // The fixture has to be the shape the incident needs, or this test
+        // passes by describing a different agent.
+        assert!(
+            !card.capabilities.model_ladder.is_empty(),
+            "this card no longer declares a model_ladder, so it cannot stand in \
+             for the answer that denied it had one. Point the test at an agent \
+             that does."
+        );
+
+        let entry = super::fleet_entry(&card);
+
+        let ladder = entry
+            .get("model_ladder")
+            .and_then(|v| v.as_object())
+            .expect("the listing must carry the ladder, not just the default");
+        assert!(
+            !ladder.is_empty(),
+            "the ladder came back empty for a card that declares three rungs, \
+             so the listing still cannot contradict `does not have a declared \
+             model_ladder`"
+        );
+
+        let default_model = entry
+            .get("model")
+            .and_then(|v| v.as_str())
+            .expect("the listing must carry the card default");
+
+        let free = ladder
+            .get("free")
+            .and_then(|r| r.get("model"))
+            .and_then(|v| v.as_str())
+            .expect(
+                "no `free` rung in the listing. The question asked was what a \
+                 FREE-tier creature gets, and a listing that cannot say is the \
+                 gap that produced the fabrication.",
+            );
+        assert_ne!(
+            free, default_model,
+            "the free rung and the card default are the same model, so this \
+             card can no longer distinguish `tier-agnostic, runs the default` \
+             from the truth. The incident turned on those differing."
+        );
+
+        // And the interface, for the other class of confident wrong answer: a
+        // composition plan naming an agent whose ports cannot carry the stage
+        // before it.
+        for field in ["accepts", "produces", "tools", "min_tier", "provider"] {
+            assert!(
+                entry.get(field).is_some(),
+                "the listing omits `{field}`, so a navigator asked about it \
+                 must answer from its prompt digest or invent one"
+            );
         }
     }
 }
