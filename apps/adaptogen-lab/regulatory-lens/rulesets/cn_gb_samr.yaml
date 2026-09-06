@@ -344,3 +344,11 @@ import_notes:
     Classified as non-alcoholic fermented beverage. Recommend declaring the ABV
     (e.g., '酒精度 < 0.5%') for consumer transparency and to pre-empt regulatory
     questions at customs, even though not strictly required below the threshold.
+
+# ── Verification sources ──────────────────────────────────────────────────────
+verify_sources:
+  - "SAMR official portal: https://www.samr.gov.cn"
+  - "GB 7718-2011 (food labeling standard)"
+  - "GB 28050-2011 (nutrition labeling)"
+  - "GB 2760 (food additive use standard)"
+  - "Current 药食同源目录 via National Health Commission (NHC)"

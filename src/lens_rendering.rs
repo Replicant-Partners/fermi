@@ -144,6 +144,8 @@ pub struct Ruleset {
     pub ingredient_status: Vec<RulesetIngredientStatus>,
     /// Primary sources to verify before commercial use. Every rendering output
     /// must include these — the gate raises `UngroundedField` if absent.
+    /// Defaults to empty vec so rulesets that omit the field still parse.
+    #[serde(default)]
     pub verify_sources: Vec<String>,
 }
 

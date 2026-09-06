@@ -276,3 +276,10 @@ ingredient_status:
     status: gras
     regulatory_reference: "21 CFR 184.1033"
     notes: "GRAS under 21 CFR 184.1033. Widely used as a food additive — no restrictions."
+
+# ── Verification sources ──────────────────────────────────────────────────────
+verify_sources:
+  - "21 CFR Part 101 — Food Labeling: https://www.ecfr.gov/current/title-21/chapter-I/part-101"
+  - "FDA guidance: Structure/function claims for conventional foods"
+  - "FTC: Dietary Supplements Advertising Guide for Industry"
+  - "FALCPA (2004) + FASTER Act (2023) — allergen labeling"
