@@ -126,7 +126,7 @@ what each costs, what capability each implies, and any way to declare policy
 
 Also: **`capability_gates` is a terminology collision.** On this platform a
 *gate* is a checkpoint that can refuse an artifact — `gate_decisions`,
-`gate_trust`, the belt. `capability_gates` is a different concept and the name
+`gate_trust`, the trace's checkpoints. `capability_gates` is a different concept and the name
 should change before it is surfaced, or the shelf will teach the wrong meaning of
 the platform's most load-bearing noun.
 

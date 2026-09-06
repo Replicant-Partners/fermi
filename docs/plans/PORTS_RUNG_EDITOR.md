@@ -29,7 +29,7 @@ before claiming any of them fixed.
 | agents with `accepts` declared | 93 of 96 real producing agents | 3 already gone. Ports is the cheapest rung; the coverage is high. |
 | agents with `produces` but no `accepts` | check with `SELECT count(*) FROM agents WHERE cardinality(produces) > 0 AND cardinality(accepts) = 0` | the target population |
 | distinct `accepts` labels in the fleet | 236 | see `LADDER.unlocks` |
-| labels appearing on both `accepts` and `produces` | 13 | a belt exists between them |
+| labels appearing on both `accepts` and `produces` | 13 | a seam exists between them |
 | `PUT /api/agents/:agent_id` accepts `accepts` field | **yes** — `AgentUpdate.accepts: Option<Vec<String>>` in `agent-bestiary/memory/src/types.rs` L742 | no backend work required |
 | `AgentFields` groups that are editable | intelligence, manage | not ports |
 | check that guards the ports row from ContractBuilder | `check_specimen_shelf.js` L280–284 | read it before touching the shelf |

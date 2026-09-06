@@ -144,7 +144,7 @@ const STEPS: &[(&str, &str)] = &[
     ),
     (
         "decided_for_episode",
-        "the gate decides and writes no ledger row, so a pulse's belt shows \
+        "the gate decides and writes no ledger row, so a pulse's trace shows \
          `not_recorded` for a check that ran",
     ),
     (

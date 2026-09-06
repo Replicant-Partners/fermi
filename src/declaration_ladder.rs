@@ -138,7 +138,7 @@ pub const LADDER: &[Declaration] = &[
         without_it: "The input-binding gate returns `undetermined` for every call, \
                      so nobody can tell free text sent to a structured port from a \
                      correct invocation. The agent also cannot appear on either \
-                     end of a belt, because there is no label to match.",
+                     end of a seam, because there is no label to match.",
     },
     Declaration {
         rung: "output_type",
@@ -158,7 +158,7 @@ pub const LADDER: &[Declaration] = &[
         owner: "agents.output_contract.schema — authored via `contract_sketch`, \
                 see docs/DESIGN_typed_output_contracts.md",
         unlocks: "`schema_validate::validate` at the delegation hop, which is what \
-                  makes a belt's `verified` mean *a schema resolved on both sides* \
+                  makes a checkpoint's `verified` mean *a schema resolved on both sides* \
                   rather than *the labels matched*. Also the wrapped output type \
                   `{value, provenance, verified}`, once declarable.",
         without_it: "The envelope reports `unverified` — and that is explicitly \

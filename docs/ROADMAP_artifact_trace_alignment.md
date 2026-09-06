@@ -97,7 +97,7 @@ order a retrofit will actually proceed in.
 |---|---|---|---|
 | `ports` | accepts / produces labels | `port_trust::bind_input` at every execute boundary; the seam census | 93/96 |
 | `output_type` | `output_contract.produces_schema` — a type *name* | `envelope::declared_type`, so a delegated consumer knows what it was handed | 8/96 |
-| `output_schema` | `output_contract.schema` — a checkable object | `schema_validate` at the hop, which is what makes a belt's `verified` mean *a schema resolved on both sides*; and the wrapped output type | 2/96 |
+| `output_schema` | `output_contract.schema` — a checkable object | `schema_validate` at the hop, which is what makes a seam's `verified` mean *a schema resolved on both sides*; and the wrapped output type | 2/96 |
 | `field_contract` | which tool could have supplied each field | **the grounding rung, `assertions[].basis`, the per-field grade, the weakest-link floor, and the verification queue** | 7/96 |
 
 `produces_schema` and `schema` are two rungs, not two spellings — one names a
@@ -181,7 +181,7 @@ nothing needs renaming:
 
 | trace concept | already exists as | state |
 |---|---|---|
-| the belt (ordered checkpoints) | `command_registry::Command.gates` — per route, in order, each `control` or `metric` with a reason | **[E]** |
+| the route's ordered checkpoints | `command_registry::Command.gates` — per route, in order, each `control` or `metric` with a reason | **[E]** |
 | a checkpoint firing | `gate_trust::decided(Gate, Decision, reason)` | **[E]** |
 | when a checkpoint fires | `gate_trust::Clock` — `Admission` / `Invocation` / `Standing` | **[E]** |
 | the per-field mark | `grounding_trust::PROVENANCE_VALUES`, ten rungs incl. `pending_tool` / `pending_human` | **[E]** |
@@ -310,7 +310,7 @@ argument against building it. It is an argument about what must ship *with* it,
 and about what the actual lever is:
 
 * **What must ship with it:** an episode with no rungs is **not a clean journey**.
-  It is an unchecked one, and rendering it as a green belt end-to-end is the exact
+  It is an unchecked one, and rendering it as a green route end-to-end is the exact
   over-read this whole architecture refuses — the same rule as
   `gate_trust::never_asked` and `liveness_trust::Inert`. `reading: "unknown"`,
   and the `detail` is no longer something the trace has to invent:
@@ -357,7 +357,7 @@ a stored copy is a second answer that can disagree with the agent actually
 invoked, which is the bug `coherence_shelf_does_not_hardcode_a_strategist` exists
 to prevent.
 
-**Q3 — what settles `verified` on a belt?**
+**Q3 — what settles `verified` on a seam?**
 Schema resolution, as the request suspects, and the 3-of-10 figure is the reason
 to defer the whole table rather than to weaken the definition. See §5, step 5.
 
@@ -595,7 +595,7 @@ The seam check and the correction chain, plus Q4's real answer. Separable, and
 each is small. The wrapped type is the one with design in it: it wants a card
 change, a `port_trust` check, and a decision about what a mixed composition does.
 
-### Step 5 — belts, and only after the free half
+### Step 5 — declared seams, and only after the free half
 
 `②` should split, because the two halves have very different costs and the cheap
 one decides the expensive one:
@@ -603,17 +603,17 @@ one decides the expensive one:
 * **Free now:** `seams: { labels, seam_forming, orphans }` from `agents.accepts` /
   `agents.produces`, which already exist as `text[]` columns. Re-measured today:
   **289 distinct `produces` labels, 236 distinct `accepts` labels, 13 forming a
-  seam.** No table, no migration, and it is the number that says whether belts are
-  worth building.
-* **Deferred:** the `belts` table. With 13 seam-forming labels the first thing it
+  seam.** No table, no migration, and it is the number that says whether declared
+  seams are worth building.
+* **Deferred:** the declared-seam table. With 13 seam-forming labels the first thing it
   buys is measuring convergence, which the free half already buys. Build it when
   the seam count is rising, or when a strategist needs to *declare* an edge that
   the labels do not imply — which is the real motivation and is a different
   feature from drawing the graph.
 
 `members`, `ports`, `calibration`, `cost_per_run`, `runs`, `strategist.agent_id`
-and `budget` all exist and can be served in ② immediately, with `belts: []` and
-`seams` populated. That is a useful screen without the table.
+and `budget` all exist and can be served in ② immediately, with `declared_seams: []`
+and `seams` populated. That is a useful screen without the table.
 
 ---
 
@@ -673,7 +673,7 @@ decision instead of a habit.
 * **`Retention::Recorded` for grounding** — the record it produces is the wrong
   shape (§2.2). The per-claim tables are the right home. `gate_decisions` keeps
   the coarse rungs.
-* **`belts` in the first pass** — 13 of 289 (§5, step 5). The free seam census
+* **the declared-seam table in the first pass** — 13 of 289 (§5, step 5). The free seam census
   gives the same information and tells us whether to build it.
 * **`strategist.mode` as stored state** — derive it from the resolved strategist
   (§4, Q2).

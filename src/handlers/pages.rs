@@ -668,7 +668,7 @@ pub async fn stream_view() -> Response {
     app_shell("templates/stream.html")
 }
 
-/// Why the belts are quiet, and whose job each one is.
+/// Why the checkpoints are quiet, and whose job each one is.
 ///
 /// The destination of the artifact trace's default state. `unknown` on every
 /// trust surface is overwhelmingly the *agent* declaring no structure to check

@@ -366,7 +366,7 @@ pub mod artifact_hash;
 // `surface` is population-level: how many loops turn, how many gates
 // discriminate. The UX team's verdict on it was right — it is legible only to
 // someone who already holds the machine in their head. This inverts the primary
-// object: one episode crossing one belt, passing checkpoints where rungs fire.
+// object: one episode crossing one route, passing checkpoints where rungs fire.
 // The two are the same structure from opposite ends.
 //
 // It holds no verdict of its own. Every judgement it renders belongs to a module

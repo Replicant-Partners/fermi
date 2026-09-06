@@ -1,5 +1,12 @@
 # Contract — belt rung outcomes
 
+> **Vocabulary note (superseded term).** This is the record of a closed exchange
+> and is kept as it was written. The "belt" metaphor it uses has since been
+> dropped: the row of checkpoints an artifact crosses is now called exactly that,
+> the payload fields are `checkpoints` / `checkpoint_route`, and the assembler is
+> `artifact_trace::checkpoints()`. A *seam* — the other thing "belt" was used for
+> — is an edge between two agents. Everything else below still holds.
+
 **Between:** the trust surfaces UI and the team that owns `artifact_trace` and
 `episode_trace_handler`.
 **Status:** ✅ **FULFILLED.** Implemented as specified — `decided` /

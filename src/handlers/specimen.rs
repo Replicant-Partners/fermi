@@ -87,7 +87,7 @@ pub async fn recent_episodes_handler(
     // the true state of the platform. Sorting contracted rows to the top of a
     // single list made every visible artifact graded and quietly implied that
     // graded is the norm. `graded` is the separate short list, so there is
-    // always an artifact with a populated belt to open even when none is
+    // always an artifact with graded checkpoints to open even when none is
     // recent.
     let sql = "SELECT e.episode_id, a.agent_name, e.created_at, e.query,
                       (a.agent_name = ANY($1)) AS contracted
@@ -135,11 +135,11 @@ pub async fn recent_episodes_handler(
         "graded_in_recent": graded_in_recent,
         "contracted_agents": names,
         "note": "`contracted` means the agent declares a field contract, so its \
-                 trace has graded checkpoints. The rest have a belt with nothing \
-                 to grade — which is the default, is the majority, and is not an \
-                 error. `episodes` is what actually ran, in order, ungraded rows \
-                 included; `graded` is a separate short list so there is always \
-                 one with a populated belt to open.",
+                 trace has graded checkpoints. The rest cross checkpoints with \
+                 nothing to grade — which is the default, is the majority, and is \
+                 not an error. `episodes` is what actually ran, in order, ungraded \
+                 rows included; `graded` is a separate short list so there is \
+                 always one with graded checkpoints to open.",
     })))
 }
 

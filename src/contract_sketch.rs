@@ -2258,7 +2258,7 @@ mod tests {
     /// every label a card declares today is still there after a recompile.
     /// `agents.produces` is a match surface -- `panel_absence` counts 289
     /// distinct labels across the fleet -- so a compiler that drops one
-    /// unbinds a belt nobody was asked about. Six labels on
+    /// unbinds a seam nobody was asked about. Six labels on
     /// `football_analyst`, measured, which is what opened section 6.8.
     ///
     /// This replaced a test asserting that no card declares a namespaced
@@ -2312,7 +2312,7 @@ mod tests {
                 assert!(
                     merged.contains(l),
                     "{name}: recompiling would drop the `produces` label `{l}`. That \
-                     column is a match surface, so dropping one unbinds a belt silently."
+                     column is a match surface, so dropping one unbinds a seam silently."
                 );
             }
             assert!(

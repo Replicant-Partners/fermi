@@ -137,7 +137,7 @@ fn document_span(text: &str) -> Option<(&str, std::ops::Range<usize>, Value)> {
 /// preventing it."*
 ///
 /// So agent-to-agent was protected and person-to-API was not, and the trace
-/// drew the same belt for both.
+/// drew the same checkpoints for both.
 ///
 /// ## What it does and does not do
 ///

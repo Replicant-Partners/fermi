@@ -702,7 +702,7 @@ pub async fn review_gate_decision_handler(
 ///
 /// # It recomputes nothing it does not own
 ///
-/// The belt comes from `command_registry`, the clocks and refusal text from
+/// The checkpoints come from `command_registry`, the clocks and refusal text from
 /// `gate_trust::GATES`, the per-field grades from
 /// `grounding_trust::graded_fields`, the weakest link from `grounding_trust
 /// ::floor`, the routing from `assertions::Assertion::route`, and the reason an
@@ -720,7 +720,7 @@ pub async fn review_gate_decision_handler(
 ///
 /// `gate_decisions` carries no `episode_id`, so no recorded gate decision can be
 /// joined to an artifact. Every rung is still listed, with
-/// `outcome: not_recorded` and the reason — a belt that drops the checkpoints it
+/// `outcome: not_recorded` and the reason — a route that drops the checkpoints it
 /// cannot report on looks shorter and safer than it is.
 /// How much of the agent's answer the trace carries.
 ///
@@ -856,8 +856,8 @@ pub async fn episode_trace_handler(
         fermi::artifact_trace::reading(report.violations.len(), &graded, &legibility);
 
     // Axis 1: is the AGENT on the substrate, and if not, whose work is it and
-    // which worklist? Distinct from the belt, which is axis 2 and is about this
-    // ARTIFACT. Keeping them apart is the whole separation: a rung that said
+    // which worklist? Distinct from the checkpoints, which are axis 2 and are
+    // about this ARTIFACT. Keeping them apart is the whole separation: a rung that said
     // "not applicable, the author declared no field contract" forced a reader to
     // understand field contracts before they could read a checkpoint, and put an
     // agent-level backlog inside a per-artifact diagram.
@@ -869,22 +869,22 @@ pub async fn episode_trace_handler(
     let disposition = fermi::declaration_ladder::disposition(&agent_name, &legibility);
     let substrate_because = match disposition {
         fermi::declaration_ladder::Disposition::Prune =>
-            "This is test cruft, not an agent anyone is going to declare. It is a              delete behind `/api/admin/agents/cleanup-test-cruft`'s safety gate,              not a retrofit target, and its belt is about a fixture."
+            "This is test cruft, not an agent anyone is going to declare. It is a              delete behind `/api/admin/agents/cleanup-test-cruft`'s safety gate,              not a retrofit target, and its checkpoints are about a fixture."
                 .to_string(),
         fermi::declaration_ladder::Disposition::Retrofit => format!(
             "`{agent_name}` is a real agent that has not been fully declared onto              the substrate, so the platform cannot say much about its output that              is not a row count. The grounding rung will read `undetermined` - the              check ran and had nothing to grade - which is a missing declaration              by the agent's author, not a check the platform skipped and not a              pass. This is authoring work, per agent, needing someone who knows              the domain."
         ),
         fermi::declaration_ladder::Disposition::Legible =>
-            "Every rung on the declaration ladder is present, so every checkpoint              on the belt can say something specific about this artifact."
+            "Every rung on the declaration ladder is present, so every checkpoint              on this route can say something specific about this artifact."
                 .to_string(),
     };
 
-    // The belt, with the grounding rung's recomputation filled in from this
-    // episode.
+    // The checkpoints, with the grounding rung's recomputation filled in from
+    // this episode.
     //
     // `agent.execute` is assumed, and that assumption is WRONG for a streamed
     // artifact -- it is disclosed in the payload rather than buried here. The
-    // two routes declare different belts: `agent.execute` has four rungs,
+    // two routes declare different checkpoints: `agent.execute` has four rungs,
     // `agent.execute_stream` has two (`credit` and `grounding`). An earlier
     // comment in this position claimed they declared the same rungs and that
     // either was therefore a correct answer. It was not true, and
@@ -892,16 +892,16 @@ pub async fn episode_trace_handler(
     // grounding.
     //
     // It is not fixable here: `episodes` carries no route discriminator, so the
-    // route is not recoverable from the artifact. Serving the wider belt is the
+    // route is not recoverable from the artifact. Serving the wider route is the
     // deliberate choice of the two errors -- a streamed artifact shows
     // `attachment` and `input_binding` as rungs its route never had, which reads
-    // as *unrecorded*, whereas serving the narrower belt would silently drop two
-    // real checkpoints for the majority of artifacts, and a belt that omits
+    // as *unrecorded*, whereas serving the narrower route would silently drop two
+    // real checkpoints for the majority of artifacts, and a route that omits
     // checkpoints looks shorter and safer than it is. Both are wrong; this one
     // is wrong in the direction that shows more rather than less, and
-    // `belt_route.recoverable` tells the client not to trust it.
-    let belt_command = "agent.execute";
-    let mut belt = fermi::artifact_trace::belt(belt_command);
+    // `checkpoint_route.recoverable` tells the client not to trust it.
+    let route_command = "agent.execute";
+    let mut checkpoints = fermi::artifact_trace::checkpoints(route_command);
 
     // What the ledger recorded for THIS artifact. Migrations 220 and 221 exist
     // for this query: without it the column and the retention promotion have no
@@ -927,7 +927,7 @@ pub async fn episode_trace_handler(
 
     let episode_at: Option<chrono::DateTime<chrono::Utc>> = row.try_get("timestamp_ref").ok();
 
-    for r in belt.iter_mut() {
+    for r in checkpoints.iter_mut() {
         // The ledger first: a recorded decision outranks anything derived.
         if let Some(hit) = ledger
             .iter()
@@ -949,8 +949,8 @@ pub async fn episode_trace_handler(
             // the verdict that supersedes it.
             r.decided_absent = None;
         } else {
-            // No row. `belt()` has already decided the two reasons that need no
-            // query; this narrows the remaining one by age.
+            // No row. `checkpoints()` has already decided the two reasons that
+            // need no query; this narrows the remaining one by age.
             let first = first_recorded
                 .iter()
                 .find(|(g, _)| g == r.rung)
@@ -974,8 +974,8 @@ pub async fn episode_trace_handler(
         // it honestly the moment the recorder has run. Keeping the branch would
         // have shadowed a real recorded verdict with a guess -- and made the
         // agent-level question ("is this agent on the substrate at all") into a
-        // belt state, which is the mixing of axes the `substrate` block exists
-        // to stop.
+        // checkpoint state, which is the mixing of axes the `substrate` block
+        // exists to stop.
         if r.rung == "grounding" && !graded.is_empty() {
             r.recomputed = Some(fermi::artifact_trace::Recomputed {
                 fields: graded.len(),
@@ -1162,19 +1162,19 @@ pub async fn episode_trace_handler(
             response_text.as_deref(),
             enforced.as_ref(),
         ),
-        "belt": belt,
-        // Which command's belt this is, and the fact that we cannot know
+        "checkpoints": checkpoints,
+        // Which command's checkpoints these are, and the fact that we cannot know
         // whether it is the right one. Served rather than assumed: a surface
         // that draws four checkpoints for an artifact that passed two is making
         // a safety claim on the platform's behalf, and the client is entitled to
         // know the claim is unverified.
-        "belt_route": {
-            "assumed": belt_command,
+        "checkpoint_route": {
+            "assumed": route_command,
             "recoverable": false,
             "because": "`episodes` records no route discriminator, so whether \
                         this artifact came from POST /execute or \
                         POST /execute/stream cannot be recovered. The two \
-                        declare DIFFERENT belts - 4 rungs and 2 - so if this \
+                        declare DIFFERENT checkpoints - 4 rungs and 2 - so if this \
                         was a streamed artifact then `attachment` and \
                         `input_binding` are shown here and its route never had \
                         them. Fixing it needs a column on `episodes`, not a \
@@ -1201,11 +1201,12 @@ pub async fn episode_trace_handler(
         "contract": "TWO AXES, deliberately not mixed. `substrate` is about the \
                      AGENT - whether it has been declared onto the platform at \
                      all, and whether it is a retrofit target or a `prune`. \
-                     `belt` is about THIS ARTIFACT. A legacy agent is not a \
-                     degraded belt; it is an agent that is not on the substrate \
-                     yet, and `substrate.disposition` is the field to branch on. \
+                     `checkpoints` is about THIS ARTIFACT. A legacy agent is not \
+                     a degraded set of checkpoints; it is an agent that is not on \
+                     the substrate yet, and `substrate.disposition` is the field \
+                     to branch on. \
                      \
-                     The belt is DECLARED, from `command_registry`, and every \
+                     The checkpoints are DECLARED, from `command_registry`, and every \
                      declared rung always appears. On each rung EXACTLY ONE of \
                      `decided` and `decided_absent` is present - never both, \
                      never neither. `decided` is what the LEDGER recorded; \

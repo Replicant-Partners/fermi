@@ -148,11 +148,11 @@
   .portDot.pending{stroke:#fff;stroke-width:2;filter:drop-shadow(0 0 4px #fff);}
   .portHit{fill:transparent;cursor:pointer;}
 
-  .beltLine{stroke-width:2;fill:none;}
-  .beltLine.verified{stroke:var(--cyan);opacity:.75;}
-  .beltLine.unverified{stroke:var(--amber);stroke-dasharray:3 3;opacity:.7;}
-  .beltLine.corrupted{stroke:var(--crimson);opacity:.9;}
-  .beltShared{fill:var(--cyan);}
+  .seamLine{stroke-width:2;fill:none;}
+  .seamLine.verified{stroke:var(--cyan);opacity:.75;}
+  .seamLine.unverified{stroke:var(--amber);stroke-dasharray:3 3;opacity:.7;}
+  .seamLine.corrupted{stroke:var(--crimson);opacity:.9;}
+  .seamShared{fill:var(--cyan);}
   .routeArrow{stroke:var(--route);stroke-width:2;fill:none;marker-end:url(#arrowHead);}
 
   .tick{stroke-width:.6;}
@@ -167,7 +167,7 @@
   .statBar.temperature{fill:#F2793D;}
   .statBar.cognition{fill:#5B8DEF;}
   .statBar.cost{fill:#8A97A3;}
-  .trialBelt{stroke:var(--schematic-dim);stroke-width:1.5;stroke-dasharray:4 3;opacity:.55;fill:none;}
+  .trialSeam{stroke:var(--schematic-dim);stroke-width:1.5;stroke-dasharray:4 3;opacity:.55;fill:none;}
   .gateCheckpoint{stroke:var(--ink);stroke-width:1;}
   .ghostToken{fill:var(--schematic-dim);opacity:.85;}
   .taskToken{fill:#F2C14E;stroke:#000;stroke-width:1;filter:drop-shadow(0 0 6px rgba(242,193,78,.75));}
@@ -406,7 +406,7 @@
           <path d="M0,0 L6,3 L0,6 Z" fill="var(--route)"/>
         </marker>
       </defs>
-      <g id="beltLayer"></g>
+      <g id="seamLayer"></g>
       <g id="routeLayer"></g>
       <g id="sprocketLayer"></g>
       <g id="portLayer"></g>
@@ -506,7 +506,7 @@
 (function(){
   "use strict";
   const svgNS = "http://www.w3.org/2000/svg";
-  const beltLayer   = document.getElementById('beltLayer');
+  const seamLayer   = document.getElementById('seamLayer');
   const routeLayer  = document.getElementById('routeLayer');
   const sprocketLayer = document.getElementById('sprocketLayer');
   const portLayer   = document.getElementById('portLayer');
@@ -612,7 +612,7 @@
     debate:    {agentId:'debate_strategist',      note:'assigns opposing positions so agreement has to be earned'}
   };
 
-  let belts = [];
+  let seams = [];
   let pending = null;
   let gateOn = true;
   let busy = false;
@@ -770,23 +770,23 @@
 
   // ---------------------------------------------------------------- render
   function render(){
-    beltLayer.innerHTML = '';
-    belts.forEach(b=>{
+    seamLayer.innerHTML = '';
+    seams.forEach(b=>{
       const sa = getSprocket(b.aId), sb = getSprocket(b.bId);
       const pa = sa.ports.find(p=>p.key===b.aPort), pb = sb.ports.find(p=>p.key===b.bPort);
       const posA = portPos(sa, pa.angle, sa.r+10);
       const posB = portPos(sb, pb.angle, sb.r+10);
       const line = document.createElementNS(svgNS,'line');
-      line.setAttribute('class','beltLine ' + (b.corrupted ? 'corrupted' : (b.verified ? 'verified' : 'unverified')));
+      line.setAttribute('class','seamLine ' + (b.corrupted ? 'corrupted' : (b.verified ? 'verified' : 'unverified')));
       line.setAttribute('x1',posA.x); line.setAttribute('y1',posA.y);
       line.setAttribute('x2',posB.x); line.setAttribute('y2',posB.y);
-      beltLayer.appendChild(line);
+      seamLayer.appendChild(line);
       if(b.shared>0){
         const dot = document.createElementNS(svgNS,'circle');
-        dot.setAttribute('class','beltShared');
+        dot.setAttribute('class','seamShared');
         dot.setAttribute('cx',(posA.x+posB.x)/2); dot.setAttribute('cy',(posA.y+posB.y)/2);
         dot.setAttribute('r', 3+Math.min(b.shared,4));
-        beltLayer.appendChild(dot);
+        seamLayer.appendChild(dot);
       }
     });
 
@@ -924,7 +924,7 @@
   // §5.4 — the leading indicator must be one that deletion cannot fake.
   function groundedCount(){
     let n = 0;
-    n += belts.filter(b=>b.verified && !b.corrupted).length * 2;
+    n += seams.filter(b=>b.verified && !b.corrupted).length * 2;
     n += queue.filter(q=>q.state==='verified').length * 3;
     sprockets.forEach(s=>{
       n += s.lessons.filter(L=>L.grade==='sourced').length * 2;
@@ -935,8 +935,8 @@
   }
   function unexaminedCount(){
     let n = 0;
-    n += belts.filter(b=>!b.verified && !b.corrupted).length * 3;
-    n += belts.filter(b=>b.corrupted).length * 5;
+    n += seams.filter(b=>!b.verified && !b.corrupted).length * 3;
+    n += seams.filter(b=>b.corrupted).length * 5;
     n += queue.filter(q=>q.state==='pending_tool').length;
     n += queue.filter(q=>q.state==='pending_human').length * 2;
     n += queue.filter(q=>q.stale && (q.state==='pending_tool' || q.state==='pending_human')).length * 3;
@@ -1126,7 +1126,7 @@
   function buildAdjacency(){
     const adj = {};
     sprockets.forEach(s=> adj[s.id] = []);
-    belts.forEach(b=>{ adj[b.aId].push(b.bId); adj[b.bId].push(b.aId); });
+    seams.forEach(b=>{ adj[b.aId].push(b.bId); adj[b.bId].push(b.aId); });
     return adj;
   }
   function computeReachableFromStrat(){
@@ -1155,12 +1155,12 @@
     dfs('strat', ['strat'], new Set(['strat']));
     return best;
   }
-  function findBelt(idA, idB){
-    return belts.find(b => (b.aId===idA && b.bId===idB) || (b.aId===idB && b.bId===idA));
+  function findSeam(idA, idB){
+    return seams.find(b => (b.aId===idA && b.bId===idB) || (b.aId===idB && b.bId===idA));
   }
   function stratConnected(){
     const ids = new Set();
-    belts.forEach(b=>{
+    seams.forEach(b=>{
       if(b.aId==='strat') ids.add(b.bId);
       if(b.bId==='strat') ids.add(b.aId);
     });
@@ -1218,7 +1218,7 @@
       ob.disabled = true;
       s.admitOverride = true;
       log(`Admission OVERRIDDEN for ${s.name}. It is on the team with fields nothing can source.`, 'bad');
-      await attemptBelt({sprocketId:'strat', portKey:'route2'}, {sprocketId:s.id, portKey:'judgment'});
+      await attemptSeam({sprocketId:'strat', portKey:'route2'}, {sprocketId:s.id, portKey:'judgment'});
       setPanel('Override',
         `<b>${s.name}</b> is in. Nothing about it changed — it still declares ${s.declared} fields with ${s.sourceable} tool behind them.<br><br>` +
         `What changed is where the problem now surfaces: not at publish, but on every single invocation, one field at a time, into the queue. That is strictly worse and strictly more expensive, and it is the state most agent platforms are in right now.`);
@@ -1232,19 +1232,19 @@
     if(!pending){ pending = {sprocketId, portKey}; render(); return; }
     if(pending.sprocketId === sprocketId){ pending = null; render(); return; }
 
-    const idx = belts.findIndex(b=>
+    const idx = seams.findIndex(b=>
       (b.aId===pending.sprocketId && b.aPort===pending.portKey && b.bId===sprocketId && b.bPort===portKey) ||
       (b.bId===pending.sprocketId && b.bPort===pending.portKey && b.aId===sprocketId && b.aPort===portKey)
     );
     if(idx >= 0){
-      belts.splice(idx,1);
+      seams.splice(idx,1);
       log('Seam removed.', null);
       pending = null; render();
       return;
     }
     const a = pending, b = {sprocketId, portKey};
     pending = null; render();
-    await attemptBelt(a, b);
+    await attemptSeam(a, b);
   }
 
   function portCls(sid, key){
@@ -1256,7 +1256,7 @@
     return ca === cb || ca === 'route' || cb === 'route';
   }
 
-  async function attemptBelt(a, b){
+  async function attemptSeam(a, b){
     gateBusy = true;
     const sa = getSprocket(a.sprocketId), sb = getSprocket(b.sprocketId);
     const pa = sa.ports.find(p=>p.key===a.portKey), pb = sb.ports.find(p=>p.key===b.portKey);
@@ -1267,7 +1267,7 @@
       const ghost = createToken(posA.x, posA.y, 'ghostToken');
       await animateEl(ghost, posA.x, posA.y, posB.x, posB.y, 400);
       ghost.remove();
-      belts.push({aId:a.sprocketId, aPort:a.portKey, bId:b.sprocketId, bPort:b.portKey, shared:0, verified:false});
+      seams.push({aId:a.sprocketId, aPort:a.portKey, bId:b.sprocketId, bPort:b.portKey, shared:0, verified:false});
       log(`Seam formed with the gates off: ${sa.name} ↔ ${sb.name}. Nobody asked whether it was real.`, 'warn');
       setPanel('Admission skipped', `<b>${sa.name}</b> and <b>${sb.name}</b> are now coordinating through a seam nobody checked. On the diagram it is identical to a good one. That is the entire difficulty.`);
       pulseScore('unexamined');
@@ -1281,7 +1281,7 @@
     note('Admission gate — a new seam is a publish decision. It runs three of the five rungs, and it can refuse.');
 
     const trial = document.createElementNS(svgNS,'line');
-    trial.setAttribute('class','trialBelt');
+    trial.setAttribute('class','trialSeam');
     trial.setAttribute('x1',posA.x); trial.setAttribute('y1',posA.y);
     trial.setAttribute('x2',posB.x); trial.setAttribute('y2',posB.y);
     tokenLayer.appendChild(trial);
@@ -1349,7 +1349,7 @@
     } else {
       await animateEl(token, prevX, prevY, posB.x, posB.y, 240);
       trial.remove(); cpEls.forEach(c=>c.remove()); token.remove();
-      belts.push({aId:a.sprocketId, aPort:a.portKey, bId:b.sprocketId, bPort:b.portKey, shared:0, verified:true});
+      seams.push({aId:a.sprocketId, aPort:a.portKey, bId:b.sprocketId, bPort:b.portKey, shared:0, verified:true});
       log(`Seam admitted: ${sa.name} ↔ ${sb.name}.`, 'hi');
       const inferNote = sb.inferrer
         ? `<br><br><b>${sb.name} passed, and that is not an oversight.</b> It also declares a field no database holds — a predation risk rating. But its contract declares that field as <i>judgement</i>, not retrieval, so grounding has nothing to object to. A rating it was commissioned to make is not a fabricated measurement, and a checker that flagged both would be indistinguishable from a broken one.`
@@ -1366,7 +1366,7 @@
   // ---------------------------------------------------------------- INVOCATION
   // Per §4: bind is recorded, not fatal. Grounding routes rather than deletes.
   // The output always arrives. What changes is whether it can lie about itself.
-  async function invocationHop(token, posA, posB, belt, producer){
+  async function invocationHop(token, posA, posB, seam, producer){
     fireClock('invocation', true);
     ladderReset('invocation');
 
@@ -1388,7 +1388,7 @@
     await animateEl(token, posA.x, posA.y, cpPos[0].x, cpPos[0].y, 200);
     setRung('binding','active'); cpEls[0].setAttribute('fill','var(--brass)');
     await wait(170);
-    const bindOk = belt.verified && !belt.corrupted;
+    const bindOk = seam.verified && !seam.corrupted;
     setRung('binding', bindOk ? 'pass' : 'routed');
     cpEls[0].setAttribute('fill', bindOk ? 'var(--cyan)' : 'var(--amber)');
 
@@ -1398,8 +1398,8 @@
     await wait(170);
 
     let rate = producer.fabRate;
-    if(belt.corrupted) rate = Math.min(0.92, rate + 0.4);
-    else if(!belt.verified) rate = Math.min(0.85, rate + 0.2);
+    if(seam.corrupted) rate = Math.min(0.92, rate + 0.4);
+    else if(!seam.verified) rate = Math.min(0.85, rate + 0.2);
     rate += 0.06 * producer.lessons.filter(L=>L.grade==='bad').length;
 
     const flagged = Math.random() < rate;
@@ -1457,21 +1457,21 @@
 
     for(let i=0;i<path.length-1;i++){
       const sa = getSprocket(path[i]), sb = getSprocket(path[i+1]);
-      const belt = findBelt(sa.id, sb.id);
-      if(!belt) break;
-      const aKey = (belt.aId===sa.id) ? belt.aPort : belt.bPort;
-      const bKey = (belt.aId===sb.id) ? belt.aPort : belt.bPort;
+      const seam = findSeam(sa.id, sb.id);
+      if(!seam) break;
+      const aKey = (seam.aId===sa.id) ? seam.aPort : seam.bPort;
+      const bKey = (seam.aId===sb.id) ? seam.aPort : seam.bPort;
       const pa = sa.ports.find(p=>p.key===aKey), pb = sb.ports.find(p=>p.key===bKey);
       const posA = portPos(sa, pa.angle, sa.r+10), posB = portPos(sb, pb.angle, sb.r+10);
       const producer = sb.isStrategist ? sa : sb;
 
       if(gateOn){
-        const r = await invocationHop(token, posA, posB, belt, producer);
+        const r = await invocationHop(token, posA, posB, seam, producer);
         tally[r.kind]++;
       } else {
         producer.opportunities++;
         await animateEl(token, posA.x, posA.y, posB.x, posB.y, 360);
-        if(Math.random() < producer.fabRate + (belt.corrupted?0.3:0)){ ungatedRisk++; hiddenDebt++; }
+        if(Math.random() < producer.fabRate + (seam.corrupted?0.3:0)){ ungatedRisk++; hiddenDebt++; }
       }
       sb.routeTicks++;
     }
@@ -1632,16 +1632,16 @@
     routingBusy = true;
     const grades = [];
     for(const part of parts){
-      const belt = findBelt('strat', part.id);
-      if(!belt) continue;
-      const aKey = (belt.aId==='strat') ? belt.aPort : belt.bPort;
-      const bKey = (belt.aId===part.id) ? belt.aPort : belt.bPort;
+      const seam = findSeam('strat', part.id);
+      if(!seam) continue;
+      const aKey = (seam.aId==='strat') ? seam.aPort : seam.bPort;
+      const bKey = (seam.aId===part.id) ? seam.aPort : seam.bPort;
       const pa = strat.ports.find(p=>p.key===aKey), pb = part.ports.find(p=>p.key===bKey);
       const posA = portPos(strat, pa.angle, strat.r+10), posB = portPos(part, pb.angle, part.r+10);
       const token = createToken(posA.x, posA.y);
       drawRouteArrow(strat, part);
       if(gateOn){
-        const r = await invocationHop(token, posA, posB, belt, part);
+        const r = await invocationHop(token, posA, posB, seam, part);
         grades.push(r.kind === 'clean' ? 'sourced' : (r.kind === 'inferred' ? 'inference' : 'unknown'));
       } else {
         await animateEl(token, posA.x, posA.y, posB.x, posB.y, 300);
@@ -1710,8 +1710,8 @@
     log(`Pipeline: ${stages.join(' → ')} — seams checked before any stage ran.`, 'hi');
     const unverified = [];
     for(let i=0;i<path.length-1;i++){
-      const belt = findBelt(path[i], path[i+1]);
-      if(belt && !belt.verified) unverified.push(getSprocket(path[i+1]).name);
+      const seam = findSeam(path[i], path[i+1]);
+      if(seam && !seam.verified) unverified.push(getSprocket(path[i+1]).name);
     }
     await wait(500);
     routingBusy = false;
@@ -1806,7 +1806,7 @@
     return c;
   }
   async function animateCoherencePulses(){
-    await Promise.all(belts.map(async b=>{
+    await Promise.all(seams.map(async b=>{
       const sa = getSprocket(b.aId), sb = getSprocket(b.bId);
       const pa = sa.ports.find(p=>p.key===b.aPort), pb = sb.ports.find(p=>p.key===b.bPort);
       const posA = portPos(sa, pa.angle, sa.r+10), posB = portPos(sb, pb.angle, sb.r+10);
@@ -1836,13 +1836,13 @@
   function principleScores(){
     const team = learners().filter(s=>computeReachableFromStrat().has(s.id));
     const pool = team.length ? team : learners();
-    const verified = belts.filter(b=>b.verified && !b.corrupted).length;
-    const risky = belts.filter(b=>!b.verified || b.corrupted).length;
+    const verified = seams.filter(b=>b.verified && !b.corrupted).length;
+    const risky = seams.filter(b=>!b.verified || b.corrupted).length;
     const allLessons = pool.reduce((n,s)=> n + s.lessons.length, 0);
     const sourced = pool.reduce((n,s)=> n + s.lessons.filter(L=>L.grade==='sourced').length, 0);
     const bad = pool.reduce((n,s)=> n + s.lessons.filter(L=>L.grade==='bad').length, 0);
     const refuted = pool.reduce((n,s)=> n + s.rejected, 0);
-    const shared = belts.reduce((n,b)=> n + (b.shared||0), 0);
+    const shared = seams.reduce((n,b)=> n + (b.shared||0), 0);
 
     const sd = arr => {
       if(!arr.length) return 0;
@@ -1919,7 +1919,7 @@
 
   async function loopCoherence(){
     if(gateBusy || busy) return;
-    if(belts.length < 2){ setPanel('Loop 3 · Cohere','Wire at least two seams — coherence only means something across a real composition.'); return; }
+    if(seams.length < 2){ setPanel('Loop 3 · Cohere','Wire at least two seams — coherence only means something across a real composition.'); return; }
     busy = true;
     setPanel('Loop 3 · Workspace coherence','ECHO network settling across the graph…');
     await animateCoherencePulses();
@@ -1971,11 +1971,11 @@
   // ---------------------------------------------------------------- LOOP 4
   function loopTeam(){
     if(gateBusy || busy) return;
-    if(!belts.some(b=>b.aId==='strat'||b.bId==='strat')){
+    if(!seams.some(b=>b.aId==='strat'||b.bId==='strat')){
       setPanel('Loop 4 · Evolve','No team yet. Assemble one first — you cannot reshape what does not exist.');
       return;
     }
-    const scored = learners().map(s=>({s, score: s.lessons.length + belts.filter(b=>b.aId===s.id||b.bId===s.id).length*2}));
+    const scored = learners().map(s=>({s, score: s.lessons.length + seams.filter(b=>b.aId===s.id||b.bId===s.id).length*2}));
     scored.sort((a,b)=>a.score-b.score);
     const lowest = scored[0];
     setPanel('Loop 4 · Composition evolution',
@@ -1988,7 +1988,7 @@
       </div>`);
     document.getElementById('teamApprove').onclick = ()=>{
       const beforeG = groundedCount(), beforeU = unexaminedCount();
-      belts = belts.filter(b=> b.aId!==lowest.s.id && b.bId!==lowest.s.id);
+      seams = seams.filter(b=> b.aId!==lowest.s.id && b.bId!==lowest.s.id);
       queue = queue.filter(q=> q.agentId !== lowest.s.id || q.state==='verified' || q.state==='rejected');
       render();
       const afterG = groundedCount(), afterU = unexaminedCount();
@@ -2093,7 +2093,7 @@
   }
   async function assembleTeam(){
     if(gateBusy || busy) return;
-    if(belts.some(b=>b.aId==='strat'||b.bId==='strat')){
+    if(seams.some(b=>b.aId==='strat'||b.bId==='strat')){
       setPanel('Assembly','A team is already wired. Use Loop 4 · Evolve to change it from here.');
       return;
     }
@@ -2132,9 +2132,9 @@
       let anchor = {sprocketId:'strat', portKey:'route1'};
       const wired = [], refused = [];
       for(const m of chain){
-        const before = belts.length;
-        await attemptBelt(anchor, {sprocketId:m.id, portKey:'judgment'});
-        if(belts.length > before){
+        const before = seams.length;
+        await attemptSeam(anchor, {sprocketId:m.id, portKey:'judgment'});
+        if(seams.length > before){
           anchor = {sprocketId:m.id, portKey:'judgment'};
           wired.push(m.name);
         } else {
@@ -2329,7 +2329,7 @@
       if(pos){ s.cx = pos.cx; s.cy = pos.cy; }
     });
     getSprocket('strat').agentId = 'pipeline_strategist';
-    belts = []; pending = null; queue = []; qid = 1;
+    seams = []; pending = null; queue = []; qid = 1;
     gateBusy = false; routingBusy = false; busy = false;
     hiddenDebt = 0; sweepRuns = 0;
     honestMode = false; honestEverUsed = false;

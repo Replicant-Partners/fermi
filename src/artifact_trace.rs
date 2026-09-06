@@ -9,7 +9,7 @@
 //! in their head, which is the team that built it."*
 //!
 //! This is the **instance-level** counterpart. Its primary object is the artifact
-//! travelling: one episode crossing one belt, passing checkpoints where rungs
+//! travelling: one episode crossing one route, passing checkpoints where rungs
 //! fire, getting marked or routed to a person. The two are the same structure
 //! read from opposite ends:
 //!
@@ -56,15 +56,15 @@ use crate::surface::Caveat;
 
 /// The routes that persist an episode.
 ///
-/// **They do not declare the same belt**, and an earlier version of this comment
-/// said they did. `agent.execute` declares four rungs -- `credit`, `attachment`,
+/// **They do not declare the same checkpoints**, and an earlier version of this
+/// comment said they did. `agent.execute` declares four rungs -- `credit`, `attachment`,
 /// `grounding`, `input_binding` -- and `agent.execute_stream` declares two,
 /// `credit` and `grounding`. `grounding_execute_coverage` holds them to both
 /// declaring *grounding*, which is a narrower promise than the one that was
 /// written here.
 ///
-/// This matters to any caller that has an episode and wants its belt: `episodes`
-/// records no route, so **which of these two an artifact travelled is not
+/// This matters to any caller that has an episode and wants its checkpoints:
+/// `episodes` records no route, so **which of these two an artifact travelled is not
 /// recoverable**. See `episode_trace_handler`, which says so in its payload
 /// rather than picking one and calling it correct.
 ///
@@ -72,7 +72,7 @@ use crate::surface::Caveat;
 /// not an afterthought here.
 pub const EXECUTE_COMMANDS: &[&str] = &["agent.execute", "agent.execute_stream"];
 
-/// One checkpoint on the belt, as declared, plus what is known about this
+/// One checkpoint on the route, as declared, plus what is known about this
 /// episode's passage through it.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Rung {
@@ -87,9 +87,9 @@ pub struct Rung {
     pub clock: &'static str,
     /// `control` if it can refuse, `metric` if it only records.
     ///
-    /// The distinction a reader most needs and the one a belt diagram most easily
-    /// hides: a checkpoint drawn identically whether or not it can stop anything
-    /// is a diagram that lies about the platform's safety properties.
+    /// The distinction a reader most needs and the one a row of equal checkpoints
+    /// most easily hides: a checkpoint drawn identically whether or not it can stop
+    /// anything is a diagram that lies about the platform's safety properties.
     pub enforcement: &'static str,
     /// Required when `enforcement` is not `control`. `command_registry`'s own
     /// words, carried through rather than paraphrased.
@@ -117,10 +117,10 @@ pub struct Rung {
 }
 
 impl Rung {
-    /// Invariant 2 of the belt contract: a rung reports **one way**.
+    /// Invariant 2 of the checkpoint contract: a rung reports **one way**.
     ///
     /// Asserted rather than assumed because the two fields are set at different
-    /// places -- `belt()` fills the absence from the registry and the handler
+    /// places -- `checkpoints()` fills the absence from the registry and the handler
     /// overwrites it from the ledger -- so a path that sets one without clearing
     /// the other produces a rung claiming both a verdict and a reason there
     /// isn't one. A client branching on `decided` would then silently ignore a
@@ -141,8 +141,8 @@ impl Rung {
 /// And the harm is not symmetric. `credit` decides whether the run may happen at
 /// all, so it can never name an artifact — its NULL is **permanent and correct**,
 /// and rendering it like a gate that should have recorded and did not puts a
-/// standing debt on every belt forever. One of these is nobody's work and one is
-/// a finding.
+/// standing debt on every artifact's checkpoints forever. One of these is nobody's
+/// work and one is a finding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NotRecordedReason {
@@ -228,12 +228,12 @@ pub struct Recomputed {
     pub violations: usize,
 }
 
-/// Assemble the declared belt for an execute route.
+/// Assemble the declared checkpoints for an execute route.
 ///
 /// Pure over the registries, so the shape a surface receives is testable without
 /// a database. `grounding` is left with no outcome here: the caller fills it from
 /// the episode, because only the caller has the response.
-pub fn belt(command_id: &str) -> Vec<Rung> {
+pub fn checkpoints(command_id: &str) -> Vec<Rung> {
     let Some(cmd) = command_registry::command(command_id) else {
         return Vec::new();
     };
@@ -258,9 +258,9 @@ pub fn belt(command_id: &str) -> Vec<Rung> {
                 refuses: spec.map(|s| s.refuses).unwrap_or("(undeclared gate)"),
                 site: g.site,
                 // Every rung starts unrecorded and the caller fills in what
-                // the ledger holds. Stated rather than omitted: a belt that
-                // silently drops the checkpoints it cannot report on is a belt
-                // that looks shorter and safer than it is.
+                // the ledger holds. Stated rather than omitted: a route that
+                // silently drops the checkpoints it cannot report on looks
+                // shorter and safer than it is.
                 decided: None,
                 decided_absent: Some(not_recorded(spec)),
                 recomputed: None,
@@ -369,7 +369,7 @@ fn clock_word(c: Clock) -> &'static str {
     }
 }
 
-/// One claimed field, dressed for a belt.
+/// One claimed field, dressed for the trace.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Field {
     pub name: &'static str,
@@ -590,19 +590,19 @@ pub const TRACE_CAVEATS: &[Caveat] = &[
                         on evidence about none of them.",
     },
     Caveat {
-        subject: "trace.belt_route",
+        subject: "trace.checkpoint_route",
         checked: "Every rung `agent.execute` declares is shown, in the order the \
                   command registry declares it.",
         does_not_show: "That this artifact travelled that route. `episodes` \
                         records no route discriminator, and the two commands \
-                        that persist an episode declare DIFFERENT belts -- \
+                        that persist an episode declare DIFFERENT checkpoints -- \
                         `agent.execute` four rungs, `agent.execute_stream` two. \
                         A streamed artifact is therefore shown `attachment` and \
                         `input_binding` rungs its route never had. The wider \
-                        belt is served deliberately, because the opposite error \
+                        route is served deliberately, because the opposite error \
                         drops two real checkpoints for the majority of \
                         artifacts, but it is an unverified claim either way and \
-                        `belt_route.recoverable` is `false` for that reason.",
+                        `checkpoint_route.recoverable` is `false` for that reason.",
     },
     Caveat {
         subject: "trace.rung.decided_absent",
@@ -618,7 +618,7 @@ pub const TRACE_CAVEATS: &[Caveat] = &[
                         for any artifact older than the gate's promotion, and \
                         nothing is backfilled. Only `retained_but_absent` is a \
                         finding. The rung is shown rather than omitted on \
-                        purpose: a belt that drops the checkpoints it cannot \
+                        purpose: a route that drops the checkpoints it cannot \
                         report on looks shorter and safer than it is.",
     },
 ];
@@ -735,7 +735,7 @@ mod tests {
 
     /// The claimed value is never stripped.
     #[test]
-    fn the_belt_carries_what_the_model_actually_claimed() {
+    fn the_trace_carries_what_the_model_actually_claimed() {
         let mut g = graded("genome.estimated_size_mb", PROV_UNAVAILABLE);
         g.value = serde_json::json!("2.4 Gb");
         let (dressed, _) = fields("no_such_agent", &[g]);
@@ -782,8 +782,8 @@ mod tests {
         assert!(dressed[0].produced);
     }
 
-    /// Both execute routes declare a belt, and every rung says whether it can
-    /// refuse.
+    /// Both execute routes declare checkpoints, and every rung says whether it
+    /// can refuse.
     ///
     /// The `enforcement` field is the one a diagram most easily hides: a
     /// checkpoint drawn identically whether or not it can stop anything is a
@@ -798,7 +798,7 @@ mod tests {
     #[test]
     fn every_rung_says_whether_it_can_actually_refuse() {
         for id in EXECUTE_COMMANDS {
-            let b = belt(id);
+            let b = checkpoints(id);
             assert!(!b.is_empty(), "`{id}` declares no gates");
             for r in &b {
                 assert!(
@@ -826,7 +826,7 @@ mod tests {
                     r.clock
                 );
             }
-            // The grounding rung must be on both belts, or the trace's only
+            // The grounding rung must be on both routes, or the trace's only
             // gradeable checkpoint is missing from one of the two paths callers
             // actually use.
             assert!(
@@ -838,7 +838,7 @@ mod tests {
 
     /// **Invariant 2.** Exactly one of `decided` / `decided_absent`, everywhere.
     ///
-    /// The two fields are filled in different places — `belt()` fills the
+    /// The two fields are filled in different places — `checkpoints()` fills the
     /// absence from the gate registry and the handler overwrites it from the
     /// ledger — so the failure this catches is a path that sets a verdict
     /// without clearing the absence beside it. A client branching on `decided`
@@ -847,7 +847,7 @@ mod tests {
     #[test]
     fn every_rung_reports_exactly_one_way() {
         for id in EXECUTE_COMMANDS {
-            let b = belt(id);
+            let b = checkpoints(id);
             assert!(!b.is_empty(), "`{id}` declares no gates");
             for r in &b {
                 assert!(
@@ -874,24 +874,23 @@ mod tests {
     ///
     /// The harm is asymmetric and that is why it is pinned. `credit` and
     /// `rate_limit` decide whether to run at all, so their NULL is permanent and
-    /// correct; mislabelling it as a gap puts a standing debt on every belt
+    /// correct; mislabelling it as a gap puts a standing debt on every artifact
     /// forever, and a debt that can never be paid is one a reader learns to
     /// ignore — including on the rungs where it is real.
     #[test]
     fn the_absence_token_comes_from_the_gate_registry() {
         let mut checked = 0usize;
         for id in EXECUTE_COMMANDS {
-            for r in belt(id) {
+            for r in checkpoints(id) {
                 let spec = gate_trust::GATES
                     .iter()
                     .find(|s| s.id == r.rung)
                     .unwrap_or_else(|| {
-                        panic!("`{}` is on `{id}`'s belt and not in `GATES`", r.rung)
+                        panic!("`{}` is a checkpoint on `{id}` and not in `GATES`", r.rung)
                     });
-                let a = r
-                    .decided_absent
-                    .as_ref()
-                    .expect("`belt()` is pure over the registries and records no verdicts");
+                let a = r.decided_absent.as_ref().expect(
+                    "`checkpoints()` is pure over the registries and records no verdicts",
+                );
 
                 assert_eq!(
                     a.token == NotRecordedReason::FiresBeforeArtifact,
@@ -928,18 +927,18 @@ mod tests {
                 checked += 1;
             }
         }
-        // `all()` over an empty iterator is `true`, and a belt walk that found
+        // `all()` over an empty iterator is `true`, and a walk that found
         // nothing would pass every assertion above.
         // Measured, not guessed: `agent.execute` declares 4 rungs and
         // `agent.execute_stream` declares 2. The first version of this line said
-        // 8 -- it assumed the two belts matched, which is the same false
+        // 8 -- it assumed the two routes matched, which is the same false
         // assumption two comments in this file made, and the guard caught it.
         assert_eq!(
             checked,
             8,
             "expected 8 rungs across {} commands (5 on `agent.execute`, 3 on \
              `agent.execute_stream`). A different number means a gate was added \
-             or removed from a belt, which is a change to what the platform \
+             or removed from a route, which is a change to what the platform \
              claims it checks -- update this and say which.\n\
              Six, then seven, then eight. `Gate::Completeness` joined \
              `agent.execute` first -- question three on this very surface, which \
@@ -955,19 +954,19 @@ mod tests {
     /// **Invariants 5 and 6.** `recomputed` is never pre-filled, and there are
     /// exactly three verdicts.
     ///
-    /// `belt()` is pure over the registries and has no episode, so it cannot
-    /// know what a re-run would say. Pre-filling `recomputed` here — with a zero,
-    /// most plausibly — would put "0 violations" on every rung of every belt,
-    /// which reads as a clean run and is a claim about a document this function
-    /// has never seen.
+    /// `checkpoints()` is pure over the registries and has no episode, so it
+    /// cannot know what a re-run would say. Pre-filling `recomputed` here — with a
+    /// zero, most plausibly — would put "0 violations" on every rung of every
+    /// route, which reads as a clean run and is a claim about a document this
+    /// function has never seen.
     #[test]
-    fn the_declared_belt_asserts_nothing_about_an_episode() {
+    fn the_declared_checkpoints_assert_nothing_about_an_episode() {
         for id in EXECUTE_COMMANDS {
-            for r in belt(id) {
+            for r in checkpoints(id) {
                 assert!(
                     r.recomputed.is_none(),
-                    "`{}` on `{id}` arrives with a recomputation and `belt()` has \
-                     no episode to have computed it from",
+                    "`{}` on `{id}` arrives with a recomputation and \
+                     `checkpoints()` has no episode to have computed it from",
                     r.rung
                 );
             }
@@ -979,7 +978,7 @@ mod tests {
         assert_eq!(
             gate_trust::DECISIONS,
             &["approved", "refused", "undetermined"],
-            "the belt contract serves exactly three verdicts and this is the \
+            "the checkpoint contract serves exactly three verdicts and this is the \
              vocabulary it serves them from"
         );
     }

@@ -197,9 +197,10 @@ const TRACE = {
   ],
   // A grounding rung that AMENDS: it cannot refuse the run, and the ungrounded
   // value does not reach the caller. Empty until now, which is why question
-  // five read `records only` in red on every fixture — the harness had no belt
-  // at all and the page's worst branch was the only one ever rendered.
-  belt: [
+  // five read `records only` in red on every fixture — the harness declared no
+  // checkpoints at all and the page's worst branch was the only one ever
+  // rendered.
+  checkpoints: [
     {
       rung: "grounding",
       clock: "invocation",
@@ -257,7 +258,7 @@ const TRACE = {
     ],
     excused: 2,
   },
-  belt_route: [],
+  checkpoint_route: [],
   caveats: [],
   contract: { declared: [], undeclared: [] },
   hashes: {},

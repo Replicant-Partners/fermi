@@ -20,7 +20,7 @@ validated three of four earlier rounds against the live database themselves.
 
 **Migrations 219, 220, 221 are registered and apply at boot. The deploy is
 authorised and expected.** Everything below assumes it has happened; if it has
-not, `gate_decisions` is still empty and every belt rung correctly reports
+not, `gate_decisions` is still empty and every checkpoint rung correctly reports
 `predates_retention`.
 
 ---
@@ -58,10 +58,10 @@ the database's own error attached. That is the point of the whole recorder.
 
 ## Then: the two things the UI team is owed
 
-1. **A route discriminator on `episodes`.** `belt_route.recoverable` is `false`
-   because the two execute commands declare **different belts** — `agent.execute`
+1. **A route discriminator on `episodes`.** `checkpoint_route.recoverable` is `false`
+   because the two execute commands declare **different checkpoints** — `agent.execute`
    four rungs, `agent.execute_stream` two — and nothing records which one an
-   artifact travelled. The trace serves the wider belt and says so. This is a
+   artifact travelled. The trace serves the wider route and says so. This is a
    column plus a bind at two write sites, and it turns an unverified safety claim
    into a verified one. **Small, and the UI team was asked whether they want it.**
 
@@ -115,9 +115,9 @@ Unchanged from the last handoff and reconfirmed three times this session:
   "agent declares no field contract" case before anyone checked what
   `execution.rs:470` already did. It already recorded `Undetermined`. The variant
   being removed was compensating for an empty database.
-* **A vacuity guard should be a measurement, not a guess.** The new belt test
-  asserted `checked >= 8` on the assumption that both execute belts matched. The
-  real number is 6, the guard went red, and that is how the differing-belts defect
+* **A vacuity guard should be a measurement, not a guess.** The new checkpoint test
+  asserted `checked >= 8` on the assumption that both execute routes matched. The
+  real number is 6, the guard went red, and that is how the differing-routes defect
   was found. **The guess was the finding.**
 * **A scan must be no broader than the property it asserts.**
   `provenance_floor_coverage` skipped `.git` by name and walked every other
@@ -169,7 +169,7 @@ token on it.
 3. **Grounding is a metric, not a control, on the two general execute paths.**
    `enforce` mutates a local dropped two lines later. It *is* a control on the
    creature handlers. The paper's §4 claims the opposite of what the primary
-   endpoints do. **This is now visible to users** — `belt[].enforcement` is
+   endpoints do. **This is now visible to users** — `checkpoints[].enforcement` is
    `metric` with `why_not_control` carrying our own words — which raises the
    question of whether it should be fixed rather than merely disclosed.
 4. `hud_contract::enforce` has no production caller.

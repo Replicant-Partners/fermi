@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Break the belt-outcome contract and require the build to notice.
+"""Break the checkpoint-outcome contract and require the build to notice.
 
 Six breaks over the shape the UX team specified in
-`docs/UX_CONTRACT_belt_outcomes.md`. Every one of them is a mistake that would
-render as a plausible belt -- which is the point. A belt that is wrong in a way
-that LOOKS wrong gets caught by the person reading it; these are the ones that
-look finished.
+`docs/UX_CONTRACT_belt_outcomes.md` (written when the checkpoint row was still
+called a belt). Every one of them is a mistake that would render as a plausible
+row of checkpoints -- which is the point. A trace that is wrong in a way that
+LOOKS wrong gets caught by the person reading it; these are the ones that look
+finished.
 
-    python3 scripts/break_belt_contract.py
+    python3 scripts/break_checkpoint_contract.py
 
 NOTE on this environment: a parallel session writes files with inconsistent
 mtimes, which defeats cargo's fingerprint cache and produces stale test binaries.
@@ -76,8 +77,8 @@ def main():
     results = []
 
     # 1. `credit` renders as a debt. The harm the token set exists to prevent:
-    #    a permanent, correct NULL shown as an unpaid obligation on every belt
-    #    forever -- and a debt that can never be paid is one a reader learns to
+    #    a permanent, correct NULL shown as an unpaid obligation on every
+    #    artifact forever -- and a debt that can never be paid is one a reader learns to
     #    ignore, including on the rungs where it is real.
     print("break 1: a gate that fires before the artifact reported as a finding")
     with Break(
@@ -116,7 +117,7 @@ def main():
         results.append(ok)
 
     # 3. `narrow_by_age` claims permanence with nothing to prove it. The calm
-    #    version ships, because a belt of grey rings that all explain themselves
+    #    version ships, because a row of grey rings that all explain themselves
     #    looks finished.
     print("break 3: an absence called permanent with no timestamp")
     with Break(
@@ -158,10 +159,10 @@ def main():
             )
         )
 
-    # 5. `belt()` pre-fills a recomputation it cannot have computed. A zero here
-    #    puts "0 violations" on every rung of every belt -- a clean bill of
-    #    health for a document this function has never seen.
-    print("break 5: the declared belt asserting something about an episode")
+    # 5. `checkpoints()` pre-fills a recomputation it cannot have computed. A
+    #    zero here puts "0 violations" on every rung of every route -- a clean
+    #    bill of health for a document this function has never seen.
+    print("break 5: the declared checkpoints asserting something about an episode")
     with Break(
         AT,
         "                decided: None,\n                decided_absent: Some(not_recorded(spec)),\n                recomputed: None,",
@@ -170,9 +171,9 @@ def main():
     ):
         results.append(
             expect_red(
-                "the_declared_belt_asserts_nothing_about_an_episode",
+                "the_declared_checkpoints_assert_nothing_about_an_episode",
                 LIB,
-                "the_declared_belt_asserts_nothing_about_an_episode",
+                "the_declared_checkpoints_assert_nothing_about_an_episode",
             )
         )
 
@@ -189,9 +190,9 @@ def main():
     ):
         results.append(
             expect_red(
-                "the_declared_belt_asserts_nothing_about_an_episode",
+                "the_declared_checkpoints_assert_nothing_about_an_episode",
                 LIB,
-                "the_declared_belt_asserts_nothing_about_an_episode",
+                "the_declared_checkpoints_assert_nothing_about_an_episode",
             )
         )
 

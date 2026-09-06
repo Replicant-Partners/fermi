@@ -125,7 +125,7 @@ async fn no_gate_decision_points_at_an_episode_that_is_not_there() {
          statement and a foreign key would let one bad row reject the rest. That \
          trade is only sound while this check holds. A dangling reference means \
          either the episode write failed after its gate decided — in which case \
-         the trace will render a belt for an artifact nobody can open — or an id \
+         the trace will render checkpoints for an artifact nobody can open — or an id \
          is being minted in two places.\n",
         dangling.len(),
         dangling

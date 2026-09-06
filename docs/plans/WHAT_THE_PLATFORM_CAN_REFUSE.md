@@ -32,7 +32,7 @@ Meanwhile `envelope::build` on the delegation hop **always** returned the
 enforced payload, and `grounding_is_enforced_at_the_hop` proves it.
 
 **Agent→agent was protected. Person→API was not. The artifact trace drew the
-same belt for both.**
+same checkpoints for both.**
 
 Ledger at the time of writing:
 
@@ -884,7 +884,7 @@ trace is built around fields), deliberately not answered here.
 | `0` and `false` are answers; `[]` and `"  "` are not | `completeness::tests::zero_and_false_are_answers_and_empty_containers_are_not` |
 | a contract of only excused fields is undetermined, not a pass | `completeness::tests::a_required_absence_is_excused_and_so_is_a_derived_value` |
 | question three names a gate and the caveat is gone | `scripts/check_trace_probe_render.js` |
-| the belt is 8 rungs, and a change must say which | `artifact_trace::tests::the_absence_token_comes_from_the_gate_registry` |
+| the route is 8 rungs, and a change must say which | `artifact_trace::tests::the_absence_token_comes_from_the_gate_registry` |
 | `GATE_IDS` is derived from `GATES` | `gate_trust::tests::gate_ids_match_the_declared_gates` |
 | a refusal reason names the fault and the field, and never counts them | `grounding_trust::tests::a_refusal_reason_names_the_fault_and_the_field` |
 | no two violation kinds share a ledger token | `grounding_trust::tests::every_violation_kind_has_its_own_token` |

@@ -87,7 +87,7 @@
   .art-t{font-size:0.62rem;color:var(--fg4);margin-left:auto;}
   .art-q{font-size:0.68rem;color:var(--fg4);margin-top:3px;line-height:1.4;
          max-height:2.8em;overflow:hidden;}
-  /* Contracted = the belt has graded checkpoints. Uncontracted is the
+  /* Contracted = the trace has graded checkpoints. Uncontracted is the
      default and is not an error, so it is dim rather than red. */
   .art-mark{font-size:0.57rem;text-transform:uppercase;letter-spacing:0.05em;padding:0 4px;
             border:1px solid var(--bg3);color:var(--fg4);}
@@ -105,7 +105,7 @@
   .detail{padding:0 12px 10px;font-size:0.77rem;color:var(--fg3);line-height:1.5;max-width:85ch;}
 
   /* ── The chain, drawn as the path it is ─────────────────────────────────
-     Same drawing as the belt on /trace: a rail, and a node per step. What
+     Same drawing as the checkpoints on /trace: a rail, and a node per step. What
      the step IS reads first; how many rows it has read is secondary text.
      The count was the primary object here and that was the census. ── */
   .chain{padding:2px 12px 10px;}
@@ -521,15 +521,16 @@
       </a>`).join("")}</div>`;
 
     // The proportion is the finding, so it is stated rather than left to be
-    // counted off the tiles. Most artifacts cross a belt with nothing on it.
+    // counted off the tiles. Most artifacts cross checkpoints with nothing to
+    // grade.
     const n = ARTS.graded_in_recent ?? 0;
     const mix = `<div class="contract"><b style="color:var(--fg3)">${n} of the last
       ${eps.length}</b> were produced by an agent that declares a field contract.
-      The rest crossed a belt with nothing to grade — that is the default, and it
-      is not an error.</div>`;
+      The rest crossed checkpoints with nothing to grade — that is the default, and
+      it is not an error.</div>`;
 
     const gradedBlock = graded.length ? `<div class="sec" style="margin-top:18px">
-        <h2>… and the most recent with a populated belt</h2>
+        <h2>… and the most recent with graded checkpoints</h2>
         <div class="why">Listed separately so there is always one to open. Ten of 761
           agents declare a contract, so these are rarely the recent ones.</div></div>`
         + strip(graded) : "";
@@ -547,7 +548,7 @@
     const lead = `<div class="lead">
       <div class="said">A loop is <b>a path an artifact takes</b>.
         A gate is <b>a checkpoint on that path</b>.</div>
-      <div class="gloss">Open one and you get its belt: every checkpoint it crossed,
+      <div class="gloss">Open one and you get its checkpoints: every one it crossed,
         which of them could have refused it, and which only watched.</div>
     </div>`;
 
@@ -569,9 +570,9 @@
       + hierarchy(d)
       + `<div class="sec"><h2>Artifacts to open</h2>
          <div class="why">Most recent runs, contracted agents first. <b>Graded</b> means the
-           agent declares a field contract, so its belt has checkpoints that actually fired;
-           the rest have a belt with nothing to grade, which is the default and not an
-           error.</div></div>`
+           agent declares a field contract, so its checkpoints actually fired;
+           the rest cross checkpoints with nothing to grade, which is the default and not
+           an error.</div></div>`
       + paneArtifacts()
       + `<div class="sec"><h2>The declared paths</h2>
          <div class="why">Each loop asserts something. The chain is the route, and the

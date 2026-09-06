@@ -1491,20 +1491,20 @@ const FALSIFICATIONS: &[Falsification] = &[
                  artifact predates retention. Claiming it without that evidence \
                  relabels a dropped recorder row as `this is old, nothing to \
                  see`, and the calm version is the one that ships, because a \
-                 belt of grey rings that all explain themselves looks finished.",
+                 row of grey rings that all explain themselves looks finished.",
     },
     Falsification {
         check: "artifact_trace::reports_exactly_one_way",
         owner: "src/artifact_trace.rs",
         // Permissive reading: "this rung is well-formed."
         passes: || {
-            fermi::artifact_trace::belt("agent.execute")
+            fermi::artifact_trace::checkpoints("agent.execute")
                 .iter()
                 .all(|r| r.reports_exactly_one_way())
         },
         fires: || {
             // A verdict written beside the absence it supersedes.
-            let mut r = fermi::artifact_trace::belt("agent.execute")
+            let mut r = fermi::artifact_trace::checkpoints("agent.execute")
                 .into_iter()
                 .next()
                 .expect("`agent.execute` declares gates");
@@ -1516,8 +1516,8 @@ const FALSIFICATIONS: &[Falsification] = &[
             });
             r.reports_exactly_one_way()
         },
-        models: "The belt's two absence-or-verdict fields are filled in two \
-                 different places -- `belt()` fills the absence from the gate \
+        models: "A rung's two absence-or-verdict fields are filled in two \
+                 different places -- `checkpoints()` fills the absence from the gate \
                  registry, and `episode_trace_handler` overwrites it from \
                  `gate_decisions` -- which is the same split that produced the \
                  defect migration 220 was written for. A handler that sets the \
@@ -2541,13 +2541,13 @@ const EXEMPT: &[(&str, &str)] = &[
     ),
     // artifact_trace
     (
-        "artifact_trace::belt",
+        "artifact_trace::checkpoints",
         "Assembles `command_registry::Command.gates` against \
          `gate_trust::GATES` and holds no opinion: the rung order, the \
          control-or-metric status and the refusal text all belong to those two. \
          Pinned by `every_rung_says_whether_it_can_actually_refuse`, which \
          asserts over BOTH execute commands that a rung demoted to a metric says \
-         why -- the field a belt diagram most easily hides.",
+         why -- the field a row of equal checkpoints most easily hides.",
     ),
     (
         "artifact_trace::fields",

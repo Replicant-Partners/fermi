@@ -2,7 +2,7 @@
 --
 -- ## What this unblocks
 --
--- `GET /api/episodes/:episode_id/trace` renders a belt of checkpoints, and every
+-- `GET /api/episodes/:episode_id/trace` renders a row of checkpoints, and every
 -- rung but one reads `outcome: not_recorded` with the reason *"`gate_decisions`
 -- carries no `episode_id`, so no row can be joined to this artifact."* This is
 -- that column.

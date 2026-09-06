@@ -98,44 +98,7 @@
             letter-spacing:0.07em;padding-bottom:4px;border-bottom:1px solid var(--bg2);}
   .note{font-size:0.71rem;color:var(--fg4);font-style:italic;line-height:1.5;margin:-2px 0 12px;}
 
-  /* ── The belt ─────────────────────────────────────────────────────────
-     Always drawn, in every state. A belt that omits the checkpoints it
-     cannot report on looks shorter and safer than it is. ── */
-  .belt{position:relative;padding:26px 0 8px;overflow-x:auto;}
-  .belt-line{position:absolute;top:44px;left:14px;right:14px;height:2px;background:var(--bg2);}
-  .belt-token{position:absolute;top:39px;width:12px;height:12px;border-radius:50%;
-              background:var(--fg2);border:2px solid var(--bg0-hard);z-index:3;}
-  .cps{display:flex;justify-content:space-between;position:relative;z-index:2;min-width:520px;gap:6px;}
-  .cp{flex:1;text-align:center;}
-  .cp-ring{width:30px;height:30px;margin:0 auto;border-radius:50%;
-           display:flex;align-items:center;justify-content:center;
-           background:var(--bg0-hard);font-size:0.8rem;}
-  /* control can refuse: solid ring. metric only records: dashed, open. */
-  .cp.control  .cp-ring{border:2px solid var(--bg3);}
-  .cp.metric   .cp-ring{border:2px dashed var(--bg3);}
-  .cp.fired-clean .cp-ring{border-color:var(--green);color:var(--green);}
-  .cp.fired-bad   .cp-ring{border-color:var(--red,#fb4934);color:var(--red,#fb4934);}
-  .cp.unreported  .cp-ring{opacity:0.4;}
-  /* What the ledger recorded for THIS artifact. `undetermined` is the majority
-     reading of the grounding rung and gets a real third visual — folding it
-     into either neighbour is how an absent check becomes a passing one. */
-  .cp.d-approved .cp-ring{border-color:var(--green);color:var(--green);}
-  .cp.d-refused  .cp-ring{border-color:var(--red,#fb4934);color:var(--red,#fb4934);}
-  .cp.d-undetermined .cp-ring{border-color:var(--purple,#d3869b);
-                              color:var(--purple,#d3869b);}
-  .cp.d-unknown  .cp-ring{border-color:var(--purple,#d3869b);border-style:dashed;
-                          color:var(--purple,#d3869b);}
-  /* No ledger row. Three of the four reasons are design and read as calm; only
-     `retained_but_absent` is a finding. */
-  .cp.a-design  .cp-ring{opacity:0.32;}
-  .cp.a-design  .cp-out {opacity:0.6;}
-  .cp.a-finding .cp-ring{border-color:var(--purple,#d3869b);color:var(--purple,#d3869b);
-                         border-style:dashed;}
-  .cp.a-unknown .cp-ring{border-color:var(--purple,#d3869b);border-style:dashed;}
-  /* The independent axis, on its own line so it cannot read as the decision. */
-  .cp-recomp{font-size:0.56rem;color:var(--yellow);margin-top:1px;}
-
-  /* Substrate — an agent-level state, deliberately not styled like a belt
+  /* Substrate — an agent-level state, deliberately not styled like a rung
      outcome. `retrofit` is not a fault and not a pass: it is outside. */
   .sub{border:1px dashed var(--bg3);padding:10px 13px;margin-bottom:18px;}
   .sub h3{font-size:0.78rem;margin:0 0 4px;}
@@ -145,14 +108,7 @@
   .sub.prune h3{color:var(--fg4);}
   .sub.legible{border-style:solid;border-color:var(--green);}
   .sub.legible h3{color:var(--green);}
-  .cp-name{font-size:0.66rem;color:var(--fg3);margin-top:5px;}
-  .cp.unreported .cp-name{color:var(--fg4);}
-  .cp-enf{font-size:0.57rem;text-transform:uppercase;letter-spacing:0.05em;margin-top:1px;}
-  .cp.control .cp-enf{color:var(--fg4);}
-  .cp.metric  .cp-enf{color:var(--yellow);}
-  .cp-out{font-size:0.58rem;color:var(--fg4);margin-top:1px;}
 
-  .belt-why{margin-top:12px;}
   .why{font-size:0.71rem;color:var(--fg4);line-height:1.5;padding:5px 0 5px 9px;
        border-left:1px solid var(--bg3);margin-bottom:5px;}
   .why b{color:var(--fg3);}
@@ -618,31 +574,8 @@
     0: "nothing to rely on yet",
   };
 
-  // The four reasons a rung has no ledger row. Exactly one is a finding; the
-  // other three are design, and rendering them alike is what made `credit`
-  // look like a permanent unpaid debt on every belt.
-  //
-  // An unrecognised token renders as `unknown`, never as healthy. A new token
-  // falling through to a benign default is the specific way this surface has
-  // lied before.
-  const ABSENT = {
-    fires_before_artifact: { cls: "a-design",  out: "before the artifact" },
-    retention_counted:     { cls: "a-design",  out: "not retained" },
-    predates_retention:    { cls: "a-design",  out: "predates the ledger" },
-    retained_but_absent:   { cls: "a-finding", out: "no row" },
-  };
-  const absentOf = t => ABSENT[t] || { cls: "a-unknown", out: "unrecognised" };
-
-  const DECIDED = {
-    approved:     { cls: "d-approved",     glyph: "✓" },
-    refused:      { cls: "d-refused",      glyph: "✕" },
-    undetermined: { cls: "d-undetermined", glyph: "?" },
-  };
-  // `undetermined` is the majority reading of the grounding rung and is not an
-  // edge case: the gate ran and could not decide. It gets its own visual.
-  const decidedOf = v => DECIDED[v] || { cls: "d-unknown", glyph: "?" };
-
-  // Which belt rungs are ladder rungs, and which are preconditions.
+  // Which of the route's checkpoints are ladder rungs, and which are
+  // preconditions.
   //
   // `gate_trust::GATES` is a runtime inventory, not the model. It mixes two
   // ladder rungs with billing, flow control and envelope checks, and drawing
@@ -679,12 +612,12 @@
   // `response_text` is persisted un-stripped, so a rung that inspects the
   // contents but cannot refuse does not protect the loop from anything.
   function readArtifact(d) {
-    const belt = d.belt || [];
+    const cps = d.checkpoints || [];
     const by = {};
-    belt.forEach(b => { by[b.rung] = b; });
+    cps.forEach(b => { by[b.rung] = b; });
 
-    const refused = belt.filter(b => b.decided && b.decided.decision === "refused");
-    const approved = belt.filter(b => b.decided && b.decided.decision === "approved");
+    const refused = cps.filter(b => b.decided && b.decided.decision === "refused");
+    const approved = cps.filter(b => b.decided && b.decided.decision === "approved");
     // Assertions still awaiting a verdict — one entry per claim, from the fold,
     // not one per row of the log.
     //
@@ -711,7 +644,7 @@
     // The ceiling: the deepest rung that both looked at the contents AND could
     // have acted on what it found. `enforcement === "control"` is the only
     // thing that can refuse; a metric records and the artifact travels on.
-    const couldRefuse = belt.filter(b => b.enforcement === "control");
+    const couldRefuse = cps.filter(b => b.enforcement === "control");
     const inspectedContents = g ? !!rc : false;
     const contentsGuarded = !!(g && g.enforcement === "control");
     // A third state, and the platform only gained the word for it once the
@@ -2265,13 +2198,13 @@ tells you is whether the agent COULD have filled it."}</span>`);
       </div>`;
     }).join("");
 
-    const pre = (d.belt || []).filter(b => PRECONDITION[b.rung]).map(b =>
+    const pre = (d.checkpoints || []).filter(b => PRECONDITION[b.rung]).map(b =>
       `<span><b>${esc(b.rung)}</b> — ${esc(PRECONDITION[b.rung])}</span>`).join("");
 
-    const route = d.belt_route && d.belt_route.recoverable === false
+    const route = d.checkpoint_route && d.checkpoint_route.recoverable === false
       ? `<div class="rung-pw" style="margin-top:8px;color:var(--yellow)">
            Route unverified: <code>episodes</code> records no route discriminator, so the wider
-           of the two declared belts is shown. This may list checkpoints the artifact never passed.</div>`
+           of the two declared routes is shown. This may list checkpoints the artifact never passed.</div>`
       : "";
 
     return `<div class="block">
@@ -2291,9 +2224,9 @@ tells you is whether the agent COULD have filled it."}</span>`);
   }
 
   // Branch on this before drawing anything. `substrate` is about the AGENT —
-  // is it declared onto the platform at all — and the belt is about this
+  // is it declared onto the platform at all — and the checkpoints are about this
   // artifact. Mixing them put an agent-level backlog inside a per-artifact
-  // diagram and made a legacy agent look like a degraded belt. It is not one:
+  // diagram and made a legacy agent look like a degraded route. It is not one:
   // it is outside the substrate, with a named owner and a worklist.
   function substrateBlock(d) {
     const s = d.substrate;
@@ -2318,7 +2251,7 @@ tells you is whether the agent COULD have filled it."}</span>`);
     if (disp === "legible") {
       return `<div class="sub legible"><h3>On the substrate</h3>
         <div class="owner-body">${esc(s.because
-          || "Every rung on the declaration ladder is present, so the belt can say \
+          || "Every rung on the declaration ladder is present, so the trace can say \
 something specific about each checkpoint.")}</div></div>`;
     }
     // Unrecognised disposition is indeterminate, never healthy.
@@ -2345,7 +2278,7 @@ something specific about each checkpoint.")}</div></div>`;
     const declared = `<div class="chips">${chips(lg.present, "have")}${chips(lg.missing, "miss")}</div>`;
 
     if (d.owner === "agent_author") {
-      return `<div class="block"><h2>Why the belt is quiet</h2>
+      return `<div class="block"><h2>Why the checkpoints are quiet</h2>
         <div class="task">
           <h3>This is the agent author's to declare</h3>
           <div class="owner-body">
@@ -2800,8 +2733,8 @@ something specific about each checkpoint.")}</div></div>`;
     } catch (e) {
       document.getElementById("content").innerHTML =
         `<div class="empty">Could not read the trace: ${esc(e.message)}.
-         No belt is shown rather than an empty one — an artifact that passed no
-         checkpoint and one we cannot read are different claims.</div>`;
+         No checkpoints are shown rather than an empty list — an artifact that
+         passed no checkpoint and one we cannot read are different claims.</div>`;
     }
   }
   boot();

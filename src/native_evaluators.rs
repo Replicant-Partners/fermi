@@ -188,7 +188,7 @@ impl ContractConformance {
             return Some((
                 "never_recorded",
                 "the platform — the gate decided and wrote no ledger row, so the \
-                 belt cannot show what it decided",
+                 trace cannot show what it decided",
             ));
         }
         None
@@ -569,7 +569,7 @@ impl NativeEvaluator for ContractWiredThrough {
                      to, and no platform wiring changes that. `never_enforced` is \
                      ours: documents exist and no path ran `enforce`. \
                      `never_recorded` is also ours: the gate decided and wrote no \
-                     ledger row, so the belt cannot show what it decided.",
+                     ledger row, so the trace cannot show what it decided.",
         }
     }
 }

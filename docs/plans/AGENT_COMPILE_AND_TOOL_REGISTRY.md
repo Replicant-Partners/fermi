@@ -287,7 +287,7 @@ rung says so, and cites 289 distinct `produces` labels across the fleet. Measure
 ```
 
 **Recompiling and saving `football_analyst` deletes six labels other agents can
-be matched against on a belt.** `condition_forecaster` loses all three and gains
+be matched against on a seam.** `condition_forecaster` loses all three and gains
 one it never declared.
 
 The decision this needs, and it is a decision rather than a bug fix: does

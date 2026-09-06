@@ -1,5 +1,9 @@
 # UX request — the object model, and the missing *between*
 
+> **Vocabulary note (superseded term).** Kept as written. "Belt" is no longer the
+> platform's word: the row of checkpoints an artifact crosses is `checkpoints`,
+> and an edge between two agents is a **seam**.
+
 **For:** the team that owns agents, compositions, workspaces, episodes and gates.
 **From:** the trust surfaces UI, built against `UX_HANDOFF_trust_surfaces.md`.
 **Status:** request. Two columns, one table, and two writers for tables that

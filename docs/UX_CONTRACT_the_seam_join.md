@@ -73,7 +73,7 @@ constrain it.
 
 ### What we render the day it lands
 
-* Every arrow in the composition view becomes **clickable through to its belt** —
+* Every arrow in the composition view becomes **clickable through to its trace** —
   the sequence diagram and the verification ladder become one drawing at two
   zoom levels.
 * A **refused artifact becomes visibly refused where the team sees it**, instead

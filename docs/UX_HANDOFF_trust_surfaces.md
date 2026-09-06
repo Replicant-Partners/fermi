@@ -4,7 +4,10 @@
 **Status:** complete enough to build against. Thirteen endpoints, one vocabulary.
 **Last change:** `UX_CONTRACT_belt_outcomes.md` is **implemented** — see
 `UX_RESPONSE_belt_outcomes.md` for the reply, which contains two corrections to
-that contract and one disclosure you should read before drawing the belt.
+that contract and one disclosure you should read before drawing the checkpoints.
+Both of those documents were written while the row of checkpoints was still
+called *the belt*; that metaphor is superseded and the payload field is
+`checkpoints`.
 
 > ### Read this first if you read nothing else
 >
@@ -14,9 +17,9 @@ that contract and one disclosure you should read before drawing the belt.
 >   all? Its `disposition` is `prune` (a fixture awaiting deletion — 110 of 206
 >   producing agents), `retrofit` (a real agent not yet declared — **this is the
 >   legacy state**), or `legible`.
-> * **`belt`** is about **this artifact** — what did each gate decide?
+> * **`checkpoints`** is about **this artifact** — what did each gate decide?
 >
-> A legacy agent is **not a degraded belt.** It is an agent that is not on the
+> A legacy agent is **not a degraded route.** It is an agent that is not on the
 > substrate yet, with a named owner and a worklist. Branch on
 > `substrate.disposition` before you draw anything.
 >
@@ -49,7 +52,7 @@ GET /api/declarations                      why everything else says `unknown`
 **Artifact-first — *what happened to this thing?*** Everyone else's question.
 
 ```
-GET /api/episodes/:episode_id/trace        one artifact, one belt   ← NEW
+GET /api/episodes/:episode_id/trace        one artifact, its checks ← NEW
 GET /api/observatory/agents/:id/loops       one agent's chain
 GET /api/agents/:id/coordination-notes      Loop 3 → Loop 1, per agent
 ```
@@ -438,10 +441,10 @@ primary object is the episode, and the loops are the routes it can take.
                  "declared": ["ports"],
                  "because": "`prey_locator` is a real agent that has not been…" },
 
-  "belt_route": { "assumed": "agent.execute", "recoverable": false,
-                  "because": "`episodes` records no route discriminator…" },
+  "checkpoint_route": { "assumed": "agent.execute", "recoverable": false,
+                        "because": "`episodes` records no route discriminator…" },
 
-  "belt": [ { "rung": "credit", "clock": "invocation",
+  "checkpoints": [ { "rung": "credit", "clock": "invocation",
               "enforcement": "control", "why_not_control": null,
               "refuses": "an action whose principal cannot pay for it",
               "site": "handlers::execution, gas::charge_gas",
@@ -469,10 +472,10 @@ primary object is the episode, and the loops are the routes it can take.
   "caveats": [ … ] }
 ```
 
-### The belt is the drawing
+### The checkpoints are the drawing
 
-`belt[]` in order **is** the row of checkpoints. Two fields decide how each one
-renders and neither is optional:
+`checkpoints[]` in order **is** the row of checkpoints. Two fields decide how each
+one renders and neither is optional:
 
 * **`enforcement`** — `control` means it can refuse; `metric` means it only
   records. **Please draw these differently.** A checkpoint drawn identically
@@ -517,15 +520,15 @@ token should render as `unknown`, never healthy.
   produce about its own drift. It survives only unreconciled — which is why there
   is deliberately no `agrees` boolean.
 
-We list every declared rung even when we can say nothing about it — a belt that
+We list every declared rung even when we can say nothing about it — a route that
 drops the checkpoints it cannot report on looks shorter and safer than it is.
 
 ### `substrate` — the agent, not the artifact. Branch on this first.
 
-**This is the field that tells you whether the belt is worth drawing at all**, and
-it is a different question from anything on the belt.
+**This is the field that tells you whether the checkpoints are worth drawing at
+all**, and it is a different question from anything on them.
 
-Until now a belt rung could say *"this agent declares no field contract, so this
+Until now a rung could say *"this agent declares no field contract, so this
 rung had nothing to grade"* — which is an **agent-level backlog rendered inside a
 per-artifact diagram**, and it forced a reader to understand field contracts
 before they could read a checkpoint. That is gone. The question moved here.
@@ -536,38 +539,38 @@ before they could read a checkpoint. That is gone. The question moved here.
 |---|---|---|
 | `prune` | Test cruft. **110 of 206 producing agents** are `test_agent_*` fixtures awaiting deletion | Arguably do not show these to a user at all. They are not a retrofit target and counting them makes the real backlog look twice its size |
 | `retrofit` | A real agent not yet declared onto the substrate. **This is the legacy state.** Its grounding rung reads `undetermined` | Show it as *not yet on the substrate* — authoring work owned by the agent's author. **Not a platform fault, and not a pass** |
-| `legible` | Every rung on the declaration ladder present | The belt can say something specific about every checkpoint |
+| `legible` | Every rung on the declaration ladder present | The trace can say something specific about every checkpoint |
 
 The platform's position, which you are welcome to quote: **legacy agents are not
-a degraded belt. They are outside the substrate**, with a named owner and a
+a degraded route. They are outside the substrate**, with a named owner and a
 worklist. Not green, not red — not yet in the system.
 
 `legibility` and `declared` now live inside this object. They used to be loose
-keys beside the belt, which invited reading `legibility` without `disposition`
-and putting a fixture on somebody's worklist.
+keys beside `checkpoints`, which invited reading `legibility` without
+`disposition` and putting a fixture on somebody's worklist.
 
-### `belt_route` — the belt may show rungs this artifact never passed
+### `checkpoint_route` — the trace may show rungs this artifact never passed
 
 An honest disclosure rather than a feature, and we would rather you knew.
 
-The two routes that persist an episode **do not declare the same belt**:
+The two routes that persist an episode **do not declare the same checkpoints**:
 
 | command | rungs |
 |---|---|
 | `agent.execute` | `credit`, `attachment`, `grounding`, `input_binding` — **4** |
 | `agent.execute_stream` | `credit`, `grounding` — **2** |
 
-The trace builds `agent.execute`'s belt for every artifact. A comment in the
+The trace builds `agent.execute`'s checkpoints for every artifact. A comment in the
 handler claimed the two declared the same rungs and that either was therefore
 correct; it was false, and asserting your invariant 1 is what measured it.
 
 It is **not fixable in the handler** — `episodes` carries no route discriminator,
-so which route an artifact travelled is not recoverable. We serve the wider belt
+so which route an artifact travelled is not recoverable. We serve the wider route
 deliberately: the opposite error drops two real checkpoints for the majority of
 artifacts. Both directions are wrong; this one is wrong in the direction that
 shows more.
 
-**What we would like:** if `recoverable` is `false`, mark the belt as unverified
+**What we would like:** if `recoverable` is `false`, mark the route as unverified
 in some low-key way. It is an unverified safety claim and your screen is the only
 place a person will ever see it. Tell us if a route column on `episodes` is worth
 prioritising — it is the real fix and it is small.
@@ -714,7 +717,7 @@ different claims and a reviewer has to see which was made.
 `episodes.assertions` today needs updating, and a test asserts the exact stored
 bytes still round-trip.
 
-### The belt now records a real outcome for grounding
+### The checkpoints now record a real outcome for grounding
 
 The last item on your list. **The column alone would not have worked**, and the
 reason is worth having:
@@ -728,11 +731,11 @@ So `episode_id` would have been NULL on every row that would ever exist, while
 making `not_recorded` **look** solved. The blocker was retention, not the key.
 
 Both landed, **and the trace now reads them.** For a while it did not: the
-column and the promotion shipped while `artifact_trace::belt()` still hardcoded
-an absence on every rung, so 220 and 221 had no observable effect. You caught
-that. It is fixed — the handler queries `gate_decisions WHERE episode_id = $1`,
-folds the result over the belt, and carries `decision_id` so you can review from
-the artifact.
+column and the promotion shipped while `artifact_trace::checkpoints()` still
+hardcoded an absence on every rung, so 220 and 221 had no observable effect. You
+caught that. It is fixed — the handler queries `gate_decisions WHERE episode_id =
+$1`, folds the result over the checkpoints, and carries `decision_id` so you can
+review from the artifact.
 
 That distinction is the interesting part for a screen. The trace already re-runs
 the contract over the retained response, so it can show per-field grades without
@@ -766,7 +769,7 @@ Two things not to be surprised by:
   a decision about durable write volume, and we would rather make them one at a
   time with a reason than promote the set. The token renders that honestly and
   updates itself the day we promote one.
-* **A route discriminator on `episodes`** — see `belt_route` above.
+* **A route discriminator on `episodes`** — see `checkpoint_route` above.
 
 ---
 
@@ -841,7 +844,7 @@ Status codes are meaningful and were separated on purpose:
 | gate board | live | counters are since-boot for 3 of 5 |
 | gate refusal ledger | live | **empty until the deploy lands**, then fills on first traffic. The recorder flushes every 15s |
 | **gate decision review** | live, after the next deploy | **empty**, and every gate reads `unreviewed`. The write path is verified against a real Postgres — constraint names, the rationale rule, whitespace — so the emptiness is a queue nobody has worked, not a rejected write |
-| **artifact trace** | live | **has content.** 75% `nothing_checked`, 21% `checked_clean`, **10 real violations** with named agent, field and claimed value. Belt rungs read `decided_absent` until the deploy, then `decided` fills from the ledger |
+| **artifact trace** | live | **has content.** 75% `nothing_checked`, 21% `checked_clean`, **10 real violations** with named agent, field and claimed value. Checkpoint rungs read `decided_absent` until the deploy, then `decided` fills from the ledger |
 | **verification queue + settle** | live, after the deploy | **empty.** The writer is wired on both execute paths; it fills as contracted agents run |
 | **declaration census / retrofit worklist** | live | 96 real agents, 110 fixtures. Ports 93/96, field contracts 7/96 |
 | **anomaly review queue** | `GET /api/observatory/hitl` — **already exists** | **empty.** No anomaly has ever been raised through the exception channel — but see the trace, which finds 10 the channel never saw |
@@ -852,7 +855,7 @@ Status codes are meaningful and were separated on purpose:
 **If you build one screen first, build the artifact trace.** It is the only one
 with real content on arrival, it is the one whose primary object a
 non-author recognises, and every other screen here is easier to explain once
-somebody has seen one artifact cross one belt.
+somebody has seen one artifact cross one route's checkpoints.
 
 The gate review queue needs the same treatment as the anomaly queue: build it
 against an empty table, and say *why* it is empty. `review.standing` gives you the

@@ -823,7 +823,7 @@ pub async fn post_workspace_message_handler(
                         // (migration 222). The id is minted before the tool
                         // context and is what the episode is stored under, so
                         // this arrow in the workflow diagram can be joined to the
-                        // belt the gates drew for that same artifact.
+                        // checkpoints the gates drew for that same artifact.
                         //
                         // `None` when the executor failed before persisting an
                         // episode. That is a real distinction and not a lost

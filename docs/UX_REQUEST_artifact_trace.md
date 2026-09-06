@@ -1,5 +1,9 @@
 # UX request — the artifact trace
 
+> **Vocabulary note (superseded term).** Kept as written. "Belt" is used below in
+> both of its old senses; neither survives. The row of checkpoints an artifact
+> crosses is now `checkpoints`, and an edge between two agents is a **seam**.
+
 **For:** the team that owns loops, gates, episodes and the composition model.
 **From:** the trust surfaces UI, built against `UX_HANDOFF_trust_surfaces.md`.
 **Status:** request. Four endpoints, of which one needs no new tables and one

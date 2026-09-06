@@ -505,8 +505,8 @@ pub async fn execute_agent_handler(
     //
     // `envelope::build` on the delegation hop has always handed back the
     // enforced payload. So agent-to-agent was protected and person-to-API was
-    // not, and the artifact trace drew the same belt for both. The gate registry
-    // named it as the reason `Gate::Grounding` is a `Metric` here: *"the
+    // not, and the artifact trace drew the same checkpoints for both. The gate
+    // registry named it as the reason `Gate::Grounding` is a `Metric` here: *"the
     // endpoint a third party calls reports fabrication rather than preventing
     // it."*
     //

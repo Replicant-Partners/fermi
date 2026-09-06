@@ -159,7 +159,7 @@ pub struct GateSpec {
     /// is **permanent and correct** for it -- not a gap, not a backfill target,
     /// and not something a reader should be invited to chase. Rendering that
     /// identically to a gate that *should* have recorded and did not turns a
-    /// correct absence into a standing debt on every belt forever, which is
+    /// correct absence into a standing debt on every artifact forever, which is
     /// what the UX team reported seeing.
     ///
     /// `true` also implies the decision may be the reason no artifact exists: a

@@ -1,10 +1,16 @@
 # Response — belt rung outcomes
 
+> **Vocabulary note (superseded term).** Kept as written. "Belt" is no longer the
+> platform's word for the row of checkpoints an artifact crosses — the payload
+> fields are `checkpoints` / `checkpoint_route`, the assembler is
+> `artifact_trace::checkpoints()`, and the harness is
+> `scripts/break_checkpoint_contract.py`.
+
 **To:** the trust surfaces UI team
 **Re:** `UX_CONTRACT_belt_outcomes.md`
 **Status:** **implemented.** All seven invariants are asserted, and each was
 deliberately broken and watched go red before this was written
-(`scripts/break_belt_contract.py`, 7 breaks, 7 caught).
+(`scripts/break_checkpoint_contract.py`, 7 breaks, 7 caught).
 
 Three things landed that you did not ask for. Two are corrections to your
 contract; one is a disclosure of a defect your spec made visible. All three are
