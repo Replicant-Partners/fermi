@@ -8,203 +8,156 @@
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
   --bg:#0d0f11;--s1:#131720;--s2:#181e27;--s3:#1e2635;
-  --b1:#202a37;--b2:#2c3a4d;--b3:#3d4f63;
-  --t1:#d0d8e5;--t2:#8896a9;--t3:#4f6070;
+  --b1:#1e2837;--b2:#28374a;--b3:#3a4f64;
+  --t1:#cfd8e4;--t2:#7d90a3;--t3:#48606f;
   --acc:#f5c518;--grn:#22c55e;--amb:#f59e0b;--red:#ef4444;
-  --blu:#60a5fa;--tea:#14b8a6;--pur:#a78bfa;--pink:#f472b6;
+  --blu:#60a5fa;--tea:#14b8a6;--pur:#a78bfa;
   --mono:'JetBrains Mono','Fira Code',monospace;
 }
-body{background:var(--bg);color:var(--t1);font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.6;min-height:100vh;display:flex;flex-direction:column}
-
-/* ── chrome ── */
-.top{display:flex;align-items:center;gap:12px;padding:8px 20px;background:var(--s1);border-bottom:1px solid var(--b1)}
+body{background:var(--bg);color:var(--t1);font-family:'Inter',system-ui,sans-serif;font-size:13px;line-height:1.6;display:flex;flex-direction:column;height:100vh;overflow:hidden}
+.top{display:flex;align-items:center;gap:10px;padding:8px 18px;background:var(--s1);border-bottom:1px solid var(--b1);flex-shrink:0}
 .top-logo{font-size:9px;font-weight:800;letter-spacing:.15em;text-transform:uppercase;color:var(--t3)}
 .top-div{color:var(--b2)}
 .top-app{font-size:13px;font-weight:700}
-.top-right{margin-left:auto;display:flex;align-items:center;gap:10px}
-.top-dpp{display:inline-flex;align-items:center;gap:5px;border:1px solid rgba(96,165,250,.3);background:rgba(96,165,250,.05);color:var(--blu);border-radius:4px;padding:3px 10px;font-size:11px;font-weight:600;text-decoration:none;cursor:pointer}
-.top-dpp:hover{background:rgba(96,165,250,.12)}
-.top-note{font-size:10px;color:var(--t3);max-width:260px;line-height:1.4}
-
-.conn{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;padding:10px 20px;background:var(--s1);border-bottom:1px solid var(--b1)}
+.top-right{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:11px;color:var(--t3)}
+.dpp-link{display:inline-flex;align-items:center;gap:4px;border:1px solid rgba(96,165,250,.3);background:rgba(96,165,250,.05);color:var(--blu);border-radius:4px;padding:3px 9px;font-size:11px;font-weight:600;text-decoration:none}
+.dpp-link:hover{background:rgba(96,165,250,.12)}
+.conn{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;padding:9px 18px;background:var(--s1);border-bottom:1px solid var(--b1);flex-shrink:0}
 .cf{display:flex;flex-direction:column;gap:3px}
 .cl{font-size:9px;color:var(--t3);text-transform:uppercase;letter-spacing:.07em;font-weight:700}
-.ci{background:var(--s2);border:1px solid var(--b2);color:var(--t1);border-radius:5px;padding:5px 10px;font-size:12px;font-family:var(--mono);outline:none;transition:border-color .15s}
-.ci:focus{border-color:var(--acc)}
-.ci::placeholder{color:var(--t3)}
-.btn{background:var(--acc);color:#000;border:none;border-radius:5px;padding:6px 16px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;transition:opacity .15s}
+.ci{background:var(--s2);border:1px solid var(--b2);color:var(--t1);border-radius:5px;padding:5px 9px;font-size:12px;font-family:var(--mono);outline:none;transition:border-color .15s}
+.ci:focus{border-color:var(--acc)}.ci::placeholder{color:var(--t3)}
+.btn{background:var(--acc);color:#000;border:none;border-radius:5px;padding:6px 15px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
 .btn:hover{opacity:.85}.btn:disabled{opacity:.4;cursor:not-allowed}
-.btn-sm{padding:4px 10px;font-size:11px}
-.btn-g{background:transparent;border:1px solid var(--b2);color:var(--t2);border-radius:5px;padding:5px 12px;font-size:12px;font-weight:500;cursor:pointer}
+.btn-g{background:transparent;border:1px solid var(--b2);color:var(--t2);border-radius:5px;padding:5px 11px;font-size:12px;font-weight:500;cursor:pointer}
 .btn-g:hover{border-color:var(--t1);color:var(--t1)}
-.btn-g.active{border-color:var(--acc);color:var(--acc)}
-
-/* ── layout ── */
-.body{display:flex;flex:1;overflow:hidden}
-.sidebar{width:300px;min-width:300px;display:flex;flex-direction:column;border-right:1px solid var(--b1);overflow:hidden}
-.sb-tabs{display:flex;border-bottom:1px solid var(--b1);background:var(--s1)}
-.sb-tab{flex:1;padding:9px 4px;text-align:center;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--t3);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s}
+.btn-sm{padding:3px 9px;font-size:11px;border-radius:4px}
+.body{display:flex;flex:1;overflow:hidden;min-height:0}
+.sidebar{width:290px;min-width:290px;display:flex;flex-direction:column;border-right:1px solid var(--b1);overflow:hidden}
+.sb-tabs{display:flex;border-bottom:1px solid var(--b1);background:var(--s1);flex-shrink:0}
+.sb-tab{flex:1;padding:9px 2px;text-align:center;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--t3);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s}
 .sb-tab.active{color:var(--acc);border-bottom-color:var(--acc)}
-.sb-panel{flex:1;overflow-y:auto;padding:16px}
+.sb-panel{flex:1;overflow-y:auto;padding:14px}
 .sb-panel.hidden{display:none}
-.content{flex:1;overflow-y:auto;padding:18px 22px 40px}
-
-/* ── section headers ── */
-.sh{display:flex;align-items:center;gap:8px;margin:18px 0 10px}
+.content{flex:1;overflow-y:auto;padding:16px 20px 40px}
+.sh{display:flex;align-items:center;gap:8px;margin:16px 0 8px}
 .sh:first-child{margin-top:0}
 .sh-label{font-size:9px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);white-space:nowrap}
 .sh-rule{flex:1;height:1px;background:var(--b1)}
-
-/* ── product switcher ── */
-.prod-list{display:flex;flex-direction:column;gap:6px;margin-bottom:4px}
-.prod-card{display:flex;align-items:center;gap:10px;padding:9px 11px;background:var(--s2);border:1px solid var(--b1);border-radius:7px;cursor:pointer;transition:all .15s}
-.prod-card:hover,.prod-card.active{border-color:var(--acc);background:rgba(245,197,24,.04)}
-.prod-icon{width:32px;height:32px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
-.prod-info{flex:1}
-.prod-name{font-size:12px;font-weight:600}
-.prod-sku{font-size:10px;color:var(--t3);font-family:var(--mono)}
-.prod-status{font-size:9px;margin-top:2px}
-.ps-ok{color:var(--grn)}.ps-pen{color:var(--amb)}.ps-new{color:var(--blu)}
-
-/* ── claims editor ── */
-.claims-list{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
-.claim-edit-row{background:var(--s2);border:1px solid var(--b1);border-radius:7px;overflow:hidden;transition:border-color .15s}
-.claim-edit-row.active{border-color:var(--acc)}
-.cer-header{display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:pointer}
-.cer-drag{color:var(--t3);font-size:12px}
-.cer-beat{color:var(--acc);font-size:11px}
-.cer-text{flex:1;font-size:12px;color:var(--t1)}
-.cer-score{display:flex;gap:2px}
-.cer-pip{width:6px;height:6px;border-radius:1px;background:var(--b2)}
-.cer-pip.on{background:var(--acc)}
-.cer-edit-area{padding:0 10px 10px;display:none}
-.claim-edit-row.active .cer-edit-area{display:block}
-.cer-input{width:100%;background:var(--s3);border:1px solid var(--b2);color:var(--t1);border-radius:5px;padding:7px 10px;font-size:12px;margin-bottom:8px;outline:none;resize:vertical;min-height:48px}
-.cer-input:focus{border-color:var(--acc)}
-.cer-actions{display:flex;gap:6px;align-items:center}
-.cer-hint{font-size:10px;color:var(--t3);flex:1}
-
-.add-claim{display:flex;align-items:center;gap:6px;padding:8px 10px;background:var(--s2);border:1px dashed var(--b2);border-radius:7px;cursor:pointer;font-size:12px;color:var(--t3)}
+/* workspace cards */
+.ws-list{display:flex;flex-direction:column;gap:5px}
+.ws-card{display:flex;align-items:center;gap:9px;padding:8px 10px;background:var(--s2);border:1px solid var(--b1);border-radius:6px;cursor:pointer;transition:all .15s}
+.ws-card:hover,.ws-card.active{border-color:var(--acc);background:rgba(245,197,24,.04)}
+.ws-icon{width:28px;height:28px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;background:var(--s3)}
+.ws-info{flex:1;min-width:0}
+.ws-name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ws-meta{font-size:10px;color:var(--t3);font-family:var(--mono)}
+.ws-badge{font-size:9px;padding:1px 5px;border-radius:2px;font-weight:700;white-space:nowrap;flex-shrink:0}
+.wb-d{background:rgba(245,158,11,.12);color:var(--amb)}
+.wb-l{background:rgba(34,197,94,.12);color:var(--grn)}
+.ws-empty{font-size:11px;color:var(--t3);line-height:1.6;padding:12px;background:var(--s2);border:1px dashed var(--b2);border-radius:6px}
+.spawn-row{display:flex;align-items:center;justify-content:center;gap:6px;padding:8px;background:var(--s2);border:1px dashed var(--b2);border-radius:6px;cursor:pointer;font-size:12px;color:var(--t3);margin-top:6px}
+.spawn-row:hover{border-color:var(--acc);color:var(--acc)}
+/* claims */
+.claim-row{background:var(--s2);border:1px solid var(--b1);border-radius:6px;overflow:hidden;margin-bottom:5px;transition:border-color .15s}
+.claim-row.open{border-color:var(--acc)}
+.cr-head{display:flex;align-items:center;gap:7px;padding:8px 10px;cursor:pointer}
+.cr-beat{color:var(--acc);font-size:10px;flex-shrink:0}
+.cr-text{flex:1;font-size:12px;color:var(--t1)}
+.cr-pips{display:flex;gap:2px;flex-shrink:0}
+.pip{width:5px;height:5px;border-radius:1px;background:var(--b2)}.pip.on{background:var(--acc)}
+.cr-body{padding:0 10px 10px;display:none}
+.claim-row.open .cr-body{display:block}
+.cr-ta{width:100%;background:var(--s3);border:1px solid var(--b2);color:var(--t1);border-radius:5px;padding:7px 9px;font-size:12px;margin-bottom:7px;outline:none;resize:vertical;min-height:44px;font-family:inherit}
+.cr-ta:focus{border-color:var(--acc)}
+.cr-btns{display:flex;gap:6px;align-items:center}
+.cr-hint{font-size:10px;color:var(--t3);flex:1}
+.add-claim{display:flex;align-items:center;gap:6px;padding:8px 10px;background:var(--s2);border:1px dashed var(--b2);border-radius:6px;cursor:pointer;font-size:12px;color:var(--t3);margin-top:4px}
 .add-claim:hover{border-color:var(--acc);color:var(--acc)}
-
-/* ── carbon section ── */
-.carbon-card{background:var(--s2);border:1px solid var(--b1);border-radius:7px;margin-bottom:10px;overflow:hidden}
-.carbon-header{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--b1)}
-.carbon-icon{font-size:16px}
-.carbon-title{font-size:12px;font-weight:600}
-.carbon-sub{font-size:10px;color:var(--t3)}
-.carbon-body{padding:12px}
-.scope-row{display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:12px;border-bottom:1px solid var(--b1)}
-.scope-row:last-child{border-bottom:none}
-.scope-key{color:var(--t2)}
-.scope-val{font-family:var(--mono);font-size:11px}
-.scope-bar{height:4px;border-radius:2px;margin-top:2px;background:var(--b2)}
-.scope-fill{height:100%;border-radius:2px}
-.carbon-note{font-size:10px;color:var(--t3);margin-top:8px;padding-top:8px;border-top:1px solid var(--b1);line-height:1.5}
-.carbon-note a{color:var(--blu);text-decoration:none}
-.carbon-note a:hover{text-decoration:underline}
-
-/* ── supply chain agent ── */
-.agent-card{background:var(--s2);border:1px dashed var(--b2);border-radius:7px;padding:12px;margin-bottom:10px;transition:all .3s}
-.agent-card.unlocked{border-style:solid;border-color:var(--pur)}
-.ac-header{display:flex;align-items:center;gap:8px;margin-bottom:8px}
-.ac-icon{font-size:18px}
-.ac-title{font-size:12px;font-weight:600}
-.ac-badge{font-size:9px;padding:2px 6px;border-radius:3px;background:rgba(167,139,250,.15);color:var(--pur);font-weight:700}
-.ac-desc{font-size:11px;color:var(--t3);margin-bottom:10px;line-height:1.5}
-.sc-fields{display:flex;flex-direction:column;gap:5px;display:none}
-.agent-card.unlocked .sc-fields{display:flex}
-.sc-row{display:flex;justify-content:space-between;font-size:11px;padding:5px 8px;background:var(--s3);border-radius:4px}
-.sc-key{color:var(--t2)}.sc-val{color:var(--t1);font-family:var(--mono)}
-.sc-flag{color:var(--red)}.sc-ok{color:var(--grn)}
-
-/* ── knowledge timeline ── */
-.kbl{display:flex;flex-direction:column;gap:0}
-.kbi{display:flex;gap:10px;padding-bottom:14px;position:relative}
+/* supply chain oracle */
+.sco-card{background:var(--s2);border:1px solid var(--b1);border-radius:7px;padding:14px;margin-bottom:10px}
+.sco-header{display:flex;align-items:center;gap:9px;margin-bottom:8px}
+.sco-icon{font-size:18px}
+.sco-name{font-size:13px;font-weight:700;flex:1}
+.sco-badge{font-size:10px;padding:2px 7px;border-radius:3px;font-weight:700}
+.sb-not{background:var(--s3);color:var(--t3)}
+.sb-hired{background:rgba(34,197,94,.12);color:var(--grn)}
+.sco-desc{font-size:11px;color:var(--t2);margin-bottom:10px;line-height:1.6}
+.sco-prov{font-size:10px;color:var(--t3);margin-top:8px;padding-top:8px;border-top:1px solid var(--b1);font-family:var(--mono)}
+.sco-result{margin-top:10px}
+.bom-row{display:flex;justify-content:space-between;align-items:flex-start;padding:6px 9px;background:var(--s3);border-radius:4px;margin-bottom:4px;gap:8px}
+.bom-name{font-size:11px;color:var(--t2);flex:1}
+.bom-right{text-align:right}
+.bom-price{font-size:11px;font-weight:600;font-family:var(--mono)}
+.bom-prov{font-size:9px;font-family:var(--mono);margin-top:2px}
+.bom-prov.tv{color:var(--grn)}.bom-prov.nm{color:var(--amb)}.bom-prov.mi{color:var(--blu)}
+.bom-flag{font-size:9px;padding:1px 5px;border-radius:2px;background:rgba(239,68,68,.1);color:var(--red);font-weight:600;margin-top:2px;display:inline-block}
+.bom-total{display:flex;justify-content:space-between;padding:7px 9px;background:var(--s2);border:1px solid var(--b2);border-radius:4px;margin-top:4px;font-weight:700;font-size:12px}
+.oracle-note{font-size:11px;color:var(--t2);margin-top:8px;padding:8px;background:var(--s3);border-radius:4px;border-left:2px solid var(--pur);line-height:1.5}
+.not-conn{background:var(--s2);border:1px solid var(--b1);border-radius:7px;padding:14px;margin-bottom:10px}
+.nc-title{font-size:12px;font-weight:600;margin-bottom:4px;display:flex;align-items:center;gap:6px}
+.nc-desc{font-size:11px;color:var(--t3);line-height:1.6}
+.nc-what{font-size:11px;color:var(--t2);margin-top:8px;padding:8px;background:var(--s3);border-radius:4px;border-left:2px solid var(--b3)}
+/* build timeline */
+.kbl{display:flex;flex-direction:column}
+.kbi{display:flex;gap:10px;padding-bottom:13px;position:relative}
 .kbi:last-child{padding-bottom:0}
-.kbi::before{content:'';position:absolute;left:10px;top:22px;width:1px;height:calc(100% - 8px);background:var(--b1)}
+.kbi::before{content:'';position:absolute;left:8px;top:19px;width:1px;height:calc(100% - 5px);background:var(--b1)}
 .kbi:last-child::before{display:none}
-.kbi-dot{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:10px;font-weight:700;margin-top:1px;z-index:1;cursor:pointer;transition:all .2s}
-.kbi-done{background:rgba(34,197,94,.12);color:var(--grn);border:1px solid rgba(34,197,94,.3)}
-.kbi-pend{background:rgba(245,158,11,.08);color:var(--amb);border:1px solid rgba(245,158,11,.25)}
-.kbi-wait{background:var(--s2);color:var(--t3);border:1px solid var(--b1)}
-.kbi-endorsed{background:rgba(167,139,250,.15);color:var(--pur);border:1px solid rgba(167,139,250,.4)}
+.dot{width:17px;height:17px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;margin-top:1px;z-index:1;flex-shrink:0}
+.d-ok{background:rgba(34,197,94,.12);color:var(--grn);border:1px solid rgba(34,197,94,.3)}
+.d-pend{background:rgba(245,158,11,.08);color:var(--amb);border:1px solid rgba(245,158,11,.25)}
+.d-wait{background:var(--s2);color:var(--t3);border:1px solid var(--b1)}
+.d-end{background:rgba(167,139,250,.12);color:var(--pur);border:1px solid rgba(167,139,250,.35)}
 .kbi-body{flex:1}
-.kbi-title{font-size:12px;font-weight:600}
-.kbi-sub{font-size:10px;color:var(--t3);margin-top:1px}
-.kbi-agent{font-size:9px;font-family:var(--mono);color:var(--blu)}
-.endorse-btn{font-size:10px;padding:2px 8px;margin-top:5px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);color:var(--amb);border-radius:3px;cursor:pointer;transition:all .2s}
-.endorse-btn:hover{background:rgba(245,158,11,.18)}
-.endorse-btn.done{background:rgba(167,139,250,.1);border-color:rgba(167,139,250,.4);color:var(--pur)}
-
-/* ── main content ── */
-.content-header{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
-.ch-title{font-size:14px;font-weight:700}
-.travel-badge{display:inline-flex;align-items:center;gap:5px;background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.25);color:var(--pur);border-radius:4px;padding:3px 10px;font-size:11px;font-weight:600}
-.preview-note{font-size:11px;color:var(--t3);margin-left:auto}
-
-/* ── status bar ── */
-.sbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:7px 12px;background:var(--s2);border:1px solid var(--b1);border-radius:6px;margin-bottom:16px;font-size:11px}
-.sd{width:7px;height:7px;border-radius:50%;flex-shrink:0}
-.sd-live{background:var(--grn);box-shadow:0 0 5px var(--grn)}.sd-demo{background:var(--acc)}
-.spill{display:inline-flex;align-items:center;gap:4px;background:var(--s3);border:1px solid var(--b1);border-radius:20px;padding:2px 8px;font-size:10px}
-.spill.ok{color:var(--grn);border-color:rgba(34,197,94,.3)}.spill.sy{color:var(--amb);border-color:rgba(245,158,11,.3)}
-
-/* ── test cascade banner ── */
-.cascade-banner{background:rgba(245,197,24,.07);border:1px solid rgba(245,197,24,.25);border-radius:6px;padding:9px 14px;margin-bottom:14px;font-size:12px;color:var(--acc);display:none}
-.cascade-banner.show{display:flex;align-items:center;gap:10px}
-
-/* ── jurisdiction tabs ── */
-.juri-tabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
-.jt{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:6px;border:1px solid var(--b1);background:var(--s2);font-size:12px;font-weight:500;cursor:pointer;transition:all .15s;color:var(--t2)}
+.kbi-t{font-size:12px;font-weight:600}
+.kbi-s{font-size:10px;color:var(--t3);margin-top:1px}
+.kbi-a{font-size:9px;font-family:var(--mono);color:var(--blu)}
+.end-btn{font-size:10px;padding:2px 7px;margin-top:4px;background:rgba(245,158,11,.07);border:1px solid rgba(245,158,11,.28);color:var(--amb);border-radius:3px;cursor:pointer}
+.end-btn:hover{background:rgba(245,158,11,.16)}
+.end-btn.done{background:rgba(167,139,250,.1);border-color:rgba(167,139,250,.4);color:var(--pur)}
+/* main content */
+.ch{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+.ch-title{font-size:15px;font-weight:700}
+.ch-sku{font-size:11px;color:var(--t3);font-family:var(--mono)}
+.travel-tag{display:inline-flex;align-items:center;gap:5px;background:rgba(167,139,250,.07);border:1px solid rgba(167,139,250,.23);color:var(--pur);border-radius:4px;padding:3px 9px;font-size:11px;font-weight:600}
+.sbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:7px 12px;background:var(--s2);border:1px solid var(--b1);border-radius:6px;margin-bottom:14px;font-size:11px}
+.sd{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.sd-live{background:var(--grn);box-shadow:0 0 4px var(--grn)}.sd-demo{background:var(--acc)}
+.pill{display:inline-flex;align-items:center;gap:4px;background:var(--s3);border:1px solid var(--b1);border-radius:20px;padding:1px 8px;font-size:10px}
+.pill.ok{color:var(--grn);border-color:rgba(34,197,94,.3)}.pill.sy{color:var(--amb);border-color:rgba(245,158,11,.3)}
+.juri-tabs{display:flex;gap:5px;margin-bottom:14px;flex-wrap:wrap}
+.jt{display:inline-flex;align-items:center;gap:5px;padding:4px 11px;border-radius:5px;border:1px solid var(--b1);background:var(--s2);font-size:12px;font-weight:500;cursor:pointer;color:var(--t2);transition:all .15s}
 .jt.active{border-color:var(--acc);color:var(--acc);background:rgba(245,197,24,.05)}
-.jt.locked{color:var(--t3);cursor:default;opacity:.6}
-.jt-lock{font-size:10px}
-.jt-tip{font-size:9px;color:var(--t3);margin-left:2px}
-
-/* ── comparison table ── */
+.jt.locked{color:var(--t3);cursor:default;opacity:.55}
 .ctw{overflow-x:auto;margin-bottom:20px}
 table{width:100%;border-collapse:collapse}
-th{padding:9px 12px;text-align:left;border-bottom:2px solid var(--b2);font-size:11px}
-.th-claim{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--t3);width:200px}
-.th-mkt{font-size:12px;font-weight:700;color:var(--t1)}
-.th-phil{font-size:9px;font-weight:400;color:var(--t3);display:block;margin-top:2px}
-.th-locked{color:var(--t3)!important;font-size:11px}
+th{padding:8px 12px;text-align:left;border-bottom:2px solid var(--b2);font-size:11px}
+.th-c{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--t3);width:190px}
+.th-m{font-size:12px;font-weight:700;color:var(--t1)}
+.th-p{font-size:9px;font-weight:400;color:var(--t3);display:block;margin-top:2px}
 tr.cr{border-bottom:1px solid var(--b1);transition:background .1s}
 tr.cr:hover{background:rgba(255,255,255,.015)}
 tr.cr.beat{background:rgba(245,197,24,.04);border-left:2px solid var(--acc)}
 tr.cr.beat td:first-child{padding-left:10px}
 tr.cr.testing{background:rgba(245,197,24,.06);border-left:3px solid var(--acc)}
 td{padding:11px 12px;vertical-align:top}
-td:first-child{width:200px}
-
+td:first-child{width:190px}
 .cid{font-size:9px;font-family:var(--mono);color:var(--t3)}
 .ccan{font-size:12px;color:var(--t1);font-style:italic;margin-top:2px}
 .cpips{display:flex;gap:2px;margin-top:5px}
 .cpip{width:6px;height:6px;border-radius:1px;background:var(--b2)}.cpip.on{background:var(--acc)}
-.ctest-label{font-size:9px;color:var(--acc);font-weight:700;margin-top:3px;letter-spacing:.05em;text-transform:uppercase}
-
-.mcell{}
 .badge{display:inline-flex;align-items:center;gap:3px;border-radius:3px;padding:2px 7px;font-size:10px;font-weight:700;margin-bottom:4px}
-.ba{background:rgba(34,197,94,.1);color:var(--grn)}
-.bc{background:rgba(245,158,11,.1);color:var(--amb)}
-.bn{background:rgba(239,68,68,.1);color:var(--red)}
-.br{background:rgba(96,165,250,.1);color:var(--blu)}
+.ba{background:rgba(34,197,94,.1);color:var(--grn)}.bc{background:rgba(245,158,11,.1);color:var(--amb)}
+.bn{background:rgba(239,68,68,.1);color:var(--red)}.br{background:rgba(96,165,250,.1);color:var(--blu)}
 .bt{background:rgba(20,184,166,.1);color:var(--tea)}
-.bl{background:rgba(79,96,112,.1);color:var(--t3)}
-
 .rtext{font-size:12px;color:var(--t1);line-height:1.5}
 .stext{font-size:11px;color:var(--red);font-style:italic;opacity:.8}
 .pchip{display:inline-flex;align-items:center;gap:3px;margin-top:4px;font-size:9px;font-family:var(--mono);color:var(--t3);border:1px solid var(--b1);border-radius:2px;padding:1px 5px}
-.pchip.tv{color:var(--grn);border-color:rgba(34,197,94,.3)}
-.pchip.inf{color:var(--blu);border-color:rgba(96,165,250,.3)}
-.pchip.end{color:var(--pur);border-color:rgba(167,139,250,.4)}
+.pchip.tv{color:var(--grn);border-color:rgba(34,197,94,.3)}.pchip.inf{color:var(--blu);border-color:rgba(96,165,250,.3)}
 .pchip.pen{color:var(--amb);border-color:rgba(245,158,11,.3)}
 .dnote{font-size:11px;color:var(--t3);margin-top:5px;border-left:2px solid var(--b1);padding-left:7px;display:none}
 tr:hover .dnote{display:block}
-.locked-cell{color:var(--t3);font-size:11px;font-style:italic}
-
-/* ── demo beat ── */
 .beat-box{background:var(--s2);border:1px solid var(--b1);border-left:3px solid var(--acc);border-radius:0 7px 7px 0;padding:14px 16px;margin-bottom:20px}
 .bb-label{font-size:9px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--acc);margin-bottom:5px}
 .bb-title{font-size:14px;font-weight:700;margin-bottom:10px}
@@ -213,16 +166,12 @@ tr:hover .dnote{display:block}
 .bb-mname{font-size:10px;font-weight:700;letter-spacing:.04em;margin-bottom:4px}
 .bb-text{font-size:12px;color:var(--t1);margin:5px 0}
 .bb-why{font-size:10px;color:var(--t3);border-top:1px solid var(--b1);padding-top:6px;margin-top:6px;line-height:1.5}
-
-/* ── ingredient divergence ── */
 .ing-beat{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px}
 .ibc{flex:1;min-width:160px;background:var(--s2);border:1px solid var(--b1);border-radius:6px;padding:12px}
 .ib-mkt{font-size:9px;font-weight:700;letter-spacing:.05em;color:var(--t3);margin-bottom:4px}
 .ib-status{font-size:11px;font-weight:700;color:var(--acc);margin-bottom:4px}
 .ib-note{font-size:11px;color:var(--t3);line-height:1.5}
 .ib-path{font-size:9px;font-family:var(--mono);color:var(--t3);margin-top:5px;padding-top:5px;border-top:1px solid var(--b1)}
-
-/* ── verification appendix ── */
 .va{background:var(--s2);border:1px solid var(--b1);border-radius:7px;padding:14px 16px;margin-bottom:20px}
 .va-intro{font-size:12px;color:var(--t2);margin-bottom:10px;line-height:1.6}
 .va-intro strong{color:var(--t1)}
@@ -231,8 +180,6 @@ tr:hover .dnote{display:block}
 .va-list li::before{content:"→";color:var(--acc);flex-shrink:0}
 .va-list a{color:var(--blu);text-decoration:none}
 .va-list a:hover{text-decoration:underline}
-
-/* ── API panel ── */
 details.api{background:var(--s2);border:1px solid var(--b1);border-radius:7px;margin-bottom:20px;overflow:hidden}
 details.api summary{padding:10px 14px;cursor:pointer;font-size:11px;font-weight:600;color:var(--t3);display:flex;align-items:center;gap:8px;list-style:none}
 details.api summary::-webkit-details-marker{display:none}
@@ -242,308 +189,230 @@ details.api[open] summary::before{transform:rotate(90deg)}
 pre.aj{padding:12px;font-family:var(--mono);font-size:10px;line-height:1.7;color:#4f6070;overflow-x:auto;max-height:340px;overflow-y:auto}
 .cpy{background:transparent;border:1px solid var(--b1);color:var(--t3);border-radius:3px;padding:2px 6px;font-size:10px;cursor:pointer}
 .cpy:hover{color:var(--t1);border-color:var(--t1)}
-
-/* ── endorsement modal ── */
-.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;z-index:100;display:none}
-.modal-bg.open{display:flex}
-.modal{background:var(--s2);border:1px solid var(--b2);border-radius:10px;padding:24px;max-width:420px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,.5)}
-.modal-title{font-size:14px;font-weight:700;margin-bottom:4px}
-.modal-sub{font-size:12px;color:var(--t2);margin-bottom:16px}
-.modal-claim{background:var(--s3);border:1px solid var(--b2);border-radius:6px;padding:12px;margin-bottom:16px;font-size:13px;font-style:italic;color:var(--t1)}
-.modal-checks{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
-.mcheck{display:flex;align-items:flex-start;gap:8px;font-size:12px;cursor:pointer}
-.mcheck input{margin-top:2px;accent-color:var(--acc);cursor:pointer}
-.modal-actions{display:flex;gap:8px;justify-content:flex-end}
-.btn-end{background:var(--pur);color:#fff;border:none;border-radius:5px;padding:7px 16px;font-size:12px;font-weight:700;cursor:pointer}
-.btn-end:hover{opacity:.85}.btn-end:disabled{opacity:.4;cursor:not-allowed}
-
-/* ── add-agent modal ── */
-.agent-modal{background:var(--s2);border:1px solid var(--b2);border-radius:10px;padding:24px;max-width:460px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,.5)}
-.am-title{font-size:14px;font-weight:700;margin-bottom:6px}
-.am-desc{font-size:12px;color:var(--t2);margin-bottom:16px;line-height:1.6}
-.am-preview{display:flex;flex-direction:column;gap:6px;margin-bottom:16px}
-.amp-row{display:flex;justify-content:space-between;font-size:12px;padding:7px 10px;background:var(--s3);border:1px solid var(--b2);border-radius:5px}
-.amp-key{color:var(--t2)}.amp-val{color:var(--t1);font-family:var(--mono)}
-.amp-flag{color:var(--red)}.amp-ok{color:var(--grn)}
-.spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--b2);border-top-color:var(--acc);border-radius:50%;animation:spin .65s linear infinite;vertical-align:middle;margin-right:5px}
-@keyframes spin{to{transform:rotate(360deg)}}
-
-/* ── empty state ── */
 .empty{text-align:center;padding:50px 20px;color:var(--t3)}
 .empty .big{font-size:28px;margin-bottom:10px}
 .empty p{font-size:12px;max-width:360px;margin:0 auto;line-height:1.7}
-
-/* ── footer ── */
-footer{border-top:1px solid var(--b1);padding:12px 20px;display:flex;justify-content:space-between;font-size:11px;color:var(--t3);flex-wrap:wrap;gap:8px}
+.spinner{display:inline-block;width:12px;height:12px;border:2px solid var(--b2);border-top-color:var(--acc);border-radius:50%;animation:spin .65s linear infinite;vertical-align:middle;margin-right:4px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.cascade-banner{background:rgba(245,197,24,.07);border:1px solid rgba(245,197,24,.25);border-radius:6px;padding:8px 13px;margin-bottom:12px;font-size:12px;color:var(--acc);display:none;align-items:center;gap:8px}
+.cascade-banner.show{display:flex}
+footer{border-top:1px solid var(--b1);padding:10px 18px;display:flex;justify-content:space-between;font-size:11px;color:var(--t3);flex-shrink:0}
 footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
-
-@media(max-width:800px){.body{flex-direction:column}.sidebar{width:100%;min-width:0;border-right:none;border-bottom:1px solid var(--b1)}.sb-panel{max-height:400px}}
+/* modal */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;z-index:100}
+.modal-bg.open{display:flex}
+.modal{background:var(--s2);border:1px solid var(--b2);border-radius:9px;padding:22px;max-width:420px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.modal-title{font-size:14px;font-weight:700;margin-bottom:4px}
+.modal-sub{font-size:12px;color:var(--t2);margin-bottom:14px}
+.modal-claim{background:var(--s3);border:1px solid var(--b2);border-radius:5px;padding:11px;margin-bottom:14px;font-size:13px;font-style:italic;color:var(--t1)}
+.modal-checks{display:flex;flex-direction:column;gap:7px;margin-bottom:14px}
+.mcheck{display:flex;align-items:flex-start;gap:7px;font-size:12px;cursor:pointer}
+.mcheck input{margin-top:2px;accent-color:var(--acc);cursor:pointer}
+.modal-actions{display:flex;gap:7px;justify-content:flex-end}
+.btn-end{background:var(--pur);color:#fff;border:none;border-radius:5px;padding:6px 15px;font-size:12px;font-weight:700;cursor:pointer}
+.btn-end:hover{opacity:.85}.btn-end:disabled{opacity:.4;cursor:not-allowed}
 </style>
 </head>
 <body>
 
-<!-- topbar -->
 <div class="top">
-  <span class="top-logo">Adaptogen Lab</span>
-  <span class="top-div">|</span>
+  <span class="top-logo">Adaptogen Lab</span><span class="top-div">|</span>
   <span class="top-app">DPP Studio <span style="font-size:10px;color:var(--t3);font-weight:400">— Digital Product Passport</span></span>
   <div class="top-right">
-    <span class="top-note">Food DPP not yet mandated — this shows the architecture it will need. <a href="https://single-market-economy.ec.europa.eu/single-market/digital-product-passport_en" target="_blank" style="color:var(--blu)">EU DPP →</a></span>
-    <a class="top-dpp" href="https://single-market-economy.ec.europa.eu/single-market/digital-product-passport_en" target="_blank">🇪🇺 DPP mandate</a>
+    <span>Food DPP not yet mandated — shows the architecture it will need.</span>
+    <a class="dpp-link" href="https://single-market-economy.ec.europa.eu/single-market/digital-product-passport_en" target="_blank">🇪🇺 EU DPP →</a>
   </div>
 </div>
 
-<!-- connection -->
 <div class="conn">
   <div class="cf"><span class="cl">ABW Base</span><input id="base-url" class="ci" style="width:210px" placeholder="https://agent-bestiary.world"/></div>
-  <div class="cf"><span class="cl">Workspace ID</span><input id="ws-id" class="ci" style="width:270px" placeholder="paste workspace UUID or URL"/></div>
-  <div class="cf"><span class="cl">API Token</span><input id="token" class="ci" style="width:190px" type="password" placeholder="ferm_..."/></div>
+  <div class="cf"><span class="cl">Workspace ID</span><input id="ws-id" class="ci" style="width:260px" placeholder="paste workspace UUID — or pick one from Products tab"/></div>
+  <div class="cf"><span class="cl">API Token</span><input id="token" class="ci" style="width:180px" type="password" placeholder="ferm_..." oninput="onTokenInput()"/></div>
   <button class="btn" id="run-btn" onclick="runLive()">Run live</button>
   <button class="btn-g" onclick="loadDemo()">Demo data</button>
 </div>
 
-<!-- body -->
 <div class="body">
-
-<!-- ══ SIDEBAR ══ -->
 <div class="sidebar">
   <div class="sb-tabs">
     <div class="sb-tab active" onclick="showTab('products')">Products</div>
     <div class="sb-tab" onclick="showTab('claims')">Label</div>
-    <div class="sb-tab" onclick="showTab('carbon')">Carbon</div>
-    <div class="sb-tab" onclick="showTab('knowledge')">Build</div>
+    <div class="sb-tab" onclick="showTab('carbon')">Supply chain</div>
+    <div class="sb-tab" onclick="showTab('build')">Build</div>
   </div>
 
-  <!-- Products tab -->
+  <!-- Products -->
   <div class="sb-panel" id="tab-products">
-    <div class="sh"><span class="sh-label">Portfolio</span><span class="sh-rule"></span></div>
-    <div class="prod-list" id="prod-list"></div>
-    <div style="font-size:10px;color:var(--t3);margin-top:8px;line-height:1.5">
-      Each product has its own workspace — a living knowledge asset. Switch products to see how different DPPs travel across the same regulatory lenses.
+    <div class="sh"><span class="sh-label">Product workspaces</span><span class="sh-rule"></span></div>
+    <div id="ws-list-container">
+      <div class="ws-empty">Enter your API token above — your product workspaces will appear here.<br><br>Each workspace <em>is</em> a product DPP. Select one to load its claims and run the regulatory comparison.</div>
     </div>
-  </div>
-
-  <!-- Claims / Label tab -->
-  <div class="sb-panel hidden" id="tab-claims">
-    <div class="sh"><span class="sh-label">Source Claims</span><span class="sh-rule"></span><span style="font-size:9px;color:var(--t3)">Edit → cascade →</span></div>
-    <div style="font-size:10px;color:var(--t3);margin-bottom:10px;line-height:1.5">
-      These are the candidate claims from the DPP — what you want to say about the product. Edit any claim to see how it renders across EU, US, and China in real-time.
-    </div>
-    <div class="claims-list" id="claims-list"></div>
-    <div class="add-claim" onclick="addClaim()">
-      <span>＋</span><span>Add a new claim to the DPP</span>
+    <div class="spawn-row" id="spawn-row" style="display:none" onclick="spawnWorkspace()">
+      <span>＋</span><span>Spawn new product workspace</span>
     </div>
     <div style="font-size:10px;color:var(--t3);margin-top:10px;line-height:1.5">
-      In a live workspace, editing here calls <code style="color:var(--blu)">compare_lenses</code> and the result is committed to the workspace git as a new DPP version.
+      Each workspace holds the DPP composition YAML, regulatory rulesets, and the comparison history committed to git.
     </div>
   </div>
 
-  <!-- Carbon tab -->
+  <!-- Label / Claims -->
+  <div class="sb-panel hidden" id="tab-claims">
+    <div class="sh"><span class="sh-label">Source Claims</span><span class="sh-rule"></span><span style="font-size:9px;color:var(--t3)">edit → cascade</span></div>
+    <div style="font-size:10px;color:var(--t3);margin-bottom:10px;line-height:1.5">
+      Edit any candidate claim to see how it renders across EU, US, and China. In a live workspace, <em>Test →</em> calls <code style="color:var(--blu)">compare_lenses</code> with the override — the result is grounded against the ruleset YAMLs, not generated by the model.
+    </div>
+    <div id="claims-list"></div>
+    <div class="add-claim" onclick="addClaim()"><span>＋</span><span>Add a new claim</span></div>
+  </div>
+
+  <!-- Supply chain / Carbon -->
   <div class="sb-panel hidden" id="tab-carbon">
-    <div class="sh"><span class="sh-label">Carbon &amp; Sustainability</span><span class="sh-rule"></span></div>
-    <div class="carbon-card">
-      <div class="carbon-header">
-        <span class="carbon-icon">🌱</span>
-        <div>
-          <div class="carbon-title">Carbon Footprint</div>
-          <div class="carbon-sub" id="c-sku">PKH-F2-330 · per 330ml unit [SYNTHETIC]</div>
-        </div>
+    <div class="sh"><span class="sh-label">Supply Chain Oracle</span><span class="sh-rule"></span></div>
+    <div class="sco-card" id="sco-card">
+      <div class="sco-header">
+        <span class="sco-icon">⛓</span>
+        <span class="sco-name">supply_chain_oracle</span>
+        <span class="sco-badge sb-not" id="sco-badge">not hired</span>
       </div>
-      <div class="carbon-body" id="carbon-body">
-        <div class="scope-row"><span class="scope-key">Scope 1 <span style="color:var(--t3)">(direct ops)</span></span><span class="scope-val" style="color:var(--grn)">0.02 kg CO₂e</span></div>
-        <div><div class="scope-bar"><div class="scope-fill" style="width:4%;background:var(--grn)"></div></div></div>
-        <div class="scope-row"><span class="scope-key">Scope 2 <span style="color:var(--t3)">(energy)</span></span><span class="scope-val" style="color:var(--amb)">0.09 kg CO₂e</span></div>
-        <div><div class="scope-bar"><div class="scope-fill" style="width:18%;background:var(--amb)"></div></div></div>
-        <div class="scope-row"><span class="scope-key">Scope 3 <span style="color:var(--t3)">(supply chain)</span></span><span class="scope-val" style="color:var(--red)">0.34 kg CO₂e</span></div>
-        <div><div class="scope-bar"><div class="scope-fill" style="width:68%;background:var(--red)"></div></div></div>
-        <div class="scope-row" style="font-weight:700"><span class="scope-key">Total</span><span class="scope-val">0.45 kg CO₂e/unit</span></div>
-        <div class="carbon-note">
-          🔴 Scope 3 dominated by hibiscus supply chain (Egypt/Sudan origin, ~11,000 km avg transport). Add the <strong>Supply Chain Agent</strong> → Carbon tab for ingredient-level breakdown.<br><br>
-          Carbon disclosure is <a href="https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32023R1542" target="_blank">mandatory in EU Battery DPP</a>. Food DPP framework will follow. This field positions your DPP ahead of the mandate.
-        </div>
+      <div class="sco-desc">
+        Uses <code style="color:var(--blu);font-size:10px">web_search</code> to get real current mid-market prices for every ingredient in the DPP composition. Prices are <strong>sourced from live web data</strong> — not generated. Returns risk flags (single_source, seasonal, substitution_risk…) as model inference over the sourced prices.
       </div>
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <button class="btn btn-sm" id="sco-hire-btn" onclick="hireOracle()" style="flex:1">Hire agent →</button>
+        <button class="btn-g btn-sm" id="sco-run-btn" onclick="runBOM()" style="flex:1;display:none">Run BOM pricing</button>
+      </div>
+      <div class="sco-prov">items: sourced (web_search) · risks: model_inference · summary: model_inference</div>
+      <div id="sco-result" class="sco-result"></div>
     </div>
-
-    <!-- Supply chain agent card -->
-    <div class="sh"><span class="sh-label">Supply Chain</span><span class="sh-rule"></span></div>
-    <div class="agent-card" id="sc-agent-card">
-      <div class="ac-header">
-        <span class="ac-icon">⛓</span>
-        <div style="flex:1">
-          <div class="ac-title">Supply Chain Agent</div>
-        </div>
-        <span class="ac-badge" id="sc-badge">not hired</span>
-      </div>
-      <div class="ac-desc" id="sc-desc">
-        Hire this agent into your workspace to unlock ingredient-level cost projections, origin verification, single-source risk flags, and Scope 3 emissions by ingredient.
-      </div>
-      <button class="btn btn-sm" style="width:100%;margin-bottom:8px" id="sc-hire-btn" onclick="hireSupplyChain()">+ Hire supply chain agent</button>
-      <div class="sc-fields" id="sc-fields">
-        <div class="sc-row"><span class="sc-key">Hibiscus (Egypt/Sudan)</span><span class="sc-val">€0.18/unit <span class="sc-flag">⚠ single source</span></span></div>
-        <div class="sc-row"><span class="sc-key">Black tea (Sri Lanka)</span><span class="sc-val">€0.06/unit <span class="sc-ok">✓ 3 suppliers</span></span></div>
-        <div class="sc-row"><span class="sc-key">Cane sugar (Brazil/AUS)</span><span class="sc-val">€0.04/unit <span class="sc-ok">✓ spot market</span></span></div>
-        <div class="sc-row"><span class="sc-key">Total COGS (materials)</span><span class="sc-val sc-ok">€0.31/unit</span></div>
-        <div class="sc-row"><span class="sc-key">Scope 3 top contributor</span><span class="sc-val sc-flag">Hibiscus (0.21 kg CO₂e)</span></div>
-        <div style="font-size:10px;color:var(--t3);margin-top:6px;line-height:1.5">
-          ⚠ Hibiscus is single-sourced from one region. Dual-sourcing recommendation flagged. Scope 3 can be reduced 40% by sourcing from closer suppliers (Morocco/Spain).
-        </div>
+    <div class="sh"><span class="sh-label">Carbon</span><span class="sh-rule"></span></div>
+    <div class="not-conn">
+      <div class="nc-title">🌱 Carbon footprint</div>
+      <div class="nc-desc">No carbon data connected to this workspace.</div>
+      <div class="nc-what">
+        When the Supply Chain Oracle runs and a BOM is priced, Scope 3 can be estimated from ingredient origins and transport distances. Carbon disclosure is <a href="https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32023R1542" target="_blank" style="color:var(--blu)">mandatory in EU Battery DPP</a> and will be required for food. This field positions your DPP ahead of the mandate.
       </div>
     </div>
   </div>
 
-  <!-- Knowledge Build tab -->
-  <div class="sb-panel hidden" id="tab-knowledge">
-    <div class="sh"><span class="sh-label">Knowledge Build Timeline</span><span class="sh-rule"></span></div>
+  <!-- Build -->
+  <div class="sb-panel hidden" id="tab-build">
+    <div class="sh"><span class="sh-label">Knowledge Build</span><span class="sh-rule"></span></div>
     <div style="font-size:10px;color:var(--t3);margin-bottom:12px;line-height:1.5">
-      This DPP is built collaboratively — agents run research, humans review and endorse. Each step carries a provenance tag. Provenance flows through to every regulatory rendering.
+      This DPP is built step by step. Each step carries a provenance tag that flows through to the regulatory renderings.
     </div>
-    <div class="kbl" id="kb-timeline"></div>
+    <div class="kbl" id="kb-list"></div>
   </div>
 </div>
 
-<!-- ══ CONTENT ══ -->
 <div class="content">
-
   <div id="empty-state" class="empty">
     <div class="big">⟷</div>
-    <p>Select a product from the Portfolio tab and click <strong>Demo data</strong> to see the DPP travel across regulatory markets — or enter a workspace ID and token for a live run.</p>
+    <p>Click <strong>Demo data</strong> to see the Precision Kombucha DPP travel across EU, US, and China — or pick a workspace from the Products tab and click <strong>Run live</strong>.</p>
   </div>
 
   <div id="main" style="display:none">
-    <!-- header -->
-    <div class="content-header">
+    <div class="ch">
       <div>
         <div class="ch-title" id="ch-name">Precision Kombucha — Hibiscus, Cold F2</div>
-        <div style="font-size:11px;color:var(--t3);font-family:var(--mono)" id="ch-sku">PKH-F2-330</div>
+        <div class="ch-sku" id="ch-sku">PKH-F2-330</div>
       </div>
-      <div class="travel-badge">⟷ DPP traveling</div>
-      <div class="preview-note">Hover rows for divergence notes</div>
+      <div class="travel-tag">⟷ DPP traveling</div>
+      <div style="margin-left:auto;font-size:11px;color:var(--t3)">Hover rows for divergence notes</div>
     </div>
 
-    <!-- status -->
     <div class="sbar">
       <span class="sd sd-demo" id="sb-dot"></span>
       <span id="sb-text">Demo mode</span>
-      <span class="spill sy" id="sb-data">⚠ synthetic data</span>
-      <span class="spill ok" id="sb-gate">✓ gate clean · 0 violations</span>
-      <span style="color:var(--t3)">rendered_claims_provenance:</span>
+      <span class="pill sy" id="sb-data">⚠ synthetic data</span>
+      <span class="pill ok" id="sb-gate">✓ gate clean · 0 violations</span>
+      <span style="color:var(--t3);font-size:10px">rendered_claims:</span>
       <span style="font-family:var(--mono);font-size:10px;color:var(--grn)">tool_verified</span>
     </div>
 
-    <!-- cascade banner -->
     <div class="cascade-banner" id="cascade-banner">
-      <span>⚡</span>
-      <span id="cascade-text"></span>
-      <button class="btn-g" style="padding:3px 10px;font-size:10px;margin-left:auto" onclick="resetCascade()">Reset</button>
+      <span>⚡</span><span id="cascade-text"></span>
+      <button class="btn-g btn-sm" style="margin-left:auto" onclick="resetCascade()">Reset</button>
     </div>
 
-    <!-- jurisdictions -->
     <div class="juri-tabs">
       <div class="jt active" onclick="setJuri(this,'all')">All markets</div>
       <div class="jt" onclick="setJuri(this,'EU')">🇪🇺 EU</div>
       <div class="jt" onclick="setJuri(this,'US')">🇺🇸 US</div>
       <div class="jt" onclick="setJuri(this,'CN')">🇨🇳 China</div>
-      <div class="jt locked" title="Japan FOSHU system — coming next">🇯🇵 Japan <span class="jt-lock">🔒</span><span class="jt-tip">coming</span></div>
-      <div class="jt locked" title="Korea MFDS health functional food system — coming next">🇰🇷 Korea <span class="jt-lock">🔒</span><span class="jt-tip">coming</span></div>
+      <div class="jt locked">🇯🇵 Japan 🔒 <span style="font-size:9px">coming</span></div>
+      <div class="jt locked">🇰🇷 Korea 🔒 <span style="font-size:9px">coming</span></div>
     </div>
 
-    <!-- comparison table -->
     <div class="ctw">
       <table>
         <thead>
           <tr>
-            <th class="th-claim">DPP claim</th>
-            <th class="th-mkt" id="th-eu">🇪🇺 EU <span class="th-phil">positive-list · Reg 1924/2006</span></th>
-            <th class="th-mkt" id="th-us">🇺🇸 US <span class="th-phil">risk-based · FDA/FTC</span></th>
-            <th class="th-mkt" id="th-cn">🇨🇳 China <span class="th-phil">two-track · GB/SAMR</span></th>
+            <th class="th-c">DPP claim</th>
+            <th class="th-m" id="th-EU">🇪🇺 EU<span class="th-p">positive-list · Reg 1924/2006</span></th>
+            <th class="th-m" id="th-US">🇺🇸 US<span class="th-p">risk-based · FDA/FTC</span></th>
+            <th class="th-m" id="th-CN">🇨🇳 China<span class="th-p">two-track · GB/SAMR</span></th>
           </tr>
         </thead>
         <tbody id="ctbody"></tbody>
       </table>
     </div>
 
-    <!-- demo beat -->
-    <div class="sh"><span class="sh-label">★ Demo Beat — The DPP Travels</span><span class="sh-rule"></span></div>
+    <div class="sh"><span class="sh-label">★ Demo Beat</span><span class="sh-rule"></span></div>
     <div class="beat-box" id="beat-box"></div>
 
-    <!-- ingredient divergence -->
-    <div class="sh" style="margin-top:20px"><span class="sh-label">Ingredient-Status Divergence</span><span class="sh-rule"></span><span style="font-size:9px;color:var(--t3)">Same ingredient · three approval pathways · same verdict · different documentation</span></div>
+    <div class="sh" style="margin-top:20px"><span class="sh-label">Ingredient-Status Divergence</span><span class="sh-rule"></span>
+      <span style="font-size:9px;color:var(--t3);margin-left:4px">Same approval, three different pathways, different documentation requirements</span>
+    </div>
     <div class="ing-beat" id="ing-beat"></div>
 
-    <!-- verification appendix -->
     <div class="sh"><span class="sh-label">Verification Appendix</span><span class="sh-rule"></span></div>
     <div class="va">
       <p class="va-intro">
-        This DPP uses <strong>structurally representative</strong> rulesets. Regulatory logic is accurate; specific authorized claim wording and thresholds must be verified before commercial use.
-        The next enrichment step: run <code style="color:var(--blu);font-size:11px">regulatory_scanner</code> with web search to pull live citations from the sources below.
+        This DPP uses <strong>structurally representative</strong> rulesets — the regulatory logic is accurate; specific wording and thresholds must be verified before commercial use. The next enrichment step: run <code style="color:var(--blu);font-size:11px">regulatory_scanner</code> against each jurisdiction to pull live web citations from the sources below.
       </p>
       <ul class="va-list" id="va-list"></ul>
     </div>
 
-    <!-- API payload -->
     <details class="api">
-      <summary>
-        Machine-readable DPP payload (JSON)
-        <span style="margin-left:auto;font-size:9px;font-family:var(--mono);color:var(--acc)">POST /actions/compare_lenses</span>
-      </summary>
-      <div class="api-bar">
-        <span>Everything in this UI comes from this one structured response. Third parties consume this directly.</span>
-        <button class="cpy" onclick="copyJ()">Copy</button>
-      </div>
+      <summary>Machine-readable DPP payload (JSON)<span style="margin-left:auto;font-size:9px;font-family:var(--mono);color:var(--acc)">POST /actions/compare_lenses</span></summary>
+      <div class="api-bar"><span>Everything above comes from this one structured response. Third parties consume this directly.</span><button class="cpy" onclick="copyJ()">Copy</button></div>
       <pre class="aj" id="ajson"></pre>
     </details>
+    <div style="font-size:11px;color:var(--t3);margin-top:8px">
+      🔌 Third-party integration: one POST, structured JSON, 120 lines.
+      <a href="embed-example.html" style="color:var(--blu)">Open embed example →</a>
+    </div>
   </div>
 </div>
-
-</div><!-- body -->
+</div>
 
 <footer>
-  <span>Adaptogen Lab · DPP Studio · three markets · Japan &amp; Korea next</span>
-  <span>
-    <a href="https://single-market-economy.ec.europa.eu/single-market/digital-product-passport_en" target="_blank">EU DPP mandate</a> ·
-    <a href="embed-example.html">Embed example</a>
-  </span>
+  <span>Adaptogen Lab · DPP Studio · EU / US / China · Japan &amp; Korea next</span>
+  <span><a href="https://single-market-economy.ec.europa.eu/single-market/digital-product-passport_en" target="_blank">EU DPP mandate</a> · <a href="embed-example.html">Embed example</a></span>
 </footer>
 
 <!-- endorsement modal -->
-<div class="modal-bg" id="endorse-modal">
+<div class="modal-bg" id="end-modal">
   <div class="modal">
     <div class="modal-title">Expert Endorsement</div>
-    <div class="modal-sub" id="em-sub">Endorsing a verified claim for this DPP</div>
+    <div class="modal-sub" id="em-sub"></div>
     <div class="modal-claim" id="em-claim"></div>
     <div class="modal-checks" id="em-checks"></div>
     <div class="modal-actions">
-      <button class="btn-g" onclick="closeModal('endorse-modal')">Cancel</button>
-      <button class="btn-end" id="em-confirm" onclick="confirmEndorse()" disabled>Endorse →</button>
-    </div>
-  </div>
-</div>
-
-<!-- supply chain modal -->
-<div class="modal-bg" id="sc-modal">
-  <div class="agent-modal">
-    <div class="am-title">Hire Supply Chain Agent</div>
-    <div class="am-desc">
-      Adding this agent to your product workspace extends the DPP with real-time supply chain intelligence. In a live workspace, the agent runs on hire — querying commodity markets, mapping origins, calculating Scope 3 by ingredient.
-    </div>
-    <div class="am-preview" id="sc-preview-rows"></div>
-    <div class="modal-actions">
-      <button class="btn-g" onclick="closeModal('sc-modal')">Cancel</button>
-      <button class="btn-end" id="sc-hire-confirm" onclick="confirmHire()">
-        Hire agent →
-      </button>
+      <button class="btn-g" onclick="closeModal('end-modal')">Cancel</button>
+      <button class="btn-end" id="em-ok" onclick="confirmEndorse()" disabled>Endorse →</button>
     </div>
   </div>
 </div>
 
 <script>
-// ── base url ──────────────────────────────────────────────────────────────────
+// ── config ──────────────────────────────────────────────────────────────────
 function getBase() {
   const p = new URLSearchParams(location.search).get('base');
   if (p) { localStorage.setItem('abw_base', p); return p; }
   return localStorage.getItem('abw_base') || 'https://agent-bestiary.world';
 }
-const BASE = getBase();
+const BASE_CONST = getBase();
 
 function wsId() {
   const v = document.getElementById('ws-id').value.trim();
@@ -554,117 +423,140 @@ function token() { return document.getElementById('token').value.trim(); }
 function base() {
   const v = document.getElementById('base-url').value.trim();
   if (v) { localStorage.setItem('abw_base', v); return v; }
-  return BASE;
+  return BASE_CONST;
 }
+function isLiveMode() { return !!(wsId() && token()); }
 
-// ── tabs ──────────────────────────────────────────────────────────────────────
+// ── sidebar tabs ────────────────────────────────────────────────────────────
 function showTab(name) {
-  ['products','claims','carbon','knowledge'].forEach(t => {
-    document.getElementById(`tab-${t}`).classList.toggle('hidden', t !== name);
+  ['products','claims','carbon','build'].forEach(t => {
+    document.getElementById('tab-' + (t === 'carbon' ? 'carbon' : t)).classList.toggle('hidden', t !== name);
   });
   document.querySelectorAll('.sb-tab').forEach((el, i) => {
-    el.classList.toggle('active', ['products','claims','carbon','knowledge'][i] === name);
+    el.classList.toggle('active', ['products','claims','carbon','build'][i] === name);
   });
 }
 
-// ── jurisdiction filter ───────────────────────────────────────────────────────
+// ── jurisdiction filter ─────────────────────────────────────────────────────
 let activeJuri = 'all';
 function setJuri(el, j) {
   if (el.classList.contains('locked')) return;
   activeJuri = j;
   document.querySelectorAll('.jt').forEach(t => t.classList.remove('active'));
   el.classList.add('active');
-  const hide = code => code !== j && j !== 'all';
-  ['eu','us','cn'].forEach(c => {
-    const th = document.getElementById(`th-${c}`);
-    if (th) th.style.display = hide(c.toUpperCase()) ? 'none' : '';
+  ['EU','US','CN'].forEach(c => {
+    const th = document.getElementById('th-' + c);
+    if (th) th.style.display = (j !== 'all' && j !== c) ? 'none' : '';
   });
-  document.querySelectorAll('.mcell').forEach(td => {
-    const mkt = td.dataset.mkt;
-    if (mkt) td.style.display = hide(mkt) ? 'none' : '';
+  document.querySelectorAll('td[data-mkt]').forEach(td => {
+    td.style.display = (j !== 'all' && td.dataset.mkt !== j) ? 'none' : '';
   });
 }
 
-// ── product portfolio ─────────────────────────────────────────────────────────
-const PRODUCTS = [
-  {
-    id: 'precision_kombucha_hibiscus_f2',
-    icon: '🫖', name: 'Precision Kombucha — Hibiscus',
-    sku: 'PKH-F2-330', status: 'ok',
-    note: '5 claims · EU/US/CN · gate clean'
-  },
-  {
-    id: 'ashwagandha_extract_300',
-    icon: '🌿', name: 'Ashwagandha Extract',
-    sku: 'AWG-300-60', status: 'pending',
-    note: '4 claims · 3 pending expert review'
-  },
-  {
-    id: 'turmeric_oat_latte',
-    icon: '☕', name: 'Turmeric Oat Latte Mix',
-    sku: 'TOL-250-10', status: 'new',
-    note: 'New — DPP authoring in progress'
-  },
-];
+// ── workspace list ──────────────────────────────────────────────────────────
+let currentWsId = null;
+let currentProductName = 'Precision Kombucha — Hibiscus, Cold F2';
+let currentProductSku = 'PKH-F2-330';
 
-let currentProductId = PRODUCTS[0].id;
+async function fetchWorkspaces() {
+  const tok = token();
+  if (!tok) return;
+  try {
+    const res = await fetch(`${base()}/api/apps/adaptogen_lab_regulatory/workspaces`, {
+      headers: { Authorization: `Bearer ${tok}` }
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    renderWorkspaceList(data.workspaces ?? [], true);
+    document.getElementById('spawn-row').style.display = '';
+  } catch(e) { /* silent */ }
+}
 
-function renderProducts() {
-  const list = document.getElementById('prod-list');
-  list.innerHTML = PRODUCTS.map(p => `
-    <div class="prod-card${p.id===currentProductId?' active':''}" onclick="switchProduct('${p.id}')">
-      <div class="prod-icon">${p.icon}</div>
-      <div class="prod-info">
-        <div class="prod-name">${p.name}</div>
-        <div class="prod-sku">${p.sku}</div>
-        <div class="prod-status ps-${p.status}">${{ok:'✓ ',pending:'○ ',new:'+ '}[p.status]}${p.note}</div>
+function renderWorkspaceList(workspaces, live) {
+  const container = document.getElementById('ws-list-container');
+  if (!workspaces.length) {
+    container.innerHTML = `<div class="ws-empty">
+      No product workspaces yet. Spawn one to create your first DPP workspace.
+    </div>`;
+    return;
+  }
+  container.innerHTML = `<div class="ws-list">${workspaces.map(ws => {
+    const id = ws.id ?? '';
+    const name = ws.name ?? ws.slug ?? id;
+    const date = ws.created_at ? ws.created_at.slice(0,10) : '';
+    const isActive = id === currentWsId;
+    return `<div class="ws-card${isActive?' active':''}" onclick="selectWorkspace('${id}','${esc(name)}')">
+      <div class="ws-icon">🫙</div>
+      <div class="ws-info">
+        <div class="ws-name">${esc(name)}</div>
+        <div class="ws-meta">${id.slice(0,8)} · ${date}</div>
       </div>
-    </div>`).join('');
+      <span class="ws-badge ${live?'wb-l':'wb-d'}">${live?'live':'demo'}</span>
+    </div>`;
+  }).join('')}</div>`;
 }
 
-function switchProduct(id) {
-  currentProductId = id;
-  renderProducts();
-  if (id === PRODUCTS[0].id) loadDemo();
-  else showProductPlaceholder(id);
+function selectWorkspace(id, name) {
+  currentWsId = id;
+  document.getElementById('ws-id').value = id;
+  currentProductName = name;
+  document.getElementById('ch-name').textContent = name;
+  renderWorkspaceList(
+    [...document.querySelectorAll('.ws-card')].map(el => ({
+      id: el.onclick?.toString().match(/'([^']+)'/)?.[1] ?? '',
+      name: el.querySelector('.ws-name')?.textContent ?? ''
+    })), true
+  );
+  // Re-fetch after selecting to re-render list with active state
+  fetchWorkspaces();
+  runLive();
 }
 
-function showProductPlaceholder(id) {
-  const p = PRODUCTS.find(x => x.id === id);
-  document.getElementById('empty-state').style.display = 'none';
-  document.getElementById('main').style.display = '';
-  document.getElementById('ch-name').textContent = p.name;
-  document.getElementById('ch-sku').textContent = p.sku;
-  document.getElementById('sb-text').textContent = `${p.note} · Load demo data to see claims`;
-  document.getElementById('ctbody').innerHTML = `<tr><td colspan="4" style="padding:40px;text-align:center;color:var(--t3);font-size:12px">
-    Click <strong>Demo data</strong> to load ${p.name} claims, or enter a live workspace.
-  </td></tr>`;
-  document.getElementById('beat-box').innerHTML = '';
-  document.getElementById('ing-beat').innerHTML = '';
+async function spawnWorkspace() {
+  const tok = token();
+  if (!tok) { alert('Enter your API token first.'); return; }
+  const name = prompt('Product name for this DPP workspace:', 'New Product DPP');
+  if (!name) return;
+  try {
+    const res = await fetch(`${base()}/api/apps/adaptogen_lab_regulatory/workspaces`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` },
+      body: JSON.stringify({ name })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    alert(`Workspace spawned: ${data.workspace_id}\nThe regulatory rulesets and composition YAML are now seeded.`);
+    document.getElementById('ws-id').value = data.workspace_id;
+    fetchWorkspaces();
+  } catch(e) { alert(`Spawn failed: ${e.message}`); }
 }
 
-// ── claims editor ─────────────────────────────────────────────────────────────
+function onTokenInput() {
+  fetchWorkspaces();
+}
+
+// ── claims editor ───────────────────────────────────────────────────────────
 let sourceClaims = [];
-let testingClaim = null;
+let openClaimIdx = null;
 
 function renderClaimsList() {
-  const list = document.getElementById('claims-list');
-  list.innerHTML = sourceClaims.map((c, i) => {
+  const el = document.getElementById('claims-list');
+  el.innerHTML = sourceClaims.map((c, i) => {
     const score = c.divergence_score ?? 0;
-    const pips = [1,2,3].map(n => `<span class="cer-pip${n<=score?' on':''}"></span>`).join('');
-    return `
-    <div class="claim-edit-row${testingClaim===i?' active':''}" id="cer-${i}">
-      <div class="cer-header" onclick="toggleClaim(${i})">
-        ${c.demo_beat?'<span class="cer-beat">★</span>':''}
-        <span class="cer-text">${esc(c.candidate_text)}</span>
-        <span class="cer-score">${pips}</span>
+    const pips = [1,2,3].map(n => `<span class="pip${n<=score?' on':''}"></span>`).join('');
+    const isOpen = openClaimIdx === i;
+    return `<div class="claim-row${isOpen?' open':''}" id="cr-${i}">
+      <div class="cr-head" onclick="toggleClaim(${i})">
+        ${c.demo_beat ? '<span class="cr-beat">★</span>' : ''}
+        <span class="cr-text">${esc(c.candidate_text)}</span>
+        <span class="cr-pips">${pips}</span>
       </div>
-      <div class="cer-edit-area">
-        <textarea class="cer-input" id="cer-inp-${i}">${esc(c.candidate_text)}</textarea>
-        <div class="cer-actions">
-          <span class="cer-hint">Edit the claim text, then test to see how it cascades →</span>
+      <div class="cr-body">
+        <textarea class="cr-ta" id="cr-ta-${i}">${esc(c.candidate_text)}</textarea>
+        <div class="cr-btns">
+          <span class="cr-hint">${isLiveMode() ? 'Will call compare_lenses with override' : 'Demo: client-side rule engine'}</span>
           <button class="btn btn-sm" onclick="testClaim(${i})">Test →</button>
-          <button class="btn-g" style="padding:3px 8px;font-size:11px" onclick="toggleClaim(${i})">Done</button>
+          <button class="btn-g btn-sm" onclick="toggleClaim(${i})">Done</button>
         </div>
       </div>
     </div>`;
@@ -672,119 +564,98 @@ function renderClaimsList() {
 }
 
 function toggleClaim(i) {
-  testingClaim = testingClaim === i ? null : i;
+  openClaimIdx = openClaimIdx === i ? null : i;
   renderClaimsList();
-}
-
-// Simple demo rule engine — maps claim text patterns to regulatory outcomes
-function analyzeClaimDemoMode(text) {
-  const t = text.toLowerCase();
-  const result = { eu: null, us: null, cn: null };
-
-  // EU logic
-  if (/probiotic/.test(t))
-    result.eu = { status:'not_allowed', note:'EU: EFSA rejected all probiotic health claims 2010–2011. Word is prohibited as a label term.' };
-  else if (/traditional|historically|centuries/.test(t) && /wellbeing|health|benefit/.test(t))
-    result.eu = { status:'not_allowed', note:'EU: Traditional use is not a valid basis for a health claim under Reg 1924/2006.' };
-  else if (/antioxidant|anti-oxidant/.test(t) && /rich|boost|high/.test(t))
-    result.eu = { status:'conditionally_allowed', note:'EU: ≥15% NRV vitamin C per serving required. Anthocyanins have no NRV.' };
-  else if (/ferment|brew|naturally made|crafted/.test(t))
-    result.eu = { status:'allowed', note:'EU: Process descriptor — permitted.' };
-  else if (/low (in )?sugar|low calorie|light/.test(t))
-    result.eu = { status:'conditionally_allowed', note:'EU: ≤5g/100ml threshold for "low sugars". Verify product meets it.' };
-  else if (/immune|immunity|gut|digestion|cognitive|brain/.test(t))
-    result.eu = { status:'not_allowed', note:'EU: No EFSA-authorized claim for this function without a specific approved claim ID.' };
-  else result.eu = { status:'allowed', note:'EU: Factual descriptor — no health benefit implied.' };
-
-  // US logic
-  if (/probiotic/.test(t))
-    result.us = { status:'allowed', note:'US: "Probiotic" is usable as a conventional food descriptor. No pre-authorization needed.' };
-  else if (/traditional|historically/.test(t) && /wellness|wellbeing/.test(t))
-    result.us = { status:'allowed_with_caution', note:'US: Traditional use framing is defensible as cultural context. FTC substantiation standard applies.' };
-  else if (/antioxidant/.test(t) && /rich|excellent/.test(t))
-    result.us = { status:'conditionally_allowed', note:'US: "Good source of antioxidants" requires ≥10% DV vitamin C per RACC.' };
-  else if (/immune|immunity/.test(t))
-    result.us = { status:'conditionally_allowed', note:'US: Structure/function claim — "supports immune function" needs FTC-standard substantiation, 75-day FDA notification.' };
-  else if (/low (in )?sugar/.test(t))
-    result.us = { status:'rewritten', note:'US: "Low sugar" is not an FDA-defined nutrient content claim. Use factual declaration instead.' };
-  else result.us = { status:'allowed', note:'US: Permitted as a factual descriptor or process claim.' };
-
-  // CN logic
-  if (/probiotic|益生菌/.test(t) && /improve|support|enhance|boost/.test(t))
-    result.cn = { status:'not_allowed', note:'CN: Function link triggers 保健食品 reclassification. The ENTIRE product must be registered as health food.' };
-  else if (/probiotic|益生菌/.test(t))
-    result.cn = { status:'allowed', note:'CN: "含活性益生菌" (contains probiotics) as a descriptor is permitted. No function link present.' };
-  else if (/antioxidant|抗氧化/.test(t))
-    result.cn = { status:'not_allowed', note:'CN: 抗氧化 is a 保健食品 function category. Off-limits on ordinary food track.' };
-  else if (/immune|immunity|免疫/.test(t))
-    result.cn = { status:'not_allowed', note:'CN: 增强免疫力 is a 保健食品 function category. Triggers full health food registration.' };
-  else if (/traditional|traditional/.test(t) && /wellness|wellbeing/.test(t))
-    result.cn = { status:'allowed_with_important_note', note:'CN: Reduce to ingredient identity. Any function link triggers reclassification.' };
-  else if (/low (in )?sugar|低糖/.test(t))
-    result.cn = { status:'conditionally_allowed', note:'CN: GB 28050-2011 定义低糖 ≤5g/100ml for liquids. Declare in 营养成分表.' };
-  else result.cn = { status:'allowed', note:'CN: Factual descriptor or process claim — permitted on ordinary food track.' };
-
-  return result;
-}
-
-function testClaim(i) {
-  const inp = document.getElementById(`cer-inp-${i}`);
-  if (!inp) return;
-  const newText = inp.value.trim();
-  if (!newText) return;
-
-  const original = sourceClaims[i].candidate_text;
-  const changed = newText !== original;
-
-  // Run demo rule engine
-  const results = analyzeClaimDemoMode(newText);
-
-  // Show cascade banner
-  const banner = document.getElementById('cascade-banner');
-  const bannerText = document.getElementById('cascade-text');
-  if (changed) {
-    bannerText.textContent = `Testing edited claim: "${newText.slice(0,50)}${newText.length>50?'…':''}" — watch the table update →`;
-    banner.classList.add('show');
+  if (openClaimIdx !== null) {
+    setTimeout(() => document.getElementById(`cr-ta-${i}`)?.focus(), 30);
   }
+}
 
-  // Update claim in table with new text and analysis
-  const claim = { ...sourceClaims[i], candidate_text: newText, testing: true };
-  claim.markets = [
-    { market:'EU', status:results.eu.status, rendered_text: renderForMarket(newText, 'EU', results.eu.status), divergence_note: results.eu.note },
-    { market:'US', status:results.us.status, rendered_text: renderForMarket(newText, 'US', results.us.status), divergence_note: results.us.note },
-    { market:'CN', status:results.cn.status, rendered_text: renderForMarket(newText, 'CN', results.cn.status), divergence_note: results.cn.note },
-  ];
-  claim.divergence_score = scoreDivergence([results.eu.status, results.us.status, results.cn.status]);
+async function testClaim(i) {
+  const ta = document.getElementById(`cr-ta-${i}`);
+  if (!ta) return;
+  const newText = ta.value.trim();
+  if (!newText) return;
+  const changed = newText !== sourceClaims[i].candidate_text;
 
-  // Re-render table with updated claim
-  const updatedClaims = [...sourceClaims];
-  updatedClaims[i] = claim;
-  renderTable(updatedClaims);
+  if (isLiveMode()) {
+    // Live: call the real API with override_source_claims
+    const btn = document.querySelector(`#cr-${i} .btn`);
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>'; }
+    try {
+      const overrides = sourceClaims.map((c, j) => ({
+        id: c.claim_id,
+        candidate_text: j === i ? newText : c.candidate_text
+      }));
+      const res = await fetch(`${base()}/api/workspaces/${wsId()}/actions/compare_lenses`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+        body: JSON.stringify({ source_product_id: 'precision_kombucha_hibiscus_f2', override_source_claims: overrides })
+      });
+      if (!res.ok) throw new Error(await res.text());
+      renderAll(await res.json(), true);
+    } catch(e) {
+      alert(`API error: ${e.message}`);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Test →'; }
+    }
+  } else {
+    // Demo: client-side rule engine
+    const rules = analyzeDemo(newText);
+    if (changed) {
+      document.getElementById('cascade-text').textContent = `Testing: "${newText.slice(0,50)}${newText.length>50?'…':''}" — result uses demo rule engine, not tool_verified`;
+      document.getElementById('cascade-banner').classList.add('show');
+    }
+    const updated = [...sourceClaims];
+    updated[i] = {
+      ...updated[i], candidate_text: newText, testing: true,
+      markets: [
+        { market:'EU', status:rules.eu.status, rendered_text: rules.eu.status==='not_allowed'?null:newText, divergence_note:rules.eu.note },
+        { market:'US', status:rules.us.status, rendered_text: rules.us.status==='not_allowed'?null:newText, divergence_note:rules.us.note },
+        { market:'CN', status:rules.cn.status, rendered_text: rules.cn.status==='not_allowed'?null:newText, divergence_note:rules.cn.note },
+      ],
+      divergence_score: scoreDiv([rules.eu.status, rules.us.status, rules.cn.status])
+    };
+    renderTable(updated);
+  }
   toggleClaim(i);
-
-  if (changed) showTab('claims');
 }
 
-function renderForMarket(text, mkt, status) {
-  if (status === 'not_allowed') return null;
-  if (mkt === 'CN') return `(${text}) [CN rendering]`;
-  return text;
+function analyzeDemo(text) {
+  const t = text.toLowerCase();
+  const eu = /probiotic/.test(t) ? { status:'not_allowed', note:'EU: EFSA rejected all probiotic claims 2010–2011. Word prohibited.' }
+    : /traditional.*well|well.*traditional/.test(t) ? { status:'not_allowed', note:'EU: Traditional use is not a valid basis under Reg 1924/2006.' }
+    : /antioxidant.*rich|rich.*antioxidant/.test(t) ? { status:'conditionally_allowed', note:'EU: ≥15% NRV vitamin C per serving required.' }
+    : /immune|immunity|gut|digestion/.test(t) ? { status:'not_allowed', note:'EU: No EFSA-authorized claim for this function.' }
+    : /low.*sugar|low.*calori/.test(t) ? { status:'conditionally_allowed', note:'EU: ≤5g/100ml threshold for "low sugars".' }
+    : { status:'allowed', note:'EU: Factual descriptor — no health benefit implied.' };
+  const us = /probiotic/.test(t) ? { status:'allowed', note:'US: "Probiotic" usable as conventional food descriptor.' }
+    : /traditional.*well|well.*traditional/.test(t) ? { status:'allowed_with_caution', note:'US: Traditional use framing defensible as cultural context.' }
+    : /antioxidant/.test(t) ? { status:'conditionally_allowed', note:'US: ≥10% DV per RACC required.' }
+    : /immune|immunity/.test(t) ? { status:'conditionally_allowed', note:'US: Structure/function claim — FTC substantiation needed.' }
+    : /low.*sugar/.test(t) ? { status:'rewritten', note:'US: "Low sugar" not an FDA-defined nutrient content claim.' }
+    : { status:'allowed', note:'US: Permitted as factual descriptor.' };
+  const cn = /probiotic|益生菌/.test(t) && /improve|support|enhance|boost/.test(t)
+    ? { status:'not_allowed', note:'CN: Function link triggers 保健食品 reclassification of entire product.' }
+    : /antioxidant|抗氧化/.test(t) ? { status:'not_allowed', note:'CN: 抗氧化 is a 保健食品 function category.' }
+    : /immune|immunity/.test(t) ? { status:'not_allowed', note:'CN: 增强免疫力 is a 保健食品 category.' }
+    : /low.*sugar|低糖/.test(t) ? { status:'conditionally_allowed', note:'CN: GB 28050-2011 低糖 ≤5g/100ml.' }
+    : { status:'allowed', note:'CN: Factual descriptor — permitted on ordinary food track.' };
+  return { eu, us, cn };
 }
 
-function scoreDivergence(statuses) {
+function scoreDiv(statuses) {
   if (statuses.some(s => s==='not_allowed') && !statuses.every(s => s==='not_allowed')) return 3;
-  const families = statuses.map(s => s==='conditionally_allowed'?'cond':s==='rewritten'?'rew':s==='not_allowed'?'no':'yes');
-  if (new Set(families).size > 1) return 2;
-  if (statuses.some(s => s==='rewritten')) return 1;
+  if (new Set(statuses.map(s => s==='conditionally_allowed'?'c':s==='rewritten'?'r':s==='not_allowed'?'n':'a')).size > 1) return 2;
   return 0;
 }
 
 function addClaim() {
-  sourceClaims.push({ claim_id:`custom_${Date.now()}`, candidate_text:'', divergence_score:0, demo_beat:false, markets:[] });
-  testingClaim = sourceClaims.length - 1;
+  sourceClaims.push({ claim_id:'custom_'+Date.now(), candidate_text:'', divergence_score:0, demo_beat:false, markets:[] });
+  openClaimIdx = sourceClaims.length - 1;
   renderClaimsList();
   showTab('claims');
-  setTimeout(() => { const inp = document.getElementById(`cer-inp-${sourceClaims.length-1}`); if(inp) inp.focus(); }, 50);
+  setTimeout(() => document.getElementById(`cr-ta-${sourceClaims.length-1}`)?.focus(), 30);
 }
 
 function resetCascade() {
@@ -792,140 +663,200 @@ function resetCascade() {
   loadDemo();
 }
 
-// ── knowledge timeline ────────────────────────────────────────────────────────
-const KB_ITEMS = [
-  { state:'done', title:'Composition loaded', sub:'precision_kombucha_hibiscus_f2.yaml from workspace git', agent:'lens_actions::compare_lenses_handler' },
-  { state:'done', title:'Rulesets loaded (3 markets)', sub:'eu_reg_1924.yaml · us_fda_ftc.yaml · cn_gb_samr.yaml', agent:'workspace_git.read_file_bytes' },
-  { state:'done', title:'Grounding gate ran', sub:'gate_lens_output · 5 claims · 0 violations · tool_verified', agent:'lens_rendering::gate_lens_output' },
-  { state:'done', title:'DPP committed to workspace', sub:'regulatory-lens/comparisons/three-lens.json', agent:'workspace_git.commit_file' },
-  { state:'pend', title:'Web search verification', sub:'Current EFSA register · 21 CFR updates · SAMR announcements', agent:'regulatory_scanner · web_search tool', endorseId:'web' },
-  { state:'wait', title:'Expert endorsement', sub:'Regulatory consultant review · human-in-the-loop sign-off', agent:'provenance: pending_human_check → human_endorsed', endorseId:'expert' },
-];
-let endorsements = {};
+// ── supply chain oracle ─────────────────────────────────────────────────────
+let oracleHired = false;
 
-function renderKbTimeline() {
-  const el = document.getElementById('kb-timeline');
-  el.innerHTML = KB_ITEMS.map((item, i) => {
-    const st = endorsements[item.endorseId] ? 'endorsed' : item.state;
-    const dotClass = { done:'kbi-done', pend:'kbi-pend', wait:'kbi-wait', endorsed:'kbi-endorsed' }[st];
-    const dotIcon  = { done:'✓', pend:'○', wait:'·', endorsed:'★' }[st];
-    const endorseHtml = item.endorseId && !endorsements[item.endorseId]
-      ? `<button class="endorse-btn" onclick="openEndorse('${item.endorseId}','${item.title}')">
-           ${item.state==='pend' ? 'Run + endorse →' : 'Endorse →'}
-         </button>` : (endorsements[item.endorseId]
-           ? `<div style="font-size:10px;color:var(--pur);margin-top:4px">★ Endorsed by you · provenance: human_endorsed</div>` : '');
+async function hireOracle() {
+  if (!isLiveMode()) {
+    alert('Enter a workspace ID and token to hire the Supply Chain Oracle.');
+    return;
+  }
+  const btn = document.getElementById('sco-hire-btn');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Hiring…';
+  try {
+    const res = await fetch(`${base()}/api/workspaces/${wsId()}/hire`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+      body: JSON.stringify({ agent_name: 'supply_chain_oracle' })
+    });
+    if (!res.ok && !res.status === 409) throw new Error(await res.text());
+    oracleHired = true;
+    document.getElementById('sco-badge').textContent = '✓ hired';
+    document.getElementById('sco-badge').className = 'sco-badge sb-hired';
+    btn.style.display = 'none';
+    document.getElementById('sco-run-btn').style.display = '';
+  } catch(e) {
+    if (e.message?.includes('already')) {
+      oracleHired = true;
+      document.getElementById('sco-badge').textContent = '✓ hired';
+      document.getElementById('sco-badge').className = 'sco-badge sb-hired';
+      btn.style.display = 'none';
+      document.getElementById('sco-run-btn').style.display = '';
+    } else {
+      alert(`Hire failed: ${e.message}`);
+      btn.disabled = false; btn.textContent = 'Hire agent →';
+    }
+  }
+}
+
+async function runBOM() {
+  if (!isLiveMode()) { alert('Connect a workspace first.'); return; }
+  const btn = document.getElementById('sco-run-btn');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Pricing BOM…';
+  const bomQuery = {
+    task: 'resolve_bom',
+    process_context: { process_name: 'Precision Kombucha F2', production_scale: 'small_batch' },
+    bom_items: [
+      { name:'Hibiscus sabdariffa L. calyces (dried)', qty:28.05, unit:'g', role:'botanical_infusion', stage_id:'cold_steep' },
+      { name:'Organic black tea (Camellia sinensis)', qty:2.64, unit:'g', role:'substrate', stage_id:'primary_fermentation' },
+      { name:'Cane sugar (residual post-F1)', qty:6.93, unit:'g', role:'carbon_source', stage_id:'primary_fermentation' },
+      { name:'Citric acid (E330)', qty:0.99, unit:'g', role:'acidulant', stage_id:'post_f2' }
+    ],
+    currency: 'EUR'
+  };
+  try {
+    // Send the BOM query to the agent
+    await fetch(`${base()}/api/workspaces/${wsId()}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+      body: JSON.stringify({ content: JSON.stringify(bomQuery), agent: 'supply_chain_oracle' })
+    });
+    // Poll for response
+    let response = null;
+    for (let i = 0; i < 20; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      const poll = await fetch(`${base()}/api/workspaces/${wsId()}/messages?limit=10`, {
+        headers: { Authorization: `Bearer ${token()}` }
+      });
+      if (!poll.ok) continue;
+      const msgs = await poll.json();
+      const agentMsg = (msgs.messages ?? []).find(m => m.sender_type === 'agent' && m.sender_name === 'supply_chain_oracle');
+      if (agentMsg?.content) {
+        try {
+          const json = JSON.parse(agentMsg.content.match(/\{[\s\S]*\}/)?.[0] ?? agentMsg.content);
+          response = json; break;
+        } catch { /* keep polling */ }
+      }
+    }
+    if (response) renderBOMResult(response);
+    else document.getElementById('sco-result').innerHTML = '<div style="font-size:11px;color:var(--amb)">Agent response timed out. The agent may still be running — check the workspace messages.</div>';
+  } catch(e) {
+    document.getElementById('sco-result').innerHTML = `<div style="font-size:11px;color:var(--red)">Error: ${esc(e.message)}</div>`;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Run BOM pricing';
+  }
+}
+
+function renderBOMResult(data) {
+  const items = data.items ?? [];
+  const risks = data.risks ?? [];
+  const summary = data.summary ?? {};
+  const prov = data.items_provenance ?? 'unavailable_no_tool_source';
+  const provClass = prov === 'tool_verified' ? 'tv' : prov === 'tool_no_match' ? 'nm' : 'nm';
+  const provLabel = prov === 'tool_verified' ? '📄 web_search · tool_verified' : prov === 'tool_no_match' ? '⚠ tool_no_match' : '○ unavailable_no_tool_source';
+
+  const risksByItem = {};
+  risks.forEach(r => { (risksByItem[r.item] = risksByItem[r.item] ?? []).push(r); });
+
+  const rowsHtml = items.map(item => {
+    const price = item.unit_cost != null ? `€${item.unit_cost.toFixed(4)}/g` : 'null — manual entry required';
+    const flags = (item.risk_flags ?? []).map(f => `<span class="bom-flag">${f}</span>`).join(' ');
+    return `<div class="bom-row">
+      <span class="bom-name">${esc(item.name)}</span>
+      <div class="bom-right">
+        <div class="bom-price" style="color:${item.unit_cost!=null?'var(--t1)':'var(--amb)'}">${price}</div>
+        ${flags}
+      </div>
+    </div>`;
+  }).join('');
+
+  const totalHtml = summary.total_bom_cost != null
+    ? `<div class="bom-total"><span>Total per 330ml unit</span><span style="color:var(--grn)">€${(summary.total_bom_cost/1000).toFixed(4)}</span></div>`
+    : `<div class="bom-total"><span>Total</span><span style="color:var(--amb)">null — some prices unknown</span></div>`;
+
+  document.getElementById('sco-result').innerHTML = `
+    ${rowsHtml}${totalHtml}
+    <div class="bom-prov ${provClass}" style="margin-top:6px">${provLabel}</div>
+    ${summary.oracle_note ? `<div class="oracle-note">🔍 ${esc(summary.oracle_note)}</div>` : ''}
+    <div style="font-size:9px;color:var(--t3);margin-top:6px">risks: model_inference · summary: model_inference</div>`;
+}
+
+// ── knowledge build timeline ────────────────────────────────────────────────
+const KB = [
+  { s:'ok',   t:'Composition loaded',          d:'precision_kombucha_hibiscus_f2.yaml from workspace git', a:'lens_actions::compare_lenses_handler' },
+  { s:'ok',   t:'Rulesets loaded (3 markets)', d:'eu_reg_1924.yaml · us_fda_ftc.yaml · cn_gb_samr.yaml',   a:'workspace_git.read_file_bytes' },
+  { s:'ok',   t:'Grounding gate ran',          d:'gate_lens_output · 5 claims · 0 violations · tool_verified', a:'lens_rendering::gate_lens_output' },
+  { s:'ok',   t:'Comparison committed',        d:'regulatory-lens/comparisons/three-lens.json', a:'workspace_git.commit_file' },
+  { s:'pend', t:'Web search verification',     d:'EFSA register · 21 CFR updates · SAMR announcements', a:'regulatory_scanner · web_search', id:'web' },
+  { s:'wait', t:'Expert endorsement',          d:'Regulatory consultant review · human-in-the-loop sign-off', a:'pending_human_check → human_endorsed', id:'expert' },
+];
+let endorsed = {};
+
+function renderKB() {
+  const el = document.getElementById('kb-list');
+  const dotClass = { ok:'d-ok', pend:'d-pend', wait:'d-wait', endorsed:'d-end' };
+  const dotIcon  = { ok:'✓', pend:'○', wait:'·', endorsed:'★' };
+  el.innerHTML = KB.map(item => {
+    const st = (item.id && endorsed[item.id]) ? 'endorsed' : item.s;
+    const endBtn = item.id && !endorsed[item.id]
+      ? `<button class="end-btn" onclick="openEndorse('${item.id}','${esc(item.t)}','${esc(item.d)}')">Endorse →</button>`
+      : (endorsed[item.id] ? `<div style="font-size:10px;color:var(--pur);margin-top:3px">★ Endorsed · provenance: human_endorsed</div>` : '');
     return `<div class="kbi">
-      <div class="kbi-dot ${dotClass}">${dotIcon}</div>
+      <div class="dot ${dotClass[st]}">${dotIcon[st]}</div>
       <div class="kbi-body">
-        <div class="kbi-title">${item.title}</div>
-        <div class="kbi-sub">${item.sub}</div>
-        <div class="kbi-agent">${item.agent}</div>
-        ${endorseHtml}
+        <div class="kbi-t">${item.t}</div>
+        <div class="kbi-s">${item.d}</div>
+        <div class="kbi-a">${item.a}</div>
+        ${endBtn}
       </div>
     </div>`;
   }).join('');
 }
 
-// ── endorsement flow ──────────────────────────────────────────────────────────
-let pendingEndorseId = null;
-
-const ENDORSE_CHECKS = {
-  web: [
-    'I have reviewed the linked primary sources and they are current as of today',
-    'The EFSA claim register entries cited are accurate for the claims rendered',
-    'The 21 CFR references accurately reflect current FDA nutrient content claim definitions',
-    'The SAMR/GB standard citations are current and I confirm the product category classification',
-  ],
-  expert: [
-    'I am a qualified regulatory affairs professional for at least one of the three target markets',
-    'I have reviewed the claim renderings and confirm they are structurally accurate for their respective markets',
-    'I confirm the ingredient-status pathway notes (GRAS, conventional food, 药食同源) are correctly attributed',
-    'I understand that this DPP uses synthetic-representative data and my endorsement is of the regulatory logic, not the specific values',
-  ],
+// endorsement modal
+const END_CHECKS = {
+  web: ['I have reviewed the primary sources and confirmed they are current','The EFSA register entries cited are accurate for the claims rendered','The 21 CFR references reflect current FDA definitions','The SAMR/GB citations are current'],
+  expert: ['I am a qualified regulatory affairs professional for at least one target market','I confirm the claim renderings are structurally accurate for their markets','I confirm the ingredient-status pathway attributions (GRAS, conventional food, 药食同源) are correct','I understand the data is synthetic-representative and I am endorsing the regulatory logic only'],
 };
-
-const ENDORSE_CLAIMS = {
-  web: 'Verification of primary regulatory sources — EFSA authorized claims register, 21 CFR Part 101, SAMR GB standards portal. Endorsing that the web search has been conducted and the linked sources were reviewed.',
-  expert: 'Expert review of all 5 claim renderings across EU, US, and China markets. Endorsing the regulatory logic, framework attribution, and divergence explanations in this DPP.',
-};
-
-function openEndorse(id, title) {
-  pendingEndorseId = id;
-  document.getElementById('em-sub').textContent = `Endorsing: ${title}`;
-  document.getElementById('em-claim').textContent = ENDORSE_CLAIMS[id] ?? 'This DPP item';
-  const checks = ENDORSE_CHECKS[id] ?? [];
-  document.getElementById('em-checks').innerHTML = checks.map((c, i) => `
-    <label class="mcheck">
-      <input type="checkbox" onchange="updateEndorseBtn()"> ${c}
-    </label>`).join('');
-  document.getElementById('em-confirm').disabled = true;
-  document.getElementById('endorse-modal').classList.add('open');
+let pendingEndId = null;
+function openEndorse(id, title, claim) {
+  pendingEndId = id;
+  document.getElementById('em-sub').textContent = 'Endorsing: ' + title;
+  document.getElementById('em-claim').textContent = claim;
+  document.getElementById('em-checks').innerHTML = (END_CHECKS[id]??[]).map(c =>
+    `<label class="mcheck"><input type="checkbox" onchange="updateEndBtn()"> ${c}</label>`).join('');
+  document.getElementById('em-ok').disabled = true;
+  document.getElementById('end-modal').classList.add('open');
 }
-
-function updateEndorseBtn() {
-  const checks = document.querySelectorAll('#em-checks input');
-  document.getElementById('em-confirm').disabled = ![...checks].every(c => c.checked);
+function updateEndBtn() {
+  document.getElementById('em-ok').disabled =
+    ![...document.querySelectorAll('#em-checks input')].every(c => c.checked);
 }
-
 function confirmEndorse() {
-  if (pendingEndorseId) {
-    endorsements[pendingEndorseId] = true;
-    renderKbTimeline();
-    // Update provenance chip in the status bar
-    if (pendingEndorseId === 'expert') {
-      document.getElementById('sb-gate').textContent = '✓ gate clean · expert endorsed';
-    }
+  if (pendingEndId) {
+    endorsed[pendingEndId] = true;
+    renderKB();
   }
-  closeModal('endorse-modal');
+  closeModal('end-modal');
 }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 
-// ── supply chain agent ────────────────────────────────────────────────────────
-let scHired = false;
-
-function hireSupplyChain() {
-  document.getElementById('sc-preview-rows').innerHTML = [
-    { k:'Raw material COGS', v:'€0.31/unit' },
-    { k:'Hibiscus risk flag', v:'⚠ single source', cls:'amp-flag' },
-    { k:'Scope 3 by ingredient', v:'0.34 kg CO₂e/unit', cls:'amp-flag' },
-    { k:'Origin verification', v:'Egypt/Sudan · Brazil · Sri Lanka' },
-    { k:'Dual-source recommendation', v:'Morocco/Spain hibiscus (−40% Scope 3)' },
-  ].map(r => `<div class="amp-row"><span class="amp-key">${r.k}</span><span class="amp-val ${r.cls??'amp-ok'}">${r.v}</span></div>`).join('');
-  document.getElementById('sc-modal').classList.add('open');
-}
-
-function confirmHire() {
-  scHired = true;
-  document.getElementById('sc-badge').textContent = '✓ hired';
-  document.getElementById('sc-badge').style.background = 'rgba(34,197,94,.15)';
-  document.getElementById('sc-badge').style.color = 'var(--grn)';
-  document.getElementById('sc-desc').textContent = 'Supply chain agent is running in this workspace. See live projections below — raw material costs, origin data, and Scope 3 by ingredient.';
-  document.getElementById('sc-hire-btn').style.display = 'none';
-  document.getElementById('sc-agent-card').classList.add('unlocked');
-  // Show loading then results
-  document.getElementById('sc-fields').style.display = 'flex';
-  closeModal('sc-modal');
-  // Switch to carbon tab to show the result
-  showTab('carbon');
-}
-
-// ── render ────────────────────────────────────────────────────────────────────
+// ── render ──────────────────────────────────────────────────────────────────
 function esc(s) { return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 function badge(status) {
-  const m = {
-    'allowed':['Allowed','ba'],'conditionally_allowed':['Conditional','bc'],
-    'not_allowed':['Not allowed','bn'],'rewritten':['Rewritten','br'],
-    'allowed_with_caution':['Caution','bt'],'allowed_with_important_note':['Note','bt'],
-    'allowed_rewritten':['Rewritten','br'],
-  };
-  const [label, cls] = m[status] ?? [status, 'ba'];
-  return `<span class="badge ${cls}">${label}</span>`;
+  const m = { allowed:['Allowed','ba'], conditionally_allowed:['Conditional','bc'], not_allowed:['Not allowed','bn'],
+    rewritten:['Rewritten','br'], allowed_with_caution:['Caution','bt'], allowed_with_important_note:['Note','bt'], allowed_rewritten:['Rewritten','br'] };
+  const [l, c] = m[status] ?? [status, 'ba'];
+  return `<span class="badge ${c}">${l}</span>`;
 }
 
-function provChip(mkt) {
+function provChip(mkt, testing) {
+  if (testing) return `<div class="pchip pen">○ demo rule engine · not tool_verified</div>`;
   const file = {EU:'eu_reg_1924.yaml', US:'us_fda_ftc.yaml', CN:'cn_gb_samr.yaml'}[mkt] ?? 'ruleset.yaml';
-  if (endorsements['expert']) return `<div class="pchip end">★ ${file} · human_endorsed</div>`;
-  return `<div class="pchip tv">📄 ${file} · tool_verified</div>`;
+  const cls = endorsed['expert'] ? 'tv' : 'tv';
+  const label = endorsed['expert'] ? `★ ${file} · human_endorsed` : `📄 ${file} · tool_verified`;
+  return `<div class="pchip ${cls}">${label}</div>`;
 }
 
 function renderTable(claims) {
@@ -933,20 +864,19 @@ function renderTable(claims) {
   tbody.innerHTML = '';
   claims.forEach(row => {
     const bm = {};
-    (row.markets??[]).forEach(m => { bm[m.market] = m; });
-    const isBeat = row.demo_beat;
-    const isTesting = row.testing;
+    (row.markets ?? []).forEach(m => { bm[m.market] = m; });
+    const isBeat = row.demo_beat, isTesting = row.testing;
 
-    const cell = (code) => {
+    const cell = code => {
       const m = bm[code];
-      if (!m) return `<td class="mcell" data-mkt="${code}" style="${activeJuri!=='all'&&activeJuri!==code?'display:none':''}"><span class="locked-cell">—</span></td>`;
+      const hidden = activeJuri !== 'all' && activeJuri !== code;
+      if (!m) return `<td data-mkt="${code}" style="${hidden?'display:none':''}"><span style="color:var(--t3);font-size:11px">—</span></td>`;
       const b = badge(m.status);
-      const t = m.status==='not_allowed'
+      const t = m.status === 'not_allowed'
         ? `<div class="stext">— stripped from this market's label —</div>`
-        : `<div class="rtext">${esc(m.rendered_text??'')}</div>`;
+        : `<div class="rtext">${esc(m.rendered_text ?? '')}</div>`;
       const note = m.divergence_note ? `<div class="dnote">${esc(m.divergence_note)}</div>` : '';
-      const prov = isTesting ? `<div class="pchip pen">○ demo rule engine · not tool_verified</div>` : provChip(code);
-      return `<td class="mcell" data-mkt="${code}" style="${activeJuri!=='all'&&activeJuri!==code?'display:none':''}">${b}${t}${prov}${note}</td>`;
+      return `<td data-mkt="${code}" style="${hidden?'display:none':''}">${b}${t}${provChip(code, isTesting)}${note}</td>`;
     };
 
     const tr = document.createElement('tr');
@@ -955,73 +885,54 @@ function renderTable(claims) {
       <div style="display:flex;align-items:center;gap:5px;margin-bottom:2px">
         ${isBeat?'<span style="color:var(--acc);font-size:10px">★</span>':''}
         <span class="cid">${esc(row.claim_id)}</span>
-        ${isTesting?'<span class="ctest-label">⚡ testing</span>':''}
+        ${isTesting?'<span style="font-size:9px;color:var(--acc);font-weight:700;text-transform:uppercase;letter-spacing:.05em">⚡ testing</span>':''}
       </div>
       <div class="ccan">"${esc(row.candidate_text)}"</div>
       <div class="cpips">${[1,2,3].map(n=>`<span class="cpip${n<=(row.divergence_score??0)?' on':''}"></span>`).join('')}</div>
-    </td>
-    ${cell('EU')}${cell('US')}${cell('CN')}`;
+    </td>${cell('EU')}${cell('US')}${cell('CN')}`;
     tbody.appendChild(tr);
   });
 }
 
 function renderBeat(data) {
-  const table = data.comparison_table ?? [];
-  const hib = table.find(r => r.claim_id==='hibiscus_wellness') ?? {};
+  const hib = (data.comparison_table??[]).find(r => r.claim_id==='hibiscus_wellness') ?? {};
   const bm = {}; (hib.markets??[]).forEach(m => { bm[m.market] = m; });
-
   const mcard = (code, flag, label) => {
     const m = bm[code] ?? {};
-    const b = badge(m.status??'not_allowed');
+    const b = badge(m.status ?? 'not_allowed');
     const t = m.status==='not_allowed'
-      ? `<div style="font-size:11px;color:var(--red);font-style:italic">Stripped — no authorized claim exists for this market</div>`
+      ? `<div style="font-size:11px;color:var(--red);font-style:italic">Stripped — no authorized claim</div>`
       : `<div class="bb-text">${esc(m.rendered_text??'')}</div>`;
-    const why = m.divergence_note
-      ? `<div class="bb-why">${esc(m.divergence_note.split('.').slice(0,2).join('.')+('.'))} </div>` : '';
-    return `<div class="bb-mkt">
-      <div class="bb-mname">${flag} ${label}</div>${b}${t}${why}
-    </div>`;
+    const why = m.divergence_note ? `<div class="bb-why">${esc(m.divergence_note.split('.').slice(0,2).join('.')+'.')}</div>` : '';
+    return `<div class="bb-mkt"><div class="bb-mname">${flag} ${label}</div>${b}${t}${why}</div>`;
   };
   document.getElementById('beat-box').innerHTML = `
-    <div class="bb-label">★ "Hibiscus — traditionally used for wellbeing" — one source claim, three regulatory readings</div>
+    <div class="bb-label">★ "Hibiscus — traditionally used for wellbeing" — one claim, three regulatory readings</div>
     <div class="bb-title">Same DPP. Same product. The passport reads differently in each realm.</div>
     <div class="bb-markets">${mcard('EU','🇪🇺','EU')}${mcard('US','🇺🇸','US')}${mcard('CN','🇨🇳','China')}</div>`;
 }
 
 function renderIngredients(data) {
-  const beat = data.ingredient_divergence_beat ?? {};
-  const mts = beat.markets ?? [];
-  const slabels = {
-    conventional_food:'Conventional food ingredient',
-    food_medicine_homologous:'药食同源 (Food-medicine homologous)',
-    approved_food_medicine_homologous:'药食同源 — Approved food + TCM',
-    gras:'GRAS — Generally Recognized as Safe',
-    gras_with_caveat:'GRAS (novel strains: notify)',
-    permitted_with_category_constraint:'Permitted (category constraint)',
-  };
-  const paths = {
-    EU:'Pathway: pre-1997 conventional food use → no novel food review',
-    US:'Pathway: GRAS self-affirmed → no pre-market authorization needed',
-    CN:'Pathway: 药食同源 list → approved for food + traditional medicine use',
-  };
+  const mts = (data.ingredient_divergence_beat ?? {}).markets ?? [];
+  const sl = { conventional_food:'Conventional food ingredient', food_medicine_homologous:'药食同源 (Food-medicine homologous)', gras:'GRAS — Generally Recognized as Safe', gras_with_caveat:'GRAS (novel strains: notify)' };
+  const pt = { EU:'Pathway: pre-1997 EU use → no novel food review', US:'Pathway: GRAS self-affirmed → no pre-market authorization', CN:'Pathway: 药食同源 list → approved for food + TCM use' };
   const fallback = [
-    { market:'EU', flag:'🇪🇺', status:'conventional_food', note:'Pre-1997 EU use as Karkadé tea. Not a novel food. No EFSA-authorized health claims for hibiscus.' },
+    { market:'EU', flag:'🇪🇺', status:'conventional_food', note:'Pre-1997 EU use. Not a novel food. No EFSA-authorized claims for hibiscus.' },
     { market:'US', flag:'🇺🇸', status:'gras', note:'GRAS. Widely used in US beverages. No special status.' },
-    { market:'CN', flag:'🇨🇳', status:'food_medicine_homologous', note:'On the 药食同源 list. Freely usable as food. CRITICAL: this authorizes the ingredient, not health claims about it.' },
+    { market:'CN', flag:'🇨🇳', status:'food_medicine_homologous', note:'药食同源 list. Freely usable as food. CRITICAL: authorizes the ingredient, not health claims about it.' },
   ];
   const cards = mts.length ? mts : fallback;
   document.getElementById('ing-beat').innerHTML = `
-    ${cards.map(m=>`
-    <div class="ibc">
+    ${cards.map(m=>`<div class="ibc">
       <div class="ib-mkt">${m.flag??''} ${m.market}</div>
-      <div class="ib-status">${slabels[m.status]??m.status??''}</div>
+      <div class="ib-status">${sl[m.status]??m.status??''}</div>
       <div class="ib-note">${esc(m.note??(m.notes??'').split('\n')[0]??'')}</div>
-      <div class="ib-path">${paths[m.market]??''}</div>
+      <div class="ib-path">${pt[m.market]??''}</div>
     </div>`).join('')}
     <div class="ibc" style="border-color:rgba(245,197,24,.3);background:rgba(245,197,24,.03)">
       <div class="ib-mkt" style="color:var(--acc)">⟷ The point</div>
-      <div class="ib-status" style="color:var(--t1);font-size:11px">Same ingredient. Same verdict (approved). Three different regulatory pathways.</div>
-      <div class="ib-note">For regulatory filings, "GRAS" doesn't help your CN submission; "药食同源" doesn't help your EU one. The mechanism matters, not just the outcome.</div>
+      <div class="ib-status" style="color:var(--t1);font-size:11px">Same approval, three different pathways.</div>
+      <div class="ib-note">"GRAS" doesn't help a CN filing. "药食同源" doesn't help a US or EU one. The mechanism matters for documentation.</div>
     </div>`;
 }
 
@@ -1034,14 +945,12 @@ function renderAppendix(data) {
 }
 
 let lastRaw = null;
-function renderApi(raw) {
+function renderApiPanel(raw) {
   lastRaw = raw;
-  const pre = document.getElementById('ajson');
-  pre.innerHTML = JSON.stringify(raw, null, 2)
+  document.getElementById('ajson').innerHTML = JSON.stringify(raw, null, 2)
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/("(\\u[\da-fA-F]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?)/g,
-      m => `<span style="color:${/^"/.test(m)?/:$/.test(m)?'#60a5fa':'#86efac':
-              /true|false/.test(m)?'#fde68a':'#fca5a5'}">${m}</span>`);
+    .replace(/("[\s\S]*?"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?)/g,
+      m => `<span style="color:${/^"/.test(m)?/:$/.test(m)?'#60a5fa':'#86efac':/true|false/.test(m)?'#fde68a':'#fca5a5'}">${m}</span>`);
 }
 function copyJ() {
   if (!lastRaw) return;
@@ -1050,40 +959,53 @@ function copyJ() {
   setTimeout(()=>b.textContent='Copy', 1500);
 }
 
-function renderAll(apiResponse, isLive) {
+function renderAll(apiResponse, live) {
   const out = apiResponse.output ?? apiResponse;
-  sourceClaims = (out.comparison_table??[]).map(r => ({ ...r }));
+  sourceClaims = (out.comparison_table ?? []).map(r => ({...r}));
   renderTable(sourceClaims);
   renderClaimsList();
   renderBeat(out);
   renderIngredients(out);
   renderAppendix(out);
-  renderKbTimeline();
-  renderApi(apiResponse);
+  renderKB();
+  renderApiPanel(apiResponse);
   document.getElementById('empty-state').style.display = 'none';
   document.getElementById('main').style.display = '';
   const clean = apiResponse.grounding_summary?.is_clean ?? true;
-  document.getElementById('sb-dot').className = `sd ${isLive?'sd-live':'sd-demo'}`;
-  document.getElementById('sb-text').textContent = isLive
-    ? `Live workspace · ${sourceClaims.length} claims rendered`
-    : `Demo mode · ${sourceClaims.length} claims · no live workspace`;
-  document.getElementById('sb-gate').textContent = `${clean?'✓ gate clean':'⚠ violations'} · ${apiResponse.grounding_summary?.violation_count??0} violations`;
+  const viols = apiResponse.grounding_summary?.violation_count ?? 0;
+  document.getElementById('sb-dot').className = `sd ${live?'sd-live':'sd-demo'}`;
+  document.getElementById('sb-text').textContent = live ? `Live workspace · ${sourceClaims.length} claims` : `Demo mode · ${sourceClaims.length} claims`;
+  document.getElementById('sb-gate').textContent = `${clean?'✓ gate clean':'⚠ violations'} · ${viols} violations`;
+  document.getElementById('ch-name').textContent = currentProductName;
+  document.getElementById('ch-sku').textContent = currentProductSku;
 }
 
-// ── live API ──────────────────────────────────────────────────────────────────
+// ── live ────────────────────────────────────────────────────────────────────
 async function runLive() {
   const id = wsId(), tok = token();
-  if (!id||!tok) { alert('Enter workspace ID and token first.'); return; }
+  if (!id || !tok) { alert('Enter workspace ID and token first.'); return; }
   const btn = document.getElementById('run-btn');
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Running…';
   try {
     const res = await fetch(`${base()}/api/workspaces/${id}/actions/compare_lenses`, {
-      method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':`Bearer ${tok}`},
-      body: JSON.stringify({ source_product_id: currentProductId }),
+      method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${tok}`},
+      body: JSON.stringify({ source_product_id: 'precision_kombucha_hibiscus_f2' }),
     });
     if (!res.ok) throw new Error(await res.text());
     renderAll(await res.json(), true);
+    // Also check if supply chain oracle is already hired
+    const agentsRes = await fetch(`${base()}/api/workspaces/${id}/agents`, { headers:{ Authorization:`Bearer ${tok}` } });
+    if (agentsRes.ok) {
+      const agentsData = await agentsRes.json();
+      const agents = agentsData.agents ?? agentsData ?? [];
+      if (agents.some(a => (a.agent_name ?? a.name) === 'supply_chain_oracle')) {
+        oracleHired = true;
+        document.getElementById('sco-badge').textContent = '✓ hired';
+        document.getElementById('sco-badge').className = 'sco-badge sb-hired';
+        document.getElementById('sco-hire-btn').style.display = 'none';
+        document.getElementById('sco-run-btn').style.display = '';
+      }
+    }
   } catch(e) {
     alert(`API error: ${e.message}`);
   } finally {
@@ -1091,10 +1013,7 @@ async function runLive() {
   }
 }
 
-// ── modal helpers ─────────────────────────────────────────────────────────────
-function closeModal(id) { document.getElementById(id).classList.remove('open'); }
-
-// ── demo data ─────────────────────────────────────────────────────────────────
+// ── demo data ────────────────────────────────────────────────────────────────
 const DEMO = {
   action_id:'00000000-0000-0000-0000-000000000000',
   grounding_summary:{is_clean:true,violation_count:0},
@@ -1113,71 +1032,57 @@ const DEMO = {
     comparison_table:[
       { claim_id:'live_cultures_present', candidate_text:'Contains live cultures', divergence_score:1, demo_beat:true,
         markets:[
-          { market:'EU', status:'allowed', rendered_text:'Contains live Acetobacter and Brettanomyces cultures',
-            divergence_note:'EU: "probiotic" is prohibited — EFSA rejected all Art.13(5) probiotic submissions 2010–2011. Organisms named factually only.' },
-          { market:'US', status:'allowed', rendered_text:'Contains live and active cultures',
-            divergence_note:'US: "probiotic" usable as a conventional food descriptor. "Live and active cultures" is the lower-risk industry standard.' },
-          { market:'CN', status:'allowed', rendered_text:'含活性醋酸菌和酵母菌 (Contains active Acetobacter and yeast cultures)',
-            divergence_note:'CN: OK as descriptor. CRITICAL: any function statement linked to these organisms triggers 保健食品 reclassification of the ENTIRE PRODUCT.' },
+          { market:'EU', status:'allowed', rendered_text:'Contains live Acetobacter and Brettanomyces cultures', divergence_note:'EU: "probiotic" is prohibited — EFSA rejected all Art.13(5) probiotic submissions 2010–2011. Organisms named factually only.' },
+          { market:'US', status:'allowed', rendered_text:'Contains live and active cultures', divergence_note:'US: "probiotic" usable as a conventional food descriptor. "Live and active cultures" is the industry-standard lower-risk phrasing.' },
+          { market:'CN', status:'allowed', rendered_text:'含活性醋酸菌和酵母菌 (Contains active Acetobacter and yeast cultures)', divergence_note:'CN: OK as descriptor. CRITICAL: any function statement linked to these organisms triggers 保健食品 reclassification of the ENTIRE PRODUCT.' },
         ]},
       { claim_id:'antioxidant_character', candidate_text:'Naturally rich in antioxidants', divergence_score:2, demo_beat:false,
         markets:[
-          { market:'EU', status:'conditionally_allowed', rendered_text:'Source of antioxidants',
-            divergence_note:'EU: ≥15% NRV vitamin C per serving. Product ~17.8% NRV — borderline. Anthocyanins have no EU NRV and cannot be the basis.' },
-          { market:'US', status:'conditionally_allowed', rendered_text:'Good source of antioxidants',
-            divergence_note:'US: ≥10% DV per RACC. Vitamin C ~15.8% DV. Verify applicable RACC for kombucha in 21 CFR 101.12.' },
-          { market:'CN', status:'allowed_rewritten', rendered_text:'富含花青素 (Rich in anthocyanins)',
-            divergence_note:'CN: 抗氧化 is a 保健食品 function category — off-limits on ordinary food track. Safe path: name the compound, not the function.' },
+          { market:'EU', status:'conditionally_allowed', rendered_text:'Source of antioxidants', divergence_note:'EU: ≥15% NRV vitamin C per serving. Product ~17.8% NRV — borderline. Anthocyanins have no EU NRV.' },
+          { market:'US', status:'conditionally_allowed', rendered_text:'Good source of antioxidants', divergence_note:'US: ≥10% DV per RACC. Vitamin C ~15.8% DV. Verify applicable RACC for kombucha in 21 CFR 101.12.' },
+          { market:'CN', status:'allowed_rewritten', rendered_text:'富含花青素 (Rich in anthocyanins)', divergence_note:'CN: 抗氧化 is a 保健食品 function category — off-limits on ordinary food track. Name the compound, not the function.' },
         ]},
       { claim_id:'hibiscus_wellness', candidate_text:'Hibiscus — traditionally used for wellbeing', divergence_score:3, demo_beat:true,
         markets:[
-          { market:'EU', status:'not_allowed', rendered_text:null,
-            divergence_note:'EU: No EFSA-authorized claim for Hibiscus sabdariffa. Traditional use is NOT a valid basis under Reg 1924/2006. Stripped.' },
-          { market:'US', status:'allowed_with_caution', rendered_text:'Hibiscus — a traditional wellness botanical',
-            divergence_note:'US: "Traditional wellness botanical" is defensible as cultural context, not a specific health function. FTC substantiation standard applies.' },
-          { market:'CN', status:'allowed_with_important_note', rendered_text:'采用玫瑰茄 (Made with Hibiscus sabdariffa / 玫瑰茄)',
-            divergence_note:'CN: 玫瑰茄 is on 药食同源 list — ingredient authorized. But citing traditional medicinal properties crosses into 保健食品 territory.' },
+          { market:'EU', status:'not_allowed', rendered_text:null, divergence_note:'EU: No EFSA-authorized claim for Hibiscus sabdariffa. Traditional use is NOT a valid basis under Reg 1924/2006.' },
+          { market:'US', status:'allowed_with_caution', rendered_text:'Hibiscus — a traditional wellness botanical', divergence_note:'US: "Traditional wellness botanical" is defensible as cultural context, not a health function claim.' },
+          { market:'CN', status:'allowed_with_important_note', rendered_text:'采用玫瑰茄 (Made with Hibiscus sabdariffa / 玫瑰茄)', divergence_note:'CN: 玫瑰茄 is on 药食同源 list — ingredient authorized. Citing traditional medicinal properties crosses into 保健食品 territory.' },
         ]},
       { claim_id:'fermentation_process', candidate_text:'Naturally fermented using traditional kombucha culture', divergence_score:0, demo_beat:false,
         markets:[
-          { market:'EU', status:'allowed', rendered_text:'Naturally fermented using traditional kombucha culture', divergence_note:'Process descriptor — no divergence across markets.' },
+          { market:'EU', status:'allowed', rendered_text:'Naturally fermented using traditional kombucha culture', divergence_note:'Process descriptor — no divergence.' },
           { market:'US', status:'allowed', rendered_text:'Naturally fermented using traditional kombucha culture', divergence_note:'Process descriptor — no divergence.' },
-          { market:'CN', status:'allowed', rendered_text:'传统工艺发酵 (Traditionally fermented)', divergence_note:'Process descriptor — permitted. Chinese translation provided.' },
+          { market:'CN', status:'allowed', rendered_text:'传统工艺发酵 (Traditionally fermented)', divergence_note:'Process descriptor — permitted.' },
         ]},
       { claim_id:'low_sugar', candidate_text:'Low in sugar', divergence_score:2, demo_beat:false,
         markets:[
-          { market:'EU', status:'conditionally_allowed', rendered_text:'Low sugars',
-            divergence_note:'EU: ≤5g/100ml for "low sugars". Product 2.67g/100ml — passes. "Sugars" (plural) is mandatory wording.' },
-          { market:'US', status:'rewritten', rendered_text:'8.8 g sugar per serving',
-            divergence_note:'US: FDA has not defined "low sugar" as an authorized nutrient content claim for sugars. Factual declaration is the safe path.' },
-          { market:'CN', status:'conditionally_allowed', rendered_text:'低糖 (Low sugar)',
-            divergence_note:'CN: GB 28050-2011 defines 低糖 at ≤5g/100ml. Passes. Declare in 营养成分表 (nutrition facts table).' },
+          { market:'EU', status:'conditionally_allowed', rendered_text:'Low sugars', divergence_note:'EU: ≤5g/100ml for "low sugars". Product 2.67g/100ml — passes. "Sugars" plural is mandatory.' },
+          { market:'US', status:'rewritten', rendered_text:'8.8 g sugar per serving', divergence_note:'US: "Low sugar" not an FDA-defined nutrient content claim. Factual declaration is the safe path.' },
+          { market:'CN', status:'conditionally_allowed', rendered_text:'低糖 (Low sugar)', divergence_note:'CN: GB 28050-2011 低糖 ≤5g/100ml. Passes. Declare in 营养成分表.' },
         ]},
     ],
     ingredient_divergence_beat:{
       ingredient_id:'hibiscus',
       markets:[
-        { market:'EU', flag:'🇪🇺', status:'conventional_food', note:'Pre-1997 EU use as Karkadé tea and Bissap. Not a novel food. No EFSA-authorized health claims.' },
-        { market:'US', flag:'🇺🇸', status:'gras', note:'GRAS. Widely used in US beverages — agua de Jamaica, herbal teas. No special status.' },
-        { market:'CN', flag:'🇨🇳', status:'food_medicine_homologous', note:'药食同源 list. Freely usable as food ingredient. CRITICAL: authorizes the ingredient, not health claims about it.' },
+        { market:'EU', flag:'🇪🇺', status:'conventional_food', note:'Pre-1997 EU use as Karkadé tea. Not a novel food. No EFSA-authorized claims.' },
+        { market:'US', flag:'🇺🇸', status:'gras', note:'GRAS. Widely used in US beverages. No special status.' },
+        { market:'CN', flag:'🇨🇳', status:'food_medicine_homologous', note:'药食同源 list. Freely usable as food. CRITICAL: authorizes the ingredient, not health claims.' },
       ],
     },
   },
 };
 
 function loadDemo() {
-  currentProductId = PRODUCTS[0].id;
-  renderProducts();
+  currentProductName = 'Precision Kombucha — Hibiscus, Cold F2';
+  currentProductSku = 'PKH-F2-330';
   renderAll(DEMO, false);
-  document.getElementById('ch-name').textContent = PRODUCTS[0].name;
-  document.getElementById('ch-sku').textContent = PRODUCTS[0].sku;
 }
 
 window.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('base-url').value = BASE;
-  renderProducts();
-  renderKbTimeline();
+  document.getElementById('base-url').value = BASE_CONST;
+  renderKB();
   loadDemo();
+  if (token()) fetchWorkspaces();
 });
 </script>
 </body>
