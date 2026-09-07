@@ -226,7 +226,7 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
 
 <div class="conn">
   <div class="cf"><span class="cl">ABW Base</span><input id="base-url" class="ci" style="width:210px" placeholder="https://agent-bestiary.world"/></div>
-  <div class="cf"><span class="cl">Workspace ID</span><input id="ws-id" class="ci" style="width:260px" placeholder="paste workspace UUID — or pick one from Products tab"/></div>
+  <div class="cf" id="ws-id-field" style="display:none"><span class="cl">Workspace ID</span><input id="ws-id" class="ci" style="width:260px" placeholder="workspace UUID"/></div>
   <div class="cf"><span class="cl">API Token</span><input id="token" class="ci" style="width:180px" type="password" placeholder="ferm_..." oninput="onTokenInput()"/></div>
   <button class="btn" id="run-btn" onclick="runLive()">Run live</button>
   <button class="btn-g" onclick="loadDemo()">Demo data</button>
@@ -498,17 +498,10 @@ function renderWorkspaceList(workspaces, live) {
 
 function selectWorkspace(id, name) {
   currentWsId = id;
-  document.getElementById('ws-id').value = id;
+  document.getElementById('ws-id').value = id; // internal only, field hidden
   currentProductName = name;
   document.getElementById('ch-name').textContent = name;
-  renderWorkspaceList(
-    [...document.querySelectorAll('.ws-card')].map(el => ({
-      id: el.onclick?.toString().match(/'([^']+)'/)?.[1] ?? '',
-      name: el.querySelector('.ws-name')?.textContent ?? ''
-    })), true
-  );
-  // Re-fetch after selecting to re-render list with active state
-  fetchWorkspaces();
+  fetchWorkspaces(); // re-render list with active state
   runLive();
 }
 
