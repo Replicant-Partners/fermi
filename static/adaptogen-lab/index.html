@@ -228,8 +228,7 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
   <div class="cf"><span class="cl">ABW Base</span><input id="base-url" class="ci" style="width:210px" placeholder="https://agent-bestiary.world"/></div>
   <div class="cf" id="ws-id-field" style="display:none"><span class="cl">Workspace ID</span><input id="ws-id" class="ci" style="width:260px" placeholder="workspace UUID"/></div>
   <div class="cf"><span class="cl">API Token</span><input id="token" class="ci" style="width:180px" type="password" placeholder="ferm_..." oninput="onTokenInput()"/></div>
-  <button class="btn" id="run-btn" onclick="runLive()">Run live</button>
-  <button class="btn-g" onclick="loadDemo()">Demo data</button>
+  <button class="btn" id="run-btn" onclick="runLive()">Run comparison</button>
 </div>
 
 <div class="body">
@@ -251,7 +250,8 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
       <span>＋</span><span>Spawn new product workspace</span>
     </div>
     <div style="font-size:10px;color:var(--t3);margin-top:10px;line-height:1.5">
-      Each workspace holds the DPP composition YAML, regulatory rulesets, and the comparison history committed to git.
+      <strong style="color:var(--t2)">One workspace = one product DPP.</strong><br>
+      The workspace holds the product composition YAML (ingredients, source claims), the comparison history (committed to git on each run), and any agent outputs. Selecting a workspace runs the regulatory comparison against its current composition.
     </div>
   </div>
 
@@ -307,7 +307,9 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
 <div class="content">
   <div id="empty-state" class="empty">
     <div class="big">⟷</div>
-    <p>Click <strong>Demo data</strong> to see the Precision Kombucha DPP travel across EU, US, and China — or pick a workspace from the Products tab and click <strong>Run live</strong>.</p>
+    <p>Select a product workspace from the <strong>Products</strong> tab.<br><br>
+    Each workspace is a living DPP — it holds the product composition YAML, the regulatory rulesets, and the full comparison history committed to git.<br><br>
+    Selecting a workspace runs the regulatory comparison against its source claims.</p>
   </div>
 
   <div id="main" style="display:none">
@@ -653,7 +655,7 @@ function addClaim() {
 
 function resetCascade() {
   document.getElementById('cascade-banner').classList.remove('show');
-  loadDemo();
+  if (currentWsId) runLive(); // re-run against workspace
 }
 
 // ── supply chain oracle ─────────────────────────────────────────────────────
@@ -930,7 +932,7 @@ function renderIngredients(data) {
 }
 
 function renderAppendix(data) {
-  const sources = data.verification_appendix ?? DEMO.output.verification_appendix;
+  const sources = data.verification_appendix ?? [];
   document.getElementById('va-list').innerHTML = sources.map(s => {
     const isUrl = s.startsWith('http');
     return `<li>${isUrl?`<a href="${esc(s)}" target="_blank">${esc(s)}</a>`:esc(s)}</li>`;
@@ -976,7 +978,8 @@ function renderAll(apiResponse, live) {
 // ── live ────────────────────────────────────────────────────────────────────
 async function runLive() {
   const id = wsId(), tok = token();
-  if (!id || !tok) { alert('Enter workspace ID and token first.'); return; }
+  if (!id) { showEmptyWithMessage('No workspace selected. Pick one from the Products tab.'); return; }
+  if (!tok) { showEmptyWithMessage('Enter your API token above.'); return; }
   const btn = document.getElementById('run-btn');
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Running…';
   try {
@@ -984,9 +987,14 @@ async function runLive() {
       method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${tok}`},
       body: JSON.stringify({ source_product_id: 'precision_kombucha_hibiscus_f2' }),
     });
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) {
+      const err = await res.text();
+      // Surface the specific error so we know what’s happening
+      showEmptyWithMessage(`API error (${res.status}): ${err}`);
+      return;
+    }
     renderAll(await res.json(), true);
-    // Also check if supply chain oracle is already hired
+    // Check if supply chain oracle is already hired
     const agentsRes = await fetch(`${base()}/api/workspaces/${id}/agents`, { headers:{ Authorization:`Bearer ${tok}` } });
     if (agentsRes.ok) {
       const agentsData = await agentsRes.json();
@@ -1000,81 +1008,22 @@ async function runLive() {
       }
     }
   } catch(e) {
-    alert(`API error: ${e.message}`);
+    showEmptyWithMessage(`Network error: ${e.message}`);
   } finally {
-    btn.disabled = false; btn.textContent = 'Run live';
+    btn.disabled = false; btn.textContent = 'Run comparison';
   }
 }
 
-// ── demo data ────────────────────────────────────────────────────────────────
-const DEMO = {
-  action_id:'00000000-0000-0000-0000-000000000000',
-  grounding_summary:{is_clean:true,violation_count:0},
-  output:{
-    source_product_id:'precision_kombucha_hibiscus_f2',
-    data_status:'synthetic_representative',
-    rendered_claims_provenance:'tool_verified',
-    verification_appendix:[
-      'EU authorized claims register: https://ec.europa.eu/food/safety/labelling_nutrition/claims/register_en',
-      'Reg 1924/2006 consolidated text',
-      '21 CFR Part 101 — Food Labeling: https://www.ecfr.gov/current/title-21/chapter-I/part-101',
-      'FTC: Dietary Supplements Advertising Guide for Industry',
-      'SAMR official portal: https://www.samr.gov.cn',
-      'Current 药食同源目录 via National Health Commission (NHC)',
-    ],
-    comparison_table:[
-      { claim_id:'live_cultures_present', candidate_text:'Contains live cultures', divergence_score:1, demo_beat:true,
-        markets:[
-          { market:'EU', status:'allowed', rendered_text:'Contains live Acetobacter and Brettanomyces cultures', divergence_note:'EU: "probiotic" is prohibited — EFSA rejected all Art.13(5) probiotic submissions 2010–2011. Organisms named factually only.' },
-          { market:'US', status:'allowed', rendered_text:'Contains live and active cultures', divergence_note:'US: "probiotic" usable as a conventional food descriptor. "Live and active cultures" is the industry-standard lower-risk phrasing.' },
-          { market:'CN', status:'allowed', rendered_text:'含活性醋酸菌和酵母菌 (Contains active Acetobacter and yeast cultures)', divergence_note:'CN: OK as descriptor. CRITICAL: any function statement linked to these organisms triggers 保健食品 reclassification of the ENTIRE PRODUCT.' },
-        ]},
-      { claim_id:'antioxidant_character', candidate_text:'Naturally rich in antioxidants', divergence_score:2, demo_beat:false,
-        markets:[
-          { market:'EU', status:'conditionally_allowed', rendered_text:'Source of antioxidants', divergence_note:'EU: ≥15% NRV vitamin C per serving. Product ~17.8% NRV — borderline. Anthocyanins have no EU NRV.' },
-          { market:'US', status:'conditionally_allowed', rendered_text:'Good source of antioxidants', divergence_note:'US: ≥10% DV per RACC. Vitamin C ~15.8% DV. Verify applicable RACC for kombucha in 21 CFR 101.12.' },
-          { market:'CN', status:'allowed_rewritten', rendered_text:'富含花青素 (Rich in anthocyanins)', divergence_note:'CN: 抗氧化 is a 保健食品 function category — off-limits on ordinary food track. Name the compound, not the function.' },
-        ]},
-      { claim_id:'hibiscus_wellness', candidate_text:'Hibiscus — traditionally used for wellbeing', divergence_score:3, demo_beat:true,
-        markets:[
-          { market:'EU', status:'not_allowed', rendered_text:null, divergence_note:'EU: No EFSA-authorized claim for Hibiscus sabdariffa. Traditional use is NOT a valid basis under Reg 1924/2006.' },
-          { market:'US', status:'allowed_with_caution', rendered_text:'Hibiscus — a traditional wellness botanical', divergence_note:'US: "Traditional wellness botanical" is defensible as cultural context, not a health function claim.' },
-          { market:'CN', status:'allowed_with_important_note', rendered_text:'采用玫瑰茄 (Made with Hibiscus sabdariffa / 玫瑰茄)', divergence_note:'CN: 玫瑰茄 is on 药食同源 list — ingredient authorized. Citing traditional medicinal properties crosses into 保健食品 territory.' },
-        ]},
-      { claim_id:'fermentation_process', candidate_text:'Naturally fermented using traditional kombucha culture', divergence_score:0, demo_beat:false,
-        markets:[
-          { market:'EU', status:'allowed', rendered_text:'Naturally fermented using traditional kombucha culture', divergence_note:'Process descriptor — no divergence.' },
-          { market:'US', status:'allowed', rendered_text:'Naturally fermented using traditional kombucha culture', divergence_note:'Process descriptor — no divergence.' },
-          { market:'CN', status:'allowed', rendered_text:'传统工艺发酵 (Traditionally fermented)', divergence_note:'Process descriptor — permitted.' },
-        ]},
-      { claim_id:'low_sugar', candidate_text:'Low in sugar', divergence_score:2, demo_beat:false,
-        markets:[
-          { market:'EU', status:'conditionally_allowed', rendered_text:'Low sugars', divergence_note:'EU: ≤5g/100ml for "low sugars". Product 2.67g/100ml — passes. "Sugars" plural is mandatory.' },
-          { market:'US', status:'rewritten', rendered_text:'8.8 g sugar per serving', divergence_note:'US: "Low sugar" not an FDA-defined nutrient content claim. Factual declaration is the safe path.' },
-          { market:'CN', status:'conditionally_allowed', rendered_text:'低糖 (Low sugar)', divergence_note:'CN: GB 28050-2011 低糖 ≤5g/100ml. Passes. Declare in 营养成分表.' },
-        ]},
-    ],
-    ingredient_divergence_beat:{
-      ingredient_id:'hibiscus',
-      markets:[
-        { market:'EU', flag:'🇪🇺', status:'conventional_food', note:'Pre-1997 EU use as Karkadé tea. Not a novel food. No EFSA-authorized claims.' },
-        { market:'US', flag:'🇺🇸', status:'gras', note:'GRAS. Widely used in US beverages. No special status.' },
-        { market:'CN', flag:'🇨🇳', status:'food_medicine_homologous', note:'药食同源 list. Freely usable as food. CRITICAL: authorizes the ingredient, not health claims.' },
-      ],
-    },
-  },
-};
-
-function loadDemo() {
-  currentProductName = 'Precision Kombucha — Hibiscus, Cold F2';
-  currentProductSku = 'PKH-F2-330';
-  renderAll(DEMO, false);
+function showEmptyWithMessage(msg) {
+  document.getElementById('main').style.display = 'none';
+  const el = document.getElementById('empty-state');
+  el.style.display = '';
+  el.querySelector('p').innerHTML = `<span style="color:var(--red)">${esc(msg)}</span><br><br>Select a workspace from the Products tab.`;
 }
 
 window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('base-url').value = BASE_CONST;
   renderKB();
-  loadDemo();
   if (token()) fetchWorkspaces();
 });
 </script>
