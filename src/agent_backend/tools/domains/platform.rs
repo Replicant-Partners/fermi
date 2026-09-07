@@ -34,6 +34,10 @@ pub fn tools() -> Vec<Arc<dyn PlatformTool>> {
         Arc::new(QueryOntology),
         Arc::new(ExecuteAgent),
         Arc::new(ListAgents),
+        Arc::new(FleetMap),
+        Arc::new(DescribeAgent),
+        Arc::new(WhoAnswers),
+        Arc::new(AgentsOfType),
         Arc::new(WebSearch),
         Arc::new(DelegateToAgent),
     ]
@@ -844,9 +848,158 @@ async fn execute_list_agents(ctx: &ToolContext) -> Result<String, String> {
         .list_cards()
         .map_err(|e| format!("Failed to list agents: {}", e))?;
 
-    let agents: Vec<serde_json::Value> = cards.iter().map(fleet_entry).collect();
+    // An INDEX, not a dump.
+    //
+    // This briefly returned `fleet_entry` for every card — model, ladder,
+    // ports, tools, eight fields times 102 agents — which fixed the
+    // fabrication described below and replaced it with a different scaling
+    // defect: O(n) fleet detail in context on every single invocation. Worse
+    // than the O(n) prompt it was meant to relieve, because a prompt pays once
+    // and a tool response pays per call.
+    //
+    // `docs/architecture/META_AGENT_FLEET_AWARENESS.md`: the tool tier has to
+    // be QUERYABLE, not enumerable. So the detail moved to `describe_agent`,
+    // which answers about one agent, and this went back to being the index a
+    // navigator scans to decide what to ask about.
+    let agents: Vec<serde_json::Value> = cards
+        .iter()
+        .map(|c| {
+            json!({
+                "id": c.agent_id,
+                "type": c.agent_type,
+                "description": c.metadata.description,
+                "skills": c.capabilities.skills,
+            })
+        })
+        .collect();
 
     serde_json::to_string_pretty(&agents).map_err(|e| format!("Serialization error: {}", e))
+}
+
+/// One agent, in full. The payload `list_agents` must not carry for all of them.
+async fn execute_describe_agent(input: &Value, ctx: &ToolContext) -> Result<String, String> {
+    let id = input
+        .get("agent_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: agent_id")?;
+
+    let cards = ctx
+        .registry
+        .list_cards()
+        .map_err(|e| format!("Failed to list agents: {}", e))?;
+
+    let card = cards
+        .iter()
+        .find(|c| c.agent_id == id)
+        .ok_or_else(|| {
+            // Names the closest thing rather than only refusing: a navigator
+            // that asked about a misremembered id should be corrected, not
+            // left to invent an answer about an agent that does not exist.
+            let near: Vec<&str> = cards
+                .iter()
+                .map(|c| c.agent_id.as_str())
+                .filter(|c| c.contains(id) || id.contains(*c))
+                .take(5)
+                .collect();
+            if near.is_empty() {
+                format!("No agent `{id}`. Use `list_agents` for the index.")
+            } else {
+                format!("No agent `{id}`. Did you mean one of {near:?}?")
+            }
+        })?;
+
+    serde_json::to_string_pretty(&fleet_entry(card))
+        .map_err(|e| format!("Serialization error: {}", e))
+}
+
+/// Who else answers a given ask.
+///
+/// The substitutability half of composability, from `port_trust::answerers`.
+/// Returns the reading as well as the members, because a label accepted by a
+/// quarter of the fleet is the platform's calling convention rather than a set
+/// of interchangeable agents, and a navigator handed 24 ids without that
+/// distinction will present them as alternatives.
+async fn execute_who_answers(input: &Value, ctx: &ToolContext) -> Result<String, String> {
+    let label = input
+        .get("label")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: label")?;
+
+    let cards = ctx
+        .registry
+        .list_cards()
+        .map_err(|e| format!("Failed to list agents: {}", e))?;
+
+    let pairs: Vec<(String, Vec<String>)> = cards
+        .iter()
+        .map(|c| (c.agent_id.clone(), c.accepts.clone()))
+        .collect();
+
+    let rows = crate::port_trust::answerers(&pairs);
+    let found = rows.iter().find(|r| r.question == label);
+
+    let out = match found {
+        Some(r) => json!({
+            "label": r.question,
+            "reading": format!("{:?}", r.reading),
+            "agents": r.agents,
+            "note": match r.reading {
+                crate::port_trust::Substitutes::Universal(n) => format!(
+                    "{n} agents accept this. It is the platform's calling \
+                     convention rather than a specialisation — do not present \
+                     these as interchangeable alternatives."
+                ),
+                crate::port_trust::Substitutes::Cohort(n) =>
+                    format!("{n} agents answer this ask and are plausible alternatives."),
+                crate::port_trust::Substitutes::Bespoke =>
+                    "Only this agent answers it.".to_string(),
+            },
+        }),
+        None => json!({
+            "label": label,
+            "agents": [],
+            "note": "No agent declares this ask. That is an answer: the gap is \
+                     real, not a lookup failure.",
+        }),
+    };
+    serde_json::to_string_pretty(&out).map_err(|e| format!("Serialization error: {}", e))
+}
+
+/// The members of one `agent_type` bucket from the fleet map.
+///
+/// The map names categories and counts; this is how a navigator gets from a
+/// category to its members without the map having carried them.
+async fn execute_agents_of_type(input: &Value, ctx: &ToolContext) -> Result<String, String> {
+    let want = input
+        .get("agent_type")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: agent_type")?;
+
+    let cards = ctx
+        .registry
+        .list_cards()
+        .map_err(|e| format!("Failed to list agents: {}", e))?;
+
+    let members: Vec<Value> = cards
+        .iter()
+        .filter(|c| c.agent_type == want)
+        .map(|c| json!({ "id": c.agent_id, "description": c.metadata.description }))
+        .collect();
+
+    if members.is_empty() {
+        let known: Vec<&str> = {
+            let mut v: Vec<&str> = cards.iter().map(|c| c.agent_type.as_str()).collect();
+            v.sort_unstable();
+            v.dedup();
+            v
+        };
+        return Err(format!(
+            "No agents of type `{want}`. Declared types are {known:?}."
+        ));
+    }
+
+    serde_json::to_string_pretty(&json!({ "agent_type": want, "agents": members }))
+        .map_err(|e| format!("Serialization error: {}", e))
 }
 
 /// One agent, as the fleet listing describes it.
@@ -1178,6 +1331,186 @@ impl PlatformTool for ListAgents {
     }
 }
 
+/// The fleet's shape, capped, from the live registry.
+///
+/// The prompt tier of `docs/architecture/META_AGENT_FLEET_AWARENESS.md`, served
+/// as a tool rather than baked into a card.
+///
+/// # Why a tool and not prompt injection
+///
+/// Injection is the better end state: the map would be present without being
+/// asked for, which is the difference between a navigator that knows the shape
+/// and one that has to remember to look. It needs `AgentRegistry` at
+/// `LlmExecutor::build_system_prompt`, and `ExecutionContext` carries no
+/// registry — its construction sites deliberately state every field
+/// explicitly, so adding one touches all of them. That is real plumbing across
+/// files with another author in them, and it is named rather than rushed.
+///
+/// Served as a tool, the map has two properties injection would not improve:
+/// it is computed from the live registry on every call, so it cannot go stale,
+/// and it costs nothing for the agents that never ask.
+async fn execute_fleet_map(ctx: &ToolContext) -> Result<String, String> {
+    use crate::fleet_digest::{digest, CardFacts, WHAT_YOU_DO_NOT_KNOW};
+
+    let cards = ctx
+        .registry
+        .list_cards()
+        .map_err(|e| format!("Failed to list agents: {}", e))?;
+
+    let facts: Vec<CardFacts> = cards
+        .iter()
+        .map(|c| {
+            let mut port_labels = c.accepts.clone();
+            port_labels.extend(c.produces.iter().cloned());
+            CardFacts {
+                agent_id: c.agent_id.clone(),
+                agent_type: c.agent_type.clone(),
+                accepts: c.accepts.clone(),
+                port_labels,
+            }
+        })
+        .collect();
+
+    let d = digest(&facts);
+    let _ = WHAT_YOU_DO_NOT_KNOW; // carried by `render`
+    Ok(d.render())
+}
+
+// ─── describe_agent / who_answers / agents_of_type ────────────────────
+//
+// The tool tier of `docs/architecture/META_AGENT_FLEET_AWARENESS.md`. Each one
+// answers about ONE thing named in the fleet map, so the cost is O(1) per
+// question rather than O(fleet) per invocation. They are what
+// `fleet_digest::WHAT_YOU_DO_NOT_KNOW` points a meta agent at.
+
+struct FleetMap;
+
+#[async_trait]
+impl PlatformTool for FleetMap {
+    fn name(&self) -> &'static str {
+        "fleet_map"
+    }
+
+    fn description(&self) -> &'static str {
+        "The fleet's SHAPE: how many agents, and how they break down by type, by type-namespace, and by which asks more than one of them answers. Categories and counts only — no per-agent detail, and it does not grow as the fleet grows. Call this first to orient, then `agents_of_type`, `who_answers` or `describe_agent` for members and facts."
+    }
+
+    fn input_schema(&self) -> Value {
+        json!({ "type": "object", "properties": {}, "required": [] })
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Platform
+    }
+
+    async fn execute(&self, input: &Value, ctx: &ToolContext) -> Result<String, String> {
+        let _ = input;
+        execute_fleet_map(ctx).await
+    }
+}
+
+struct DescribeAgent;
+
+#[async_trait]
+impl PlatformTool for DescribeAgent {
+    fn name(&self) -> &'static str {
+        "describe_agent"
+    }
+
+    fn description(&self) -> &'static str {
+        "Full detail for ONE agent: model, model_ladder by tier, min_tier, provider, accepts/produces ports, produces_schema, and tool names. Use this instead of stating any of those from memory — a one-line description does not carry them, and guessing produces confident wrong answers about which model a tier will run."
+    }
+
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "Exact agent id, as returned by `list_agents`."
+                }
+            },
+            "required": ["agent_id"]
+        })
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Platform
+    }
+
+    async fn execute(&self, input: &Value, ctx: &ToolContext) -> Result<String, String> {
+        execute_describe_agent(input, ctx).await
+    }
+}
+
+struct WhoAnswers;
+
+#[async_trait]
+impl PlatformTool for WhoAnswers {
+    fn name(&self) -> &'static str {
+        "who_answers"
+    }
+
+    fn description(&self) -> &'static str {
+        "Which agents accept a given ask, and whether they are genuinely interchangeable. Returns a reading: Cohort (a real set of alternatives), Universal (the label is the platform's calling convention — do not present these as alternatives), or Bespoke (only one agent answers it)."
+    }
+
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "label": {
+                    "type": "string",
+                    "description": "An `accepts` label, e.g. `workspace-state` or `fermi/forecast-question/1`."
+                }
+            },
+            "required": ["label"]
+        })
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Platform
+    }
+
+    async fn execute(&self, input: &Value, ctx: &ToolContext) -> Result<String, String> {
+        execute_who_answers(input, ctx).await
+    }
+}
+
+struct AgentsOfType;
+
+#[async_trait]
+impl PlatformTool for AgentsOfType {
+    fn name(&self) -> &'static str {
+        "agents_of_type"
+    }
+
+    fn description(&self) -> &'static str {
+        "The members of one agent_type bucket. The fleet map gives category names and counts; this is how to get from a category to its agents."
+    }
+
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "agent_type": {
+                    "type": "string",
+                    "description": "An agent_type from the fleet map, e.g. `research`, `coordination`, `meta`."
+                }
+            },
+            "required": ["agent_type"]
+        })
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Platform
+    }
+
+    async fn execute(&self, input: &Value, ctx: &ToolContext) -> Result<String, String> {
+        execute_agents_of_type(input, ctx).await
+    }
+}
+
 // ─── web_search ───────────────────────────────────────────────────────────────
 
 struct WebSearch;
@@ -1311,9 +1644,24 @@ mod tests {
         }
     }
 
+    /// The platform domain's tool count, and what each addition was for.
+    ///
+    /// Six until the fleet tier landed. `describe_agent`, `who_answers` and
+    /// `agents_of_type` are the queryable replacements for a `list_agents` that
+    /// had grown into a dump — see
+    /// `docs/architecture/META_AGENT_FLEET_AWARENESS.md`. The number is pinned
+    /// rather than derived because a tool appearing without anyone meaning it
+    /// is how an agent's context fills up.
     #[test]
-    fn tool_count_is_six() {
-        assert_eq!(tools().len(), 6);
+    fn tool_count_is_ten() {
+        let names: Vec<&str> = tools().iter().map(|t| t.name()).collect();
+        assert_eq!(
+            tools().len(),
+            10,
+            "the platform tool set changed: {names:?}. Six before the fleet \
+             tier; say which tool was added and why, because every one of these \
+             is offered to every agent that gets platform tools."
+        );
     }
 
     #[test]
@@ -1356,7 +1704,8 @@ mod tests {
         }
     }
 
-    /// **The fleet listing must be able to answer the question it got wrong.**
+    /// **`describe_agent` must be able to answer the question the navigator got
+    /// wrong.**
     ///
     /// Asked which model a free-tier creature would use for `biotech_analyst`,
     /// `xaman_ek` said the card declares no `model_ladder`, that it is
@@ -1376,7 +1725,7 @@ mod tests {
     /// or a model name would go red every time a model is swapped, which is
     /// routine, and would say nothing about whether the question is answerable.
     #[test]
-    fn the_fleet_listing_answers_what_the_navigator_got_wrong() {
+    fn describe_agent_answers_what_the_navigator_got_wrong() {
         let raw = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/agents/curated/biotech_analyst/agent_card.json"
@@ -1438,5 +1787,93 @@ mod tests {
                  must answer from its prompt digest or invent one"
             );
         }
+    }
+
+    /// **`list_agents` is an index; `describe_agent` is the detail.**
+    ///
+    /// The tier separation, asserted rather than left to the comment that
+    /// argues for it. `list_agents` briefly returned `fleet_entry` for every
+    /// card, which fixed the fabrication and replaced it with O(n) fleet detail
+    /// in context on every invocation — worse than the prompt it relieved,
+    /// because a prompt pays once and a tool response pays per call.
+    ///
+    /// The failure mode is a helpful edit: someone adds `model` to the index
+    /// "so the navigator does not need a second call", and the dump returns one
+    /// field at a time. So the index is pinned to the fields it may carry.
+    #[test]
+    fn the_index_carries_no_per_agent_detail_and_describe_agent_carries_it_all() {
+        let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/agent_backend/tools/domains/platform.rs"))
+            .expect("this file");
+        let start = src
+            .find("async fn execute_list_agents")
+            .expect("execute_list_agents");
+        let end = src[start..]
+            .find("async fn execute_describe_agent")
+            .map(|i| start + i)
+            .expect("execute_describe_agent must follow the index");
+        let index = &src[start..end];
+
+        for detail in [
+            "model_ladder",
+            "min_tier",
+            "produces_schema",
+            "\"tools\"",
+            "\"accepts\"",
+            "\"produces\"",
+        ] {
+            assert!(
+                !index.contains(detail),
+                "`list_agents` carries {detail}. That is per-agent detail times \
+                 the whole fleet, in context, on every invocation. It belongs \
+                 in `describe_agent`, which answers about one agent."
+            );
+        }
+
+        // And the detail really is reachable, or the split just loses it.
+        let raw = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/agents/curated/biotech_analyst/agent_card.json"
+        ))
+        .expect("card");
+        let card =
+            crate::agent_backend::agent_card::AgentCard::from_json(&raw).expect("card parses");
+        let entry = super::fleet_entry(&card);
+        for field in ["model", "model_ladder", "min_tier", "accepts", "produces", "tools"] {
+            assert!(
+                entry.get(field).is_some(),
+                "`describe_agent`'s payload omits `{field}`, so slimming the \
+                 index dropped the fact rather than relocating it"
+            );
+        }
+    }
+
+    /// Every fleet tool the map points at must exist.
+    ///
+    /// `fleet_digest::WHAT_YOU_DO_NOT_KNOW` tells a meta agent where to look
+    /// instead of answering from memory. A named route that does not resolve is
+    /// worse than no route: the agent is told to call something, cannot, and
+    /// answers anyway — which is the `biotech_analyst` failure with an extra
+    /// step.
+    #[test]
+    fn the_map_points_only_at_tools_that_exist() {
+        let names: Vec<&'static str> = super::tools().iter().map(|t| t.name()).collect();
+        for named in ["describe_agent", "who_answers"] {
+            assert!(
+                crate::fleet_digest::WHAT_YOU_DO_NOT_KNOW.contains(named),
+                "`{named}` is not named in WHAT_YOU_DO_NOT_KNOW, so the map \
+                 does not tell the agent it exists"
+            );
+            assert!(
+                names.contains(&named),
+                "WHAT_YOU_DO_NOT_KNOW sends the agent to `{named}` and no such \
+                 tool is registered: {names:?}"
+            );
+        }
+        // `agents_of_type` is how a category in the map becomes members.
+        assert!(
+            names.contains(&"agents_of_type"),
+            "the map lists agent_type categories and nothing resolves them to \
+             agents: {names:?}"
+        );
     }
 }

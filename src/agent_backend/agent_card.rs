@@ -1215,25 +1215,86 @@ mod tests {
         }
     }
 
+    /// **The navigator must not carry a roster of the fleet.**
+    ///
+    /// This test used to assert the opposite. It required every `agent_id` to
+    /// appear as `**agent_id**` in `xaman_ek`'s system prompt, and it worked —
+    /// which was the problem. It made the prompt grow with the fleet, it went
+    /// red on every agent added until someone pasted a line in, and the line
+    /// that fitted carried a description and dropped the facts.
+    ///
+    /// That omission is why the navigator told a user `biotech_analyst`
+    /// declares no `model_ladder` (it declares three rungs), is tier-agnostic
+    /// (free resolves to `openrouter/free`), and defaults to Haiku (it defaults
+    /// to a Sonnet). Its prompt entry had no model information and neither did
+    /// the only tool it could call.
+    ///
+    /// The old test was a claim, and the claim was that a meta agent should
+    /// know every agent individually. `AKP-ecology-design-doc` §7 says the
+    /// opposite — *"does not attempt to know everything every agent knows"* —
+    /// and `docs/architecture/META_AGENT_FLEET_AWARENESS.md` is the
+    /// implementation. A test enforcing a superseded design is the hardest kind
+    /// of stale claim to see, because nobody reads a green test as an argument.
+    ///
+    /// So this asserts the inverse, and it is O(1) in the fleet: the roster must
+    /// not come back, and the tools that replaced it must exist.
     #[test]
-    fn test_all_agents_registered_with_xaman_ek() {
+    fn the_navigator_reads_the_fleet_rather_than_reciting_it() {
         let dir = curated_dir();
         let xaman_path = dir.join("xaman_ek/agent_card.json");
         let json = fs::read_to_string(&xaman_path).expect("Failed to read xaman_ek card");
         let xaman: AgentCard = AgentCard::from_json(&json).expect("Failed to parse xaman_ek card");
-        let prompt = xaman.system_prompt.expect("xaman_ek has no system_prompt");
+        let prompt = xaman
+            .system_prompt
+            .clone()
+            .expect("xaman_ek has no system_prompt");
 
+        // The ratchet. A handful of agents may be named in prose as examples;
+        // a roster is when most of the fleet is in there.
         let cards = load_all_cards();
-        for (dir_name, card) in &cards {
-            if card.agent_id == "xaman_ek" {
-                continue; // Xaman Ek doesn't need to list itself
-            }
+        let named = cards
+            .iter()
+            .filter(|(_, c)| c.agent_id != "xaman_ek")
+            .filter(|(_, c)| prompt.contains(&format!("**{}**", c.agent_id)))
+            .count();
+        assert!(
+            named * 4 < cards.len(),
+            "{named} of {} agents are named in the navigator's prompt. That is \
+             a roster, and a roster grows with the fleet, goes stale silently, \
+             and drops every fact that does not fit on one line. The fleet is \
+             read with `fleet_map`, `agents_of_type`, `who_answers` and \
+             `describe_agent`.",
+            cards.len()
+        );
+
+        // And the replacement has to be reachable, or this is just a deletion.
+        let declared: Vec<&str> = xaman
+            .capabilities
+            .mcp_tools
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect();
+        let registered: Vec<&'static str> = crate::agent_backend::tools::domains::platform::tools()
+            .iter()
+            .map(|t| t.name())
+            .collect();
+        for tool in ["fleet_map", "describe_agent", "who_answers", "agents_of_type"] {
             assert!(
-                prompt.contains(&format!("**{}**", card.agent_id)),
-                "{}: agent is not registered in Xaman Ek's system prompt \
-                 (expected '**{}**' to appear)",
-                dir_name,
-                card.agent_id
+                prompt.contains(tool),
+                "the prompt does not mention `{tool}`. The roster is gone and \
+                 nothing tells the navigator what to call instead, which is \
+                 strictly worse than the roster: it will answer from memory."
+            );
+            assert!(
+                declared.contains(&tool),
+                "`{tool}` is not in xaman_ek's mcp_tools, so the prompt names a \
+                 tool this agent cannot call: {declared:?}"
+            );
+            assert!(
+                registered.contains(&tool),
+                "`{tool}` is declared on the card and not registered in the \
+                 platform domain, which is the phantom-tool defect \
+                 `no_curated_card_declares_a_phantom_tool` exists for"
             );
         }
     }

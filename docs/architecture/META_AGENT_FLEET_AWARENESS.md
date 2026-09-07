@@ -1,6 +1,8 @@
 # Meta-agent fleet awareness
 
-**Status:** Pattern documented; digest generator in `src/fleet_digest.rs`
+**Status:** Built — prompt tier (`src/fleet_digest.rs`), tool tier
+(`fleet_map`, `describe_agent`, `who_answers`, `agents_of_type`), and
+`xaman_ek` migrated off its roster. Prompt-time injection is the named next step.
 **Date:** 2026-09-07
 **Related:** `docs/architecture/AKP-ecology-design-doc - roadmap.md` §7,
              `docs/AGENT_MODEL.md` §3.3,
@@ -73,6 +75,13 @@ tools fixed the fabrication and enlarged the dump. The widened payload is the
 right response for `describe_agent(id)` and the wrong one for `list_agents()`.
 
 **A tool tier has to be queryable, not enumerable.**
+
+So `list_agents` went back to being an index (`id`, `type`, `description`,
+`skills`) and the detail moved to `describe_agent(agent_id)`.
+`the_index_carries_no_per_agent_detail_and_describe_agent_carries_it_all` pins
+the split, because the failure mode is a helpful edit: someone adds `model` to
+the index *"so the navigator does not need a second call"*, and the dump returns
+one field at a time.
 
 ## The pattern: three tiers
 
@@ -224,6 +233,42 @@ response enforces nothing. `xaman_ek` emits prose (4 of 18 recorded responses
 contain even a brace), so its contract waits on an agent change, not a platform
 one. `fermi` emits documents in two thirds of its responses and is the
 contractable meta agent today.
+
+## What is built here
+
+| tier | piece | state |
+|---|---|---|
+| prompt | `fleet_digest::digest` / `render`, capped at `MAP_ROWS` | built |
+| prompt | `fleet_digest::WHAT_YOU_DO_NOT_KNOW` | built |
+| prompt | `Digest::describes(live_count)` — staleness | built |
+| tool | `fleet_map` — the map, from the live registry | built |
+| tool | `describe_agent(agent_id)` — the facts for one agent | built |
+| tool | `who_answers(label)` — cohort plus reading | built |
+| tool | `agents_of_type(agent_type)` — category to members | built |
+| delegation | cluster-resident experts | not started |
+
+`xaman_ek`'s prompt went from **65,717 to 41,971 characters** — the 96-line
+roster was 33% of it — and
+`test_all_agents_registered_with_xaman_ek` was replaced by
+`the_navigator_reads_the_fleet_rather_than_reciting_it`, which asserts the
+inverse and is O(1) in the fleet.
+
+### Why the map is a tool rather than injected into the prompt
+
+Injection is the better end state: the map would be present without being asked
+for, which is the difference between a navigator that knows the shape and one
+that has to remember to look.
+
+It needs `AgentRegistry` at `LlmExecutor::build_system_prompt`, and
+`ExecutionContext` carries no registry — its construction sites deliberately
+state every field explicitly, so adding one touches all of them. That is named
+rather than rushed.
+
+Served as a tool the map has two properties injection would not improve: it is
+computed from the live registry on every call, so it cannot go stale, and it
+costs nothing for the agents that never ask. The residual risk is real and worth
+stating — a model that does not call `fleet_map` has no map — which is why the
+prompt names the tools in order and says what it does not know.
 
 ## Generalising
 
