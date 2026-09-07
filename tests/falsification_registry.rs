@@ -965,6 +965,27 @@ const FALSIFICATIONS: &[Falsification] = &[
                  the one the corpus does not currently contain, which is why it \
                  has to be constructed.",
     },
+    // ── fleet_digest ────────────────────────────────────
+    Falsification {
+        check: "fleet_digest::describes",
+        owner: "src/fleet_digest.rs",
+        // Permissive reading: "this map still describes the fleet."
+        passes: || {
+            let d = fermi::fleet_digest::digest(&[]);
+            d.describes(0)
+        },
+        fires: || {
+            let d = fermi::fleet_digest::digest(&[]);
+            d.describes(1)
+        },
+        models: "A compressed map that cannot report its own staleness is the \
+                 authored prompt again with fewer lines: confidently describing \
+                 a fleet that has moved, with nothing to notice. `xaman_ek` \
+                 told a user `biotech_analyst` had no model_ladder because its \
+                 prompt digest carried no model information and it answered \
+                 anyway — the same failure a stale map reproduces, and the \
+                 reason the agent count is carried rather than assumed.",
+    },
     // ── completeness ────────────────────────────────────
     Falsification {
         check: "completeness::assess",
@@ -2399,6 +2420,27 @@ const EXEMPT: &[(&str, &str)] = &[
          name, and that each is reachable through this function are asserted \
          directly by `reliance::tests::every_token_is_unique_and_explained`.",
     ),
+    (
+        "fleet_digest::digest",
+        "Counts cards into buckets and delegates the one judgement it makes \
+         — whether a shared ask narrows the fleet — to \
+         `port_trust::substitutes`, registered above with the two real labels \
+         that separate its readings. What must hold about the OUTPUT is not a \
+         pair of worlds but a set of invariants, and those are asserted \
+         directly: `the_digest_names_no_individual_agent`, \
+         `the_map_is_bounded_even_when_the_vocabulary_grows`, and \
+         `the_map_omits_the_calling_convention_and_keeps_the_cohorts`.",
+    ),
+    (
+        "fleet_digest::render",
+        "Formats a `Digest` into prompt lines. The properties that matter about \
+         it are held over the rendered string by \
+         `the_digest_names_no_individual_agent` and \
+         `the_render_says_what_the_agent_does_not_know` — deliberately \
+         asserted on the rendering rather than the struct, because the \
+         rendering is what reaches a model and a field nobody prints is not \
+         the risk.",
+    ),
     ("port_trust::as_tag", ACCESSOR),
     (
         "port_trust::answerers",
@@ -2785,6 +2827,7 @@ const TRUST_MODULES: &[&str] = &[
     "reliance",
     "port_trust",
     "completeness",
+    "fleet_digest",
 ];
 
 // ── assertions ──────────────────────────────────────────────────────────

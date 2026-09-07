@@ -466,6 +466,11 @@ pub mod coordination_note;
 // unchecked; worse, `stamp_invocation` recorded the CALLER's claim about the
 // binding as if it were a finding. Canonical implementation lives here so
 // the server can verify rather than transcribe.
+// The fleet's shape in a fixed number of lines — the prompt tier of the
+// meta-agent pattern in `docs/architecture/META_AGENT_FLEET_AWARENESS.md`.
+// Names categories and counts, never members: a meta agent gets the map here
+// and the territory from tools.
+pub mod fleet_digest;
 pub mod port_trust;
 // What a caller may rely on, in one token, derived from the verdicts the
 // gates already produced. The prerequisite for promoting any of them to a
