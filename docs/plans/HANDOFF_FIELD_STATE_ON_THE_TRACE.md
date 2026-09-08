@@ -3,6 +3,11 @@
 **Status:** `src/field_state.rs` is built, guarded and consumed by two surfaces.
 `Observed` is built and **nothing renders it**. This is that task.
 
+**Amended** after a second reading of the same trace, with the user's sign-off on
+three decisions (§2.1). The plumbing in §4.1 and §4.2 is unchanged; §2.1, §4.2b,
+§4.4 and §4.5 are new and are about **what the tokens should say**. Do §4.1
+first regardless.
+
 **Repo:** `/home/ilabra/fermi`, branch `main`, deployed to `agent-bestiary.world`
 (the remote *is* the dev environment; deploying to iterate is normal).
 
@@ -43,6 +48,74 @@ Nothing contradicted. It read as though everything did, because:
   for *this gate acted*. Nothing was declined; one field was nulled and the
   answer was delivered whole. Asked *"what exactly was refused?"*, the page had
   no answer.
+
+### 2.1 The second reading — three reds, four meanings
+
+After `b3fa7e0a` the user read the same `football_analyst` trace again and
+objected to what it *means*, not how it is built:
+
+> "1 field empty ok but why is this a red flag?"
+>
+> "In practical terms this feels like a bunch of rejection."
+>
+> "Some of the things the agent was trying to do were incomplete, and 11 things
+> couldn't be checked but were **omissions not hallucinations**. The error is
+> **agent completeness vs aspiration**, not failure in the sense of producing
+> untrusted or unsourced data. This kind of agent **compiles and should** — but
+> is also not up to the standard one would want as the agent designer."
+
+Verified against the code. The page renders four findings in one red, and they
+are four different kinds of thing:
+
+| where | keyed on | what it actually is |
+|---|---|---|
+| header badge `VIOLATIONS` | `violations > 0` — `artifact_trace::reading()`, `src/artifact_trace.rs:537` | **fault** — the model asserted what it could not know |
+| Q3 `1 of 8 owed`, tone hardcoded `bad` | `e.empty > 0` — `templates/trace.html:926` | **shortfall** — commissioned work not delivered |
+| Q4 `11 ◌` | `weakSourced > 0 ? "bad"` — `templates/trace.html:958` | mostly **capability gaps** and **compliance** |
+| Q5 `records only` | `enforcement !== "control"` — `templates/trace.html:791` | a **ceiling**, not a finding at all |
+
+Three conclusions, and they are the amendment.
+
+**a. The badge is already right, and reads as wrong.** `reading()`'s first
+branch returns `Reading::Fault` on `violations > 0` and nothing else. It is
+reporting the single fabrication-shaped event on the page. But the badge says
+`1` and Q3 says `1`, they are different `1`s, nothing distinguishes them, and Q4
+puts `11` in the same colour family. *The one event that should alarm a reader
+is the smallest number on the page and is drowned by two larger numbers that
+mean "didn't do everything."*
+
+**b. Rule 3 holds *within* completeness and not *across* the questions.**
+`owed` / `no_data` / `excused` are carefully separated inside Q3's prose. Then
+Q3's tone line reads `e.empty === 0 ? "ok" : "bad"` and paints a shortfall with
+the fault colour anyway.
+
+**c. The page answers one question and the reader has two.**
+
+1. **Legality** — does it compile, is the artifact deliverable? On this pulse,
+   **yes**.
+2. **Ambition** — is the agent doing what its designer hoped? **No**, and that
+   is not a fault.
+
+They are interleaved in one strip with one colour ramp, so a designer-grade
+disappointment reads as a caller-grade defect. That is the "bunch of rejection".
+
+**The specimen page already solved this.** `templates/specimen.html:645`:
+
+> Green means zero **errors**. The 4 pending field(s) are declared gaps with no
+> source yet — each one a standing request for an integration, and **pruning
+> them to reach green would delete the ambition the contract exists to record.**
+
+Same sentence, same repo, one surface away. The trace lacks the frame, not the
+facts.
+
+#### Decisions taken, with the user, before any of this was coded
+
+| # | question | decision |
+|---|---|---|
+| 1 | is "how bad" a separate axis from `whose`? | **Separate.** `Owed` and `Stripped` are both the agent's and only one is damaging; conflating attribution with severity is what produced the problem. → §4.2b |
+| 2 | what replaces `records only`? | **Not a better adjective.** The word makes the platform sound impotent when the fact is "somebody left a thread dangling" — and the reason is already on the wire and discarded. → §4.4 |
+| 3 | split legality from ambition? | **Split.** *"Ideally those things have no divergence but they are orthogonal and in conscious flux as agent versions change."* → §4.5 |
+| 3b | drop the header badge once Row A carries the same finding? | **Keep and label** as Row A's summary, for now. Revisit once the split has been read in anger. |
 
 ## 3. What already exists — read this before writing anything
 
@@ -129,6 +202,47 @@ loops.rs:829  artifact_trace::fields(&agent_name, &graded)   ← the seam
 
 `artifact_trace::fields` has few call sites; check them before widening.
 
+### 4.2b `Finding` — the axis `whose` cannot carry
+
+`Observed::whose()` answers **attribution** and buckets `Owed | Stripped` as
+`"the agent's"`. Both are the agent's; only one is damaging. Attribution
+therefore cannot carry the colour, and a second axis is needed:
+
+```rust
+pub enum Finding { Delivered, Compliance, CapabilityGap, Shortfall, Fault }
+
+impl Observed {
+    pub fn finding(self) -> Finding {
+        match self {
+            Self::Filled           => Finding::Delivered,
+            Self::AbsentByContract => Finding::Compliance,
+            Self::ToolEmpty        => Finding::CapabilityGap,
+            Self::Owed             => Finding::Shortfall,
+            Self::Stripped         => Finding::Fault,
+        }
+    }
+}
+```
+
+`Finding::tone()` is then **the one producer of the colour** (house rule 8), and
+the standing rule it encodes is:
+
+> **Red is reserved for faults.** Shortfall is amber. Capability gap and
+> compliance are neutral. Delivered is neutral.
+
+Consequences to apply with it:
+
+* `templates/trace.html:926` — Q3 stops hardcoding `bad` for `empty > 0` and
+  takes its tone from the worst `Finding` among its fields.
+* `templates/trace.html:957` — the pip distribution stops carrying a tone at
+  all. `weakSourced > 0 ? "bad"` is a verdict smuggled into a description; the
+  verdict moves to a row that can attribute it (§4.5, row 5).
+
+Carry `finding()` on `artifact_trace::Field` alongside `observed`, in the same
+widening as §4.2. Guard it the way the module guards everything else: every
+`Observed` maps to exactly one `Finding`, and `Owed` and `Stripped` must not map
+to the same one — mutate it and watch it go red.
+
 ### 4.3 Retire the prose
 
 Once the token renders, the sentences it replaces should go, or there are two
@@ -140,7 +254,100 @@ answers again. In `templates/trace.html`:
 * Anywhere `refused` reaches a reader as a field-level verdict.
 
 Keep the aggregate sentence if it earns its place, but it must use `stripped`,
-not `unsourced`.
+not `unsourced`. Under §4.5 the surviving aggregate becomes Row A's caption.
+
+### 4.4 The enforcement word — the reason is already on the wire
+
+`records only` collapses **four** states into two. `command_registry` declares:
+
+| `Enforcement` | what it does |
+|---|---|
+| `Control` | refuses the run |
+| `Amend` | alters the artifact before it leaves |
+| `Report` | verdict reaches the caller, unacted |
+| `Metric` | verdict computed and **thrown away** |
+
+`templates/trace.html` tests `b.enforcement === "control"` (lines 791, 831, 966)
+and prints `records only` for the other three. So `Amend` — the mode that *does*
+remove the bad part — reads as impotent, and `Report` (you were told) is
+indistinguishable from `Metric` (discarded).
+
+Worse: `command_registry::GateApplication::why_not_control` is **mandatory** for
+every non-`Control` application. `a_gate_that_cannot_refuse_explains_itself`
+panics without it, on the stated grounds that *"a gate demoted to a metric is a
+decision somebody made, and the reason is what tells a later reader whether it
+was deliberate or drift."* `artifact_trace::Rung` already carries it to the
+client (`src/artifact_trace.rs:96`, filled at line 257).
+
+**The page receives the reason and throws it away, then prints a word that
+sounds like the platform shrugging.** There are two situations under that one
+word and they are distinguishable in data today:
+
+* *a limit that is real* — grounding on `/execute`: nothing can know a field is
+  ungrounded until the model has written it. That is the honest ceiling for a
+  check that happens afterwards.
+* *a promotion nobody has done yet* — the dangling thread. The ratchet
+  `the_discarded_gate_verdicts_are_the_ones_we_know_about` already says the set
+  *"may only shrink. Promoting one to Control is the fix."*
+
+Render consequence, not bookkeeping:
+
+| | chip | full row |
+|---|---|---|
+| `Control` | `can stop it` | refuses the run |
+| `Amend` | `removes the bad part` | (today's `strips and records` already reads well) |
+| `Report` | `tells the caller` | + `why_not_control` |
+| `Metric` | `counted, not acted` | + `why_not_control` |
+
+Only `Metric` is a dangling thread and only `Metric` should carry a tone.
+
+And: **the legend comes out of `<details class="expert">`** (`trace.html:1023`).
+Today the token is unfolded and its gloss is folded, which honours house rule 2
+in the letter and breaks it in effect. A token whose gloss is folded has no
+gloss.
+
+### 4.5 The strip splits — two standards, named
+
+Five questions become two rows plus one description.
+
+**Row A — "Fit to send"** · the caller's standard. Can be green today, and on
+this pulse is.
+
+1. allowed to run · `credit`, `rate_limit`
+2. got its inputs · `attachment`, `input_binding`
+3. **clean of unsourced claims** · `grounding` violations
+
+Row 3 is what the header badge says. The badge **stays and gains a label**
+naming it as Row A's summary (decision 3b); it is not dropped until the split
+has been read in anger.
+
+**Row B — "As designed"** · the designer's standard. Green here is an
+aspiration, and divergence is information rather than failure.
+
+4. did the work · `completeness` owed
+5. sources reachable · fields naming a tool that was never called or cannot run
+   (this is where `weakSourced` goes, per §4.2b)
+6. checks that can act · route enforcement, with `why_not_control` (§4.4)
+
+**Where the numbers came from** · the pip distribution, full width, **no tone**.
+It is a description; it should not render a verdict.
+
+Row B takes the computed caption — the specimen's sentence, ported and derived
+from the `Finding` counts rather than written:
+
+> **Deliverable, below standard.** No unsourced claim left this answer. What is
+> missing is missing: 1 value the agent owed, 5 the world could not supply, 4
+> the contract requires be empty. Pruning the contract to reach green would
+> delete the ambition it exists to record.
+
+The distance between the two rows is the designer's worklist. This is the same
+idea as replacing the create-page wizard (§10) with a live verdict strip:
+**legality is a gate, ambition is a gradient**, and the platform currently only
+has vocabulary for the first.
+
+**Sequencing.** §4.5 lands *after* §4.2 and §4.2b, not with them. It needs
+`Finding` to exist before it can colour anything, and it is the only part of
+this handoff that restructures a panel rather than adding to one.
 
 ## 5. The nuance that must not be lost
 
@@ -229,7 +436,9 @@ were **not** theirs at handoff time. Check `git status` before starting.
 1. A cell holds a value or a token, never a sentence.
 2. **Explain once** — the reason belongs to the *state*, in one legend keyed by
    the token the rows print.
-3. **Absent must look different from bad.**
+3. **Absent must look different from bad** — and, per §2.1, this must hold
+   *across* panels and not only within one. Red is reserved for faults;
+   a shortfall is amber and a capability gap is neutral.
 4. `value · condition · act`, positionally fixed.
 5. If the platform can name what would close a gap, **the name is the control**.
 6. Green = zero errors, not zero pending.
@@ -254,6 +463,8 @@ Full argument: `docs/plans/WHAT_THE_PLATFORM_CAN_REFUSE.md` (read §4 first) and
 
 * **The wizard.** `templates/agent_create.html` has `wizard-panel`,
   `step-indicator`, four steps — against "no wizards, the agent should compile".
+  **Directly related to §4.5:** the legality/ambition split is the same idea,
+  and the create page needs it more than the trace does.
   The compiler exists: `run_publish_checks` returns named checks with severity
   and **is what `Gate::Admission` refuses on**. The create page calls neither it
   nor `validate_agent_card`. Replacing the steps with a live verdict strip is
