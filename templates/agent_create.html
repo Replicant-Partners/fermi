@@ -89,9 +89,9 @@
         background: var(--bg1);
         font-weight: bold;
       }
-      .step-dot.done {
-        color: var(--green);
-      }
+      /* `.step-dot.done` was here, painting a section green for having been
+         walked past. Nothing applies it now — see `goStep` — and leaving the
+         rule behind is an invitation to reintroduce it. */
 
       .step-panel {
         display: none;
@@ -433,6 +433,124 @@
       }
       .check-item.fail {
         color: var(--red);
+      }
+
+      /* ── Two standards, named ────────────────────────────────
+
+         This page used to score itself. `buildReview` held five checks
+         written by hand, in JavaScript, one of which read "Typed output
+         contract compiles — would pass the publish gate".
+
+         It could not know that. `publish_pipeline::run_publish_checks` is
+         what `Gate::Admission` refuses on, and it blocks on far more than a
+         compiled contract: `sample_queries`, `accepts`, `produces`,
+         `valence` and every `typed_tier_violations` finding. So an author
+         could be told they would pass and then be refused — the page
+         promising a verdict it does not compute.
+
+         One producer of a verdict; everything else reads it. The checks
+         below are the platform's, by the platform's own names, fetched from
+         `/api/agents/:id/publish-checks`.
+
+         And `CheckSeverity` already carries the split the artifact trace had
+         to invent: `Error` is legality — the platform refuses — and
+         `Warning` is ambition, reported and never blocking. Green on the
+         second is an aspiration, not a requirement, and pruning ambition to
+         reach it is not a fix. */
+      .verdict {
+        margin-top: 14px;
+      }
+      .vhead {
+        font-size: 0.82rem;
+        line-height: 1.45;
+        padding: 8px 10px;
+        background: var(--bg1);
+        border: 1px solid var(--bg3);
+        color: var(--fg1);
+      }
+      .vhead.ok {
+        border-color: var(--green);
+      }
+      .vhead.no {
+        border-color: var(--red);
+      }
+      .vhead.unknown {
+        border-color: var(--yellow);
+      }
+      .std {
+        margin-top: 10px;
+        border: 1px solid var(--bg2);
+      }
+      .std-h {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 12px;
+        padding: 5px 10px;
+        background: var(--bg1);
+        border-bottom: 1px solid var(--bg2);
+      }
+      .std-n {
+        font-size: 0.78rem;
+        color: var(--yellow);
+        white-space: nowrap;
+      }
+      .std-w {
+        font-size: 0.7rem;
+        color: var(--fg3);
+        text-align: right;
+        line-height: 1.4;
+      }
+      /* value · condition · act, positionally fixed: state, then the
+         platform's name for the check, then its own sentence about it. */
+      .chk {
+        display: grid;
+        grid-template-columns: 14px 200px 1fr;
+        gap: 8px;
+        padding: 4px 10px;
+        font-size: 0.76rem;
+        color: var(--fg2);
+        border-top: 1px solid var(--bg1);
+      }
+      .chk-s {
+        text-align: center;
+      }
+      .chk-n {
+        color: var(--fg3);
+      }
+      .chk.pass .chk-s {
+        color: var(--green);
+      }
+      .chk.fail .chk-s {
+        color: var(--red);
+      }
+      .chk.warn .chk-s {
+        color: var(--yellow);
+      }
+      .std-none {
+        padding: 6px 10px;
+        font-size: 0.74rem;
+        color: var(--fg3);
+      }
+      .vacts {
+        margin-top: 10px;
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      /* The acts here are links, and `.btn` was written for buttons. */
+      .vacts .btn {
+        display: inline-block;
+        text-decoration: none;
+      }
+      /* An unrun check is not a failing check. */
+      .notasked {
+        margin-top: 12px;
+        padding: 8px 10px;
+        border: 1px dashed var(--bg3);
+        font-size: 0.76rem;
+        color: var(--fg3);
+        line-height: 1.5;
       }
 
       .error-msg {
@@ -952,12 +1070,15 @@
           </div>
         </div>
 
-        <!-- ─── Step 6: Review & Create ─── -->
+        <!-- ─── Step 6: Review & compile ─── -->
         <div class="step-panel" id="step-5">
           <div class="form-section">
-            <div class="form-title">Review & Create</div>
+            <div class="form-title">Review & compile</div>
             <div class="review-card" id="review-card"></div>
+            <!-- The values you typed, above. The platform's verdict on them,
+                 below, and only once the platform has been asked. -->
             <div class="checklist" id="checklist"></div>
+            <div class="verdict" id="verdict"></div>
           </div>
           <div class="step-nav">
             <button class="btn" onclick="goStep(4)">&larr; Back</button>
@@ -966,7 +1087,7 @@
               id="create-btn"
               onclick="createAgent()"
             >
-              Create Agent
+              Compile agent
             </button>
           </div>
           <div class="error-msg" id="error-msg"></div>
@@ -976,7 +1097,10 @@
     </div>
 
     <script>
-      let currentStep = 0;
+      // `currentStep` was here. It existed so `goStep` could refuse to move
+      // forward and so the step dots could refuse to be clicked; with the
+      // gating gone nothing reads it, and a variable tracking how far through
+      // a wizard you are is the wizard.
       let selectedProvider = "anthropic";
       let selectedModel = "claude-3-haiku-20240307";
       let selectedEmbeddingProvider = "anthropic";
@@ -1201,52 +1325,57 @@
         body.classList.toggle("open");
       }
 
-      // ─── Step navigation ───
+      // ─── Section navigation ───
+      //
+      // A jump list, not a wizard. Forward motion used to be gated by
+      // `validateStep`, which enforced exactly one rule — a lowercase-slug
+      // agent name — in an `alert()`, and that rule is not one of the
+      // platform's. Six gates and one check, and the check belonged to the
+      // page rather than to `Gate::Admission`.
+      //
+      // So the panels are reachable in any order and nothing blocks. What
+      // decides whether this agent is well-formed is the compiler, and the
+      // compiler is asked by name in `renderVerdict`. The numbers stay
+      // because a long form needs orientation; they no longer stand for
+      // permission.
       function goStep(n) {
-        if (n > currentStep && !validateStep(currentStep)) return;
         document
           .querySelectorAll(".step-panel")
           .forEach((p) => p.classList.remove("active"));
         document
           .querySelectorAll(".step-dot")
           .forEach((d) => d.classList.remove("active"));
-        for (let i = 0; i < n; i++) {
-          document
-            .querySelector(`.step-dot[data-step="${i}"]`)
-            .classList.add("done");
-        }
+        // The `done` painting is gone with the gating that justified it. It
+        // turned every dot before the current one green, and `done` was never
+        // removed on the way back, so walking to the last section painted the
+        // whole indicator green — for sections nobody had filled in and
+        // nothing had checked. Green means zero errors, and no error had been
+        // looked for. The only state left is where you are.
         document.getElementById("step-" + n).classList.add("active");
         document
           .querySelector(`.step-dot[data-step="${n}"]`)
           .classList.add("active");
-        currentStep = n;
         if (n === 3) cbRenderAll();
         if (n === 5) buildReview();
       }
 
       document.querySelectorAll(".step-dot").forEach((d) => {
-        d.addEventListener("click", () => {
-          const target = parseInt(d.dataset.step);
-          if (target <= currentStep || target === currentStep + 1)
-            goStep(target);
-        });
+        d.addEventListener("click", () => goStep(parseInt(d.dataset.step)));
       });
 
-      function validateStep(step) {
-        if (step === 0) {
-          const name = document.getElementById("agent-name").value.trim();
-          if (!name) {
-            alert("Agent name is required");
-            return false;
-          }
-          if (!/^[a-z0-9_-]+$/.test(name)) {
-            alert("Agent name: lowercase, numbers, underscores, hyphens only");
-            return false;
-          }
-          return true;
-        }
-        return true;
-      }
+      // `validateStep` was here. It is gone rather than moved, and the name
+      // format rule went with it.
+      //
+      // It refused any name failing `/^[a-z0-9_-]+$/`. Nothing on the server
+      // enforces that: `create_agent_handler` takes `agent_name` as given.
+      // And the rule is stricter than the platform's own corpus —
+      // `workspace/core.rs` carries a regression test for agent ids of the
+      // shape `efra-ai/05-valuation`, which this regex rejects. A check the
+      // platform does not make, refusing a name the platform does use.
+      //
+      // "A name is required" survives, in `createAgent`, inline on the form
+      // rather than in a modal — not as a verdict but because there is
+      // nothing to POST without one.
 
       // ─── Templates ───
       async function loadTemplates() {
@@ -1475,25 +1604,24 @@
         <div class="review-row"><span class="rk">Dream Budget</span><span class="rv">5 cycles (included)</span></div>
       `;
 
-        const checks = [
-          { label: "Agent name is set", pass: !!name },
-          { label: "Description provided", pass: !!desc },
-          { label: "System prompt configured", pass: !!prompt },
-          { label: "Valid name format", pass: /^[a-z0-9_-]+$/.test(name) },
-          {
-            label: cbCompiled
-              ? "Typed output contract compiles — would pass the publish gate"
-              : "Typed output contract (optional now, required to publish)",
-            pass: !!cbCompiled,
-          },
-        ];
+        // Five hand-written checks used to render here, and one of them
+        // said "Typed output contract compiles — would pass the publish
+        // gate". The page could not know that. `run_publish_checks` also
+        // blocks on `sample_queries`, `accepts`, `produces`, `valence` and
+        // every `typed_tier_violations` finding, so a compiled contract
+        // buys none of the pass this promised — and an author told they
+        // would pass, then refused, has been lied to by the surface that
+        // was supposed to be helping.
+        //
+        // Nothing replaces them here, because nothing here can compute it.
+        // An unrun check is not a failing check, so this says so and stops.
         const cl = document.getElementById("checklist");
-        cl.innerHTML = checks
-          .map(
-            (c) =>
-              `<div class="check-item ${c.pass ? "pass" : "fail"}">${c.pass ? "&#10003;" : "&#10007;"} ${c.label}</div>`,
-          )
-          .join("");
+        cl.innerHTML = `<div class="notasked">The platform has not been asked
+          about this agent yet. <b>Compile</b> saves it as a draft and runs
+          <code>run_publish_checks</code> — the same function
+          <code>Gate::Admission</code> refuses on — then reports every check
+          by name, below.</div>`;
+        document.getElementById("verdict").innerHTML = "";
       }
 
       // Contract builder: see /static/js/widgets/contract-builder.js.
@@ -1562,7 +1690,7 @@
         }
 
         btn.disabled = true;
-        btn.textContent = "Creating...";
+        btn.textContent = "Compiling...";
 
         try {
           const res = await fetch("/api/agents", {
@@ -1572,22 +1700,159 @@
           });
           if (res.ok) {
             const data = await res.json();
-            sucEl.textContent = "Agent created: " + data.agent_name;
+            sucEl.textContent =
+              "Saved as a draft: " +
+              data.agent_name +
+              ". A draft is private until it passes the publish gate.";
             sucEl.style.display = "block";
-            setTimeout(() => {
-              window.location.href = "/dashboard";
-            }, 1500);
-          } else {
-            const err = await res.text();
-            errEl.textContent = err;
-            errEl.style.display = "block";
+            // No redirect. The verdict is the point of pressing the button,
+            // and this page used to leave for `/dashboard` 1.5 seconds after
+            // creating the agent — so the author never saw a single one of
+            // the platform's checks on the thing they had just made.
+            //
+            // The button stays disabled: it is a POST that creates an agent,
+            // and a second press would make a second one. The acts that
+            // follow a compile live in the verdict panel.
+            btn.textContent = "Compiled";
+            await renderVerdict(data.agent_id, data.agent_name);
+            return;
           }
+          const err = await res.text();
+          errEl.textContent = err;
+          errEl.style.display = "block";
         } catch (e) {
           errEl.textContent = "Network error: " + e.message;
           errEl.style.display = "block";
         }
         btn.disabled = false;
-        btn.textContent = "Create Agent";
+        btn.textContent = "Compile agent";
+      }
+
+      // ─── The verdict ───────────────────────────────────────────
+      //
+      // Read, never computed. `/api/agents/:id/publish-checks` returns
+      // `run_publish_checks` — the function `Gate::Admission` refuses on —
+      // and `can_publish`, which is that function's own reduction of it. This
+      // renders both and decides nothing.
+      //
+      // Two standards, because `CheckSeverity` already draws the line:
+      //
+      //   Error   legality — the platform refuses. Must be green.
+      //   Warning ambition — reported, never blocking. Green is a wish.
+      //
+      // Splitting them is the whole point. Rolled together, an author fixing
+      // a default temperature and an author with no output contract are shown
+      // the same red, and "make it all green" becomes advice to prune the
+      // agent's ambition until the page stops complaining.
+      async function renderVerdict(agentId, agentName) {
+        const el = document.getElementById("verdict");
+        const agentHref = "/agent/" + encodeURIComponent(agentId);
+
+        let data = null;
+        try {
+          const r = await fetch(
+            "/api/agents/" + encodeURIComponent(agentId) + "/publish-checks",
+          );
+          if (r.ok) data = await r.json();
+        } catch {}
+
+        // A read that failed is not a pass. Said as the platform's, with the
+        // one act that still works, because the alternative — rendering an
+        // empty check list — reads as an agent with nothing wrong with it.
+        if (!data || !Array.isArray(data.checks)) {
+          el.innerHTML = `<div class="vhead unknown"><b>The agent was saved and its
+            checks could not be read.</b> This says nothing about whether it
+            would publish — the draft exists and the gate has not been
+            reported on.</div>
+            <div class="vacts">
+              <a class="btn" href="${agentHref}">Open ${esc(agentName || "the agent")}</a>
+            </div>`;
+          return;
+        }
+
+        const errs = data.checks.filter((c) => c.severity === "error");
+        const warns = data.checks.filter((c) => c.severity !== "error");
+        const failing = errs.filter((c) => !c.passed);
+        const wanting = warns.filter((c) => !c.passed);
+
+        // `can_publish` comes from the platform. It is not recomputed from
+        // `failing.length` here, even though the two agree today: one
+        // producer of a verdict, and if they ever disagreed the platform
+        // would be right.
+        const ok = !!data.can_publish;
+
+        const head = ok
+          ? wanting.length
+            ? `<b>Compiles, and can publish.</b> Every check the platform refuses on
+               passes. ${wanting.length} advisory check(s) are unmet — those are
+               the agent's ambition, not its legality, and none of them blocks.`
+            : `<b>Compiles, and as designed.</b> Every check passes, blocking and
+               advisory alike.`
+          : failing.length
+            ? `<b>Compiles as a draft — cannot publish yet.</b> ${failing.length}
+               check(s) the platform refuses on are unmet. Each is named below
+               with the platform's own sentence about it; fixing them is the
+               work.`
+            : // `can_publish` is false and no error-severity check reports a
+              // failure. The two come from the same function, so this should be
+              // unreachable — which is why it is stated rather than smoothed
+              // into the sentence above. A page that renders "0 checks unmet"
+              // under "cannot publish" has hidden a disagreement it could have
+              // named, and the platform's answer is the one that governs.
+              `<b>Compiles as a draft — cannot publish yet, and the reason was not
+               reported.</b> The platform refuses the publish and named no failing
+               check. Both come from <code>run_publish_checks</code>, so this is a
+               platform disagreement rather than anything about your agent — worth
+               reporting.`;
+
+        const rows = (list) =>
+          list
+            .map(
+              (c) => `<div class="chk ${
+                c.passed ? "pass" : c.severity === "error" ? "fail" : "warn"
+              }">
+                <span class="chk-s">${c.passed ? "&#10003;" : "&#10007;"}</span>
+                <span class="chk-n"><code>${esc(c.name)}</code></span>
+                <span class="chk-m">${esc(c.message || "")}</span>
+              </div>`,
+            )
+            .join("");
+
+        const std = (name, words, list) => `<div class="std">
+          <div class="std-h">
+            <span class="std-n">${name}</span>
+            <span class="std-w">${words}</span>
+          </div>
+          ${
+            list.length
+              ? rows(list)
+              : `<div class="std-none">The platform reported no checks at this
+                 severity.</div>`
+          }
+        </div>`;
+
+        el.innerHTML = `
+          <div class="vhead ${ok ? "ok" : "no"}">${head}</div>
+          ${std(
+            "Fit to publish",
+            `the platform's standard — <code>Gate::Admission</code> refuses on these`,
+            errs,
+          )}
+          ${std(
+            "As designed",
+            `the designer's standard. Advisory and never blocking — green here is an
+             aspiration, and pruning the agent to reach it is not a fix`,
+            warns,
+          )}
+          <div class="vacts">
+            <a class="btn btn-primary" href="${agentHref}">Open ${esc(
+              agentName || "the agent",
+            )}</a>
+            <a class="btn" href="/agents/new">Compile another</a>
+          </div>
+          <div class="std-none">Publishing happens on the agent's own page, where
+            the gate runs again at the moment it matters — these checks are a
+            reading, not a reservation.</div>`;
       }
 
       // ─── Prefill from xamanEK session ───────────────────────────
