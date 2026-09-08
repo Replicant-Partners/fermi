@@ -452,8 +452,8 @@
 /* Bits the wizard's own stylesheet provided and a standalone page must not
    assume. Deliberately minimal — this is not a second design system, it is the
    handful of primitives the widget's markup references. */
-.cb-standalone .form-group { margin-bottom: 14px; }
-.cb-standalone .form-group label {
+:is(.cb-standalone, .cb-root) .form-group { margin-bottom: 14px; }
+:is(.cb-standalone, .cb-root) .form-group label {
   display: block;
   font-size: 0.72rem;
   color: var(--fg3);
@@ -461,10 +461,10 @@
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
-.cb-standalone .form-group input,
-.cb-standalone .form-group select,
-.cb-standalone .form-group textarea,
-.cb-standalone .cb-field-row input {
+:is(.cb-standalone, .cb-root) .form-group input,
+:is(.cb-standalone, .cb-root) .form-group select,
+:is(.cb-standalone, .cb-root) .form-group textarea,
+:is(.cb-standalone, .cb-root) .cb-field-row input {
   width: 100%;
   background: var(--bg0);
   border: 1px solid var(--bg2);
@@ -520,9 +520,9 @@
 }
 .cb-prompt-minimal .cb-copybtn { float: right; margin-left: 8px; }
 /* ─────────────────────────────────────────────────────────────── */
-.cb-standalone .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.cb-standalone .hint { font-size: 0.7rem; color: var(--fg3); line-height: 1.5; }
-.cb-standalone .info-box {
+:is(.cb-standalone, .cb-root) .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+:is(.cb-standalone, .cb-root) .hint { font-size: 0.7rem; color: var(--fg3); line-height: 1.5; }
+:is(.cb-standalone, .cb-root) .info-box {
   border: 1px solid var(--bg2);
   background: var(--bg0);
   padding: 10px 12px;
@@ -535,7 +535,7 @@
    button on the platform. The standalone page links common.css and
    components.css for exactly this reason — the first version did not, which is
    why nav.js and every primitive rendered as unstyled text. */
-.cb-standalone .collapsible-header {
+:is(.cb-standalone, .cb-root) .collapsible-header {
   cursor: pointer;
   font-size: 0.74rem;
   color: var(--fg3);
@@ -543,8 +543,8 @@
   border-top: 1px solid var(--bg2);
   margin-top: 14px;
 }
-.cb-standalone .collapsible-body { display: none; }
-.cb-standalone .collapsible-body.open { display: block; }
+:is(.cb-standalone, .cb-root) .collapsible-body { display: none; }
+:is(.cb-standalone, .cb-root) .collapsible-body.open { display: block; }
 
 /* ── Tool-driven field picker ───────────────────────────────────────
    The tool decides which fields are available on a sourced block. A field

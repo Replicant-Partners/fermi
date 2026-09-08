@@ -221,3 +221,133 @@ fn the_tab_ordering_comment_stays_template_literal_safe() {
          template literal rather than being read as text.\n\n{comment}"
     );
 }
+
+/// **The standalone widget scripts parse too.**
+///
+/// # The gap this closes
+///
+/// The suite above exists for one defect: an HTML comment inside a JavaScript
+/// template literal, containing backticks, which end the literal. Its own
+/// header describes it verbatim.
+///
+/// It scans `templates/` — inline `<script>` blocks — and the widgets moved
+/// out of the templates. `static/js/widgets/*.js` is where the large template
+/// literals live now: `contract-builder.js` builds its whole markup in one,
+/// and `nav.js` builds the navigation in another.
+///
+/// So the check that names this bug did not cover the files where it recurs,
+/// and it recurred: adding two links to `nav.js` with an explanatory HTML
+/// comment above them — backticks around the link names — ended the template
+/// literal and broke the navigation on every page. `node --check` caught it in
+/// seconds; nothing in the suite would have.
+///
+/// That is the third time in this codebase's recent history that a scan was
+/// only as good as the list it scanned: `TRUST_MODULES` did not list
+/// `port_trust`, and the trace's fold check searched a 6,000-character window
+/// that no longer reached its target.
+///
+/// # Why `node --check` rather than the inline linter
+///
+/// These are whole files rather than extracted fragments, so there is nothing
+/// to extract — the parser can read them directly, which removes the
+/// extraction step that the regex version of the sibling check got wrong.
+#[test]
+fn every_widget_script_parses() {
+    if !have_node() {
+        eprintln!(
+            "SKIPPED: `node` is not on PATH, so the widget scripts were not \
+             syntax-checked. This is an absence of a check, not a passing one."
+        );
+        return;
+    }
+
+    let dir = repo().join("static/js");
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    let mut stack = vec![dir];
+    while let Some(d) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().and_then(|s| s.to_str()) == Some("js") {
+                files.push(p);
+            }
+        }
+    }
+
+    assert!(
+        files.len() >= 10,
+        "only found {} scripts under static/js — the walk is broken, which \
+         would make this vacuously pass",
+        files.len()
+    );
+
+    let mut broken: Vec<String> = Vec::new();
+    for f in &files {
+        let out = Command::new("node")
+            .arg("--check")
+            .arg(f)
+            .current_dir(repo())
+            .output()
+            .expect("run node --check");
+        if !out.status.success() {
+            broken.push(format!(
+                "{}\n{}",
+                f.strip_prefix(repo()).unwrap_or(f).display(),
+                String::from_utf8_lossy(&out.stderr)
+            ));
+        }
+    }
+
+    assert!(
+        broken.is_empty(),
+        "{} widget script(s) do not parse. A template literal containing a \
+         stray backtick is the usual cause, and an HTML comment inside one is \
+         the usual place — inside a template literal a comment is string \
+         content, and a backtick in it ends the string.\n\n{}",
+        broken.len(),
+        broken.join("\n\n")
+    );
+}
+
+/// **The falsifier for the widget scan.**
+///
+/// The original bug, in the shape it actually took, put in front of the same
+/// parser. Without this the walk above could find zero files, or `node --check`
+/// could be reporting success for something it never read, and the suite would
+/// stay green either way.
+#[test]
+fn the_widget_scan_sees_a_backtick_inside_a_comment_inside_a_template_literal() {
+    if !have_node() {
+        eprintln!("SKIPPED: no node on PATH.");
+        return;
+    }
+
+    let dir = std::env::temp_dir().join(format!("fermi-widget-lint-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let bad = dir.join("bad.js");
+    // Exactly the shape: a comment inside a template literal, with backticks.
+    std::fs::write(
+        &bad,
+        "const MARKUP = `\n  <!-- `New` and `Contracts` were not navigable -->\n  <a href=\"/x\">x</a>\n`;\n",
+    )
+    .expect("write fixture");
+
+    let out = Command::new("node")
+        .arg("--check")
+        .arg(&bad)
+        .output()
+        .expect("run node --check");
+
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert!(
+        !out.status.success(),
+        "`node --check` accepted a template literal ended by a backtick inside \
+         an HTML comment. That is the defect this whole file exists for, and if \
+         the parser does not object then the scan above proves nothing."
+    );
+}

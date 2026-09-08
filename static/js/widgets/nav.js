@@ -37,6 +37,14 @@ const Nav = {
             <span class="nav-group-label">compose</span>
             <a href="/bestiary" class="${current === "bestiary" ? "active" : ""}">Bestiary</a>
             <a href="/apps" class="${current === "apps" ? "active" : ""}">Apps</a>
+            <!-- New and Contracts were reachable and not navigable. Six
+                 pages link to /agents/new and one links to /contracts, so
+                 neither was orphaned — but the platform's primary verb had no
+                 entry in the persistent nav, which meant you could only start
+                 creating from somewhere that already thought to offer it.
+                 Both sit in the compose group because that is what the group is for. -->
+            <a href="/agents/new" class="${current === "agents-new" ? "active" : ""}">New</a>
+            <a href="/contracts" class="${current === "contracts" ? "active" : ""}">Contracts</a>
           </span>
           <span class="nav-group">
             <span class="nav-group-label">curate</span>

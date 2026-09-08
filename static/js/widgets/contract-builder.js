@@ -31,7 +31,7 @@ const ContractBuilder = (() => {
     return d.innerHTML.replace(/"/g, "&quot;");
   };
 
-  const MARKUP = `          <div class="form-section">
+  const MARKUP = `          <div class="form-section cb-root">
         <div class="form-title">Typed Output Contract</div>
 
         <div class="info-box">

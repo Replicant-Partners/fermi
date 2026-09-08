@@ -150,3 +150,107 @@ fn the_table_still_supports_what_the_headless_check_asserts() {
         both
     );
 }
+
+/// **The widget must be themed wherever it mounts.**
+///
+/// # The bug this pins
+///
+/// `contract-builder.css` gave the widget's form controls their background and
+/// colour under `.cb-standalone`, and `.cb-standalone` existed on exactly one
+/// element in the codebase: the `<body>` of `templates/contract_builder.html`.
+///
+/// The widget is injected by JavaScript into `specimen.html` and
+/// `agent_create.html` as well. Both load the stylesheet; neither has the
+/// class. So every input the builder rendered on those two pages had **no
+/// background at all** and fell back to the user agent default — white fields
+/// in a dark theme, and only on the pages where the widget is actually used.
+///
+/// Most of the controls carry no class of their own (`<input value="...">`
+/// inside a `cb-` container), so no class-based selector reaches them. The
+/// theming has to hang off an ancestor, and the ancestor was wrong.
+///
+/// This is the fourth bug of one family in this widget. `check_contract_builder.js`
+/// opens by naming three: tabs paired to panels by index, **a page missing its
+/// stylesheets**, and a backtick that ended a template literal. All four are
+/// "the code runs, the markup is right, and it looks wrong" — which no syntax
+/// check sees.
+///
+/// # Why this is static rather than a computed style
+///
+/// The right assertion is `getComputedStyle(input).backgroundColor`, and the
+/// harness this file drives uses a DOM stub with no layout. A real-browser
+/// check exists (`scripts/check_pages_headless.js`) and would be the better
+/// home once it mounts the builder.
+///
+/// Until then this pins the invariant that actually broke: **the class the
+/// widget puts on its root must be the class the stylesheet themes its
+/// controls under.** That is the pairing that came apart, and it is checkable
+/// from the two files.
+#[test]
+fn the_widget_root_class_is_the_class_its_controls_are_themed_under() {
+    let js = std::fs::read_to_string(repo().join("static/js/widgets/contract-builder.js"))
+        .expect("contract-builder.js");
+    let css = std::fs::read_to_string(repo().join("static/css/contract-builder.css"))
+        .expect("contract-builder.css");
+
+    // The widget's outermost element. `form-section` is generic and shared with
+    // host pages, which is why the theming could not hang off it.
+    assert!(
+        js.contains("cb-root"),
+        "the widget no longer puts `cb-root` on its outermost element. Its \
+         controls are then reachable only through an ancestor it does not \
+         control, which is how they came to be white on every page except the \
+         one dedicated to them."
+    );
+
+    // The rule that themes form CONTROLS must reach that root.
+    //
+    // Located by selector rather than by the first `background: var(--bg0)` in
+    // the file — which is `.cb-shape-row`, a container, and finding it first is
+    // how the first version of this test reported a failure that was not there.
+    let lines: Vec<&str> = css.lines().collect();
+    let control_selector = lines.iter().position(|l| {
+        l.contains("cb-root")
+            && (l.contains(" input") || l.contains(" select") || l.contains(" textarea"))
+    });
+    let at = control_selector.unwrap_or_else(|| {
+        panic!(
+            "no selector mentions both `cb-root` and a form control, so the \
+             widget's inputs are themed only under some other ancestor. It \
+             mounts into `specimen.html` and `agent_create.html` as well as its \
+             own page, and a selector that reaches only one of them leaves the \
+             other two with user-agent-default white inputs."
+        )
+    });
+
+    // …and that rule has to actually set a background, or the selector reaches
+    // the controls and says nothing about how they look.
+    let body: String = lines[at..]
+        .iter()
+        .take_while(|l| !l.trim_start().starts_with('}'))
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        body.contains("background:"),
+        "the control selector reaches `cb-root` and sets no background, which \
+         is the defect verbatim: a themed-looking rule that leaves the field \
+         white.\n\n{body}"
+    );
+
+    // And the pages that mount it must load the stylesheet at all — the
+    // sibling bug named in the harness header.
+    for page in [
+        "templates/contract_builder.html",
+        "templates/agent_create.html",
+        "templates/specimen.html",
+    ] {
+        let body = std::fs::read_to_string(repo().join(page)).unwrap_or_default();
+        assert!(
+            body.contains("contract-builder.css"),
+            "{page} mounts the contract builder and does not link \
+             `contract-builder.css`. That exact defect is one of the three in \
+             this widget's history."
+        );
+    }
+}
