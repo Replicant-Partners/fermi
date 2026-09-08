@@ -325,11 +325,42 @@ pub async fn list_workspace_agents_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // What each member can be trusted about, in the same words the specimen page
+    // and the artifact trace use.
+    //
+    // Ports say two agents CAN connect. They do not say whether what flows
+    // across is worth consuming, and that is the question a person wiring a
+    // pipeline is actually asking. `6 resolved, 4 pending` is the sentence they
+    // need before adding a stage.
+    //
+    // Read from `field_state::Declared` rather than counted here, so this panel
+    // cannot drift from the two surfaces that already print those tokens — the
+    // drift that had `unsourced` meaning a declared kind on one page and a
+    // violation on another.
+    let dispatchable: std::collections::HashSet<&'static str> =
+        fermi::agent_backend::tools::dispatchable_tool_names()
+            .into_iter()
+            .collect();
+    let contract_states = |agent_name: &str| -> Value {
+        let mut counts = std::collections::BTreeMap::<&'static str, usize>::new();
+        for c in fermi::grounding_trust::contracts_for(agent_name) {
+            let d = fermi::field_state::Declared::of(&c.grounding, |t| dispatchable.contains(t));
+            *counts.entry(d.token()).or_default() += 1;
+        }
+        // An agent with no contract gets an empty map, not zeroes. Absent and
+        // "declared nothing wrong" are different findings, and 81 of 102 agents
+        // are in the first.
+        json!(counts)
+    };
+
     let agent_list: Vec<Value> = rows
         .iter()
         .map(|r| {
+            let agent_name = r.try_get::<String, _>("agent_name").unwrap_or_default();
             json!({
                 "agent_id": r.try_get::<uuid::Uuid, _>("agent_id").ok(),
+                // Per-field contract states, keyed by the shared token.
+                "contract_states": contract_states(&agent_name),
                 "agent_name": r.try_get::<String, _>("agent_name").unwrap_or_default(),
                 "display_alias": r.try_get::<Option<String>, _>("display_alias").unwrap_or(None),
                 "agent_type": r.try_get::<String, _>("agent_type").unwrap_or_default(),

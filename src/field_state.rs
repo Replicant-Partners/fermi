@@ -470,4 +470,63 @@ mod tests {
              page's green count would be counting a permanent gap as healthy"
         );
     }
+
+    /// **Every surface that prints a contract state reads it from here.**
+    ///
+    /// Three surfaces show a field's contract state: the specimen page, the
+    /// workspace Team tab, and (via the trace) the artifact page. Before this
+    /// module the specimen had the five-way match inline and the trace had its
+    /// own words, and they drifted — `unsourced` meaning a declared kind on one
+    /// and a violation on the other.
+    ///
+    /// A fourth copy is the natural next step for anyone adding a panel: the
+    /// match is six lines and inlining it is faster than finding this module. So
+    /// the call sites are scanned, and a hand-rolled mapping is what the scan
+    /// looks for.
+    ///
+    /// Deliberately not a check that they mention `field_state` — a file can
+    /// import it and still spell its own tokens beside it, which is exactly how
+    /// two vocabularies coexisted in one codebase for as long as they did.
+    #[test]
+    fn no_surface_maps_grounding_to_a_state_itself() {
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        // The files that render contract states today. Named rather than
+        // globbed: the population is small and a glob would either miss a
+        // template or flag every file that mentions a token in prose.
+        const SURFACES: &[&str] = &[
+            "src/handlers/specimen.rs",
+            "src/handlers/workspace/core.rs",
+        ];
+
+        for rel in SURFACES {
+            let body = std::fs::read_to_string(repo.join(rel))
+                .unwrap_or_else(|e| panic!("{rel}: {e}"));
+            let code: String = body
+                .lines()
+                .filter(|l| !l.trim_start().starts_with("//"))
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            assert!(
+                code.contains("field_state::Declared::of"),
+                "{rel} renders contract states and does not call \
+                 `field_state::Declared::of`. One producer of the verdict, or \
+                 the surfaces drift — which is what put `unsourced` on two pages \
+                 meaning two things."
+            );
+
+            // A hand-rolled mapping is a `Grounding::` match beside a state
+            // token. Either alone is innocent; together they are a second copy.
+            let matches_grounding = code.contains("Grounding::Unsourced")
+                || code.contains("Grounding::Narrative")
+                || code.contains("Grounding::Inferred");
+            let spells_tokens = code.contains("\"pending\"") || code.contains("\"narrative\"");
+            assert!(
+                !(matches_grounding && spells_tokens),
+                "{rel} matches on `Grounding::` AND spells a state token. That \
+                 is the five-way match inlined again beside the shared one, and \
+                 the two will disagree the first time a state is added."
+            );
+        }
+    }
 }

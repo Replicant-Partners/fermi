@@ -1010,6 +1010,12 @@
         color: var(--fg0);
       }
 
+      .team-cap-trust{margin-top:4px;display:flex;flex-wrap:wrap;gap:6px;align-items:baseline;}
+      .team-cs{font-size:0.68rem;color:var(--fg3);border:1px solid var(--bg3);
+               border-radius:2px;padding:1px 5px;}
+      .team-cs.bad{color:var(--red,#fb4934);border-color:var(--red,#fb4934);}
+      .team-cs.none{border:none;padding:0;color:var(--fg4);font-style:italic;}
+
       /* ─── Team tab ───────────────────────────────────────────────────── */
       .team-section-title { font-size:0.72rem; color:var(--aqua); text-transform:uppercase;
         letter-spacing:0.5px; margin-bottom:4px; }
@@ -4038,6 +4044,29 @@
                 ...feedsTo.map(b => `<span class="team-compat-to" title="Accepts what this agent produces">→ ${tEsc(b.display_alias || b.agent_name)}</span>`),
               ].join("");
 
+              // What this member can be TRUSTED about, beside what it can be
+              // wired to.
+              //
+              // Ports say two agents can connect; they say nothing about
+              // whether what flows across is worth consuming. A stage whose
+              // every field is `pending` accepts and produces perfectly well
+              // and carries nothing anyone can rely on.
+              //
+              // Same tokens as the specimen page and the artifact trace, from
+              // `field_state::Declared` on the server. `error` is shown first
+              // and coloured because it is the one state that is a defect: a
+              // contract naming a tool the platform cannot dispatch, so that
+              // field can never settle.
+              const cs = a.contract_states || {};
+              const ORDER = ["error", "resolved", "pending", "derived", "inferred", "narrative"];
+              const csParts = ORDER.filter(k => cs[k]).map(k =>
+                `<span class="team-cs ${k === "error" ? "bad" : ""}">${cs[k]} ${tEsc(k)}</span>`);
+              const trust = csParts.length
+                ? `<div class="team-cap-trust"><span class="team-cap-label">trusted about</span>${csParts.join("")}</div>`
+                : `<div class="team-cap-trust"><span class="team-cap-label">trusted about</span>
+                     <span class="team-cs none">no contract — nothing about this member's
+                     output is checked</span></div>`;
+
               return `<div class="team-cap-row">
                 <a class="team-cap-name" href="/specimen/${encodeURIComponent(a.agent_name)}" target="_blank">${tEsc(name)}</a>
                 <div class="team-cap-type">${tEsc(a.agent_type)}</div>
@@ -4046,6 +4075,7 @@
                   <span class="team-cap-arrow">→</span>
                   <span class="team-cap-label">produces</span>${osidChip}
                 </div>
+                ${trust}
                 ${compat ? `<div class="team-cap-compat">${compat}</div>` : ""}
               </div>`;
             }).join("");
@@ -4059,7 +4089,7 @@
           </div>
           <div class="team-section" style="margin-top:24px">
             <div class="team-section-title">Team capabilities</div>
-            <div class="team-section-sub">What each member accepts and produces. The coordinator uses this at runtime to decide how to route — you don’t wire these together manually.</div>
+            <div class="team-section-sub">What each member accepts and produces, and what it can be trusted about. Ports say two members <em>can</em> connect; the contract states say whether what flows across is worth consuming. The coordinator uses both at runtime to decide how to route — you don’t wire these together manually.</div>
             <div id="team-caps">${capRows}</div>
           </div>`;
       }
