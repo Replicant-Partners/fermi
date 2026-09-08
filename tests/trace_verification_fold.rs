@@ -805,7 +805,32 @@ fn the_summary_is_a_strip_and_the_expert_views_carry_their_headlines() {
     // fails on a comment. It already did, at 3000, four characters short of the
     // line it was looking for.
     let body: String = src[at..].chars().take(6000).collect();
-    for (name, what) in [("loopsFed(d)", "the loops"), ("ladder(d)", "the ladder")] {
+    // `ladder(d)` was here and is gone — deliberately, and this is the record.
+    //
+    // Three of the ladder's five rungs were `scope: "platform"` and the page
+    // printed them as "standing clock — answered platform-wide, not for this
+    // artifact": three rows saying "not here". The other two, grounding and
+    // binding, are the two the questions strip already answers, and the ceiling
+    // the ladder computed is stated in question five.
+    //
+    // So a reader met two five-row panels about trust, adjacent, in different
+    // vocabularies, labelling the same gate "refused · records only" in one and
+    // "RECORDS ONLY · CEILING" in the other. Nothing contradicted; it read as
+    // though everything did. Folding it was the previous remedy and it was not
+    // enough — a second answer to the same question is confusing whether or not
+    // it is collapsed.
+    //
+    // The ladder's real artifact is `src/ladder.rs`, which maps the paper's five
+    // rungs to the modules that answer them, with tests. A platform-wide
+    // taxonomy belongs on a platform surface, not on one pulse.
+    assert!(
+        !body.contains("ladder(d)"),
+        "the verification ladder is being rendered on the artifact page again. \
+         Three of its rungs are not about this artifact and the other two \
+         duplicate the questions strip; putting it back gives a reader two \
+         panels answering one question in two vocabularies."
+    );
+    for (name, what) in [("loopsFed(d)", "the loops")] {
         assert!(
             body.contains("expert(") && body.contains(name),
             "{what} is no longer part of the folded expert view. It is true, it is \
@@ -836,7 +861,11 @@ fn the_summary_is_a_strip_and_the_expert_views_carry_their_headlines() {
          landed — and it was three stacked sentences two folds down."
     );
 
-    for head in ["loopsHead", "ladderHead"] {
+    // `substrateHead`, formerly `ladderHead`: the fold it summarises now holds
+    // only the substrate block, and its headline still counts the checkpoints
+    // on the route — which is the number a reader is deciding whether to open
+    // it for.
+    for head in ["loopsHead", "substrateHead"] {
         let at = body
             .find(&format!("const {head} = "))
             .unwrap_or_else(|| panic!("`{head}` is gone, so a fold has no summary"));
