@@ -1,0 +1,97 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# DPP Composition — Bill of Materials (BOM)
+# Owner: R&D / formulation
+# Lifecycle: changes when the recipe changes (sourcing, reformulation)
+# Source: can be imported from SimOps process output, ERP, or lab analysis
+#
+# This is separate from claims.yaml (what you say about the product).
+# compose_lenses reads both: BOM for context, claims for what to render.
+#
+# DATA: [SYNTHETIC] — structurally representative only.
+# ─────────────────────────────────────────────────────────────────────────────
+
+product_id: precision_kombucha_hibiscus_f2
+display_name: "Precision Kombucha — Hibiscus, Cold F2"
+sku: PKH-F2-330
+format: cold_brew_ready_to_drink
+bom_version: "1.0"
+
+serving:
+  volume_ml: 330
+  servings_per_unit: 1
+
+# ── Ingredients (descending weight order) ────────────────────────────────────
+ingredients:
+  - id: fermented_sweet_tea
+    display_name: "Fermented sweet tea"
+    category: base
+    composition_pct: 91.2          # [SYNTHETIC]
+    sub_components:
+      - { id: black_tea,           pct: 0.8,  notes: "Camellia sinensis" }
+      - { id: cane_sugar_residual, pct: 2.1,  notes: "post-fermentation residual" }
+      - { id: water,               pct: 88.3, notes: "" }
+
+  - id: hibiscus_infusion
+    display_name: "Hibiscus infusion"
+    botanical: "Hibiscus sabdariffa L."
+    category: botanical_infusion
+    composition_pct: 8.5           # [SYNTHETIC]
+    notes: "Cold-steeped dried hibiscus calyces"
+
+  - id: live_cultures
+    display_name: "Live cultures"
+    category: processing_culture
+    composition_pct: trace
+    declared_organisms:
+      - { id: acetobacter_xylinum,        common: "Kombucha acetobacter" }
+      - { id: brettanomyces_bruxellensis, common: "Kombucha yeast" }
+    cfu_per_ml_at_pack: 1.2e6     # [SYNTHETIC]
+
+  - id: citric_acid
+    display_name: "Citric acid"
+    category: acidulant
+    composition_pct: 0.3          # [SYNTHETIC]
+    additive_codes: { eu: "E330", cn: "柠檬酸 (GB 2760)" }
+
+# ── Nutrition per 330 ml serving ─────────────────────────────────────────────
+# [SYNTHETIC] — verify against actual lab analysis
+nutrition_per_serving:
+  energy_kcal:         38
+  energy_kj:          159
+  fat_g:              0.0
+  saturated_fat_g:    0.0
+  carbohydrate_g:      9.2
+  of_which_sugars_g:   8.8
+  fibre_g:             0.2
+  protein_g:           0.2
+  salt_g:              0.01
+  vitamin_c_mg:       14.2
+
+# ── Physical parameters ───────────────────────────────────────────────────────
+physical:
+  ph_at_pack:      3.1           # [SYNTHETIC]
+  alcohol_abv_pct: 0.4           # [SYNTHETIC] — non-alcoholic in all 3 markets
+  colour:          deep_ruby_red
+  carbonation:     mild_effervescent
+  shelf_life_days: 180
+  storage:         refrigerated_2_8c
+
+# ── Allergens ─────────────────────────────────────────────────────────────────
+allergens:
+  present:     []
+  may_contain: []
+  gluten_free: true
+  vegan:       true
+
+# ── Functional compounds ──────────────────────────────────────────────────────
+functional_compounds:
+  - { id: anthocyanins,        source: hibiscus_infusion,    mg_per_serving: 18.5 }
+  - { id: vitamin_c,           source: hibiscus_infusion,    mg_per_serving: 14.2 }
+  - { id: acetic_acid,         source: fermented_sweet_tea,  mg_per_serving: 120  }
+  - { id: lactic_acid,         source: fermented_sweet_tea,  mg_per_serving:  85  }
+
+# ── SimOps link ───────────────────────────────────────────────────────────────
+# The production process that generates this composition lives in SimOps.
+# The process YAML (F1 + F2 fermentation) feeds into this BOM.
+simops_process: "scoby_kombucha_v2"
+simops_feature_of_interest: "xid:platform/ambu-001"

@@ -327,18 +327,30 @@ pub async fn compare_lenses_handler(
         .as_deref()
         .unwrap_or("precision_kombucha_hibiscus_f2")
         .to_string();
+    // Composition fallback chain:
+    //   1. workspace: dpp/composition.yaml              (new DPP layout)
+    //   2. workspace: regulatory-lens/sku/{id}.yaml     (legacy)
+    //   3. platform:  apps/adaptogen-lab/dpp/composition.yaml  (new)
+    //   4. platform:  apps/adaptogen-lab/regulatory-lens/sku/{id}.yaml  (legacy)
     let ws_comp_path = format!("regulatory-lens/sku/{product_id}.yaml");
     let platform_comp_path = format!("apps/adaptogen-lab/regulatory-lens/sku/{product_id}.yaml");
     let git = state.workspace_git.clone();
     let slug_c = slug.clone();
     let comp_bytes = tokio::task::spawn_blocking(move || {
-        git.read_file_bytes(&slug_c, &ws_comp_path).or_else(|_| {
-            std::fs::read(&platform_comp_path).map_err(|e| {
-                agent_bestiary_ontology::OntologyError::RepoNotFound(format!(
-                    "platform fallback not found at {platform_comp_path}: {e}"
-                ))
+        git.read_file_bytes(&slug_c, "dpp/composition.yaml")
+            .or_else(|_| git.read_file_bytes(&slug_c, &ws_comp_path))
+            .or_else(|_| {
+                std::fs::read("apps/adaptogen-lab/dpp/composition.yaml").map_err(|e| {
+                    agent_bestiary_ontology::OntologyError::RepoNotFound(e.to_string())
+                })
             })
-        })
+            .or_else(|_| {
+                std::fs::read(&platform_comp_path).map_err(|e| {
+                    agent_bestiary_ontology::OntologyError::RepoNotFound(format!(
+                        "platform fallback not found at {platform_comp_path}: {e}"
+                    ))
+                })
+            })
     })
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
@@ -355,6 +367,25 @@ pub async fn compare_lenses_handler(
             format!("Composition parse error: {e}"),
         )
     })?;
+
+    // Try to read source_claims from a separate claims.yaml first.
+    // This is the new architecture: BOM and claims are separate documents.
+    // Falls back to source_claims embedded in the composition YAML for compatibility.
+    let claims_bytes = {
+        let git2 = state.workspace_git.clone();
+        let slug2 = slug.clone();
+        tokio::task::spawn_blocking(move || {
+            git2.read_file_bytes(&slug2, "dpp/claims.yaml")
+                .or_else(|_| {
+                    std::fs::read("apps/adaptogen-lab/dpp/claims.yaml").map_err(|e| {
+                        agent_bestiary_ontology::OntologyError::RepoNotFound(e.to_string())
+                    })
+                })
+        })
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok() // None if not found — fall back to composition
+    };
 
     let source_claims: Vec<serde_json::Value> =
         if let Some(ref overrides) = req.override_source_claims {
@@ -387,7 +418,17 @@ pub async fn compare_lenses_handler(
                 }
             }
             base
+        } else if let Some(ref cb) = claims_bytes {
+            // New: read source_claims from the separate claims.yaml document.
+            let claims_doc: serde_json::Value =
+                serde_yaml::from_slice(cb).unwrap_or(serde_json::Value::Null);
+            claims_doc
+                .get("source_claims")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default()
         } else {
+            // Legacy: source_claims embedded directly in the composition YAML.
             composition
                 .get("source_claims")
                 .and_then(|v| v.as_array())

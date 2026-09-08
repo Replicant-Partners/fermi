@@ -1,0 +1,47 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# DPP Claims — Label / Regulatory Claims
+# Owner: marketing / regulatory affairs
+# Lifecycle: changes when regulatory strategy changes, not when recipe changes
+#
+# These are candidate claims run through the regulatory lenses (EU, US, CN).
+# The compare_lenses action reads this file + composition.yaml and returns
+# a grounded comparison showing which claims are allowed in each market.
+#
+# Claim status lifecycle:
+#   draft → under_review → endorsed → archived
+# ─────────────────────────────────────────────────────────────────────────────
+
+product_id: precision_kombucha_hibiscus_f2
+claims_version: "1.0"
+bom_ref: "composition.yaml"       # which BOM these claims are for
+
+source_claims:
+  - id: live_cultures_present
+    candidate_text: "Contains live cultures"
+    claim_pressure: high
+    status: draft
+    notes: "Factual descriptor — CFU count substantiated by lot testing"
+
+  - id: antioxidant_character
+    candidate_text: "Naturally rich in antioxidants"
+    claim_pressure: medium
+    status: draft
+    notes: "Anthocyanins from hibiscus; vitamin C also present"
+
+  - id: hibiscus_wellness
+    candidate_text: "Hibiscus — traditionally used for wellbeing"
+    claim_pressure: high
+    status: draft
+    notes: "Traditional use reference — not a clinical health claim"
+
+  - id: fermentation_process
+    candidate_text: "Naturally fermented using traditional kombucha culture"
+    claim_pressure: low
+    status: draft
+    notes: "Process descriptor — factually accurate"
+
+  - id: low_sugar
+    candidate_text: "Low in sugar"
+    claim_pressure: medium
+    status: draft
+    notes: "8.8g per 330ml serving — verify threshold per market"

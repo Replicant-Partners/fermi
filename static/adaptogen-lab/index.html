@@ -265,13 +265,35 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
     </div>
   </div>
 
-  <!-- Label / Composition YAML editor -->
+  <!-- Label / Claims + BOM YAML editors -->
   <div class="sb-panel hidden" id="tab-claims">
-    <div class="sh"><span class="sh-label">Composition</span><span class="sh-rule"></span></div>
+    <div class="sh"><span class="sh-label">Claims</span><span class="sh-rule"></span><span style="font-size:9px;color:var(--t3)">dpp/claims.yaml</span></div>
+    <div style="font-size:10px;color:var(--t2);margin-bottom:10px;line-height:1.5">
+      What you want to <em>say</em> about the product. Edit the source claims, save, and run the regulatory comparison to see how each claim renders across markets.
+    </div>
     <div id="yaml-editor-container">
       <div class="yaml-not-connected">
         <strong>No workspace connected.</strong><br><br>
-        Select a product workspace from the Products tab. The composition YAML — the canonical DPP document — will load here for editing.
+        Select a workspace from the Products tab.
+      </div>
+    </div>
+
+    <div class="sh" style="margin-top:16px"><span class="sh-label">Composition (BOM)</span><span class="sh-rule"></span><span style="font-size:9px;color:var(--t3)">dpp/composition.yaml</span></div>
+    <div style="font-size:10px;color:var(--t3);margin-bottom:8px;line-height:1.5">
+      What the product IS made of. Separate from claims. Import from SimOps, ERP, or paste a BOM YAML.
+    </div>
+    <div id="bom-editor-container">
+      <div class="yaml-not-connected" style="font-size:11px;color:var(--t3)">
+        No workspace connected.
+      </div>
+    </div>
+    <div id="bom-import-area" style="display:none">
+      <div class="yaml-editor-wrap" style="height:auto">
+        <textarea class="yaml-ta" id="bom-ta" style="min-height:200px" placeholder="Paste BOM YAML here to import..." spellcheck="false"></textarea>
+        <div class="yaml-actions">
+          <span class="yaml-status info" id="bom-status">Paste BOM YAML and save.</span>
+          <button class="btn-g btn-sm" onclick="saveBomYaml()">Save BOM to workspace</button>
+        </div>
       </div>
     </div>
   </div>
@@ -448,8 +470,8 @@ function showTab(name) {
   document.querySelectorAll('.sb-tab').forEach((el, i) => {
     el.classList.toggle('active', ['products','claims','carbon','build'][i] === name);
   });
-  // Load composition YAML when Label tab is opened if workspace is connected
-  if (name === 'claims' && wsId()) loadCompositionYaml();
+  // Load claims and BOM YAML when Label tab is opened if workspace is connected
+  if (name === 'claims' && wsId()) { loadClaimsYaml(); loadBomYaml(); }
 }
 
 // ── jurisdiction filter ─────────────────────────────────────────────────────
@@ -517,7 +539,8 @@ function selectWorkspace(id, name) {
   currentProductName = name;
   document.getElementById('ch-name').textContent = name;
   fetchWorkspaces(); // re-render list with active state
-  loadCompositionYaml(); // load the composition YAML into the Label tab
+  loadClaimsYaml();
+  loadBomYaml();
   runLive();
 }
 
@@ -550,7 +573,9 @@ function onTokenInput() {
 // user modify it, and writes it back. compare_lenses then reads the updated
 // YAML to produce the regulatory comparison.
 
-const COMPOSITION_PATH = 'regulatory-lens/sku/precision_kombucha_hibiscus_f2.yaml';
+const CLAIMS_PATH = 'dpp/claims.yaml';
+const COMPOSITION_PATH = 'dpp/composition.yaml';
+const COMPOSITION_PATH_LEGACY = 'regulatory-lens/sku/precision_kombucha_hibiscus_f2.yaml';
 const COMPOSITION_TEMPLATE = `# Digital Product Passport — Composition
 # Edit this file to define your product's ingredients and source claims.
 # Save & run comparison to see how each claim renders across EU, US, and China.
@@ -586,42 +611,39 @@ source_claims:
     claim_pressure: medium
 `;
 
-async function loadCompositionYaml() {
+async function loadClaimsYaml() {
   const id = wsId(), tok = token();
   const container = document.getElementById('yaml-editor-container');
   if (!id || !tok) {
     container.innerHTML = `<div class="yaml-not-connected">
       <strong>No workspace connected.</strong><br><br>
-      Select a product workspace from the Products tab. The composition YAML —
-      the canonical DPP document — will load here for editing.
+      Select a workspace from the Products tab.
     </div>`;
     return;
   }
 
   container.innerHTML = `<div style="font-size:11px;color:var(--t3);padding:12px">
-    <span class="spinner"></span> Loading composition…
+    <span class="spinner"></span> Loading claims…
   </div>`;
 
   let yamlContent = '';
   let isNew = false;
 
   try {
-    const res = await fetch(`${base()}/api/workspaces/${id}/files/${COMPOSITION_PATH}`, {
+    const res = await fetch(`${base()}/api/workspaces/${id}/files/${CLAIMS_PATH}`, {
       headers: { Authorization: `Bearer ${tok}` }
     });
     if (res.ok) {
       const data = await res.json();
       yamlContent = data.content ?? data.text ?? '';
     } else if (res.status === 404) {
-      // File not in workspace yet — load the platform template via compare_lenses fallback
-      // For now show the template so the user can author their first composition
+      // File not in workspace yet — show template so the user can author their first claims file
       yamlContent = COMPOSITION_TEMPLATE;
       isNew = true;
     } else {
       throw new Error(await res.text());
     }
   } catch(e) {
-    // Try the platform fallback path
     yamlContent = COMPOSITION_TEMPLATE;
     isNew = true;
   }
@@ -629,19 +651,19 @@ async function loadCompositionYaml() {
   container.innerHTML = `
     <div class="yaml-editor-wrap">
       <div class="yaml-path">
-        ${esc(COMPOSITION_PATH)}
+        dpp/claims.yaml
         ${isNew ? '<span style="color:var(--amb);margin-left:8px">○ new — not yet saved to workspace</span>' : '<span style="color:var(--grn);margin-left:8px">✓ loaded from workspace git</span>'}
       </div>
       <textarea class="yaml-ta" id="composition-ta" spellcheck="false">${esc(yamlContent)}</textarea>
       <div class="yaml-actions">
         <span class="yaml-status info" id="yaml-status">Edit the YAML, then save.</span>
-        <button class="btn-g btn-sm" onclick="saveCompositionYaml(false)">Save to workspace</button>
-        <button class="btn btn-sm" onclick="saveCompositionYaml(true)">Save &amp; run comparison</button>
+        <button class="btn-g btn-sm" onclick="saveClaimsYaml(false)">Save to workspace</button>
+        <button class="btn btn-sm" onclick="saveClaimsYaml(true)">Save &amp; run comparison</button>
       </div>
     </div>`;
 }
 
-async function saveCompositionYaml(andRun) {
+async function saveClaimsYaml(andRun) {
   const id = wsId(), tok = token();
   if (!id || !tok) { alert('Connect a workspace first.'); return; }
   const ta = document.getElementById('composition-ta');
@@ -652,12 +674,12 @@ async function saveCompositionYaml(andRun) {
   status.textContent = 'Saving…';
 
   try {
-    const res = await fetch(`${base()}/api/workspaces/${id}/files/${COMPOSITION_PATH}`, {
+    const res = await fetch(`${base()}/api/workspaces/${id}/files/${CLAIMS_PATH}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` },
       body: JSON.stringify({
         content,
-        message: `DPP Studio: update composition YAML`,
+        message: `DPP Studio: update claims YAML`,
       })
     });
     if (!res.ok) throw new Error(await res.text());
@@ -672,6 +694,66 @@ async function saveCompositionYaml(andRun) {
       await runLive();
       status.textContent = '✓ Saved and comparison updated.';
     }
+  } catch(e) {
+    status.className = 'yaml-status err';
+    status.textContent = `Error: ${e.message}`;
+  }
+}
+
+async function loadBomYaml() {
+  const id = wsId(), tok = token();
+  const container = document.getElementById('bom-import-area');
+  const statusEl = document.getElementById('bom-editor-container');
+  if (!id || !tok) return;
+
+  statusEl.innerHTML = '<div style="font-size:11px;color:var(--t3);padding:8px"><span class="spinner"></span> Loading BOM…</div>';
+
+  try {
+    // Try new path first, then legacy path
+    let res = await fetch(`${base()}/api/workspaces/${id}/files/${COMPOSITION_PATH}`, {
+      headers: { Authorization: `Bearer ${tok}` }
+    });
+    if (!res.ok) {
+      res = await fetch(`${base()}/api/workspaces/${id}/files/${COMPOSITION_PATH_LEGACY}`, {
+        headers: { Authorization: `Bearer ${tok}` }
+      });
+    }
+
+    if (res.ok) {
+      const data = await res.json();
+      const content = data.content ?? data.text ?? '';
+      statusEl.innerHTML = `<div style="font-size:10px;color:var(--grn);padding:4px 0">✓ BOM loaded from workspace git (${COMPOSITION_PATH})</div>`;
+      container.style.display = '';
+      document.getElementById('bom-ta').value = content;
+    } else {
+      statusEl.innerHTML = `<div style="font-size:10px;color:var(--amb);padding:4px 0">○ No BOM in workspace yet — paste a composition YAML below to import one</div>`;
+      container.style.display = '';
+    }
+  } catch(e) {
+    statusEl.innerHTML = `<div style="font-size:10px;color:var(--t3);padding:4px 0">Could not load BOM: ${esc(e.message)}</div>`;
+    container.style.display = '';
+  }
+}
+
+async function saveBomYaml() {
+  const id = wsId(), tok = token();
+  if (!id || !tok) { alert('Connect a workspace first.'); return; }
+  const ta = document.getElementById('bom-ta');
+  if (!ta || !ta.value.trim()) return;
+  const status = document.getElementById('bom-status');
+  status.className = 'yaml-status info';
+  status.textContent = 'Saving BOM…';
+
+  try {
+    const res = await fetch(`${base()}/api/workspaces/${id}/files/${COMPOSITION_PATH}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` },
+      body: JSON.stringify({ content: ta.value, message: 'DPP Studio: import BOM / update composition' })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    status.className = 'yaml-status ok';
+    status.textContent = `✓ BOM saved — commit ${(data.sha ?? '').slice(0, 8)}`;
   } catch(e) {
     status.className = 'yaml-status err';
     status.textContent = `Error: ${e.message}`;
