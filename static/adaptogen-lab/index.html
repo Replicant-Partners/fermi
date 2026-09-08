@@ -33,7 +33,7 @@ body{background:var(--bg);color:var(--t1);font-family:'Inter',system-ui,sans-ser
 .btn-g:hover{border-color:var(--t1);color:var(--t1)}
 .btn-sm{padding:3px 9px;font-size:11px;border-radius:4px}
 .body{display:flex;flex:1;overflow:hidden;min-height:0}
-.sidebar{width:240px;min-width:180px;display:flex;flex-direction:column;border-right:1px solid var(--b1);overflow:hidden}
+.sidebar{width:200px;min-width:160px;display:flex;flex-direction:column;border-right:1px solid var(--b1);overflow:hidden}
 .sb-tabs{display:flex;border-bottom:1px solid var(--b1);background:var(--s1);flex-shrink:0}
 .sb-tab{flex:1;padding:9px 2px;text-align:center;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--t3);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s}
 .sb-tab.active{color:var(--acc);border-bottom-color:var(--acc)}
@@ -347,7 +347,7 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
         What the product <em>is made of</em>. Edit ingredients below or import a full BOM YAML.
       </div>
       <table class="ing-edit-table" id="ing-table">
-        <thead><tr><th>Ingredient</th><th>%</th><th>Category</th><th></th></tr></thead>
+        <thead><tr><th>Ingredient</th><th>Qty</th><th>Category</th><th>Part #</th><th></th></tr></thead>
         <tbody id="ing-tbody"></tbody>
       </table>
       <button class="add-claim-btn" style="margin-top:6px" onclick="addIngredientRow()">
@@ -915,24 +915,30 @@ let bomYamlText = ''; // full YAML in memory
 let bomIngredients = []; // extracted ingredient rows
 
 function parseIngredients(yaml) {
+  // Reads 'consists_of:' (JSON-LD aligned schema) or 'ingredients:' (legacy).
+  // Top-level only — sub-components shown as child count, not expanded.
   const ings = [];
   const lines = yaml.split('\n');
   let inBlock = false; let cur = null;
+  const blockKey = yaml.includes('consists_of:') ? 'consists_of:' : 'ingredients:';
   for (const line of lines) {
-    if (/^ingredients:/.test(line)) { inBlock = true; continue; }
-    if (inBlock && /^[a-z_A-Z]/.test(line) && !line.startsWith(' ')) { inBlock = false; }
+    if (line.trim() === blockKey) { inBlock = true; continue; }
+    if (inBlock && /^[a-z@_A-Z]/.test(line) && !line.startsWith(' ')) { inBlock = false; }
     if (!inBlock) continue;
     if (/^  - /.test(line)) {
       if (cur) ings.push(cur);
-      cur = { id:'', display_name:'', composition_pct:'', category:'', raw:[] };
+      cur = { id:'', display_name:'', quantity:'', category:'', part_number:'', sub_count:0 };
     }
+    if (/^    - /.test(line)) { if (cur) cur.sub_count++; continue; } // count sub-components
     if (cur) {
-      cur.raw.push(line);
-      const m = (k) => line.match(new RegExp(k + ':\\s*(.+)'));
-      if (m('id'))              cur.id = m('id')[1].trim().replace(/^"|"$/g,'');
+      const m = (k) => line.match(new RegExp('\\b' + k + ':\\s*(.+)'));
+      if (m('item_id'))         cur.id = m('item_id')[1].trim().replace(/^"|"$/g,'');
+      if (m('id'))              cur.id = cur.id || m('id')[1].trim().replace(/^"|"$/g,'');
       if (m('display_name'))    cur.display_name = m('display_name')[1].trim().replace(/^"|"$/g,'');
-      if (m('composition_pct')) cur.composition_pct = m('composition_pct')[1].trim();
+      if (m('quantity'))        cur.quantity = m('quantity')[1].trim().replace(/^"|"$/g,'');
+      if (m('composition_pct')) cur.quantity = cur.quantity || m('composition_pct')[1].trim(); // legacy
       if (m('category'))        cur.category = m('category')[1].trim();
+      if (m('part_number'))     cur.part_number = m('part_number')[1].trim().replace(/^null$/,'');
     }
   }
   if (cur) ings.push(cur);
@@ -942,18 +948,26 @@ function parseIngredients(yaml) {
 function renderIngTable() {
   const tbody = document.getElementById('ing-tbody');
   if (!tbody) return;
-  tbody.innerHTML = bomIngredients.map((ing, i) => `
-    <tr>
-      <td><input value="${esc(ing.display_name||ing.id)}" oninput="updateIng(${i},'display_name',this.value)" placeholder="Ingredient name"></td>
-      <td style="width:52px"><input value="${esc(ing.composition_pct)}" oninput="updateIng(${i},'composition_pct',this.value)" placeholder="%" style="text-align:right"></td>
-      <td style="width:90px">
+  tbody.innerHTML = bomIngredients.map((ing, i) => {
+    const subBadge = ing.sub_count > 0
+      ? `<span style="font-size:9px;color:var(--t3);margin-left:4px">(${ing.sub_count} sub)</span>` : '';
+    const pn = ing.part_number || '';
+    return `<tr>
+      <td>
+        <input value="${esc(ing.display_name||ing.id)}" oninput="updateIng(${i},'display_name',this.value)" placeholder="Ingredient name">
+        ${subBadge}
+      </td>
+      <td style="width:60px"><input value="${esc(ing.quantity)}" oninput="updateIng(${i},'quantity',this.value)" placeholder="qty"></td>
+      <td style="width:80px">
         <select onchange="updateIng(${i},'category',this.value)">
           ${['base','botanical_infusion','processing_culture','acidulant','preservative','flavour','other'].map(c =>
             `<option value="${c}"${ing.category===c?' selected':''}>${c}</option>`).join('')}
         </select>
       </td>
-      <td style="width:24px"><button class="ing-del" onclick="deleteIng(${i})">✕</button></td>
-    </tr>`);
+      <td style="width:80px"><input value="${esc(pn)}" oninput="updateIng(${i},'part_number',this.value)" placeholder="part #"></td>
+      <td style="width:20px"><button class="ing-del" onclick="deleteIng(${i})">✕</button></td>
+    </tr>`;
+  }).join('');
 }
 
 function updateIng(i, field, val) {
@@ -984,11 +998,12 @@ function spliceIngredientsIntoYaml() {
   }
   if (start < 0) return bomYamlText; // no ingredients block, leave as-is
 
-  const ingLines = ['ingredients:'];
+  // Write as consists_of (JSON-LD aligned schema)
+  const ingLines = ['consists_of:'];
   for (const ing of bomIngredients) {
     const name = ing.display_name || ing.id;
     const id = ing.id || name.toLowerCase().replace(/[^a-z0-9]+/g,'_');
-    ingLines.push(`  - id: ${id}`);
+    ingLines.push(`  - item_id: ${id}`);
     ingLines.push(`    display_name: "${name.replace(/"/g,'\\"')}"`);
     ingLines.push(`    category: ${ing.category||'other'}`);
     if (ing.composition_pct) ingLines.push(`    composition_pct: ${ing.composition_pct}`);

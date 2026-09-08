@@ -1,80 +1,155 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# DPP Composition — Bill of Materials (BOM)
-# Owner: R&D / formulation
-# Lifecycle: changes when the recipe changes (sourcing, reformulation)
-# Source: can be imported from SimOps process output, ERP, or lab analysis
+# DPP Composition — Bill of Materials
 #
-# This is separate from claims.yaml (what you say about the product).
-# compose_lenses reads both: BOM for context, claims for what to render.
+# Schema alignment:
+#   JSON-LD:  bom:Item / bom:consistsOf / bom:partNumber / bom:quantity
+#   SimOps:   Input.name / Input.role / Input.qty+per / Input.unit_cost
+#             StageV2.carbon_intensity
+#
+# The `role` field uses SimOps vocabulary exactly (principal/catalyst/consumable)
+# so this document can be derived from a SimOps cascade output and compared
+# back to the source process without field remapping.
+#
+# Costs are NOT stored here — they are sourced by the supply_chain_oracle
+# agent via web_search and stored separately. This keeps the composition
+# stable (recipe facts) while costs are dynamic (market data).
 #
 # DATA: [SYNTHETIC] — structurally representative only.
 # ─────────────────────────────────────────────────────────────────────────────
 
+item_type: bom:Item
 product_id: precision_kombucha_hibiscus_f2
 display_name: "Precision Kombucha — Hibiscus, Cold F2"
-sku: PKH-F2-330
+part_number: "PKH-F2-330"            # bom:partNumber — SKU / supplier code
 format: cold_brew_ready_to_drink
-bom_version: "1.0"
+bom_version: "1.1"
+
+# SimOps linkage — the process that produces this composition
+simops_process: "scoby_kombucha_v2"
+simops_output_stage: "bottling"
+simops_output_name: "bottled_kombucha"
+simops_feature_of_interest: "xid:platform/ambu-001"
 
 serving:
   volume_ml: 330
   servings_per_unit: 1
 
-# ── Ingredients (descending weight order) ────────────────────────────────────
-ingredients:
-  - id: fermented_sweet_tea
-    display_name: "Fermented sweet tea"
-    category: base
-    composition_pct: 91.2          # [SYNTHETIC]
-    sub_components:
-      - { id: black_tea,           pct: 0.8,  notes: "Camellia sinensis" }
-      - { id: cane_sugar_residual, pct: 2.1,  notes: "post-fermentation residual" }
-      - { id: water,               pct: 88.3, notes: "" }
+# ── Bill of Materials (bom:consistsOf) ───────────────────────────────────────
+# Each entry mirrors a SimOps Input from the relevant stage.
+# role:         SimOps InputRole — principal | consumable | catalyst
+# quantity:     Final product composition %, derived from SimOps cascade output
+# qty_unit:     Unit of quantity (%, g, mL, etc.)
+# simops_input: Name of the corresponding Input in the SimOps process
+# simops_stage: Stage ID in the SimOps process where this input is consumed
+# part_number:  bom:partNumber — supplier / additive code (optional)
 
-  - id: hibiscus_infusion
+consists_of:
+
+  # ── Stage: cold_steep ──────────────────────────────────────────────────────
+  - item_id: water
+    display_name: "Water (process grade)"
+    role: principal                   # SimOps: principal — mass-balance basis
+    quantity: "88.3%"                 # [SYNTHETIC] of final product
+    qty_unit: "%"
+    simops_input: "water"
+    simops_stage: "cold_steep"
+
+  - item_id: green_tea
+    display_name: "Black tea (Camellia sinensis)"
+    role: consumable                  # SimOps: consumable — included in mass-balance
+    quantity: "0.8%"                  # [SYNTHETIC]
+    qty_unit: "%"
+    simops_input: "green_tea"
+    simops_stage: "cold_steep"
+    part_number: "TEA-BLK-SL"
+    origin: "Sri Lanka"
+
+  # ── Stage: primary_fermentation ────────────────────────────────────────────
+  - item_id: cane_sugar_residual
+    display_name: "Cane sugar (residual post-F1)"
+    role: consumable
+    quantity: "2.1%"                  # [SYNTHETIC] — post-fermentation residual
+    qty_unit: "%"
+    simops_input: "cane_sugar"
+    simops_stage: "primary_fermentation"
+    origin: "Brazil / Australia"
+
+  - item_id: starter_scoby
+    display_name: "SCOBY starter culture"
+    role: catalyst                    # SimOps: catalyst — excluded from mass-balance
+    quantity: "trace"
+    qty_unit: "presence"
+    simops_input: "starter_scoby"
+    simops_stage: "primary_fermentation"
+    part_number: "SCOBY-F2-CULTURE"
+    notes: "Catalyst — reused across batches, not consumed into final product"
+
+  # ── Stage: bottling ────────────────────────────────────────────────────────
+  - item_id: hibiscus_infusion
     display_name: "Hibiscus infusion"
+    role: consumable
+    quantity: "8.5%"                  # [SYNTHETIC]
+    qty_unit: "%"
+    simops_input: null                # cold-steeped separately, not in process v2
+    simops_stage: null
+    part_number: "HSB-CALYCES-DRIED"
     botanical: "Hibiscus sabdariffa L."
-    category: botanical_infusion
-    composition_pct: 8.5           # [SYNTHETIC]
-    notes: "Cold-steeped dried hibiscus calyces"
+    origin: "Egypt / Sudan"
+    consists_of:                      # sub-components (bom:consistsOf, nested)
+      - { display_name: "Dried hibiscus calyces", quantity: "100%", qty_unit: "% of component" }
 
-  - id: live_cultures
-    display_name: "Live cultures"
-    category: processing_culture
-    composition_pct: trace
-    declared_organisms:
-      - { id: acetobacter_xylinum,        common: "Kombucha acetobacter" }
-      - { id: brettanomyces_bruxellensis, common: "Kombucha yeast" }
-    cfu_per_ml_at_pack: 1.2e6     # [SYNTHETIC]
+  - item_id: priming_sugar
+    display_name: "Priming sugar (F2)"
+    role: consumable
+    quantity: "trace"                 # [SYNTHETIC] — consumed in carbonation
+    qty_unit: "presence"
+    simops_input: "priming_sugar"
+    simops_stage: "bottling"
 
-  - id: citric_acid
+  - item_id: citric_acid
     display_name: "Citric acid"
-    category: acidulant
-    composition_pct: 0.3          # [SYNTHETIC]
-    additive_codes: { eu: "E330", cn: "柠檬酸 (GB 2760)" }
+    role: consumable
+    quantity: "0.3%"                  # [SYNTHETIC]
+    qty_unit: "%"
+    simops_input: null                # post-process addition
+    simops_stage: null
+    part_number: "E330"
+    additive_codes:
+      eu: "E330"
+      cn: "柠檬酸 (GB 2760)"
 
-# ── Nutrition per 330 ml serving ─────────────────────────────────────────────
-# [SYNTHETIC] — verify against actual lab analysis
+# ── Nutrition per serving ─────────────────────────────────────────────────────
+# [SYNTHETIC] — verify against actual lab analysis per lot
 nutrition_per_serving:
   energy_kcal:         38
   energy_kj:          159
   fat_g:              0.0
-  saturated_fat_g:    0.0
   carbohydrate_g:      9.2
   of_which_sugars_g:   8.8
-  fibre_g:             0.2
   protein_g:           0.2
   salt_g:              0.01
   vitamin_c_mg:       14.2
 
-# ── Physical parameters ───────────────────────────────────────────────────────
+# ── Physical ──────────────────────────────────────────────────────────────────
 physical:
-  ph_at_pack:      3.1           # [SYNTHETIC]
-  alcohol_abv_pct: 0.4           # [SYNTHETIC] — non-alcoholic in all 3 markets
-  colour:          deep_ruby_red
-  carbonation:     mild_effervescent
-  shelf_life_days: 180
-  storage:         refrigerated_2_8c
+  ph_at_pack:       3.1
+  alcohol_abv_pct:  0.4
+  colour:           deep_ruby_red
+  carbonation:      mild_effervescent
+  shelf_life_days:  180
+  storage:          refrigerated_2_8c
+
+# ── Carbon intensity ──────────────────────────────────────────────────────────
+# Maps to SimOps StageV2.carbon_intensity (kg CO₂-eq per kg output).
+# Values below are [SYNTHETIC] — run supply_chain_oracle for Scope 3 by ingredient.
+# Mode: synthetic | lca (lca = defer to external LCA database, future)
+carbon_intensity:
+  mode: synthetic                   # SimOps CarbonIntensity::Synthetic
+  value_kg_per_kg: 0.41             # [SYNTHETIC] — total per 330ml unit ≈ 0.45 kg / 1.05 kg/L
+  scope_1: 0.02
+  scope_2: 0.09
+  scope_3: 0.34                     # dominated by hibiscus supply chain
+  dominant_contributor: hibiscus_infusion
 
 # ── Allergens ─────────────────────────────────────────────────────────────────
 allergens:
@@ -82,16 +157,3 @@ allergens:
   may_contain: []
   gluten_free: true
   vegan:       true
-
-# ── Functional compounds ──────────────────────────────────────────────────────
-functional_compounds:
-  - { id: anthocyanins,        source: hibiscus_infusion,    mg_per_serving: 18.5 }
-  - { id: vitamin_c,           source: hibiscus_infusion,    mg_per_serving: 14.2 }
-  - { id: acetic_acid,         source: fermented_sweet_tea,  mg_per_serving: 120  }
-  - { id: lactic_acid,         source: fermented_sweet_tea,  mg_per_serving:  85  }
-
-# ── SimOps link ───────────────────────────────────────────────────────────────
-# The production process that generates this composition lives in SimOps.
-# The process YAML (F1 + F2 fermentation) feeds into this BOM.
-simops_process: "scoby_kombucha_v2"
-simops_feature_of_interest: "xid:platform/ambu-001"
