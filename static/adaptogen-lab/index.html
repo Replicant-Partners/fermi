@@ -1131,6 +1131,7 @@ let openClaimIdx = null;
 
 function renderClaimsList() {
   const el = document.getElementById('claims-list');
+  if (!el) return; // element renamed to claims-cards-container
   el.innerHTML = sourceClaims.map((c, i) => {
     const score = c.divergence_score ?? 0;
     const pips = [1,2,3].map(n => `<span class="pip${n<=score?' on':''}"></span>`).join('');
@@ -1561,14 +1562,16 @@ function renderAll(apiResponse, live) {
   const out = apiResponse.output ?? apiResponse;
   sourceClaims = (out.comparison_table ?? []).map(r => ({...r}));
   renderTable(sourceClaims);
-  renderClaimsList();
+  renderClaimsCards(); // update the structured claim cards from comparison output
   renderBeat(out);
   renderIngredients(out);
   renderAppendix(out);
   renderKB();
   renderApiPanel(apiResponse);
-  document.getElementById('empty-state').style.display = 'none';
-  document.getElementById('main').style.display = '';
+  const esEl = document.getElementById('empty-state');
+  const mainEl = document.getElementById('main');
+  if (esEl) esEl.style.display = 'none';
+  if (mainEl) mainEl.style.display = '';
   const clean = apiResponse.grounding_summary?.is_clean ?? true;
   const viols = apiResponse.grounding_summary?.violation_count ?? 0;
   document.getElementById('sb-dot').className = `sd ${live?'sd-live':'sd-demo'}`;
