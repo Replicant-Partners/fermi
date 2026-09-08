@@ -35,7 +35,7 @@ body{background:var(--bg);color:var(--t1);font-family:'Inter',system-ui,sans-ser
 .body{display:flex;flex:1;overflow:hidden;min-height:0}
 .sidebar{width:200px;min-width:160px;display:flex;flex-direction:column;border-right:1px solid var(--b1);overflow:hidden}
 .sb-tabs{display:flex;border-bottom:1px solid var(--b1);background:var(--s1);flex-shrink:0}
-.sb-tab{flex:1;padding:9px 2px;text-align:center;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--t3);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s}
+.sb-tab{flex:1;padding:7px 2px;text-align:center;font-size:9px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--t3);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;line-height:1.3}
 .sb-tab.active{color:var(--acc);border-bottom-color:var(--acc)}
 .sb-panel{flex:1;overflow-y:auto;padding:14px}
 .sb-panel.hidden{display:none}
@@ -294,8 +294,8 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
   <div class="sb-tabs">
     <div class="sb-tab active" onclick="showTab('products')">Products</div>
     <div class="sb-tab" onclick="showTab('claims')">Claims</div>
-    <div class="sb-tab" onclick="showTab('ingredients')">Ingredients</div>
-    <div class="sb-tab" onclick="showTab('carbon')">Supply chain</div>
+    <div class="sb-tab" onclick="showTab('ingredients')">BOM</div>
+    <div class="sb-tab" onclick="showTab('carbon')">Supply Chain</div>
     <div class="sb-tab" onclick="showTab('build')">Build</div>
   </div>
 
@@ -1384,6 +1384,7 @@ let endorsed = {};
 
 function renderKB() {
   const el = document.getElementById('kb-list');
+  if (!el) return; // Build tab may not be in DOM yet
   const dotClass = { ok:'d-ok', pend:'d-pend', wait:'d-wait', endorsed:'d-end' };
   const dotIcon  = { ok:'✓', pend:'○', wait:'·', endorsed:'★' };
   el.innerHTML = KB.map(item => {
@@ -1496,7 +1497,8 @@ function renderBeat(data) {
     const why = m.divergence_note ? `<div class="bb-why">${esc(m.divergence_note.split('.').slice(0,2).join('.')+'.')}</div>` : '';
     return `<div class="bb-mkt"><div class="bb-mname">${flag} ${label}</div>${b}${t}${why}</div>`;
   };
-  document.getElementById('beat-box').innerHTML = `
+  const bb = document.getElementById('beat-box');
+  if (bb) bb.innerHTML = `
     <div class="bb-label">★ "Hibiscus — traditionally used for wellbeing" — one claim, three regulatory readings</div>
     <div class="bb-title">Same DPP. Same product. The passport reads differently in each realm.</div>
     <div class="bb-markets">${mcard('EU','🇪🇺','EU')}${mcard('US','🇺🇸','US')}${mcard('CN','🇨🇳','China')}</div>`;
@@ -1512,7 +1514,9 @@ function renderIngredients(data) {
     { market:'CN', flag:'🇨🇳', status:'food_medicine_homologous', note:'药食同源 list. Freely usable as food. CRITICAL: authorizes the ingredient, not health claims about it.' },
   ];
   const cards = mts.length ? mts : fallback;
-  document.getElementById('ing-beat').innerHTML = `
+  const ib = document.getElementById('ing-beat');
+  if (!ib) return;
+  ib.innerHTML = `
     ${cards.map(m=>`<div class="ibc">
       <div class="ib-mkt">${m.flag??''} ${m.market}</div>
       <div class="ib-status">${sl[m.status]??m.status??''}</div>
@@ -1528,7 +1532,9 @@ function renderIngredients(data) {
 
 function renderAppendix(data) {
   const sources = data.verification_appendix ?? [];
-  document.getElementById('va-list').innerHTML = sources.map(s => {
+  const vaList = document.getElementById('va-list');
+  if (!vaList) return;
+  vaList.innerHTML = sources.map(s => {
     const isUrl = s.startsWith('http');
     return `<li>${isUrl?`<a href="${esc(s)}" target="_blank">${esc(s)}</a>`:esc(s)}</li>`;
   }).join('');
@@ -1537,7 +1543,9 @@ function renderAppendix(data) {
 let lastRaw = null;
 function renderApiPanel(raw) {
   lastRaw = raw;
-  document.getElementById('ajson').innerHTML = JSON.stringify(raw, null, 2)
+  const aj = document.getElementById('ajson');
+  if (!aj) return;
+  aj.innerHTML = JSON.stringify(raw, null, 2)
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/("[\s\S]*?"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?)/g,
       m => `<span style="color:${/^"/.test(m)?/:$/.test(m)?'#60a5fa':'#86efac':/true|false/.test(m)?'#fde68a':'#fca5a5'}">${m}</span>`);
