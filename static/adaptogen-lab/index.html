@@ -39,6 +39,43 @@ body{background:var(--bg);color:var(--t1);font-family:'Inter',system-ui,sans-ser
 .sb-tab.active{color:var(--acc);border-bottom-color:var(--acc)}
 .sb-panel{flex:1;overflow-y:auto;padding:14px}
 .sb-panel.hidden{display:none}
+/* drag handle between sidebar and content */
+.drag-handle{width:4px;background:var(--b1);cursor:col-resize;flex-shrink:0;transition:background .15s;position:relative}
+.drag-handle:hover,.drag-handle.dragging{background:var(--acc)}
+.drag-handle::after{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:12px;height:32px;border-radius:6px}
+/* hide native scrollbar arrows, keep track */
+*{scrollbar-width:thin;scrollbar-color:var(--b2) transparent}
+*::-webkit-scrollbar{width:5px;height:5px}
+*::-webkit-scrollbar-track{background:transparent}
+*::-webkit-scrollbar-thumb{background:var(--b2);border-radius:4px}
+*::-webkit-scrollbar-thumb:hover{background:var(--b3)}
+*::-webkit-scrollbar-button{display:none}
+/* claim cards */
+.claim-card{background:var(--s2);border:1px solid var(--b1);border-radius:6px;margin-bottom:6px;overflow:hidden;transition:border-color .15s}
+.claim-card.editing{border-color:var(--acc)}
+.claim-card-head{display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:pointer}
+.claim-beat-star{color:var(--acc);font-size:11px;flex-shrink:0}
+.claim-text{flex:1;font-size:12px;color:var(--t1);font-style:italic}
+.claim-pressure{font-size:9px;padding:2px 6px;border-radius:3px;font-weight:700;flex-shrink:0}
+.cp-high{background:rgba(239,68,68,.1);color:var(--red)}
+.cp-medium{background:rgba(245,158,11,.1);color:var(--amb)}
+.cp-low{background:rgba(34,197,94,.1);color:var(--grn)}
+.claim-status{font-size:9px;color:var(--t3);flex-shrink:0}
+.claim-edit-body{padding:0 10px 10px;display:none}
+.claim-card.editing .claim-edit-body{display:block}
+.claim-field{margin-bottom:7px}
+.claim-field label{display:block;font-size:9px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-bottom:3px}
+.claim-field input,.claim-field textarea,.claim-field select{width:100%;background:var(--s3);border:1px solid var(--b2);color:var(--t1);border-radius:4px;padding:5px 8px;font-size:12px;font-family:inherit;outline:none}
+.claim-field textarea{min-height:52px;resize:vertical;line-height:1.5}
+.claim-field input:focus,.claim-field textarea:focus,.claim-field select:focus{border-color:var(--acc)}
+.claim-field select{cursor:pointer}
+.claim-edit-actions{display:flex;gap:6px;align-items:center;margin-top:8px}
+.claim-delete-btn{font-size:10px;color:var(--red);background:transparent;border:none;cursor:pointer;padding:0;margin-left:auto}
+.claim-delete-btn:hover{text-decoration:underline}
+.claims-footer{display:flex;gap:7px;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid var(--b1)}
+.claims-save-status{font-size:11px;flex:1}
+.add-claim-btn{display:flex;align-items:center;gap:6px;padding:7px 10px;background:var(--s2);border:1px dashed var(--b2);border-radius:6px;cursor:pointer;font-size:12px;color:var(--t3);margin-top:4px;width:100%}
+.add-claim-btn:hover{border-color:var(--acc);color:var(--acc)}
 .content{flex:1;overflow-y:auto;padding:16px 20px 40px}
 .sh{display:flex;align-items:center;gap:8px;margin:16px 0 8px}
 .sh:first-child{margin-top:0}
@@ -244,10 +281,11 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
 </div>
 
 <div class="body">
-<div class="sidebar">
+<div class="sidebar" id="sidebar">
   <div class="sb-tabs">
     <div class="sb-tab active" onclick="showTab('products')">Products</div>
-    <div class="sb-tab" onclick="showTab('claims')">Label</div>
+    <div class="sb-tab" onclick="showTab('claims')">Claims</div>
+    <div class="sb-tab" onclick="showTab('ingredients')">Ingredients</div>
     <div class="sb-tab" onclick="showTab('carbon')">Supply chain</div>
     <div class="sb-tab" onclick="showTab('build')">Build</div>
   </div>
@@ -267,34 +305,42 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
     </div>
   </div>
 
-  <!-- Label / Claims + BOM YAML editors -->
+  <!-- Claims tab -->
   <div class="sb-panel hidden" id="tab-claims">
-    <div class="sh"><span class="sh-label">Claims</span><span class="sh-rule"></span><span style="font-size:9px;color:var(--t3)">dpp/claims.yaml</span></div>
+    <div class="sh"><span class="sh-label">Source Claims</span><span class="sh-rule"></span><span style="font-size:9px;color:var(--t3)">dpp/claims.yaml</span></div>
     <div style="font-size:10px;color:var(--t2);margin-bottom:10px;line-height:1.5">
-      What you want to <em>say</em> about the product. Edit the source claims, save, and run the regulatory comparison to see how each claim renders across markets.
+      What you want to <em>say</em> about the product. Each claim is tested against EU, US, and China rules. Save and run the comparison to see how each renders.
     </div>
-    <div id="yaml-editor-container">
-      <div class="yaml-not-connected">
-        <strong>No workspace connected.</strong><br><br>
-        Select a workspace from the Products tab.
+    <div id="claims-cards-container">
+      <div style="font-size:11px;color:var(--t3);padding:12px;background:var(--s2);border:1px solid var(--b1);border-radius:6px">
+        Select a workspace from Products to load claims.
       </div>
     </div>
+    <button class="add-claim-btn" id="add-claim-btn" onclick="addClaimCard()" style="display:none">
+      <span>＋</span><span>Add a claim</span>
+    </button>
+    <div class="claims-footer" id="claims-footer" style="display:none">
+      <span class="claims-save-status" id="claims-save-status"></span>
+      <button class="btn-g btn-sm" onclick="saveClaimsFromCards(false)">Save</button>
+      <button class="btn btn-sm" onclick="saveClaimsFromCards(true)">Save &amp; run</button>
+    </div>
+  </div>
 
-    <div class="sh" style="margin-top:16px"><span class="sh-label">Composition (BOM)</span><span class="sh-rule"></span><span style="font-size:9px;color:var(--t3)">dpp/composition.yaml</span></div>
-    <div style="font-size:10px;color:var(--t3);margin-bottom:8px;line-height:1.5">
-      What the product IS made of. Separate from claims. Import from SimOps, ERP, or paste a BOM YAML.
+  <!-- Ingredients tab -->
+  <div class="sb-panel hidden" id="tab-ingredients">
+    <div class="sh"><span class="sh-label">Composition (BOM)</span><span class="sh-rule"></span><span style="font-size:9px;color:var(--t3)">dpp/composition.yaml</span></div>
+    <div style="font-size:10px;color:var(--t2);margin-bottom:10px;line-height:1.5">
+      What the product <em>is made of</em>. R&amp;D-owned. Import from SimOps, ERP, or paste a BOM YAML.
     </div>
     <div id="bom-editor-container">
-      <div class="yaml-not-connected" style="font-size:11px;color:var(--t3)">
-        No workspace connected.
-      </div>
+      <div style="font-size:11px;color:var(--t3)">Select a workspace to load the BOM.</div>
     </div>
     <div id="bom-import-area" style="display:none">
       <div class="yaml-editor-wrap" style="height:auto">
         <textarea class="yaml-ta" id="bom-ta" style="min-height:200px" placeholder="Paste BOM YAML here to import..." spellcheck="false"></textarea>
         <div class="yaml-actions">
           <span class="yaml-status info" id="bom-status">Paste BOM YAML and save.</span>
-          <button class="btn-g btn-sm" onclick="saveBomYaml()">Save BOM to workspace</button>
+          <button class="btn-g btn-sm" onclick="saveBomYaml()">Save BOM</button>
         </div>
       </div>
     </div>
@@ -338,6 +384,7 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
     <div class="kbl" id="kb-list"></div>
   </div>
 </div>
+<div class="drag-handle" id="drag-handle"></div>
 
 <div class="content">
   <div id="empty-state" class="empty">
@@ -515,14 +562,15 @@ function confirmLogout() {
 
 // ── sidebar tabs ────────────────────────────────────────────────────────────
 function showTab(name) {
-  ['products','claims','carbon','build'].forEach(t => {
-    document.getElementById('tab-' + t).classList.toggle('hidden', t !== name);
+  ['products','claims','ingredients','carbon','build'].forEach(t => {
+    const el = document.getElementById('tab-' + t);
+    if (el) el.classList.toggle('hidden', t !== name);
   });
   document.querySelectorAll('.sb-tab').forEach((el, i) => {
-    el.classList.toggle('active', ['products','claims','carbon','build'][i] === name);
+    el.classList.toggle('active', ['products','claims','ingredients','carbon','build'][i] === name);
   });
-  // Load claims and BOM YAML when Label tab is opened if workspace is connected
-  if (name === 'claims' && wsId()) { loadClaimsYaml(); loadBomYaml(); }
+  if (name === 'claims' && wsId()) loadClaimsCards();
+  if (name === 'ingredients' && wsId()) loadBomYaml();
 }
 
 // ── jurisdiction filter ─────────────────────────────────────────────────────
@@ -588,7 +636,7 @@ function selectWorkspace(id, name) {
   currentProductName = name;
   document.getElementById('ch-name').textContent = name;
   fetchWorkspaces(); // re-render list with active state
-  loadClaimsYaml();
+  loadClaimsCards();
   loadBomYaml();
   runLive();
 }
@@ -654,92 +702,188 @@ source_claims:
     claim_pressure: medium
 `;
 
-async function loadClaimsYaml() {
-  const id = wsId();
-  const container = document.getElementById('yaml-editor-container');
-  if (!id) {
-    container.innerHTML = `<div class="yaml-not-connected">
-      <strong>No workspace connected.</strong><br><br>
-      Select a workspace from the Products tab.
+// ── Structured claims card editor ─────────────────────────────────────────
+// Reads dpp/claims.yaml, parses into cards, saves back as YAML.
+// No raw YAML visible to the user.
+
+let claimsData = []; // current claims state
+let claimsYamlHeader = ''; // YAML comment block before source_claims:
+
+function parseClaimsYaml(text) {
+  const lines = text.split('\n');
+  const claims = [];
+  let headerLines = [];
+  let inClaims = false;
+  let current = null;
+  let headerDone = false;
+
+  for (const line of lines) {
+    if (!headerDone && !line.match(/^source_claims:/)) {
+      headerLines.push(line);
+      continue;
+    }
+    if (line.match(/^source_claims:/)) { inClaims = true; headerDone = true; continue; }
+    if (!inClaims) continue;
+    if (line.match(/^  - id:/)) {
+      if (current) claims.push(current);
+      current = { id: line.replace(/^  - id:\s*/, '').trim(), candidate_text:'', claim_pressure:'medium', status:'draft', notes:'' };
+    } else if (current && line.match(/^    candidate_text:/)) {
+      current.candidate_text = line.replace(/^    candidate_text:\s*/, '').trim().replace(/^["']|["']$/g,'');
+    } else if (current && line.match(/^    claim_pressure:/)) {
+      current.claim_pressure = line.replace(/^    claim_pressure:\s*/, '').trim();
+    } else if (current && line.match(/^    status:/)) {
+      current.status = line.replace(/^    status:\s*/, '').trim();
+    } else if (current && line.match(/^    notes:/)) {
+      current.notes = line.replace(/^    notes:\s*/, '').trim().replace(/^["']|["']$/g,'');
+    }
+  }
+  if (current) claims.push(current);
+  return { header: headerLines.join('\n'), claims };
+}
+
+function serializeClaimsYaml(header, claims) {
+  const lines = [header.trim(), '', 'source_claims:'];
+  for (const c of claims) {
+    lines.push(`  - id: ${c.id}`);
+    lines.push(`    candidate_text: "${(c.candidate_text||'').replace(/"/g,'\\"')}"`);
+    lines.push(`    claim_pressure: ${c.claim_pressure || 'medium'}`);
+    lines.push(`    status: ${c.status || 'draft'}`);
+    if (c.notes) lines.push(`    notes: "${(c.notes||'').replace(/"/g,'\\"')}"`);
+  }
+  return lines.join('\n');
+}
+
+function renderClaimsCards() {
+  const container = document.getElementById('claims-cards-container');
+  if (!container) return;
+  if (!claimsData.length) {
+    container.innerHTML = `<div style="font-size:11px;color:var(--t3);padding:10px;background:var(--s2);border:1px dashed var(--b2);border-radius:6px">
+      No claims yet. Click "+ Add a claim" to start authoring.
     </div>`;
     return;
   }
-
-  container.innerHTML = `<div style="font-size:11px;color:var(--t3);padding:12px">
-    <span class="spinner"></span> Loading claims…
-  </div>`;
-
-  let yamlContent = '';
-  let isNew = false;
-
-  try {
-    const res = await fetch(`${base()}/api/workspaces/${id}/files/${CLAIMS_PATH}`, {
-      credentials:'include', headers: authHeaders()
-    });
-    if (res.ok) {
-      const data = await res.json();
-      yamlContent = data.content ?? data.text ?? '';
-    } else if (res.status === 404) {
-      // File not in workspace yet — show template so the user can author their first claims file
-      yamlContent = COMPOSITION_TEMPLATE;
-      isNew = true;
-    } else {
-      throw new Error(await res.text());
-    }
-  } catch(e) {
-    yamlContent = COMPOSITION_TEMPLATE;
-    isNew = true;
-  }
-
-  container.innerHTML = `
-    <div class="yaml-editor-wrap">
-      <div class="yaml-path">
-        dpp/claims.yaml
-        ${isNew ? '<span style="color:var(--amb);margin-left:8px">○ new — not yet saved to workspace</span>' : '<span style="color:var(--grn);margin-left:8px">✓ loaded from workspace git</span>'}
+  container.innerHTML = claimsData.map((c, i) => {
+    const pressureClass = {high:'cp-high',medium:'cp-medium',low:'cp-low'}[c.claim_pressure] ?? 'cp-medium';
+    const isBeat = c.claim_pressure === 'high';
+    return `<div class="claim-card" id="cc-${i}">
+      <div class="claim-card-head" onclick="toggleClaimCard(${i})">
+        ${isBeat ? '<span class="claim-beat-star">\u2605</span>' : ''}
+        <span class="claim-text">"${esc(c.candidate_text || 'Empty claim \u2014 click to edit')}"</span>
+        <span class="claim-pressure ${pressureClass}">${c.claim_pressure||'medium'}</span>
+        <span class="claim-status">${c.status||'draft'}</span>
       </div>
-      <textarea class="yaml-ta" id="composition-ta" spellcheck="false">${esc(yamlContent)}</textarea>
-      <div class="yaml-actions">
-        <span class="yaml-status info" id="yaml-status">Edit the YAML, then save.</span>
-        <button class="btn-g btn-sm" onclick="saveClaimsYaml(false)">Save to workspace</button>
-        <button class="btn btn-sm" onclick="saveClaimsYaml(true)">Save &amp; run comparison</button>
+      <div class="claim-edit-body">
+        <div class="claim-field">
+          <label>Claim text</label>
+          <textarea oninput="updateClaim(${i},'candidate_text',this.value)">${esc(c.candidate_text||'')}</textarea>
+        </div>
+        <div class="claim-field">
+          <label>Claim pressure</label>
+          <select onchange="updateClaim(${i},'claim_pressure',this.value)">
+            <option value="high"${c.claim_pressure==='high'?' selected':''}>High \u2014 core product claim, likely divergent</option>
+            <option value="medium"${c.claim_pressure==='medium'?' selected':''}>Medium \u2014 supporting claim</option>
+            <option value="low"${c.claim_pressure==='low'?' selected':''}>Low \u2014 process descriptor, rarely divergent</option>
+          </select>
+        </div>
+        <div class="claim-field">
+          <label>Notes (internal)</label>
+          <input type="text" value="${esc(c.notes||'')}" oninput="updateClaim(${i},'notes',this.value)" placeholder="Evidence basis, regulatory references\u2026">
+        </div>
+        <div class="claim-edit-actions">
+          <span style="font-size:10px;color:var(--t3);font-family:var(--mono)">${esc(c.id)}</span>
+          <button class="claim-delete-btn" onclick="deleteClaim(${i})">Delete claim</button>
+        </div>
       </div>
     </div>`;
+  }).join('');
 }
 
-async function saveClaimsYaml(andRun) {
+let openCardIdx = null;
+function toggleClaimCard(i) {
+  const prev = openCardIdx;
+  openCardIdx = prev === i ? null : i;
+  document.querySelectorAll('.claim-card').forEach((el, j) => {
+    el.classList.toggle('editing', j === openCardIdx);
+  });
+}
+
+function updateClaim(i, field, value) {
+  if (claimsData[i]) claimsData[i][field] = value;
+  // Update the header text live
+  const card = document.getElementById('cc-' + i);
+  if (card && field === 'candidate_text') {
+    const span = card.querySelector('.claim-text');
+    if (span) span.textContent = `"${value || 'Empty claim \u2014 click to edit'}"`;
+  }
+}
+
+function deleteClaim(i) {
+  if (!confirm('Delete this claim?')) return;
+  claimsData.splice(i, 1);
+  openCardIdx = null;
+  renderClaimsCards();
+}
+
+function addClaimCard() {
+  const id = 'claim_' + Date.now();
+  claimsData.push({ id, candidate_text:'', claim_pressure:'medium', status:'draft', notes:'' });
+  renderClaimsCards();
+  openCardIdx = claimsData.length - 1;
+  document.querySelectorAll('.claim-card').forEach((el, j) => {
+    el.classList.toggle('editing', j === openCardIdx);
+  });
+  const ta = document.querySelector(`#cc-${openCardIdx} textarea`);
+  if (ta) ta.focus();
+}
+
+async function loadClaimsCards() {
+  const id = wsId();
+  const container = document.getElementById('claims-cards-container');
+  const addBtn = document.getElementById('add-claim-btn');
+  const footer = document.getElementById('claims-footer');
+  if (!id) {
+    if (container) container.innerHTML = `<div style="font-size:11px;color:var(--t3);padding:12px;background:var(--s2);border:1px solid var(--b1);border-radius:6px">Select a workspace from Products to load claims.</div>`;
+    return;
+  }
+  if (container) container.innerHTML = `<div style="font-size:11px;color:var(--t3);padding:8px"><span class="spinner"></span> Loading claims\u2026</div>`;
+  try {
+    const res = await fetch(`${base()}/api/workspaces/${id}/files/${CLAIMS_PATH}`,
+      { credentials:'include', headers: authHeaders() });
+    if (res.ok) {
+      const data = await res.json();
+      const text = data.content ?? data.text ?? '';
+      const parsed = parseClaimsYaml(text);
+      claimsYamlHeader = parsed.header;
+      claimsData = parsed.claims;
+    } else {
+      // No claims file yet — start empty
+      claimsYamlHeader = `# DPP Claims \u2014 dpp/claims.yaml\n# What you say about the product. Separate from the BOM.\n`;
+      claimsData = [];
+    }
+    renderClaimsCards();
+    if (addBtn) addBtn.style.display = '';
+    if (footer) footer.style.display = '';
+  } catch(e) {
+    if (container) container.innerHTML = `<div style="font-size:11px;color:var(--red)">Error: ${esc(e.message)}</div>`;
+  }
+}
+
+async function saveClaimsFromCards(andRun) {
   const id = wsId();
   if (!id) { alert('Connect a workspace first.'); return; }
-  const ta = document.getElementById('composition-ta');
-  if (!ta) return;
-  const content = ta.value;
-  const status = document.getElementById('yaml-status');
-  status.className = 'yaml-status info';
-  status.textContent = 'Saving…';
-
+  const statusEl = document.getElementById('claims-save-status');
+  if (statusEl) { statusEl.style.color='var(--t3)'; statusEl.textContent = 'Saving\u2026'; }
+  const yamlText = serializeClaimsYaml(claimsYamlHeader, claimsData);
   try {
-    const res = await fetch(`${base()}/api/workspaces/${id}/files/${CLAIMS_PATH}`, {
-      method: 'PUT',
-      headers: authHeaders(),
-      body: JSON.stringify({
-        content,
-        message: `DPP Studio: update claims YAML`,
-      })
-    });
+    const res = await fetch(`${base()}/api/workspaces/${id}/files/${CLAIMS_PATH}`,
+      { method:'PUT', credentials:'include', headers: authHeaders(),
+        body: JSON.stringify({ content: yamlText, message: 'DPP Studio: update claims' }) });
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
-    status.className = 'yaml-status ok';
-    status.textContent = `✓ Saved — commit ${(data.sha ?? data.commit ?? '').slice(0, 8)}`;
-    // Update the path indicator
-    const pathEl = document.querySelector('.yaml-path span');
-    if (pathEl) { pathEl.style.color = 'var(--grn)'; pathEl.textContent = '✓ saved to workspace git'; }
-    if (andRun) {
-      status.textContent += ' — running comparison…';
-      await runLive();
-      status.textContent = '✓ Saved and comparison updated.';
-    }
+    if (statusEl) { statusEl.style.color='var(--grn)'; statusEl.textContent = `\u2713 Saved \u2014 ${(data.sha||'').slice(0,8)}`; }
+    if (andRun) { if (statusEl) statusEl.textContent += ' \u2014 running\u2026'; await runLive(); if (statusEl) statusEl.textContent = '\u2713 Saved and comparison updated'; }
   } catch(e) {
-    status.className = 'yaml-status err';
-    status.textContent = `Error: ${e.message}`;
+    if (statusEl) { statusEl.style.color='var(--red)'; statusEl.textContent = `Error: ${e.message}`; }
   }
 }
 
@@ -1285,11 +1429,42 @@ async function runLive() {
 }
 
 function showEmptyWithMessage(msg) {
-  document.getElementById('main').style.display = 'none';
+  const main = document.getElementById('main');
+  if (main) main.style.display = 'none';
   const el = document.getElementById('empty-state');
+  if (!el) return;
   el.style.display = '';
-  el.querySelector('p').innerHTML = `<span style="color:var(--red)">${esc(msg)}</span><br><br>Select a workspace from the Products tab.`;
+  const p = el.querySelector('p') || el;
+  p.innerHTML = `<span style="color:var(--red)">${esc(msg)}</span><br><br>Select a workspace from the Products tab.`;
 }
+
+// ── drag handle (sidebar resize) ──────────────────────────────────────────
+(function() {
+  let dragging = false;
+  const handle = document.getElementById('drag-handle');
+  const sidebar = document.getElementById('sidebar');
+  if (!handle || !sidebar) return;
+  handle.addEventListener('mousedown', e => {
+    dragging = true;
+    handle.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const w = Math.max(180, Math.min(520, e.clientX));
+    sidebar.style.width = w + 'px';
+    sidebar.style.minWidth = w + 'px';
+  });
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove('dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  });
+})();
 
 window.addEventListener('DOMContentLoaded', () => {
   renderKB();
