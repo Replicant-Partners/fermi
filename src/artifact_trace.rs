@@ -480,13 +480,109 @@ pub struct Field {
     /// endpoint this field's contract names" on a tool that takes a species
     /// binomial.
     pub probe_endpoint: Option<String>,
+    /// **What happened to this field on this pulse**, from
+    /// [`crate::field_state::Observed`].
+    ///
+    /// `filled` | `absent_by_contract` | `tool_empty` | `owed` | `stripped`.
+    ///
+    /// The trace had its own words for this and computed them in JavaScript
+    /// from `produced`, `kind`, `settleable` and a tool-call scan — a fourth
+    /// inline copy of a five-way match the platform already owns, and the copy
+    /// that spelled a removal `refused` and an unsourceable absence
+    /// `unsourced`, one word meaning the opposite of what the specimen page
+    /// meant by it.
+    ///
+    /// **`stripped` is the word `refused` was standing in for.**
+    pub observed: &'static str,
+    /// Whose gap this is: `nobody's` | `the world's` | `the agent's`.
+    ///
+    /// Attribution, and **not** severity. `owed` and `stripped` are both the
+    /// agent's and only one is damaging, which is why [`Field::finding`] exists
+    /// separately and why this field must never decide a colour.
+    pub whose: &'static str,
+    /// **How bad it is**, from [`crate::field_state::Finding`].
+    ///
+    /// `delivered` | `compliance` | `capability_gap` | `shortfall` | `fault`.
+    ///
+    /// The axis the page was missing. It rendered four different kinds of
+    /// finding in one red — a fabrication, a shortfall against the agent's own
+    /// ambition, a capability gap in the world, and a ceiling that is not a
+    /// finding at all — so the one event that should alarm a reader was the
+    /// smallest number on the page and was drowned by two larger ones.
+    pub finding: &'static str,
+    /// The colour, decided once, in `field_state`.
+    ///
+    /// `neutral` | `amber` | `red`. **Red is reserved for faults.** Served
+    /// rather than derived on the client because a surface that maps a count to
+    /// a tone has made a second and weaker copy of this decision — which is
+    /// exactly what `empty > 0 ? "bad"` was.
+    pub finding_tone: &'static str,
+    /// How much worse than neutral, for a row taking a worst-of over its fields.
+    ///
+    /// Served so that ordering the platform's own tone vocabulary is not
+    /// something a client invents.
+    pub finding_rank: u8,
+    /// **What the contract says about this field**, from
+    /// [`crate::field_state::Declared`].
+    ///
+    /// `resolved` | `error` | `pending` | `derived` | `inferred` | `narrative`.
+    ///
+    /// The other clock, and the reason the trace needed it. The page derived
+    /// nine words of its own from `kind`, `produced`, `settleable` and a scan
+    /// of the tool calls — `platform-computed`, `prose`, `a judgement`,
+    /// `no tool exists` — and every one of them was this enum with different
+    /// spelling. The specimen page has read it from here all along; the trace
+    /// spelled its own, and that is how one word came to mean a declared kind
+    /// on one panel and a violation on the next.
+    ///
+    /// Two served clocks, so a row prints `declared · observed` and decides
+    /// nothing.
+    pub declared: &'static str,
+    /// **How much the named tool returned on this run**, when it was called.
+    ///
+    /// `None` when no tool is named or none was called. A fact, not a verdict,
+    /// and deliberately reported rather than thresholded: `genome_profiler`'s
+    /// NCBI call returned 210 bytes for a beetle with no sequenced genome and
+    /// `football_analyst`'s `injuries` call returned 16,036. Both are "the tool
+    /// was asked and the field is empty", one is a capability gap and the other
+    /// a discarded result, and the line between them is a judgement about
+    /// whether the answer was IN that response — which only running it settles.
+    ///
+    /// Computed here because it comes from the run record. The page computed it
+    /// from `tool_calls`, which is `.take(40)`, so a tool that happened to be
+    /// the forty-first read as never called.
+    pub evidence_bytes: Option<i64>,
 }
 
 /// Dress the graded fields, and compute the document's weakest link.
 ///
 /// The floor comes from [`grounding_trust::floor`] rather than from a `min` here:
 /// it is a trust calculation and it has exactly one implementation.
-pub fn fields(agent_id: &str, graded: &[GradedField]) -> (Vec<Field>, &'static str) {
+///
+/// `report` and `completeness` are **taken rather than recomputed**, and that is
+/// the whole point of the seam. [`crate::field_state::Observed::of`] needs both,
+/// and every one of the three inputs already exists at the one call site: a
+/// second opinion computed here could say `filled` while the summary above it
+/// said the field was empty, or call a capability gap the agent's fault — which
+/// is what the client-side version did, because it could not see the run record.
+///
+/// `completeness` is `Option` because a trace served before `Gate::Completeness`
+/// existed has no assessment. `Observed::of` degrades honestly without it: an
+/// empty `sourced` field becomes `Owed` rather than being sorted into
+/// `ToolEmpty`, which is the safe direction — it attributes the gap to the agent
+/// rather than excusing it as the world's.
+/// `returned` maps a tool name to the largest number of bytes any of its calls
+/// returned on this run. Taken rather than derived from a truncated call list:
+/// the trace serves `tool_calls` as `.take(40)` because it carries per-call
+/// inputs a reader can replay from, and deriving "was this tool called" from a
+/// truncated list reports the forty-first call as never having happened.
+pub fn fields(
+    agent_id: &str,
+    graded: &[GradedField],
+    report: &grounding_trust::Report,
+    completeness: Option<&crate::completeness::Assessment>,
+    returned: &std::collections::HashMap<String, i64>,
+) -> (Vec<Field>, &'static str) {
     // Why each field can or cannot carry a verdict, from the one function that
     // decides it. Re-derived rather than remembered: `from_graded_fields` is pure
     // over the graded fields, so asking it here cannot disagree with what the
@@ -495,24 +591,121 @@ pub fn fields(agent_id: &str, graded: &[GradedField]) -> (Vec<Field>, &'static s
     let (_, skipped) = crate::assertions::from_graded_fields(agent_id, graded);
     let out: Vec<Field> = graded
         .iter()
-        .map(|f| Field {
-            name: f.path,
-            value: f.value.clone(),
-            grade: f.provenance,
-            strength: grounding_trust::strength(f.provenance),
-            settleable_by: f.settleable_by,
-            produced: !f.value.is_null(),
-            not_checkable: skipped.iter().find(|s| s.path == f.path).map(|s| s.why),
-            kind: f.kind,
-            absence_expected: f.kind.absence_is_expected(),
-            settleable: f.kind.is_settleable(),
-            tool_runnable: f.settleable_by.is_some_and(crate::field_probe::is_runnable),
-            response_hint: crate::field_probe::response_hint(agent_id, f.path),
-            probe_endpoint: crate::field_probe::probe_endpoint(agent_id, f.path),
+        .map(|f| {
+            // Once per field, and every derived word comes off the same value.
+            // Calling the constructor per column would let the token and the
+            // colour describe different states if the inputs ever changed
+            // mid-iteration, which is the shape of bug this module exists to
+            // make unrepresentable.
+            let observed = crate::field_state::Observed::of(f, report, completeness);
+            let finding = observed.finding();
+            Field {
+                name: f.path,
+                value: f.value.clone(),
+                grade: f.provenance,
+                strength: grounding_trust::strength(f.provenance),
+                settleable_by: f.settleable_by,
+                produced: !f.value.is_null(),
+                not_checkable: skipped.iter().find(|s| s.path == f.path).map(|s| s.why),
+                kind: f.kind,
+                absence_expected: f.kind.absence_is_expected(),
+                settleable: f.kind.is_settleable(),
+                tool_runnable: f.settleable_by.is_some_and(crate::field_probe::is_runnable),
+                response_hint: crate::field_probe::response_hint(agent_id, f.path),
+                probe_endpoint: crate::field_probe::probe_endpoint(agent_id, f.path),
+                observed: observed.token(),
+                whose: observed.whose(),
+                finding: finding.token(),
+                finding_tone: finding.tone(),
+                finding_rank: finding.rank(),
+                // The other clock, from the one producer. `of_graded` exists so
+                // this line is not a five-arm match over `GroundingKind`.
+                declared: crate::field_state::Declared::of_graded(f, |t| {
+                    crate::field_probe::is_runnable(t)
+                })
+                .token(),
+                evidence_bytes: f.settleable_by.and_then(|t| returned.get(t).copied()),
+            }
         })
         .collect();
     let floor = grounding_trust::floor(graded.iter().map(|f| f.provenance));
     (out, floor)
+}
+
+/// One run state, glossed. The legend, served.
+///
+/// **Served once rather than per field**, which is house rule 2 applied to the
+/// payload as well as to the page: the reason belongs to the *state*, and a
+/// sentence repeated on each of eleven identical rows is the wall this surface
+/// has already shipped twice.
+///
+/// Sent as a list so a page renders only the states its rows actually print,
+/// and cannot write a legend entry for a state the platform retired.
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct StateGloss {
+    /// The token a row prints: `filled`, `owed`, `stripped`, …
+    pub token: &'static str,
+    /// What the state means, in the platform's own words.
+    pub why: &'static str,
+    /// `nobody's` | `the world's` | `the agent's`. Attribution.
+    pub whose: &'static str,
+    /// `delivered` | `compliance` | `capability_gap` | `shortfall` | `fault`.
+    /// Severity, which is a different axis from `whose`.
+    pub finding: &'static str,
+    /// `neutral` | `amber` | `red`. **Red is reserved for faults.**
+    pub finding_tone: &'static str,
+    /// Why that severity, so a reader can look up the colour and not guess.
+    pub finding_why: &'static str,
+}
+
+/// One contract state, glossed. The other legend, served.
+///
+/// `Declared` carries no severity: a `pending` field is a standing request for
+/// an integration and **not a defect**, and the only state here that is one is
+/// `error`. That is why this struct has no tone — a contract state cannot be a
+/// finding about a run, and giving it a colour is how a page came to report an
+/// agent's ambition as its failure.
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct DeclaredGloss {
+    pub token: &'static str,
+    pub why: &'static str,
+    /// Is this the one contract state that is a defect?
+    ///
+    /// True only for `error` — a contract naming a tool the platform cannot
+    /// dispatch, so nothing can ever settle the field. Served rather than left
+    /// to a client to infer from the word, because `pending` also *sounds* like
+    /// a problem and is the opposite of one.
+    pub is_defect: bool,
+}
+
+/// Every contract state a field can be in, glossed for a legend.
+pub fn declared_glossary() -> Vec<DeclaredGloss> {
+    crate::field_state::Declared::ALL
+        .iter()
+        .map(|d| DeclaredGloss {
+            token: d.token(),
+            why: d.why(),
+            is_defect: *d == crate::field_state::Declared::Unresolvable,
+        })
+        .collect()
+}
+
+/// Every run state a field can be in, glossed for a legend.
+pub fn field_state_glossary() -> Vec<StateGloss> {
+    crate::field_state::Observed::ALL
+        .iter()
+        .map(|o| {
+            let f = o.finding();
+            StateGloss {
+                token: o.token(),
+                why: o.why(),
+                whose: o.whose(),
+                finding: f.token(),
+                finding_tone: f.tone(),
+                finding_why: f.why(),
+            }
+        })
+        .collect()
 }
 
 /// The trace's three-word reading, and why.
@@ -642,6 +835,24 @@ mod tests {
         }
     }
 
+    /// A report with nothing removed.
+    ///
+    /// `fields()` needs one to derive each field's run state, and these fixtures
+    /// are about the strength ladder rather than about enforcement — so an empty
+    /// report is the honest input, and it means no field here reads `stripped`.
+    fn clean() -> grounding_trust::Report {
+        grounding_trust::Report::default()
+    }
+
+    /// A run in which no tool was called.
+    ///
+    /// These fixtures exercise the strength ladder and the run states, not the
+    /// evidence chip, so an empty record is the honest input - and it means no
+    /// field here carries a byte count.
+    fn no_calls() -> std::collections::HashMap<String, i64> {
+        std::collections::HashMap::new()
+    }
+
     /// An episode nobody could check is `unknown`, and the cause is sourced.
     ///
     /// The majority case — 3,571 of 3,576 — and the one most likely to ship
@@ -711,7 +922,7 @@ mod tests {
             graded("b.y", PROV_NO_MATCH),
             graded("c.z", PROV_TOOL),
         ];
-        let (dressed, floor) = fields("no_such_agent", &g);
+        let (dressed, floor) = fields("no_such_agent", &g, &clean(), None, &no_calls());
         assert_eq!(dressed.len(), 3);
         assert_eq!(
             floor,
@@ -738,8 +949,13 @@ mod tests {
     fn the_trace_carries_what_the_model_actually_claimed() {
         let mut g = graded("genome.estimated_size_mb", PROV_UNAVAILABLE);
         g.value = serde_json::json!("2.4 Gb");
-        let (dressed, _) = fields("no_such_agent", &[g]);
+        let (dressed, _) = fields("no_such_agent", &[g], &clean(), None, &no_calls());
         assert_eq!(dressed[0].value, serde_json::json!("2.4 Gb"));
+        // And the run state travels with it. A value came back, whatever the
+        // contract thinks of where it came from.
+        assert_eq!(dressed[0].observed, "filled");
+        assert_eq!(dressed[0].finding, "delivered");
+        assert_eq!(dressed[0].finding_tone, "neutral");
     }
 
     /// A field the agent left null says so, and says a verdict cannot attach.
@@ -753,7 +969,7 @@ mod tests {
     fn an_absent_value_is_reported_as_absent_rather_than_as_unqueued() {
         let mut g = graded("squad_value.arsenal_total", PROV_UNAVAILABLE);
         g.value = serde_json::Value::Null;
-        let (dressed, _) = fields("no_such_agent", &[g]);
+        let (dressed, _) = fields("no_such_agent", &[g], &clean(), None, &no_calls());
 
         assert!(
             !dressed[0].produced,
@@ -778,7 +994,7 @@ mod tests {
     fn a_present_value_reports_no_obstruction() {
         let mut g = graded("league_context.season", PROV_TOOL);
         g.value = serde_json::json!("2024-25");
-        let (dressed, _) = fields("no_such_agent", &[g]);
+        let (dressed, _) = fields("no_such_agent", &[g], &clean(), None, &no_calls());
         assert!(dressed[0].produced);
     }
 
@@ -888,9 +1104,10 @@ mod tests {
                     .unwrap_or_else(|| {
                         panic!("`{}` is a checkpoint on `{id}` and not in `GATES`", r.rung)
                     });
-                let a = r.decided_absent.as_ref().expect(
-                    "`checkpoints()` is pure over the registries and records no verdicts",
-                );
+                let a = r
+                    .decided_absent
+                    .as_ref()
+                    .expect("`checkpoints()` is pure over the registries and records no verdicts");
 
                 assert_eq!(
                     a.token == NotRecordedReason::FiresBeforeArtifact,

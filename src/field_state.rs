@@ -112,6 +112,16 @@ pub enum Observed {
 }
 
 impl Declared {
+    /// Every contract state, for a surface that has to render a legend.
+    pub const ALL: &'static [Declared] = &[
+        Declared::Resolved,
+        Declared::Unresolvable,
+        Declared::Pending,
+        Declared::Derived,
+        Declared::Inferred,
+        Declared::Narrative,
+    ];
+
     pub fn token(self) -> &'static str {
         match self {
             Self::Resolved => "resolved",
@@ -180,9 +190,52 @@ impl Declared {
             Grounding::Narrative => Self::Narrative,
         }
     }
+
+    /// The same decision, from a [`GradedField`].
+    ///
+    /// A surface with a pulse in hand holds `GradedField`s rather than
+    /// `Grounding`s: `graded_fields` has already resolved the contract and kept
+    /// only [`GroundingKind`] and the tool name. Both carry everything this
+    /// decision needs, and **the point of the second constructor is that
+    /// neither caller has to write the mapping.**
+    ///
+    /// Without it, the artifact trace would need a five-arm match from
+    /// `GroundingKind` to `Declared` — which is the fourth inline copy
+    /// `no_surface_maps_grounding_to_a_state_itself` exists to forbid, one
+    /// enum to the left.
+    ///
+    /// `the_two_constructors_agree_on_every_kind` pins the two together.
+    pub fn of_graded(field: &GradedField, dispatchable: impl Fn(&str) -> bool) -> Self {
+        match field.kind {
+            GroundingKind::Sourced => match field.settleable_by {
+                Some(tool) if dispatchable(tool) => Self::Resolved,
+                // A sourced field whose tool cannot be dispatched, and one
+                // whose contract somehow named none, are the same finding: no
+                // retrieval can ever settle it.
+                _ => Self::Unresolvable,
+            },
+            GroundingKind::Unsourced => Self::Pending,
+            GroundingKind::Derived => Self::Derived,
+            GroundingKind::Inferred => Self::Inferred,
+            GroundingKind::Narrative => Self::Narrative,
+        }
+    }
 }
 
 impl Observed {
+    /// Every run state, for a surface that has to render a legend.
+    ///
+    /// Exposed rather than left to the tests so a legend cannot be written by
+    /// hand and then quietly fall behind the enum — which is how a page came to
+    /// explain a state no row could print and omit one that several did.
+    pub const ALL: &'static [Observed] = &[
+        Observed::Filled,
+        Observed::AbsentByContract,
+        Observed::ToolEmpty,
+        Observed::Owed,
+        Observed::Stripped,
+    ];
+
     pub fn token(self) -> &'static str {
         match self {
             Self::Filled => "filled",
@@ -196,7 +249,9 @@ impl Observed {
     pub fn why(self) -> &'static str {
         match self {
             Self::Filled => {
-                "a value came back. What it is worth depends on the contract                  state beside it — a filled `resolved` field came from a tool,                  a filled `inferred` one is the agent's judgement"
+                "a value came back. What it is worth depends on the contract \
+                 state beside it — a filled `resolved` field came from a tool, \
+                 a filled `inferred` one is the agent's judgement"
             }
             Self::AbsentByContract => {
                 "empty, and the contract requires that. This is the contract \
@@ -268,6 +323,146 @@ impl Observed {
     }
 }
 
+/// **How bad is it** — the axis [`Observed::whose`] cannot carry.
+///
+/// `whose()` answers *attribution* and buckets `Owed | Stripped` together as
+/// `"the agent's"`. Both are the agent's and **only one is damaging**, so
+/// attribution cannot decide the colour. Conflating the two is what produced
+/// the defect this enum exists to fix: a user read one trace and reported it as
+/// *"a bunch of rejection"* when the artifact was deliverable and the only
+/// fault-shaped event on the page was the smallest number on it.
+///
+/// Four findings were rendered in one red and they are four different kinds of
+/// thing:
+///
+/// | what the page said | what it was |
+/// |---|---|
+/// | header badge `VIOLATIONS` | a **fault** — the model asserted what it could not know |
+/// | `1 of 8 owed`, tone hardcoded | a **shortfall** — commissioned work not delivered |
+/// | `11 ◌` in the fault colour | mostly **capability gaps** and **compliance** |
+/// | `records only` | a **ceiling**, not a finding at all |
+///
+/// # The standing rule this encodes
+///
+/// > **Red is reserved for faults.** Shortfall is amber. Capability gap,
+/// > compliance and delivery are neutral.
+///
+/// [`Finding::tone`] is the **one producer** of that colour (house rule 8).
+/// A surface that hardcodes a tone from a count — `empty > 0 ? "bad"` — has
+/// made a second, weaker copy of this decision, and the weaker copy is the one
+/// that paints a shortfall as a defect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Finding {
+    /// A value came back. Nothing to report.
+    Delivered,
+    /// Empty because the contract requires it. The contract **working**.
+    Compliance,
+    /// The named tool was asked and the world had nothing. Nobody's fault, and
+    /// a real gap: it is the prioritised request for an integration.
+    CapabilityGap,
+    /// Commissioned work that did not come back. The agent's, and a matter of
+    /// **ambition rather than legality** — the artifact is still deliverable.
+    Shortfall,
+    /// The model wrote a value the contract forbids. The one fault-shaped
+    /// event: an assertion the agent could not have known.
+    Fault,
+}
+
+impl Observed {
+    /// How bad this state is, separately from whose it is.
+    ///
+    /// Total and injective over the two damaging states: `Owed` and `Stripped`
+    /// are both `"the agent's"` under [`Observed::whose`] and **must not** share
+    /// a `Finding`. `a_shortfall_and_a_fault_are_not_the_same_finding` is that
+    /// invariant.
+    pub fn finding(self) -> Finding {
+        match self {
+            Self::Filled => Finding::Delivered,
+            Self::AbsentByContract => Finding::Compliance,
+            Self::ToolEmpty => Finding::CapabilityGap,
+            Self::Owed => Finding::Shortfall,
+            Self::Stripped => Finding::Fault,
+        }
+    }
+}
+
+impl Finding {
+    pub fn token(self) -> &'static str {
+        match self {
+            Self::Delivered => "delivered",
+            Self::Compliance => "compliance",
+            Self::CapabilityGap => "capability_gap",
+            Self::Shortfall => "shortfall",
+            Self::Fault => "fault",
+        }
+    }
+
+    /// The colour, and the **only** place it is decided.
+    ///
+    /// Three tones, and exactly one of them is red. Deliberately not five: a
+    /// tone per finding would let a surface distinguish compliance from a
+    /// capability gap by colour, and the two call for the same reaction from a
+    /// reader looking at a strip — neither is anybody's defect.
+    pub fn tone(self) -> &'static str {
+        match self {
+            // Delivered is neutral, not green. Green means zero *errors*, and
+            // painting every filled field green makes a document of filled
+            // fields look verified when nothing has verified it.
+            Self::Delivered | Self::Compliance | Self::CapabilityGap => "neutral",
+            Self::Shortfall => "amber",
+            Self::Fault => "red",
+        }
+    }
+
+    /// How much worse than neutral, for a surface taking a worst-of over a set.
+    ///
+    /// Served so that "the tone of this row is the worst tone among its fields"
+    /// is not a client-side ordering of the platform's vocabulary. A surface
+    /// that ranks these itself has made a verdict out of a presentation detail,
+    /// which is how `weakSourced > 0 ? "bad"` came to smuggle a verdict into a
+    /// description of where numbers came from.
+    pub fn rank(self) -> u8 {
+        match self {
+            Self::Delivered | Self::Compliance | Self::CapabilityGap => 0,
+            Self::Shortfall => 1,
+            Self::Fault => 2,
+        }
+    }
+
+    /// Said once, keyed by the token the rows print.
+    pub fn why(self) -> &'static str {
+        match self {
+            Self::Delivered => {
+                "a value came back. Neutral rather than green on purpose: that a \
+                 field is filled says nothing about whether the value is right, \
+                 and green here would make a document of filled fields look \
+                 verified when nothing has verified it"
+            }
+            Self::Compliance => {
+                "empty because the contract requires it. Not a gap — the \
+                 contract working"
+            }
+            Self::CapabilityGap => {
+                "the tool was asked and the world had nothing. Nobody's fault, \
+                 and a prioritised request for the integration that would close \
+                 it"
+            }
+            Self::Shortfall => {
+                "commissioned work that did not come back. The agent's, and a \
+                 question of ambition rather than legality — the artifact is \
+                 still deliverable, and pruning the contract to make this \
+                 disappear would delete the ambition the contract exists to \
+                 record"
+            }
+            Self::Fault => {
+                "the model asserted what it could not have known. The one \
+                 fault-shaped event a field can carry, and the only one that \
+                 earns red"
+            }
+        }
+    }
+}
+
 /// One row, as every surface should print it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FieldRow {
@@ -298,6 +493,174 @@ mod tests {
         Observed::Owed,
         Observed::Stripped,
     ];
+    const FINDING_ALL: &[Finding] = &[
+        Finding::Delivered,
+        Finding::Compliance,
+        Finding::CapabilityGap,
+        Finding::Shortfall,
+        Finding::Fault,
+    ];
+
+    /// **The amendment, made impossible to undo.**
+    ///
+    /// `whose()` buckets `Owed` and `Stripped` together as `"the agent's"`.
+    /// Both are the agent's; only one is damaging. If they ever share a
+    /// `Finding`, the colour is back on the attribution axis and a shortfall is
+    /// painted as a fault again — which is the whole of the reported defect:
+    /// *"omissions not hallucinations … the error is agent completeness vs
+    /// aspiration, not failure in the sense of producing untrusted data."*
+    #[test]
+    fn a_shortfall_and_a_fault_are_not_the_same_finding() {
+        assert_eq!(
+            Observed::Owed.whose(),
+            Observed::Stripped.whose(),
+            "the premise of this test has changed: these two shared an \
+             attribution, which is why a second axis was needed at all"
+        );
+        assert_ne!(
+            Observed::Owed.finding(),
+            Observed::Stripped.finding(),
+            "`owed` and `stripped` map to one finding. They are both the \
+             agent's and only one is damaging: a value the agent owed and did \
+             not deliver is a shortfall against its own ambition, and a value \
+             the model asserted without a source is a fault. Painting them the \
+             same is the defect this enum exists to fix."
+        );
+        assert_ne!(
+            Observed::Owed.finding().tone(),
+            Observed::Stripped.finding().tone(),
+            "the two findings differ and their tones do not, so the page still \
+             cannot tell them apart"
+        );
+    }
+
+    /// **Red is reserved for faults.** The standing rule, as an assertion.
+    ///
+    /// Exactly one finding is red and it is the fabrication-shaped one. This is
+    /// what stops the smallest number on the page — the single event that should
+    /// alarm a reader — being drowned by two larger numbers that both mean
+    /// "the agent did not do everything it hoped to".
+    #[test]
+    fn exactly_one_finding_is_red_and_it_is_the_fault() {
+        let red: Vec<&str> = FINDING_ALL
+            .iter()
+            .filter(|f| f.tone() == "red")
+            .map(|f| f.token())
+            .collect();
+        assert_eq!(
+            red,
+            vec!["fault"],
+            "red is reserved for faults and these carry it: {red:?}. A \
+             shortfall is amber; a capability gap and compliance are neutral. \
+             Widening red is how a deliverable artifact came to read as \
+             a bunch of rejection."
+        );
+        // And the ordering a surface takes a worst-of over agrees with the
+        // tone, or a row can be amber while containing a red field.
+        assert!(
+            Finding::Fault.rank() > Finding::Shortfall.rank(),
+            "a fault does not outrank a shortfall, so a worst-of over a set of \
+             fields can report the shortfall and hide the fault"
+        );
+        assert_eq!(
+            Finding::Delivered.rank(),
+            Finding::Compliance.rank(),
+            "delivery and compliance rank differently, which lets a row of \
+             compliant absences read as worse than a row of values — and the \
+             contract requiring an absence is the contract working"
+        );
+    }
+
+    /// Every `Observed` maps to exactly one `Finding`, and every `Finding` is
+    /// reachable.
+    ///
+    /// Totality is what the compiler gives us. **Surjectivity is not**: a
+    /// `Finding` no `Observed` produces is a colour the legend explains and no
+    /// row can ever print, which is how a legend comes to describe a state the
+    /// platform retired.
+    #[test]
+    fn every_finding_is_reachable_from_some_observed_state() {
+        for f in FINDING_ALL {
+            assert!(
+                OBSERVED_ALL.iter().any(|o| o.finding() == *f),
+                "no run state produces `{}`, so the legend explains a colour no \
+                 row can print",
+                f.token()
+            );
+        }
+        // Five states, five findings, and the map is injective — so the token a
+        // row prints and the colour it wears cannot come apart.
+        let mut seen: Vec<&str> = OBSERVED_ALL.iter().map(|o| o.finding().token()).collect();
+        seen.sort();
+        seen.dedup();
+        assert_eq!(
+            seen.len(),
+            OBSERVED_ALL.len(),
+            "two run states share a finding. That is allowed in principle and \
+             is not what this vocabulary does today: if it becomes true, decide \
+             deliberately which pair collapses and say so here, because the \
+             pair that must never collapse is `owed` and `stripped`."
+        );
+    }
+
+    /// The two `Declared` constructors agree, on every kind.
+    ///
+    /// `of` reads a `Grounding` and `of_graded` a `GradedField`, and the second
+    /// exists so the artifact trace does not have to write a five-arm match
+    /// from `GroundingKind` — which would be the fourth inline copy, one enum
+    /// to the left of the one the scan already forbids.
+    ///
+    /// Two constructors for one decision is only safe while they cannot
+    /// disagree, so this walks every kind through both.
+    #[test]
+    fn the_two_constructors_agree_on_every_kind() {
+        let cases: &[(Grounding, GroundingKind, Option<&'static str>)] = &[
+            (
+                Grounding::Sourced {
+                    tool: "call_football_api",
+                    response_field: "x",
+                },
+                GroundingKind::Sourced,
+                Some("call_football_api"),
+            ),
+            (Grounding::Unsourced, GroundingKind::Unsourced, None),
+            (
+                Grounding::Derived {
+                    from: "taxonomy.order",
+                    how: "a closed table",
+                },
+                GroundingKind::Derived,
+                None,
+            ),
+            (
+                Grounding::Inferred {
+                    from: "taxonomy and proximity",
+                },
+                GroundingKind::Inferred,
+                None,
+            ),
+            (Grounding::Narrative, GroundingKind::Narrative, None),
+        ];
+
+        // Both worlds: the tool dispatches, and it does not. `Resolved` versus
+        // `Unresolvable` is the one arm where the closure changes the answer,
+        // so testing only one world would leave it uncovered.
+        for dispatchable in [true, false] {
+            for (grounding, kind, tool) in cases {
+                let mut f = field("a.b", *kind, serde_json::Value::Null);
+                f.settleable_by = *tool;
+                assert_eq!(
+                    Declared::of(grounding, |_| dispatchable),
+                    Declared::of_graded(&f, |_| dispatchable),
+                    "the two constructors disagree about {kind:?} when \
+                     dispatchable={dispatchable}. Two producers of one decision \
+                     is the defect this module exists to end; the second \
+                     constructor is only safe while it cannot say something \
+                     different."
+                );
+            }
+        }
+    }
 
     /// **The defect, made impossible.**
     ///
@@ -355,6 +718,7 @@ mod tests {
             .iter()
             .map(|d| (d.token(), d.why()))
             .chain(OBSERVED_ALL.iter().map(|o| (o.token(), o.why())))
+            .chain(FINDING_ALL.iter().map(|f| (f.token(), f.why())))
             .collect();
         for (t, why) in &all {
             assert!(
@@ -493,14 +857,25 @@ mod tests {
         // The files that render contract states today. Named rather than
         // globbed: the population is small and a glob would either miss a
         // template or flag every file that mentions a token in prose.
-        const SURFACES: &[&str] = &[
-            "src/handlers/specimen.rs",
-            "src/handlers/workspace/core.rs",
+        //
+        // Paired with the constructor each one is obliged to call, because they
+        // do not all print the same clock. The specimen page and the Team tab
+        // describe a contract and have no pulse in hand, so they read
+        // `Declared`. The artifact trace has the retained bytes and reads
+        // `Observed` — and it is the surface the whole module was built for, so
+        // leaving it unscanned would have exempted the one that drifted.
+        const SURFACES: &[(&str, &str)] = &[
+            ("src/handlers/specimen.rs", "field_state::Declared::of"),
+            (
+                "src/handlers/workspace/core.rs",
+                "field_state::Declared::of",
+            ),
+            ("src/artifact_trace.rs", "field_state::Observed::of"),
         ];
 
-        for rel in SURFACES {
-            let body = std::fs::read_to_string(repo.join(rel))
-                .unwrap_or_else(|e| panic!("{rel}: {e}"));
+        for (rel, required) in SURFACES {
+            let body =
+                std::fs::read_to_string(repo.join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"));
             let code: String = body
                 .lines()
                 .filter(|l| !l.trim_start().starts_with("//"))
@@ -508,11 +883,10 @@ mod tests {
                 .join("\n");
 
             assert!(
-                code.contains("field_state::Declared::of"),
-                "{rel} renders contract states and does not call \
-                 `field_state::Declared::of`. One producer of the verdict, or \
-                 the surfaces drift — which is what put `unsourced` on two pages \
-                 meaning two things."
+                code.contains(required),
+                "{rel} renders field states and does not call `{required}`. \
+                 One producer of the verdict, or the surfaces drift — which is \
+                 what put `unsourced` on two pages meaning two things."
             );
 
             // A hand-rolled mapping is a `Grounding::` match beside a state

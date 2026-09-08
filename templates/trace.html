@@ -17,6 +17,12 @@
   .head .sub{font-size:0.72rem;color:var(--fg4);}
   .head .meta{font-size:0.7rem;color:var(--fg4);margin-top:6px;display:flex;gap:12px;flex-wrap:wrap;}
 
+  /* The badge names the row it summarises. Unlabelled it read as a verdict on
+     the artifact entire, when `reading()` returns `Fault` on `violations > 0`
+     and on nothing else — so it has always been reporting one row of one of the
+     two standards. */
+  .badge-of{margin-left:5px;padding-left:5px;border-left:1px solid currentColor;
+            opacity:0.7;font-size:0.9em;}
   .badge{display:inline-block;font-size:0.62rem;text-transform:uppercase;letter-spacing:0.06em;
          padding:1px 6px;border:1px solid;}
   .r-idle{color:var(--fg3);border-color:var(--bg3);}
@@ -201,6 +207,79 @@
   /* The finding stays in the open. A `no gate` behind a fold is a `no gate`
      nobody reads. */
   .q5-nogate{margin:0 0 4px;}
+
+  /* ── Two standards, named ──────────────────────────────────────
+
+     Five questions in one strip with one colour ramp made a designer-grade
+     disappointment read as a caller-grade defect. Legality is a gate and
+     ambition is a gradient, and the platform had vocabulary for only the
+     first.
+
+     Row A can be green today and on most pulses is. Row B green is an
+     aspiration, and divergence there is information rather than failure — so
+     the two rows are separated by a labelled band rather than a blank line,
+     because the whole point is that a reader knows which standard they are
+     reading. */
+  .std{margin-bottom:2px;}
+  .std-h{display:flex;align-items:baseline;gap:8px;padding:2px 0 4px;}
+  .std-n{font-size:0.72rem;color:var(--fg2);}
+  .std-w{font-size:0.66rem;color:var(--fg4);}
+  .std-a .std-n{color:var(--aqua);}
+  .std-b .std-n{color:var(--yellow);}
+  .std3{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--bg2);}
+  @media (max-width:880px){ .std3{grid-template-columns:repeat(2,1fr);} }
+  /* The caption under row B. Computed from the finding counts, not written —
+     so it cannot claim a shortfall the fields do not show. */
+  .std-cap{font-size:0.72rem;color:var(--fg3);line-height:1.55;margin:6px 0 12px;
+           padding-left:10px;border-left:2px solid var(--yellow);max-width:92ch;}
+  .std-cap b{color:var(--fg2);}
+  .std-cap .amb{color:var(--yellow);}
+  /* The description. Full width, and deliberately toneless: it is where the
+     numbers came from, not a verdict on them. `weakSourced > 0 ? "bad"` was a
+     verdict smuggled into a description, and it has moved to row 5, which can
+     attribute it. */
+  .dist{background:var(--bg0);padding:7px 10px;border-top:2px solid var(--bg3);
+        display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;}
+  .dist-l{font-size:0.63rem;color:var(--fg4);}
+  .dist-v{font-size:0.8rem;color:var(--fg2);}
+  .dist-w{font-size:0.66rem;color:var(--fg4);line-height:1.45;}
+
+  /* ── The run state, served ─────────────────────────────────────
+
+     `field_state::Observed`, coloured by `Finding::tone`. Three tones and only
+     one is red: red is reserved for faults. A shortfall is amber and a
+     capability gap is neutral, because neither is anybody's defect and drawing
+     them in the fault colour is what made eleven omissions read as eleven
+     rejections. */
+  .obs{font-size:0.58rem;letter-spacing:0.04em;padding:0 4px;border:1px solid var(--bg3);
+       color:var(--fg4);white-space:nowrap;}
+  .obs.f-red{border-color:var(--red,#fb4934);color:var(--red,#fb4934);}
+  .obs.f-amber{border-color:var(--yellow);color:var(--yellow);}
+  .obs.f-neutral{border-color:var(--bg3);color:var(--fg4);}
+  /* The legend for it, out in the open. A token whose gloss is folded has no
+     gloss — which is house rule 2 honoured in the letter and broken in
+     effect. */
+  .obs-leg{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:0.66rem;color:var(--fg4);
+           line-height:1.5;margin:6px 0 10px;align-items:baseline;}
+  .obs-leg .lgi{display:flex;gap:5px;align-items:baseline;max-width:46ch;}
+  .obs-leg .leg-k{font-size:0.6rem;text-transform:uppercase;letter-spacing:0.07em;
+                  color:var(--bg4,#7c6f64);min-width:74px;}
+
+  /* The contract clock, beside the run clock. **No tone at all.**
+
+     A `pending` field is a standing request for an integration and the opposite
+     of a defect — `error` is the only contract state that is one, and it is the
+     only one marked. Giving this axis a colour ramp is how an agent's ambition
+     came to be reported as its failure. */
+  .dec{font-size:0.58rem;letter-spacing:0.04em;padding:0 4px;color:var(--fg4);
+       border:1px dashed var(--bg3);white-space:nowrap;}
+  .dec.d-defect{border-style:solid;border-color:var(--red,#fb4934);
+                color:var(--red,#fb4934);}
+  /* The verification log's word, which is a different question again from
+     either clock: has anybody judged this claim? */
+  .vd{font-size:0.58rem;letter-spacing:0.04em;padding:0 4px;color:var(--fg4);
+      white-space:nowrap;}
+  .a-c{display:flex;gap:3px;justify-content:flex-end;flex-wrap:wrap;align-items:baseline;}
   /* What an absent row means to something consuming this document. One line,
      above the rows, because every absence was being read as a failure. */
   .consumed{margin:0 0 8px;font-style:normal;}
@@ -642,11 +721,18 @@
     if (a.refused.length) {
       line = "This artifact was refused."; tone = "dirty";
     } else if (a.violations > 0 && a.contentsAmended) {
-      line = `This artifact was repaired before it left: ${a.violations} unsourced \
-              claim(s) were removed and the rest was delivered.`;
+      // `stripped`, not `unsourced`, and the word matters more than it looks.
+      //
+      // `unsourced` is a DECLARED KIND on the specimen page — no tool exists
+      // yet, the field must be null, a standing request rather than a defect —
+      // and this sentence used it to mean a violation. One word, two opposite
+      // meanings, on two panels a reader sees together. `field_state` makes the
+      // collision a build failure; this is the sentence that caused it.
+      line = `This artifact was repaired before it left: ${a.violations} \
+              claim(s) were <b>stripped</b> and the rest was delivered.`;
       tone = "clean";
     } else if (a.violations > 0 && !a.contentsGuarded) {
-      line = "Nothing stopped this artifact, and it carries unsourced claims.";
+      line = "Nothing stopped this artifact, and it carries claims the contract forbids.";
       tone = "dirty";
     } else if (a.graded > 0 && a.violations === 0) {
       line = "Nothing stopped this artifact, and every claim under contract was sourced.";
@@ -660,34 +746,40 @@
       ["", a.approved.length, "passed"],
       [a.held.length ? "warm" : "", a.held.length, "held for review"],
       [a.refused.length ? "hot" : "", a.refused.length, "refused"],
-      [a.violations ? "hot" : "", a.violations, "unsourced claims"],
+      [a.violations ? "hot" : "", a.violations, "stripped"],
       ["", a.graded, "claims graded"],
     ].map(([cls, v, label]) =>
       `<div class="vnum ${cls}"><b>${v}</b><span>${label}</span></div>`).join("");
 
-    // The ceiling is the honest limit on any claim about this artifact.
-    const ceiling = a.contentsGuarded
-      ? `<b>Contents were inspected by a checkpoint that could refuse.</b>`
-      : a.contentsAmended
-        ? `<b>Contents were inspected by a checkpoint that repairs.</b>
-           <code>grounding</code> graded ${a.graded} claim(s) and strips any the
-           contract cannot support before the response leaves. It cannot refuse the
-           run — a field's grounding is unknowable until the model has written it —
-           so the ceiling here is that the bad part does not travel, not that it was
-           never produced.`
-      : a.inspectedContents
-        ? `Deepest checkpoint that could have refused: <b>the envelope only</b>.
-           <code>grounding</code> read the contents and graded ${a.graded} claim(s), but on this
-           route it only records — so nothing it found could have stopped the response.`
-        : `Deepest checkpoint that could have refused: <b>the envelope only</b>.
-           Nothing opened the payload, so no verdict here concerns what it says.`;
+    // The ceiling, in the enforcement vocabulary rather than in three
+    // hand-written variants of it.
+    //
+    // This spelled out `amend`, `metric` and "nothing looked" in prose, which is
+    // a fourth place the four declared enforcement modes were collapsed by hand
+    // — and the mode it could not name is `report`, where the verdict does reach
+    // the caller. `ENFORCE` is the one map; `why_not_control` is the platform's
+    // own sentence and is carried rather than paraphrased.
+    //
+    // The detail that used to live here — how many claims were graded, and what
+    // the mode means for the artifact — is row 6 of "As designed" below, beside
+    // the other five answers rather than two scrolls from them.
+    const enf = a.grounding && a.grounding.enforcement;
+    const ee = enf ? enforceOf(enf) : null;
+    const ceiling = ee
+      ? `<b>A checkpoint read the contents and ${esc(ee.full)}.</b>${
+          a.grounding.why_not_control
+            ? ` It cannot refuse the run: <i>${esc(a.grounding.why_not_control)}</i>`
+            : ""}`
+      : `Deepest checkpoint that could have refused: <b>the envelope only</b>.
+         Nothing opened the payload, so no verdict here concerns what it says.`;
 
     // The point of the gate, stated: was this fit to learn from?
     const feed = a.violations > 0 && !a.contentsGuarded
       ? `<div class="vfeed bad">⚠ This artifact entered <b>Loop 1</b> as training data with
-         ${a.violations} unsourced claim(s) still in it. The platform computed a cleaned
-         copy and discarded it; <code>response_text</code> is persisted un-stripped, and
-         consolidation reads it. <b>This is how a loop gets corrupted.</b></div>`
+         ${a.violations} claim(s) the contract forbids still in it. The platform computed a
+         cleaned copy and discarded it; <code>response_text</code> is persisted with the
+         claims intact, and consolidation reads that.
+         <b>This is how a loop gets corrupted.</b></div>`
       : a.graded > 0
         ? `<div class="vfeed ok">Fit to learn from, for the ${a.graded} field(s) under
            contract. Everything else in the document is unexamined.</div>`
@@ -702,48 +794,19 @@
     </div>`;
   }
 
-  // ── The five questions ──────────────────────────────────────────
+  // What the agent was asked for, and what it owes.
   //
-  // What it means to trust an output, for someone who has never heard of this
-  // platform. Every internal token gets the human question it answers, and no
-  // internal noun survives into the answer.
-  //
-  // This is now the ONLY trust panel on the page. The verification ladder used
-  // to render directly below it, and three of its five rungs were platform-wide
-  // rather than about this artifact — so a reader met two five-row panels in
-  // two vocabularies, labelling the same gate differently in each.
-  //
-  // Question three is the one nothing asked: grounding checks whether a tool
-  // COULD have supplied a field, never whether the agent DID produce one, so a
-  // null inherits its block's provenance and reads as `tool_verified`.
-  //
-  // **It must not count an absence the contract requires.** It did, and the
-  // result was the shelf and this page reporting opposite verdicts on the same
-  // fifteen fields: `genome_profiler` scored `9 of 29 empty` in red while its
-  // configuration shelf said "nothing unresolvable", and eight of those nine
-  // nulls were the contract being obeyed — seven `unsourced` fields with no
-  // tool behind them and one `derived` field the platform owes. One null was a
-  // real finding. A headline that says nine cannot point at the one.
-  //
-  // Same rule the shelf already follows: green means zero ERRORS, not zero
-  // pending. `required` is what the agent was actually asked to fill.
-  // **Served, not recomputed.**
-  //
-  // This walked the field values in JavaScript: excused `unsourced` and
-  // `derived`, counted the rest. That was a second implementation of
-  // `completeness::assess`, and the weaker one — it cannot see the run record,
-  // so it could not tell a tool that was ASKED and had nothing from one that was
-  // never called. Both are empty fields; only the second is the agent's.
+  // **Served, not recomputed.** This walked the field values in JavaScript:
+  // excused `unsourced` and `derived`, counted the rest. That was a second
+  // implementation of `completeness::assess`, and the weaker one — it cannot see
+  // the run record, so it could not tell a tool that was ASKED and had nothing
+  // from one that was never called. Both are empty fields; only the second is
+  // the agent's.
   //
   // On the stag beetle that was the whole finding: four null genome fields with
-  // `ncbi_genome_search` called and 229 bytes back, which the row legend calls
-  // "a capability gap and nobody's fault" — counted here, in red, against the
-  // agent. The page contradicted its own rows because this function could not
-  // see what the rows could.
-  //
-  // `Gate::Completeness` now computes it server-side and the verdict is on the
-  // payload. A display that disagrees with the gate it draws is worse than one
-  // that draws nothing, so there is one computation and this reads it.
+  // `ncbi_genome_search` called and 229 bytes back — a capability gap and
+  // nobody's fault — counted in red against the agent. The page contradicted its
+  // own rows because this function could not see what the rows could.
   //
   // Falls back to zeroes rather than to the old walk: an older episode served
   // without the block should say "nothing examined", which is true, instead of
@@ -751,9 +814,8 @@
   function emptiness(d) {
     const c = (d && d.completeness) || {};
     return {
-      // What the agent was asked for, and what it owes. `owed` is the count
-      // that is somebody's fault; `no_data` is the world's and is reported
-      // beside it rather than folded in.
+      // `owed` is the count that is somebody's fault; `no_data` is the world's
+      // and is reported beside it rather than folded in.
       total: c.asked_for || 0,
       empty: (c.owed || []).length,
       no_data: (c.no_data || []).length,
@@ -762,19 +824,44 @@
     };
   }
 
-  // Which checkpoint answers a question, and whether it could act on the answer.
+  // `records only` collapsed FOUR declared states into two, and the reason it
+  // could not distinguish them was already on the wire.
   //
-  // The gate names used to appear only in the ladder below, so a reader who
-  // understood the five questions had to re-derive, from a second table, which
-  // checkpoint was responsible for each. They were folded up here as tokens:
-  // the name, what it decided, and whether it can refuse or only records —
-  // which is what made the ladder removable. `records only` is the one that changes what an answer means, and it
-  // was two scrolls away from the question it qualifies.
+  // `command_registry::Enforcement` declares `Control` (refuses the run),
+  // `Amend` (alters the artifact before it leaves), `Report` (the verdict
+  // reaches the caller, unacted) and `Metric` (computed and thrown away).
+  // `artifact_trace` serves all four as distinct words. This page tested
+  // `=== "control"` and printed `records only` for the other three — so `amend`,
+  // the mode that actually removes the bad part, read as impotent, and `report`
+  // (you were told) was indistinguishable from `metric` (discarded).
+  //
+  // Consequence, not bookkeeping: what does this mean for the artifact?
+  //
+  // And only `metric` is a dangling thread, so only `metric` carries a tone.
+  // `why_not_control` is MANDATORY on every non-control application —
+  // `a_gate_that_cannot_refuse_explains_itself` panics without it, on the
+  // grounds that "a gate demoted to a metric is a decision somebody made, and
+  // the reason is what tells a later reader whether it was deliberate or
+  // drift." The page received that sentence and threw it away, then printed a
+  // word that sounded like the platform shrugging.
+  const ENFORCE = {
+    control: { chip: "can stop it",          tone: "",     full: "refuses the run" },
+    amend:   { chip: "removes the bad part", tone: "",     full: "strips what the contract cannot support, before the response leaves" },
+    report:  { chip: "tells the caller",     tone: "",     full: "returns the verdict to the caller and alters nothing" },
+    metric:  { chip: "counted, not acted",   tone: "warn", full: "computes the verdict and discards it" },
+  };
+  // An enforcement word this page has not met renders as the discarded case
+  // rather than the acting one. A new mode defaulting to "can stop it" would
+  // overstate the platform's safety properties, and that is the one direction
+  // of error that matters here.
+  const enforceOf = w => ENFORCE[w] || ENFORCE.metric;
+
+  // Which checkpoint answers a question, and what it can do about the answer.
   //
   // Three kinds of nothing, and they are not the same:
-  //   * `no gate`   — nothing in the system asks this. Question three.
+  //   * `no gate`           — nothing in the system asks this.
   //   * `not on this route` — the gate exists and this route does not declare it.
-  //   * `not recorded` — it is declared, it ran, and no ledger row survives.
+  //   * `not recorded`      — it is declared, it ran, and no ledger row survives.
   function gates(a, ids) {
     if (ids === null) {
       return `<span class="gate">every checkpoint together</span>`;
@@ -785,38 +872,23 @@
     return ids.map(id => {
       const b = a.by[id];
       if (!b) return `<span class="gate g-off"><b>${esc(id)}</b> · not on this route</span>`;
-      const refuses = b.enforcement === "control";
+      const e = enforceOf(b.enforcement);
       const verdict = b.decided ? b.decided.decision : "not recorded";
-      const cls = verdict === "refused" ? "g-refused" : refuses ? "g-refuse" : "";
+      const cls = verdict === "refused" ? "g-refused"
+                : b.enforcement === "control" ? "g-refuse" : "";
       return `<span class="gate ${cls}"><b>${esc(id)}</b> · ${esc(verdict)} · ${
-        refuses ? "can refuse" : "records only"}</span>`;
+        esc(e.chip)}</span>${b.why_not_control
+          ? `<div class="caveat">Why it cannot refuse: ${esc(b.why_not_control)}</div>`
+          : ""}`;
     }).join("");
   }
 
-  // The five questions, as a strip you can take in at once.
-  //
-  // They were five stacked rows of prose, each a question and a sentence and a
-  // line of gate tokens: half a screen, above the thing the reader came for. The
-  // note under the heading said what they were for and the sentences said the
-  // rest, and all of it was true and all of it was in the way. **The summary
-  // should not dominate; it should contextualise.**
-  //
-  // So each question becomes one cell: a number, a short label, one token that
-  // is the answer, and the checkpoint that decides it. Five cells, one line,
-  // scannable in a glance — and the sentences, which are good and which nobody
-  // needs twice, move one disclosure down.
-  //
-  // Two things stay in the open because they are findings rather than detail:
-  // the `no gate` mark on question three, and the paragraph naming it. A finding
-  // behind a fold is a finding nobody reads.
   // The same three kinds of nothing, at glance width.
   //
-  // `gates` writes `grounding · approved · records only`, which is right where
-  // there is a line to put it and unreadable in a fifth of a strip. Here the
-  // name carries the state: an outlined chip can refuse, a plain one only
-  // records, and `no gate` is the one that is a finding. Same data, same
-  // function's rules, said in the space available — and the full form is in the
-  // expander, one click away, rather than reworded.
+  // `gates` writes `grounding · refused · removes the bad part`, which is right
+  // where there is a line to put it and unreadable in a third of a strip. Here
+  // the name carries the state and the full form is one disclosure away rather
+  // than reworded.
   function gateNames(a, ids) {
     if (ids === null) return `<span class="gate">every checkpoint</span>`;
     if (!ids.length) return `<span class="gate g-none">no gate</span>`;
@@ -826,45 +898,87 @@
         return `<span class="gate g-off" title="the gate exists and this route does not \
 declare it">${esc(id)}</span>`;
       }
-      const refuses = b.enforcement === "control";
+      const e = enforceOf(b.enforcement);
       const verdict = b.decided ? b.decided.decision : "not recorded";
-      const cls = verdict === "refused" ? "g-refused" : refuses ? "g-refuse" : "";
+      const cls = verdict === "refused" ? "g-refused"
+                : b.enforcement === "control" ? "g-refuse" : "";
       return `<span class="gate ${cls}" title="${esc(id)} · ${esc(verdict)} · ${
-        refuses ? "can refuse" : "records only"}">${esc(id)}</span>`;
+        esc(e.chip)}${b.why_not_control ? ` — ${esc(b.why_not_control)}` : ""}">${
+        esc(id)}</span>`;
     }).join("");
   }
 
+  // ── Two standards, named ────────────────────────────────────────────────
+  //
+  // Five questions, one strip, one colour ramp. A user read it and reported
+  // "in practical terms this feels like a bunch of rejection" about an artifact
+  // that was deliverable — and they were right about the page and wrong about
+  // the artifact, which means the page was wrong.
+  //
+  // The strip rendered four different kinds of finding in one red: a
+  // fabrication (a fault), commissioned work not delivered (a shortfall
+  // against the agent's own ambition), a capability gap in the world, and a
+  // ceiling that is not a finding at all. The one event that should alarm a
+  // reader was therefore the SMALLEST number on the page, drowned by two
+  // larger numbers that both mean "the agent did not do everything it hoped".
+  //
+  // The reader has two questions and the page answered one:
+  //
+  //   Legality  does it compile, is the artifact deliverable?   a GATE
+  //   Ambition  is the agent doing what its designer hoped?     a GRADIENT
+  //
+  // Interleaved under one ramp, a designer-grade disappointment reads as a
+  // caller-grade defect. So they split. The distance between the two rows is
+  // the designer's worklist.
+  //
+  // The specimen page had already solved this and the trace lacked the frame
+  // rather than the facts: "Green means zero ERRORS. The pending fields are
+  // declared gaps with no source yet — pruning them to reach green would delete
+  // the ambition the contract exists to record."
   function questions(d) {
     const a = readArtifact(d);
     const fs = d.fields || [];
     const e = emptiness(d);
     const byStrength = s => fs.filter(f => (f.strength ?? 0) === s).length;
-    // A retrieval claim with no retrieval behind it — the only way this question
-    // is somebody's fault.
+
+    // Findings, counted from the SERVED per-field verdict.
     //
-    // `strength 0` alone is not that. `tool_no_match` is strength 0 and means
-    // the tool was ASKED and had nothing, which is honest: on the stag beetle
-    // all six `genome` fields sat at zero because NCBI has no assembly for it,
-    // and Q4 went red for a run that did everything right. Nulling a field the
-    // world cannot supply is the contract working.
+    // `field_state::Finding` is the one producer. The caption under row B is
+    // derived from these counts rather than written, because a caption claiming
+    // a shortfall the rows do not show is the failure mode of a hand-written
+    // summary — and this page has shipped that twice.
+    const findings = {};
+    fs.forEach(f => { findings[f.finding] = (findings[f.finding] || 0) + 1; });
+
+    // The worst finding in a subset, by the rank the server serves.
     //
-    // What is a fault is a sourced field at zero whose tool was never called —
-    // the same distinction question three makes, from the same served
-    // assessment, so the two cells cannot disagree about whose gap it is.
-    const neverCalled = new Set(
-      (((d.completeness || {}).owed) || [])
-        .filter(g => g.why === "tool_never_called").map(g => g.path));
-    const weakSourced = fs.filter(
-      f => f.kind === "sourced" && (f.strength ?? 0) === 0
-        && neverCalled.has(f.name)).length;
+    // Ordering the platform's tone vocabulary on the client would be a second
+    // verdict; `finding_rank` exists so this is a max over served numbers.
+    // `-1` means the subset is empty, which is not a verdict about anything.
+    const worstOf = pred => fs.filter(pred)
+      .reduce((m, f) => Math.max(m, f.finding_rank ?? 0), -1);
+    const toneOf = rank =>
+      rank < 0 ? "na" : rank === 0 ? "ok" : rank === 1 ? "warn" : "bad";
 
     const ran = a.by.credit || a.by.rate_limit;
     const got = a.by.attachment || a.by.input_binding;
 
-    // `tok` is the glance and `ans` is the account of it. They must never
-    // disagree, which is why both are computed from the same expression rather
-    // than written twice.
-    const rows = [
+    const owedPaths = new Set((e.owed || []).map(g => g.path));
+    // Row 5's subject, and it is where `weakSourced` went.
+    //
+    // It used to be a TONE on the distribution cell: `weakSourced > 0 ? "bad"`.
+    // That is a verdict smuggled into a description — the distribution says
+    // where the numbers came from and cannot attribute anything — so the
+    // verdict moved to a row that can, and the description lost its colour.
+    const neverCalled = new Set(
+      (((d.completeness || {}).owed) || [])
+        .filter(g => g.why === "tool_never_called").map(g => g.path));
+    const unreachable = fs.filter(f =>
+      neverCalled.has(f.name) || (f.settleable_by && !f.tool_runnable));
+    const unreachableNames = new Set(unreachable.map(f => f.name));
+
+    // ── Row A · fit to send. The caller's standard, and it can be green. ──
+    const rowA = [
       { short: "allowed to run",
         tok: ran ? "yes" : "no check",
         ans: ran ? "Yes — it had the budget and was inside its limits."
@@ -881,22 +995,34 @@ declare it">${esc(id)}</span>`;
         q: "Did it get what it needed?",
         g: ["attachment", "input_binding"] },
 
-      // Counted over the values the agent was ASKED to fill. The rest are
-      // reported alongside rather than folded in: an `unsourced` null is the
-      // contract working and a `derived` null is ours, and adding them to this
-      // number is how a compliant agent scored `9 of 29 empty` in red.
-      //
-      // `g: ["completeness"]` — and that is new. This question was computed
-      // here, from the values, because nothing in the platform asked it, and it
-      // rendered `no gate` in a dotted box under a red header. A reader saw the
-      // agent bypassing a checkpoint; the truth was the platform missing one.
-      // `Gate::Completeness` now stands behind it, so the cell names a gate like
-      // every other cell and the `no gate` sentence below the strip disappears
-      // because it stopped being true.
-      // `owed` is the only count that is somebody's fault. A tool that was
-      // asked and had nothing is the world's gap and sits in `no_data`, said
-      // beside the verdict rather than inside it — which is the difference
-      // between `4 of 22 empty` in red and `all 18 filled` on the same run.
+      // The one row on this page that earns red, and the reason the split
+      // works: it is the only question here whose bad answer means the model
+      // asserted something it could not have known.
+      { short: "clean of unsourced claims",
+        tok: a.graded === 0 ? "nothing examined"
+           : a.violations === 0 ? "clean"
+           : `${a.violations} stripped`,
+        ans: a.graded === 0
+          ? "Nothing it returned was examined, so nothing here is claimed."
+          : a.violations === 0
+            ? `Yes — all ${a.graded} claim(s) under contract could have come from a
+               source the agent has.`
+            : `<b>No — ${a.violations} value(s) the contract forbids were asserted.</b>
+               They were <b>stripped</b> before the response left, so the caller did
+               not receive them. This is the one finding on this page that is a
+               fault rather than a shortfall.`,
+        tone: a.graded === 0 ? "na" : a.violations === 0 ? "ok" : "bad",
+        q: "Did it assert anything it could not have known?",
+        g: ["grounding"] },
+    ];
+
+    // ── Row B · as designed. The designer's standard, a gradient. ──
+    const rowB = [
+      // The tone comes from the worst `Finding` among the fields it is about.
+      // It used to read `e.empty === 0 ? "ok" : "bad"`, which painted a
+      // shortfall in the fault colour — carefully separating `owed`, `no_data`
+      // and `excused` in the prose one line above, and then throwing the
+      // distinction away in the colour.
       { short: "did the work",
         tok: e.total === 0
           ? "nothing examined"
@@ -907,7 +1033,7 @@ declare it">${esc(id)}</span>`;
           ? "Nothing it returned was examined."
           : (e.empty === 0
               ? `Yes — every value it was asked for and could get came back filled in.`
-              : `<b>No — ${e.empty} of ${e.total} value(s) the agent owed came back \
+              : `<b>${e.empty} of ${e.total} value(s) the agent owed came back
                  empty.</b> ` + e.owed.map(g =>
                    `<code>${esc(g.path)}</code> (${esc(
                      g.why === "tool_never_called"
@@ -915,116 +1041,180 @@ declare it">${esc(id)}</span>`;
                           never called"
                        : "commissioned work, and none came back")})`).join(", ") + ".")
             + (e.no_data
-                ? ` ${e.no_data} more are empty because the named tool was asked and \
+                ? ` ${e.no_data} more are empty because the named tool was asked and
                    had nothing — a capability gap, and nobody's fault.`
                 : "")
             + (e.excused
-                ? ` A further ${e.excused} are absent because the contract requires \
-                   it — no tool exists for them, or the platform fills them — and \
+                ? ` A further ${e.excused} are absent because the contract requires
+                   it — no tool exists for them, or the platform fills them — and
                    those are not this agent's to answer.`
                 : ""),
-        tone: e.total === 0 ? "na" : e.empty === 0 ? "ok" : "bad",
-        q: "Did it actually do the work?",
+        tone: e.total === 0 ? "na"
+            : e.empty === 0 ? "ok"
+            : toneOf(worstOf(f => owedPaths.has(f.name))),
+        q: "Did it actually do the work it was commissioned for?",
         g: ["completeness"] },
 
-      // The one glance that is a distribution rather than a verdict, and it is
-      // drawn in the same pips the rows use. A reader who has learnt the row
-      // grammar has already learnt this cell.
-      { short: "where numbers came from",
-        // Empty groups are dropped. `0 ▰▱` is a slot with nothing in it, and a
-        // glance cell that spends a third of its width saying "none of these"
-        // is the summary dominating again, in miniature.
-        tok: fs.length === 0
-          ? "nothing checked"
-          : [2, 1, 0].filter(s => byStrength(s))
-              .map(s => `${byStrength(s)}${pips(s)}`).join(" "),
+      { short: "sources reachable",
+        tok: fs.length === 0 ? "nothing checked"
+           : unreachable.length === 0 ? "all reachable"
+           : `${unreachable.length} out of reach`,
         ans: fs.length === 0
           ? "Nothing was checked, so there is nothing to say."
-          : `${byStrength(2)} from a tool or citation, ${byStrength(1)} from the model's \
-             own judgement, ${byStrength(0)} from nothing that could be checked`
-             + (weakSourced
-                 ? `. <b>${weakSourced} of those name a tool that was never called</b>, \
-                    which is the finding here.`
-                 : ` — and none of those is a retrieval that went unattempted, so \
-                    nothing is overstating itself. A tool asked and empty scores \
-                    zero and should: there is nothing to rely on, and the contract \
-                    says so.`),
-        // Strength 0 is CORRECT for a field the contract says nothing can
-        // source: there is nothing to rely on and the contract says so. Red for
-        // that alone painted three compliant `conservation` fields and a prose
-        // summary as a fault. What is a fault is a `sourced` field sitting at
-        // zero — a retrieval claim with no retrieval behind it.
+          : unreachable.length === 0
+            ? `Every field naming a tool names one the platform can run, and the
+               record shows each was called.`
+            : `<b>${unreachable.length} field(s) name a source this run did not
+               reach</b> — either the tool was never called, or it is one this
+               platform cannot dispatch from here. ` + unreachable.slice(0, 6).map(f =>
+                 `<code>${esc(f.name)}</code>`).join(", ")
+               + (unreachable.length > 6 ? ` and ${unreachable.length - 6} more` : "")
+               + `. A declared source that is never reached is the agent's
+                  ambition outrunning its wiring, not a claim it got wrong.`,
         tone: fs.length === 0 ? "na"
-          : weakSourced > 0 ? "bad"
-          : byStrength(1) > 0 ? "warn" : "ok",
-        q: "Where did the numbers come from?",
+            : unreachable.length === 0 ? "ok"
+            : toneOf(worstOf(f => unreachableNames.has(f.name))),
+        q: "Could it reach the sources it declares?",
         g: ["grounding"] },
 
-      { short: "anything could stop it",
-        tok: a.contentsGuarded ? "can refuse"
-           : a.contentsAmended ? "strips and records"
-           : a.inspectedContents ? "records only" : "nothing looked",
-        ans: a.contentsGuarded
-          ? "Yes — a checkpoint read the contents and can refuse."
-          : a.contentsAmended
-            ? "<b>The bad part cannot travel.</b> A checkpoint reads the contents and \
-               strips any claim the contract cannot support before the response \
-               leaves. It cannot refuse the run itself — nothing can know a field is \
-               ungrounded until the model has written it — so this is the honest \
-               ceiling for a check that happens afterwards."
-            : a.inspectedContents
-              ? "<b>No.</b> A checkpoint read the contents and only records — whatever it \
-                 found, the answer was returned anyway."
-              : "<b>No.</b> Nothing opened the answer to look inside it.",
-        // An amend is not a failure. Red here said "uncontrolled" about the one
-        // gate on the page that actually changes what the caller receives.
-        tone: a.contentsGuarded || a.contentsAmended ? "ok" : "bad",
-        q: "Could anything have stopped it?",
-        g: null },
+      // §4.4: consequence, not bookkeeping — and only the discarded case
+      // carries a tone. `records only` made the platform sound impotent about
+      // `amend`, which is the one mode that actually removes the bad part, and
+      // hid `report` (you were told) behind the same word as `metric`
+      // (thrown away).
+      (() => {
+        const enf = a.grounding && a.grounding.enforcement;
+        const ee = enf ? enforceOf(enf) : null;
+        return { short: "checks that can act",
+          tok: ee ? ee.chip : "nothing looked",
+          ans: ee
+            ? `A checkpoint read the contents and <b>${esc(ee.full)}</b>.`
+              + (a.grounding.why_not_control
+                  ? ` It cannot refuse the run, and the platform's own reason is:
+                      <i>${esc(a.grounding.why_not_control)}</i>`
+                  : "")
+              + (enf === "metric"
+                  ? ` <b>This one is a dangling thread</b> — the verdict is computed
+                      and discarded, and promoting it to a control is the fix.`
+                  : "")
+            : "<b>Nothing opened the answer to look inside it</b>, so no verdict here concerns what it says.",
+          // A ceiling is not a finding. Red is reserved for faults, and the
+          // deepest thing wrong here is that somebody left a thread dangling.
+          tone: !ee ? "warn" : (ee.tone || "ok"),
+          q: "Could anything have acted on what it found?",
+          g: ["grounding"] };
+      })(),
     ];
 
-    // Said once, under the strip, and only when it is true.
-    //
-    // The absence is the finding and it is easy to read as an oversight in the
-    // page rather than in the platform, so it is named as the platform's.
-    //
-    // DERIVED, not asserted. This read `<b>Question 3 has no gate.</b>` followed
-    // by a paragraph about `grounding` asking whether a tool COULD supply a
-    // value. Every word of that was true when it was written and none of it is
-    // now: `Gate::Completeness` stands behind question three, so the condition
-    // above it went false and the sentence stopped rendering — while remaining
-    // in the page, hardcoded, ready to blame question three for whichever
-    // question next loses its gate. A conditional claim nobody can see is
-    // false is the same defect as a gate whose verdict nobody reads.
-    //
-    // So the note now finds its own subject and names it by number AND label,
-    // so the sentence and the cell it qualifies find each other. The prose is
-    // general because the situation is: what makes this worth saying is not
-    // anything about completeness, it is that one answer on the page has no
-    // checkpoint behind it.
-    const gateless = rows.findIndex(r => Array.isArray(r.g) && !r.g.length);
-    const noGate = gateless >= 0
-      ? `<div class="note q5-nogate"><b>Question ${gateless + 1}
-           (${esc(rows[gateless].short)}) has no gate.</b> Nothing in the platform
-           stands behind this answer: it is computed here, from the values. Every
-           other answer on this page names the checkpoint that decides it.</div>`
-      : "";
-
-    const strip = rows.map((r, i) => `<div class="q5c t-${r.tone}" title="${esc(r.q)}">
-      <div class="q5c-l"><span class="q5c-n">${i + 1}</span>${esc(r.short)}</div>
+    const cell = (r, i, n) => `<div class="q5c t-${r.tone}" title="${esc(r.q)}">
+      <div class="q5c-l"><span class="q5c-n">${n}</span>${esc(r.short)}</div>
       <div class="q5c-v">${r.tok}</div>
       <div class="q5c-g">${gateNames(a, r.g)}</div>
-    </div>`).join("");
+    </div>`;
+
+    // The caption under row B, DERIVED from the finding counts.
+    //
+    // The specimen page's sentence, ported. It is the frame the trace was
+    // missing: what is missing is missing, and pruning the contract to make it
+    // disappear would delete the ambition the contract exists to record.
+    const sh = findings.shortfall || 0;
+    const cg = findings.capability_gap || 0;
+    const co = findings.compliance || 0;
+    const fa = findings.fault || 0;
+    let caption = "";
+    if (fs.length) {
+      // **A stripped field does not make an artifact undeliverable**, and
+      // getting this backwards was the first version of this caption.
+      //
+      // `Decision::Refused` on the grounding rung is the ledger's word for
+      // "this gate acted". Nothing was declined: the value was nulled and the
+      // answer was delivered whole. That is what `amend` means, and it is why
+      // the fault belongs in row A as red while the caption still says
+      // deliverable — two true things about one event, which the old page could
+      // not say at once because it had one word for both.
+      //
+      // The one case that is NOT deliverable is a violation that reached the
+      // caller: graded, found, and nothing on the route able to remove it.
+      const repaired = a.contentsAmended || a.contentsGuarded;
+      const head = fa && !repaired
+        ? `<b>Not fit to send.</b> ${fa} value(s) the contract forbids were asserted and
+           nothing on this route could remove them, so the caller received them.`
+        : fa
+          ? `<b>Deliverable, and repaired.</b> ${fa} value(s) the contract forbids were
+             asserted and <b>stripped</b> before the answer left — so the caller did not
+             receive them, and the assertion is still the agent's to answer for.`
+          : (sh || cg)
+            ? `<b>Deliverable, below standard.</b> No claim the contract forbids left this
+               answer.`
+            : `<b>Deliverable, and as designed.</b> No claim the contract forbids left this
+               answer, and nothing the agent owed is missing.`;
+      const parts = [];
+      if (sh) parts.push(`<span class="amb">${sh} value(s) the agent owed</span>`);
+      if (cg) parts.push(`${cg} the world could not supply`);
+      if (co) parts.push(`${co} the contract requires be empty`);
+      caption = `<div class="std-cap">${head}${
+        parts.length ? ` What is missing is missing: ${parts.join(", ")}.` : ""}${
+        (sh || cg)
+          ? ` Pruning the contract to reach green would delete the ambition it
+              exists to record.`
+          : ""}</div>`;
+    }
+
+    // Said once, under the rows, and only when it is true.
+    //
+    // DERIVED, not asserted: it finds its own subject rather than naming a
+    // question by number, so it cannot go on blaming a question that has since
+    // gained a gate.
+    const all = rowA.concat(rowB);
+    const gateless = all.findIndex(r => Array.isArray(r.g) && !r.g.length);
+    const noGate = gateless >= 0
+      ? `<div class="note q5-nogate"><b>${esc(all[gateless].short)} has no gate.</b>
+           Nothing in the platform stands behind this answer: it is computed here,
+           from the values. Every other answer on this page names the checkpoint
+           that decides it.</div>`
+      : "";
 
     return `<div class="block q5block">
       <h2>Can you trust this?</h2>
-      <div class="q5strip">${strip}</div>
+
+      <div class="std std-a">
+        <div class="std-h">
+          <span class="std-n">Fit to send</span>
+          <span class="std-w">the caller's standard \u2014 and what the badge at the top
+            of this page summarises. This can be green, and on most pulses is.</span>
+        </div>
+        <div class="std3">${rowA.map((r, i) => cell(r, i, i + 1)).join("")}</div>
+      </div>
+
+      <div class="std std-b">
+        <div class="std-h">
+          <span class="std-n">As designed</span>
+          <span class="std-w">the designer's standard. Green here is an aspiration and
+            divergence is information, not failure \u2014 the distance between these two
+            rows is the worklist.</span>
+        </div>
+        <div class="std3">${rowB.map((r, i) => cell(r, i, i + 4)).join("")}</div>
+      </div>
+      ${caption}
+
+      <div class="dist">
+        <span class="dist-l">where the numbers came from</span>
+        <span class="dist-v">${fs.length === 0
+          ? "nothing checked"
+          : [2, 1, 0].filter(s => byStrength(s))
+              .map(s => `${byStrength(s)}${pips(s)}`).join(" ")}</span>
+        <span class="dist-w">${fs.length === 0
+          ? "Nothing was checked, so there is nothing to say."
+          : `${byStrength(2)} from a tool or citation, ${byStrength(1)} from the
+             model's own judgement, ${byStrength(0)} from nothing that could be
+             checked. A description, not a verdict \u2014 strength 0 is correct for a
+             field the contract says nothing can source.`}</span>
+      </div>
       ${noGate}
-      <details class="expert"><summary>the five questions, answered in full</summary>
-        <div class="note">In the order they matter, each with the checkpoint that answers
-          it. <b>records only</b> means it looked and could not refuse.</div>
-        ${rows.map(r => `<div class="q5 t-${r.tone}">
-          <div class="q5-q">${esc(r.q)}</div>
+
+      <details class="expert"><summary>the six questions, answered in full</summary>
+        ${all.map((r, i) => `<div class="q5 t-${r.tone}">
+          <div class="q5-q">${i + 1}. ${esc(r.q)}</div>
           <div class="q5-a">${r.ans}</div>
           <div class="q5-g">${gates(a, r.g)}</div>
         </div>`).join("")}
@@ -1059,6 +1249,37 @@ declare it">${esc(id)}</span>`;
 
   // Contracted fields by dotted path, and the lens.
   let FIELD_BY_PATH = {};
+  // The run-state legend, served by the platform and keyed by the token the
+  // rows print. Not written here: a hand-written legend beside served tokens is
+  // precisely how two vocabularies coexisted in this codebase, and how a
+  // paragraph about "returned nothing" came to sit over rows reading
+  // `never asked`.
+  let STATE_GLOSS = {};
+  // The other clock's legend. `Declared` carries no tone: a `pending` field is a
+  // standing request for an integration and the opposite of a defect, and
+  // `error` is the only contract state that is one.
+  let DECLARED_GLOSS = {};
+  // Token → severity rank, from the served run-state glossary, so the legend can
+  // put the worst first without ordering the platform's vocabulary itself.
+  let RANK_OF = {};
+
+  // What the header badge is a summary OF, per reading token.
+  //
+  // Every one of these is a statement about "fit to send" and none of them says
+  // anything about "as designed", which is the whole reason the badge needed a
+  // label rather than a demotion.
+  const BADGE_IS = {
+    violations: "the contract found a value the model could not have known. This is " +
+      "row 3 of `fit to send` and says nothing about whether the agent did what " +
+      "its designer hoped — read `as designed` for that.",
+    checked_clean: "the fields under contract were graded and none violated it. " +
+      "Narrow: a field contract covers the fields somebody wrote an entry for, and " +
+      "everything else in the document is unexamined.",
+    nothing_checked: "this agent declares no field contract, so no rung could grade " +
+      "anything. Not a pass and not a failure — it is the declaration gap, and " +
+      "`/declarations` holds the worklist.",
+  };
+
   let LENS = "checked";
   // The last trace drawn, so switching a lens redraws from data rather than
   // re-fetching. A lens is a view, and re-reading the platform to change a view
@@ -1121,19 +1342,34 @@ declare it">${esc(id)}</span>`;
   // could not test it: "trusting an agent's self-report about its own tool's
   // capabilities is the identical error to trusting its self-report about a
   // genome size."
-  function askedFor(f) {
-    const mine = TOOL_CALLS.filter(c => c.tool === f.settleable_by);
-    if (!mine.length) return "unused";
-    // Only some tools take an `endpoint`; where none do, the tool name is the
-    // finest signal the record carries and claiming more would be invention.
-    if (!mine.some(c => (c.input || {}).endpoint !== undefined)) return "asked";
-    // The same served endpoint the probe form loads and the probe endpoint
-    // checks against, so the row's badge and the run's verdict cannot disagree.
-    const want = hintEndpoint(f);
-    if (!want) return "asked";
-    return mine.some(c => String((c.input || {}).endpoint || "") === want)
-      ? "asked"
-      : "unasked";
+  // The row's state cell: **two served clocks, and no decision here.**
+  //
+  //   declared   what the contract says this field can be trusted about
+  //   observed   what happened to it on this pulse
+  //
+  // Deliberately disjoint vocabularies — `field_state`'s
+  // `the_two_vocabularies_share_no_token` is a build failure if they ever
+  // collide — so a reader who learns a word learns one thing. That guarantee is
+  // the whole reason both can sit in one cell.
+  //
+  // The colour is `finding_tone`, decided in `field_state::Finding::tone` and
+  // nowhere else. **Red is reserved for faults.** The contract clock carries no
+  // tone at all: a `pending` field is a standing request for an integration and
+  // the opposite of a defect, and `error` is the only contract state that is
+  // one, so it is the only one marked.
+  function fieldState(f) {
+    const obs = STATE_GLOSS[f.observed] || {};
+    const dec = DECLARED_GLOSS[f.declared] || {};
+    const word = t => esc(String(t || "").replace(/_/g, " "));
+    return {
+      cls: "t-state",
+      html: `<span class="obs f-${esc(f.finding_tone || "neutral")}"
+                   title="${esc(obs.why || f.observed || "")}">${word(f.observed)}</span>`
+        + (f.declared
+            ? `<span class="dec${dec.is_defect ? " d-defect" : ""}"
+                     title="${esc(dec.why || f.declared)}">${word(f.declared)}</span>`
+            : ""),
+    };
   }
 
   // The act cell: what the platform offers on this row, and nothing else.
@@ -1157,6 +1393,39 @@ declare it">${esc(id)}</span>`;
     return none();
   }
 
+  // What this row says about the field, and what you can do about it.
+  //
+  // **The field-state derivation is gone from here.** It was five branches over
+  // `produced`, `absence_expected`, `kind`, `settleable` and a scan of the tool
+  // calls, producing nine words of its own: `no tool exists`, `no tool for
+  // this`, `platform-computed`, `prose`, `a judgement`, `asked, empty`,
+  // `no data there`, `never asked`, `tool unused`, `agent wrote nothing`.
+  //
+  // Every one of them was already a state the platform owns:
+  //
+  //   `platform-computed` `prose` `a judgement` `no tool exists`
+  //       → `field_state::Declared`, which the specimen page has read from
+  //         `field_state` all along. This page spelled its own, which is how one
+  //         word came to mean a declared kind on one panel and a violation on
+  //         the next.
+  //
+  //   `asked, empty` `no data there` `never asked` `tool unused`
+  //   `agent wrote nothing`
+  //       → `field_state::Observed`, plus a byte count that is a FACT and not a
+  //         verdict.
+  //
+  // And the copy was the weaker one. `askedFor` looked for any call to
+  // `f.settleable_by`, so it was per TOOL where the platform's answer is per
+  // FIELD: a run that called `call_football_api` for `injuries` and never for
+  // `match_statistics.xg` reported both as asked. That disagreement became
+  // visible the moment the served token was rendered beside it — one row read
+  // `owed` next to `asked, empty` — and it had been there, unseen, for as long
+  // as both existed.
+  //
+  // What stays is what only the client knows: the state of the **verification
+  // log**. `CLAIMS` is a fold over the append-only `routed[]` and it changes
+  // when a reader settles something, so those branches are live state rather
+  // than a property of the pulse.
   function annotate(dotted) {
     const f = FIELD_BY_PATH[dotted];
     if (!f) return { cls: "", condition: null, act: "", body: "" };
@@ -1165,223 +1434,65 @@ declare it">${esc(id)}</span>`;
     const st = aid ? CLAIMS[aid] : null;
     const open = !!st && String(st.verdict || "").startsWith("pending_");
 
-    // An absence the contract REQUIRES is not a fault.
+    // ── the verification log, which is this page's to know ──
     //
-    // `squad_value` is `unsourced`: the contract says no tool returns market
-    // values, so the field must be null, and the agent nulled it and wrote a
-    // note saying Transfermarkt is not integrated. That is compliance, and it
-    // was rendered `not produced` in the same yellow as `advanced_metrics.xg` —
-    // which is `sourced`, also null, and a real finding. Thirty-one of the
-    // platform's contracted fields are `unsourced`.
-    //
-    // The gap is still real and still worth closing; it is just not the agent's
-    // and not a reviewer's. It is a request for the integration that does not
-    // exist, which is what the paper says an unsourceable field IS.
-    if (f.produced === false && f.absence_expected) {
-      // `no tool exists` rather than `as declared`, which was jargon of mine and
-      // told a reader nothing they could act on.
-      return {
-        cls: "r-asdeclared",
-        condition: { text: "no tool exists", cls: "t-done" },
-        act: actCell(dotted, f, false),
-        body: "",
-      };
-    }
-    // An `unsourced` field that HAS a value is the violation.
-    //
-    // The contract says no tool returns this, so the model could only have
-    // produced it from parametric knowledge — which is why `enforce` nulls it,
-    // and why the value shown here is the claimed one, kept because a nulled
-    // field has no evidence in it.
-    //
-    // This fell through to the judgement branch and read "a judgement", which is
-    // the opposite: a judgement is output the agent was commissioned to make,
-    // and this is a retrieval it was forbidden to invent. Same two states the
-    // whole change is about, inverted.
-    if (f.kind === "unsourced" && f.produced !== false) {
-      // Deliberately NOT called "invented", which the first version said.
-      //
-      // A value at an `unsourced` path can be a fabricated number, and it can
-      // also be a block of nulls with a note explaining why — which is what the
-      // real `squad_value` is: two null totals, `provenance:
-      // unavailable_no_tool_source`, and a sentence about Transfermarkt not
-      // being integrated. Calling that invented accuses an agent that complied,
-      // which is the same error as the badge this whole change removed, pointed
-      // the other way.
-      //
-      // Telling them apart is grounding's job and grounding does it: the
-      // violation count and the `grounding` gate's verdict are already on this
-      // page. This row states the standing fact and leaves the verdict to the
-      // thing that computes it.
-      return {
-        cls: "r-done",
-        condition: { text: "no tool for this", cls: "t-done" },
-        act: actCell(dotted, f, false),
-        body: "",
-      };
-    }
-    // A judgement nothing can settle.
-    //
-    // `assessment` is `inferred` and its contract says so outright: "no database
-    // holds them — which is why they cannot be verified directly". An
-    // endorsement here is the TERMINAL verdict, not a weak substitute for a
-    // citation, and asking for a source is asking for something that cannot
-    // exist. The row said `needs a person` and offered a citation box.
-    // Branch on the KIND, not on `!settleable`.
-    //
-    // Three kinds are unsettleable and they are not the same thing. `inferred`
-    // is a judgement the agent was commissioned to make; `derived` is platform
-    // code applying a transform, which is reproducible by construction and whose
-    // disagreements are OUR bug; `narrative` is prose. Collapsing them on the
-    // strength of one boolean labelled a platform-computed field "a judgement",
-    // which is the same shape of error as the collapse this whole change undoes.
-    // Branch on the KIND, and do it whether or not a value came back.
-    //
-    // This used to require `f.produced !== false`, and an empty `derived` field
-    // therefore fell past it into the absence branch below, where
-    // `settleable_by: None` yields `tool unused` — "the contract names a tool
-    // the agent did not call at all during this run". False twice over:
-    // `phylogeny.superorder` names no tool, and the prompt tells the agent to
-    // leave it null because the PLATFORM fills it. The one row on the page that
-    // was the platform's own unkept promise was the row that blamed the agent.
-    //
-    // Extended to `derived` only, and that limit is the point. Three kinds are
-    // unsettleable and an empty one means three different things:
-    //
-    //   derived    ours, and possibly not derivable at all — not the agent's
-    //   inferred   the agent skipped the judgement it was commissioned to make
-    //   narrative  the agent wrote no prose
-    //
-    // Only the first is nobody's fault, so only the first reads the same empty
-    // as full. The other two fall through to the absence branch, which now
-    // distinguishes "a tool was named and not called" from "no tool was ever
-    // named" — they were one token, and the token said the first.
-    if (!f.settleable && (f.produced !== false || f.kind === "derived")) {
-      const aid0 = ASSERTION_BY_PATH[dotted];
-      const st0 = aid0 ? CLAIMS[aid0] : null;
-      const open0 = !!st0 && String(st0.verdict || "").startsWith("pending_");
-      const unsettled = f.kind === "derived"
-        ? { text: "platform-computed", cls: "t-done" }
-        : f.kind === "narrative"
-          ? { text: "prose", cls: "t-person" }
-          : { text: "a judgement", cls: "t-person" };
-      return {
-        cls: open0 ? "r-actionable" : "r-done",
-        condition: st0 && !open0
-          ? { text: SHORT_VERDICT[st0.verdict] || "settled", cls: "t-done" }
-          : unsettled,
-        // Only an open judgement has an act, and the act is a person's: nothing
-        // retrieves an answer to a question the contract says nothing can settle.
-        act: actCell(dotted, f, open0),
-        body: `<div class="a-body"${open0 ? ` data-assertion="${esc(aid0)}"` : ""}>
-                 ${st0 ? claimState(st0) : ""}${open0 ? settleForm(aid0) : ""}
-                 <span class="settle-out"></span></div>`,
-      };
-    }
-    if (f.produced === false) {
-      // No prose on the row. `not produced` IS the statement, and the reason it
-      // carries is the same reason on every one of them — eleven identical
-      // two-line paragraphs shipped down the page, which is the wall this whole
-      // pass was supposed to remove. It is said once, in `legend`, with the
-      // count and the tool that would close them.
-      //
-      // But the tool control belongs HERE, and this branch returned before
-      // reaching it — so the button was absent from precisely the seven rows it
-      // exists for. "Could the tool have supplied this?" is the only question
-      // available about an absent field, and answering it splits one state into
-      // two with different owners: the tool returns data, so the agent had the
-      // means and did not use it; or the tool has nothing, so the gap is the
-      // integration's and not the agent's.
-      // Three absences, three owners. They were one yellow badge.
-      //
-      // `not produced` accused `genome_profiler` of failing when it had called
-      // its tool, found no sequenced genome for Lucanus cervus, and correctly
-      // declined to invent one. That is the canonical corrected agent working,
-      // reported as broken.
-      const asked = askedFor(f);
-      // How much came back, when the tool was asked.
-      //
-      // Deliberately reported rather than thresholded. `genome_profiler`'s NCBI
-      // call returned 210 bytes for a beetle with no sequenced genome;
-      // `football_analyst`'s `injuries` call returned 16,036. Both are "the tool
-      // was asked and the field is empty", and one is a capability gap while the
-      // other is a discarded result — but the line between them is a judgement
-      // about whether the answer was IN that response, which only running it
-      // settles. So the number is stated and both readings are named.
-      const got = TOOL_CALLS
-        .filter(c => c.tool === f.settleable_by)
-        .reduce((m, c) => Math.max(m, c.output_chars || 0), 0);
-      // The reason belongs to the STATE and is in the legend, once. What belongs
-      // on the row is the one thing that differs between two rows in the same
-      // state: how much came back. `genome_profiler`'s NCBI call returned 210
-      // bytes for a beetle with no sequenced genome and `football_analyst`'s
-      // `injuries` call returned 16,036 — both "asked, and still empty", and the
-      // number is the whole difference between a capability gap and a discarded
-      // result. A fact, as a chip; the sentence around it was on every row.
-      const state = asked === "asked"
-        ? { cls: "r-nodata", token: got > 2000 ? "asked, empty" : "no data there",
-            fact: got ? `${got.toLocaleString()} B back` : "nothing back" }
-        : asked === "unasked"
-          ? { cls: "r-unasked", token: "never asked", fact: "" }
-          // `askedFor` returns "unused" both when a named tool went uncalled and
-          // when the contract names no tool at all — `settleable_by` is null.
-          // One token said the first about both, so a field the agent simply
-          // did not write was reported as a tool it declined to call.
-          : f.settleable_by
-            ? { cls: "r-unasked", token: "tool unused", fact: "" }
-            : { cls: "r-unasked", token: "agent wrote nothing", fact: "" };
-      return {
-        cls: state.cls,
-        condition: { text: state.token,
-                     cls: asked === "asked" ? "t-done" : "t-person" },
-        // The control moves to the act column, where every other control is. It
-        // was inside the body, ahead of the sentence explaining the state — the
-        // only rows on the page with something to press, and the press was the
-        // one thing not in the pressable place.
-        act: actCell(dotted, f, false),
-        body: state.fact
-          ? `<div class="a-body"><span class="fact">${esc(state.fact)}</span></div>`
-          : "",
-      };
-    }
-    if (st && !open) {
-      return {
-        cls: "r-done",
-        condition: { text: SHORT_VERDICT[st.verdict] || "settled", cls: "t-done" },
-        // Settled is an answer, not a question. Offering the tool again here is
-        // how nine rows end up wearing the same button and none of them mean it.
-        act: none(),
-        body: `<div class="a-body">${claimState(st)}</div>`,
-      };
-    }
+    // Ordered first because a settled claim is an answer, and the field's run
+    // state is the question it answers. A row that has been judged should say
+    // so; the two clocks are still on it, in the state column.
     if (open) {
       return {
         cls: "r-actionable",
-        // The condition column was empty on exactly the rows that have work on
-        // them, because the tool button was sitting in it. What state the claim
-        // is in and what you can do about it are two questions.
-        condition: { text: "awaiting a verdict", cls: "t-person" },
+        condition: fieldState(f),
+        verdict: { text: "awaiting a verdict", cls: "t-person" },
         act: actCell(dotted, f, true),
         body: `<div class="a-body" data-assertion="${esc(aid)}">
                  ${claimState(st)}${settleForm(aid)}<span class="settle-out"></span>
                </div>`,
       };
     }
-    if ((f.strength ?? 0) >= 2) {
+    if (st) {
       return {
         cls: "r-done",
-        condition: { text: "settled", cls: "t-done" },
+        condition: fieldState(f),
+        verdict: { text: SHORT_VERDICT[st.verdict] || "settled", cls: "t-done" },
+        // Settled is an answer, not a question. Offering the tool again here is
+        // how nine rows end up wearing the same button and none of them mean it.
         act: none(),
-        body: "",
+        body: `<div class="a-body">${claimState(st)}</div>`,
       };
     }
-    // Same rule: the destination names who could settle it, and the reason is
-    // shared across the group rather than repeated on each row.
+
+    // ── no verdict on file: the row is the field's two clocks ──
+    //
+    // `cls` still drives the lens filters and the row's left edge, and it is
+    // now read from the SERVED severity rather than re-derived. `r-empty` is
+    // what the `returned nothing` lens selects on, so it tracks the states that
+    // mean the value is absent.
+    const TONE_ROW = { red: "r-violation", amber: "r-empty", neutral: "r-done" };
+    const cls = f.observed === "filled"
+      ? "r-done"
+      : (TONE_ROW[f.finding_tone] || "r-done");
+
     return {
-      cls: "r-blocked",
-      condition: { text: "nothing queued it", cls: "t-person" },
-      act: actCell(dotted, f, true),
-      body: "",
+      cls,
+      condition: fieldState(f),
+      // Nothing has judged this claim, which is not the same as nothing being
+      // wrong with it. Said in the act column, where the offer lives.
+      verdict: f.settleable && f.observed === "filled"
+        ? { text: "nothing queued it", cls: "t-person" }
+        : null,
+      act: actCell(dotted, f, f.settleable && f.observed === "filled"),
+      // The one thing that differs between two rows in the same state: how much
+      // the tool returned. A fact, as a chip. `genome_profiler`'s NCBI call
+      // returned 210 bytes for a beetle with no sequenced genome and
+      // `football_analyst`'s `injuries` call returned 16,036 — both "asked, and
+      // still empty", and the number is the whole difference between a
+      // capability gap and a discarded result.
+      body: f.evidence_bytes !== null && f.evidence_bytes !== undefined
+        ? `<div class="a-body"><span class="fact">${
+            f.evidence_bytes ? `${f.evidence_bytes.toLocaleString()} B back`
+                             : "nothing back"}</span></div>`
+        : "",
     };
   }
 
@@ -1596,8 +1707,9 @@ declare it">${esc(id)}</span>`;
       <span class="a-p">${gradePips(r.dotted)}</span>
       <span class="a-k${whole ? ` d${Math.min(3, r.depth)}` : ""}">${label}</span>
       <span class="a-v ${r.v.cls}">${r.v.text}</span>
-      <span class="a-c ${r.a.condition ? r.a.condition.cls : ""}">${
-        r.a.condition ? esc(r.a.condition.text) : ""}</span>
+      <span class="a-c">${r.a.condition ? r.a.condition.html : ""}${
+        r.a.verdict ? `<span class="vd ${esc(r.a.verdict.cls)}">${
+          esc(r.a.verdict.text)}</span>` : ""}</span>
       <span class="a-a">${r.a.act}</span>
       ${r.a.body}
     </div>`;
@@ -1620,89 +1732,79 @@ declare it">${esc(id)}</span>`;
     ["all", "everything", () => true],
   ];
 
-  // Said once for the group, not once per row — and keyed by the token the row
-  // itself prints in column four.
+  // **One legend, both clocks, every sentence served.**
   //
-  // Every state on this surface carries a reason, and the reason is a property of
-  // the STATE rather than of the row: eleven `not produced` rows have eleven
-  // identical explanations. Printed per row that is a wall — it shipped as one,
-  // twice, first as `not under contract` on 125 rows and then as a two-line
-  // paragraph on 11.
+  // Said once for the group and keyed by the tokens the rows print. Every state
+  // on this surface carries a reason, and the reason is a property of the STATE
+  // rather than of the row: eleven rows in one state have eleven identical
+  // explanations, and printed per row that is a wall. It shipped as one twice —
+  // first as `not under contract` on 125 rows, then as a two-line paragraph
+  // on 11.
   //
-  // The second version fixed the wall and left a subtler fault: the legend
-  // grouped by CSS class and the row printed a token, so the two vocabularies
-  // were written twice and drifted — a paragraph about "returned nothing" over
-  // rows reading `never asked`. Now `annotate` returns one token, the row renders
-  // it and this looks it up, so a legend entry that matches no row cannot be
-  // written and a row whose state has no entry is visible immediately.
+  // This replaces a hand-written `CONDITION_WHY` map of ten entries. That map
+  // was the mirror of the derivation in `annotate`, so retiring one without the
+  // other would have left a legend describing states no row could print. Both
+  // glossaries now come off the payload — `field_states` and `declared_states`
+  // — which means:
   //
-  // The aggregate is also more use than the repetition. "5 of these would be
-  // closed by `call_football_api`" is a decision; the same sentence eleven times
-  // is a paragraph to skip.
-  const CONDITION_WHY = {
-    "no tool exists": { close: false, why:
-      `No tool returns these, so the absence is the contract obeyed \u2014 and a standing
-       request for the integration that would close it.` },
-    "no tool for this": { close: false, why:
-      `Nothing retrieves this and a value is present. Invention or a documented gap is
-       grounding's call, and grounding has made it.` },
-    "a judgement": { close: false, why:
-      `Commissioned work, not retrieval. An endorsement is the strongest verdict
-       available, not a weaker one than a citation.` },
-    "prose": { close: false, why:
-      `Narrative. There is no proposition here to settle.` },
-    "platform-computed": { close: false, why:
-      `Our transform over other fields, reproducible by construction \u2014 so a
-       disagreement is our bug and not the agent's.` },
-    "asked, empty": { close: true, why:
-      `Asked, plenty came back, still empty. The answer may have been in there \u2014 the
-       byte count is on the row and running it settles which.` },
-    "no data there": { close: true, why:
-      `Asked, and had nothing. A capability gap and nobody's fault: closing it needs a
-       source that does not exist here yet.` },
-    "never asked": { close: true, why:
-      `Declared, and the record shows it was not consulted. The grade's "the tool had
-       nothing" is not what happened.` },
-    "tool unused": { close: true, why:
-      `The contract names a tool the agent did not call at all during this run.` },
-    "agent wrote nothing": { close: false, why:
-      `The contract names no tool for this — it is the agent's own judgement or
-       prose, and none came back. Nothing to retrieve; the fix is the agent.` },
-    "awaiting a verdict": { close: false, why:
-      `Queued, and nobody has ruled. Until someone does, "nobody checked" and "checked and
-       fine" are the same state.` },
-    "nothing queued it": { close: true, why:
-      `These could carry a verdict and nothing put one in the queue.` },
-  };
+  //   * a legend entry that matches no row cannot be written here, and
+  //   * a row whose state has no entry is a hole in the SERVED vocabulary,
+  //     which `every_finding_is_reachable_from_some_observed_state` fails on.
+  //
+  // The one thing a gloss cannot say is which tool would close a group, and
+  // that is kept: "5 of these would be closed by `call_football_api`" is a
+  // decision, where the same sentence eleven times is a paragraph to skip.
+  //
+  // Runnable tools only. A tool this page cannot run is not a remedy it can
+  // offer, and naming it here as one is what the act column was rebuilt to
+  // stop: the name of a fix nobody can press.
+  function stateLegend(shown) {
+    const group = (key, gloss) => {
+      const counts = {}, tools = {};
+      shown.forEach(r => {
+        const f = FIELD_BY_PATH[r.dotted];
+        if (!f || !f[key]) return;
+        counts[f[key]] = (counts[f[key]] || 0) + 1;
+        if (f.settleable_by && f.tool_runnable) {
+          (tools[f[key]] ||= new Set()).add(f.settleable_by);
+        }
+      });
+      // Worst first, by the served rank. A fault below four states that are
+      // nobody's fault is a fault a reader meets last.
+      return Object.keys(counts).sort((x, y) =>
+        (RANK_OF[y] ?? 0) - (RANK_OF[x] ?? 0)).map(t => {
+        const g = gloss[t] || {};
+        const tone = g.finding_tone || (g.is_defect ? "red" : "");
+        // A remedy is only offered where the state is one a tool could close.
+        // On a judgement, on prose, or on a compliant absence there is nothing
+        // to retrieve, and printing a tool there offers a fix for a state that
+        // is not broken.
+        const closable = key === "observed"
+          && (t === "owed" || t === "tool_empty");
+        const ts = tools[t];
+        return `<span class="lgi">
+          <span class="${key === "observed" ? `obs f-${esc(tone || "neutral")}`
+                                            : `dec${g.is_defect ? " d-defect" : ""}`}"
+            >${esc(t.replace(/_/g, " "))}</span>
+          <span>${counts[t]} \u00b7 ${esc(g.why || "")}${
+            g.whose && g.whose !== "nobody's" ? ` <b>${esc(g.whose)}</b>` : ""}${
+            closable && ts && ts.size
+              ? ` <b>${[...ts].map(esc).join(", ")}</b> would close ${
+                  counts[t] === 1 ? "it" : `${counts[t]} of them`}.`
+              : ""}</span>
+        </span>`;
+      }).join("");
+    };
 
-  function legend(shown) {
-    const groups = [];
-    shown.forEach(r => {
-      const t = r.a.condition && r.a.condition.text;
-      if (!t || !CONDITION_WHY[t]) return;
-      let g = groups.find(x => x.t === t);
-      if (!g) groups.push(g = { t, n: 0, tools: new Set() });
-      g.n += 1;
-      // Runnable only. A tool this page cannot run is not a remedy it can offer,
-      // and naming it here as one is the thing the act column was rebuilt to
-      // stop: the name of a fix nobody can press. The row still shows it, dim,
-      // where a reader can see it is a description.
-      const f = FIELD_BY_PATH[r.dotted];
-      if (f && f.settleable_by && f.tool_runnable) g.tools.add(f.settleable_by);
-    });
-    if (!groups.length) return "";
-    return `<div class="fgroup-legend">${groups.map(g => `<div class="lg">
-      <span class="lg-n">${g.n}</span>
-      <span class="lg-t">${esc(g.t)}</span>
-      <span class="lg-w">${g.why || CONDITION_WHY[g.t].why}${
-        // Named only where the name is a remedy. On a judgement or a settled
-        // claim there is nothing for a tool to close, and printing one there
-        // offers a fix for a state that is not broken.
-        CONDITION_WHY[g.t].close && g.tools.size
-          ? ` <b>${[...g.tools].map(esc).join(", ")}</b> would close ${
-              g.n === 1 ? "it" : `${g.n} of them`}.`
-          : ""}</span>
-    </div>`).join("")}</div>`;
+    const run = group("observed", STATE_GLOSS);
+    const dec = group("declared", DECLARED_GLOSS);
+    if (!run && !dec) return "";
+    return `<div class="obs-leg">
+        <span class="leg-k">this run</span>${run}
+      </div>`
+      + (dec ? `<div class="obs-leg">
+        <span class="leg-k">the contract</span>${dec}
+      </div>` : "");
   }
 
   // Nothing to do is a finding, and it has to be said.
@@ -1786,15 +1888,16 @@ declare it">${esc(id)}</span>`;
       // the places the words describe, and a reader who reads it once has read
       // every row.
       const header = `<div class="arow ahead">
-        <span class="a-p" title="grounding's grade for this field. A verdict below a row
-              is a separate answer and does not move them">rely</span>
+        <span class="a-p" title="two clocks: grounding's grade for this field from the
+              contract, and what happened to it on this pulse">rely · this run</span>
         <span class="a-k">field</span>
         <span class="a-v">value</span>
         <span class="a-c">state</span>
         <span class="a-a">act</span>
       </div>`;
       body = shown.length
-        ? worklist(rows) + legend(shown) + header + shown.map(x => arow(x, whole)).join("")
+        ? worklist(rows) + stateLegend(shown) + header
+          + shown.map(x => arow(x, whole)).join("")
         : `<div class="empty">Nothing in this lens.</div>`;
     } else if (r.text) {
       body = `<div class="pl-body clamp" data-clamp>${esc(r.text)}</div>
@@ -2457,6 +2560,22 @@ something specific about each checkpoint.")}</div></div>`;
     LAST_TRACE = d;
     const rd = reading(d.reading);
     const m = d.model || {};
+    // **The badge says what it is a summary of.** (Decision 3b.)
+    //
+    // `artifact_trace::reading()` returns `Fault` on `violations > 0` and
+    // nothing else, so the badge has always been reporting the single
+    // fabrication-shaped event on the page — which is row 3 of "Fit to send",
+    // and nothing about whether the agent did what its designer hoped.
+    //
+    // Unlabelled, it read as a verdict on the artifact entire. It said `1`,
+    // question 3 said `1`, they were different `1`s, and eleven omissions sat
+    // beside them in the same colour family. Naming the row it summarises is
+    // what makes it possible to keep it: a reader who sees `violations · fit to
+    // send` knows the badge is silent about the other standard, and knows where
+    // to look for it.
+    //
+    // Kept rather than dropped, on purpose, until the split has been read in
+    // anger — a header with no verdict is its own kind of unreadable.
     const head = `<div class="head">
       <h1>Artifact trace</h1>
       <div class="sub">One episode, and the checkpoints it passed</div>
@@ -2465,7 +2584,8 @@ something specific about each checkpoint.")}</div></div>`;
         <span>${esc(m.model_used || "model not recorded")}</span>
         <span>v${m.persona_version_at_write ?? 1}</span>
         <span>${esc((d.at || "").slice(0,19).replace("T"," "))}</span>
-        <span class="badge r-${rd}">${esc((d.token || "").replace(/_/g," "))}</span>
+        <span class="badge r-${rd}" title="${esc(BADGE_IS[d.token] || "")}">${
+          esc((d.token || "").replace(/_/g," "))}<span class="badge-of">fit to send</span></span>
         ${d.corpus_eligible ? "" : `<span class="absent">not corpus-eligible</span>`}
       </div>
       ${d.input && d.input.query ? `<div class="meta"><span class="absent">
@@ -2610,6 +2730,29 @@ something specific about each checkpoint.")}</div></div>`;
       TOOL_CALLS = trace.tool_calls || [];
       FIELD_BY_PATH = {};
       (trace.fields || []).forEach(f => { if (f.name) FIELD_BY_PATH[f.name] = f; });
+      // The run-state legend, keyed by the token. An older trace served before
+      // `field_state` reached this handler carries none, and the rows then
+      // print no run state at all rather than one this page invented — which is
+      // the honest degradation: the platform did not say, so the page does not
+      // either.
+      STATE_GLOSS = {};
+      RANK_OF = {};
+      (trace.field_states || []).forEach(g => {
+        if (!g.token) return;
+        STATE_GLOSS[g.token] = g;
+        // Derived from the served tone rather than from a list here. Three
+        // tones, one red, and the ordering follows the platform's.
+        RANK_OF[g.token] = g.finding_tone === "red" ? 2
+                         : g.finding_tone === "amber" ? 1 : 0;
+      });
+      DECLARED_GLOSS = {};
+      (trace.declared_states || []).forEach(g => {
+        if (!g.token) return;
+        DECLARED_GLOSS[g.token] = g;
+        // The one contract state that is a defect sorts with the faults; the
+        // rest carry no severity at all, which is the point of the axis.
+        RANK_OF[g.token] = g.is_defect ? 2 : 0;
+      });
       // Current state is the LATEST row per assertion, DERIVED and not stored.
       // Migration 205 says so in the table comment — "so a
       // rejected-then-reverified assertion reads as exactly that instead of as

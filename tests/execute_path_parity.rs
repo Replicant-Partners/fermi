@@ -585,3 +585,68 @@ fn the_public_response_reports_the_verdict_to_the_caller() {
          matched the type the agent declared"
     );
 }
+
+// ─── every surface that grades enforces the same way ───────────────────
+
+/// The surfaces that re-grade a retained artifact, and the entry point they
+/// must all use.
+///
+/// `episode_boundary` is the execute path's; `handlers/loops.rs` is the artifact
+/// trace, which re-runs the contract over `response_text` rather than reading
+/// stored violations — deliberately, because migration 199 retains the bytes so
+/// a historical pulse can be re-graded.
+const GRADING_SURFACES: &[&str] = &["src/episode_boundary.rs", "src/handlers/loops.rs"];
+
+/// **Every surface that grades uses the same enforcement entry point.**
+///
+/// This is the parity the file already owns, applied one level out: not "every
+/// route checks" but "every surface that re-checks checks the same way".
+///
+/// It caught a live divergence. The trace called `grounding_trust::enforce` —
+/// the `FIELD_CONTRACTS`-only path — while the execute path had moved to
+/// `enforce_from_output_contract`, which reads the registered table first and
+/// the agent card's compiled `grounding` map second. Ten agents declare a
+/// contract only on the card, two of them among the busiest on the platform, so
+/// for those the execute route stripped and stamped and the artifact page showed
+/// nothing removed from an artifact the platform had in fact repaired.
+///
+/// The cost is not cosmetic and it grew with this change. Everything downstream
+/// of that report is derived from it: the violation count that decides the
+/// header reading, and every field's `Observed` state and `Finding` colour. A
+/// narrower report does not merely omit — it actively reports `absent_by_contract`
+/// where the truth is `stripped`, which is compliance shown in place of a fault.
+///
+/// A source scan, for the reason stated at the top of this file: both surfaces
+/// are async and need a database, and the property is cross-file.
+#[test]
+fn every_surface_that_grades_uses_the_same_enforcement_entry_point() {
+    for file in GRADING_SURFACES {
+        let src = code(&read(file));
+        assert!(
+            src.contains("enforce_from_output_contract"),
+            "{file} re-grades a retained artifact and does not call \
+             `enforce_from_output_contract`. That is the general path: it reads \
+             `FIELD_CONTRACTS` first and the card's compiled `grounding` map \
+             second. Ten agents declare a contract only on the card, so a \
+             surface on the narrow path reports them as having no contract while \
+             the execute route enforces one."
+        );
+
+        // The narrow path may still be reached — `enforce_from_output_contract`
+        // delegates to it — but not called directly from a grading surface,
+        // because that is the divergence rather than a step toward it.
+        let direct: Vec<&str> = src
+            .lines()
+            .filter(|l| l.contains("grounding_trust::enforce(") || l.contains("::enforce(&agent"))
+            .collect();
+        assert!(
+            direct.is_empty(),
+            "{file} calls the narrow `enforce` directly:\n  {}\n\n\
+             `enforce_from_output_contract` is the entry point and it delegates \
+             to `enforce` where a registered contract exists. Calling the inner \
+             one from a surface is how this page and the route it describes came \
+             to enforce differently.",
+            direct.join("\n  ")
+        );
+    }
+}

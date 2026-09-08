@@ -1104,6 +1104,90 @@ const FALSIFICATIONS: &[Falsification] = &[
                  artifact trace could not tell them apart — which is why `1 \
                  unsourced claim removed` read as contradicting `4 pending`.",
     },
+    Falsification {
+        check: "field_state::of_graded",
+        owner: "src/field_state.rs",
+        // Permissive reading: "something can settle this field."
+        //
+        // Both worlds are the same contract on the same field, differing only
+        // in whether the platform can dispatch the tool it names — which is
+        // invisible in the contract alone, and is why the closure is asked
+        // rather than assumed.
+        passes: || {
+            let f = fermi::grounding_trust::GradedField {
+                path: "match_statistics.xg",
+                block: "match_statistics",
+                value: serde_json::Value::Null,
+                provenance: "tool_verified",
+                settleable_by: Some("call_football_api"),
+                kind: fermi::grounding_trust::GroundingKind::Sourced,
+            };
+            fermi::field_state::Declared::of_graded(&f, |_| true)
+                != fermi::field_state::Declared::Unresolvable
+        },
+        fires: || {
+            let f = fermi::grounding_trust::GradedField {
+                path: "match_statistics.xg",
+                block: "match_statistics",
+                value: serde_json::Value::Null,
+                provenance: "tool_verified",
+                settleable_by: Some("call_football_api"),
+                kind: fermi::grounding_trust::GroundingKind::Sourced,
+            };
+            fermi::field_state::Declared::of_graded(&f, |_| false)
+                != fermi::field_state::Declared::Unresolvable
+        },
+        models: "A contract naming a tool the platform cannot dispatch, which \
+                 reads as `resolved` if nobody asks. Nothing can ever settle \
+                 that field, so the specimen page's green count would be \
+                 counting a permanent gap as healthy — and the artifact trace \
+                 would tell a reader the contract names a runnable source when \
+                 no such source exists. The second constructor exists so the \
+                 trace does not write this five-arm match itself; a copy that \
+                 skipped the dispatch question would be the exact defect the \
+                 first constructor already guards against.",
+    },
+    Falsification {
+        check: "field_state::finding",
+        owner: "src/field_state.rs",
+        // Permissive reading: "this field's gap is not a fault."
+        //
+        // The two worlds are both `whose() == "the agent's"`. That is the whole
+        // point: attribution cannot carry severity, and these are the two states
+        // that prove it.
+        passes: || {
+            fermi::field_state::Observed::Owed.finding() != fermi::field_state::Finding::Fault
+        },
+        fires: || {
+            fermi::field_state::Observed::Stripped.finding() != fermi::field_state::Finding::Fault
+        },
+        models: "The second reading of the football_analyst trace. A user saw \
+                 four kinds of finding rendered in one red and reported the \
+                 artifact as `a bunch of rejection` when it was deliverable: \
+                 `some of the things the agent was trying to do were incomplete \
+                 — omissions not hallucinations. The error is agent completeness \
+                 vs aspiration, not failure in the sense of producing untrusted \
+                 data.` Both worlds here are the agent's gap; only the second is \
+                 damaging, and a `finding` that cannot separate them puts the \
+                 colour back on the attribution axis.",
+    },
+    Falsification {
+        check: "field_state::tone",
+        owner: "src/field_state.rs",
+        // Permissive reading: "this state does not warrant red."
+        passes: || {
+            fermi::field_state::Observed::Owed.finding().tone() != "red"
+                && fermi::field_state::Observed::ToolEmpty.finding().tone() != "red"
+        },
+        fires: || fermi::field_state::Observed::Stripped.finding().tone() != "red",
+        models: "`templates/trace.html`'s question three, which read \
+                 `e.empty === 0 ? \"ok\" : \"bad\"` — separating `owed`, \
+                 `no_data` and `excused` carefully in the prose one line above, \
+                 then painting a shortfall with the fault colour anyway. Red is \
+                 reserved for faults; the `passes` world holds the two states \
+                 that were wrongly wearing it, and the `fires` world the one \
+                 that earns it.",
+    },
     // ── native_evaluators ───────────────────────────────────────────────
     Falsification {
         check: "native_evaluators::Verdict::is_failing",
@@ -2502,6 +2586,39 @@ const EXEMPT: &[(&str, &str)] = &[
     ),
     ("field_state::token", ACCESSOR),
     ("field_state::why", ACCESSOR),
+    (
+        "field_state::rank",
+        "A monotone restatement of `field_state::tone`, which is registered \
+         above with the two states that separate its readings. It exists so a \
+         surface taking a worst-of over a set of fields does not have to order \
+         the platform's tone vocabulary itself — an ordering invented on a \
+         client is a verdict wearing a presentation detail's clothes. That the \
+         order agrees with the tone is asserted by \
+         `exactly_one_finding_is_red_and_it_is_the_fault`, which checks both \
+         directions on the one pair that must never collapse.",
+    ),
+    (
+        "artifact_trace::declared_glossary",
+        "Projects `field_state::Declared::ALL` into the contract clock's legend: \
+         token, sentence, and whether the state is the one that is a defect. No \
+         evidence is weighed. The `is_defect` flag is a single equality against \
+         `Unresolvable` and is the reason the projection exists at all — \
+         `pending` also sounds like a problem and is the opposite of one, so a \
+         client left to infer severity from the word would mark an agent's \
+         ambition as its failure. That it marks exactly one state is asserted on \
+         the rendered page by `only_a_fault_renders_red_on_the_artifact_trace`, \
+         property 12.",
+    ),
+    (
+        "artifact_trace::field_state_glossary",
+        "Projects `field_state::Observed::ALL` into the legend a surface \
+         renders: token, sentence, attribution, severity, tone. No evidence is \
+         weighed and there is no arm to get wrong — every value comes from an \
+         accessor registered or exempted in its own right. What could go wrong \
+         is the legend and the enum drifting apart, and that is asserted \
+         directly by `every_finding_is_reachable_from_some_observed_state`: a \
+         legend entry no row can print, or a state with no entry, fails there.",
+    ),
     (
         "field_state::whose",
         "A total mapping from a run state to whose gap it is — nobody's, the \

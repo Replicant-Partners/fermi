@@ -759,6 +759,14 @@ pub async fn episode_trace_handler(
     let agent_name: String = row.try_get("agent_name").unwrap_or_default();
     let response_text: Option<String> = row.try_get("response_text").ok().flatten();
 
+    // The compiled contract, read here rather than fifty lines further down.
+    //
+    // It is needed by enforcement, and it used to be read only for the
+    // declaration ladder below — which is how the drift in the next paragraph
+    // survived: the value the trace needed was already selected by the query and
+    // already in the function, just not yet in scope.
+    let output_contract: Option<Value> = row.try_get("output_contract").ok();
+
     // Re-run the contract over the retained bytes. `enforce` mutates, so the
     // claimed values are read from a copy taken before it — the same rule the
     // execute path follows, and for the same reason: a nulled field has no
@@ -767,8 +775,33 @@ pub async fn episode_trace_handler(
         .as_deref()
         .and_then(fermi::agent_backend::envelope::extract_json);
     let mut enforced = claimed_doc.clone();
+    // `enforce_from_output_contract`, not `enforce`, and the difference was a
+    // real divergence between this page and the route it describes.
+    //
+    // `enforce` is the `FIELD_CONTRACTS`-only path. `episode_boundary` moved the
+    // execute path to the general one, which reads the registered table first and
+    // the agent card's compiled `grounding` map second. Ten agents declare a
+    // contract only on the card — `simops_companion`, `supply_chain_oracle`,
+    // `equity_analyst`, `species_resolver`, the four `weather_*`,
+    // `macro_data_agent`, `moe_router_strategist`, `pipeline_strategist`, two of
+    // them among the busiest on the platform — so for those the execute path
+    // stripped and stamped while this page re-graded with a contract it could not
+    // see and showed nothing.
+    //
+    // The consequence was not a cosmetic gap. Everything downstream of this
+    // report is derived from it: the violation count that decides the header
+    // reading, and now every field's `Observed` state. Deriving a field state
+    // from the narrower report would have told a reader that nothing was removed
+    // from an artifact the platform had in fact repaired.
+    //
+    // `FIELD_CONTRACTS` still wins where it exists; the precedence and the
+    // measurement behind it live on `enforce_from_output_contract`.
     let report = match enforced.as_mut() {
-        Some(doc) => fermi::grounding_trust::enforce(&agent_name, doc),
+        Some(doc) => fermi::grounding_trust::enforce_from_output_contract(
+            &agent_name,
+            output_contract.as_ref(),
+            doc,
+        ),
         None => fermi::grounding_trust::Report::default(),
     };
     let mut graded = match claimed_doc.as_ref() {
@@ -826,7 +859,46 @@ pub async fn episode_trace_handler(
     let tools_called: Vec<&str> = tools_called_owned.iter().map(String::as_str).collect();
     let completeness = fermi::completeness::assess(&graded, &tools_called);
 
-    let (fields, floor) = fermi::artifact_trace::fields(&agent_name, &graded);
+    // The largest response each tool returned on this run, over the WHOLE
+    // record rather than the `.take(40)` list served to the page.
+    //
+    // "The tool answered with nothing" and "the tool answered at length and the
+    // agent dropped the result" are different findings and the length is what
+    // tells them apart — so the number is a fact on the row, and the row does
+    // not compute it. The page computed it from the truncated list, which
+    // reports the forty-first call as never having happened.
+    let mut returned: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    if let Some(invocations) = row
+        .try_get::<Option<Value>, _>("context")
+        .ok()
+        .flatten()
+        .and_then(|c| c.get("tool_invocations").cloned())
+        .and_then(|v| v.as_array().cloned())
+    {
+        for t in &invocations {
+            let Some(name) = t.get("tool_name").and_then(|n| n.as_str()) else {
+                continue;
+            };
+            let chars = t
+                .get("output")
+                .and_then(|o| o.as_str().map(|s| s.chars().count() as i64))
+                .unwrap_or(0);
+            let slot = returned.entry(name.to_string()).or_insert(0);
+            *slot = (*slot).max(chars);
+        }
+    }
+
+    // The report, the assessment and the run record are handed over rather than
+    // left for the module to recompute. All three are already right here, and a
+    // second opinion formed inside `fields()` is how a row came to say `filled`
+    // under a summary saying the field was empty.
+    let (fields, floor) = fermi::artifact_trace::fields(
+        &agent_name,
+        &graded,
+        &report,
+        Some(&completeness),
+        &returned,
+    );
 
     // What this agent has declared, so the empty case has a sourced cause rather
     // than this handler's guess.
@@ -838,7 +910,6 @@ pub async fn episode_trace_handler(
     {
         rungs_declared.push("ports");
     }
-    let output_contract: Option<Value> = row.try_get("output_contract").ok();
     if let Some(oc) = output_contract.as_ref() {
         if oc.get("produces_schema").is_some() {
             rungs_declared.push("output_type");
@@ -1181,6 +1252,20 @@ pub async fn episode_trace_handler(
                         change to this handler.",
         },
         "fields": fields,
+        // The legend for `fields[].observed`, served once rather than repeated
+        // on every row. Each field carries its token, its attribution and its
+        // severity; the SENTENCE behind each of those belongs to the state, and
+        // eleven rows in one state have eleven identical explanations.
+        //
+        // Served rather than written on the client for the reason the whole
+        // `field_state` module exists: a hand-written legend drifted from the
+        // rows it glossed, and the drift was `unsourced` meaning a declared
+        // kind on one panel and a violation on the next.
+        "field_states": fermi::artifact_trace::field_state_glossary(),
+        // The other clock's legend. `Declared` carries no tone on purpose: a
+        // `pending` field is a standing request for an integration and not a
+        // defect, and `error` is the only state here that is one.
+        "declared_states": fermi::artifact_trace::declared_glossary(),
         "floor": floor,
         "floor_strength": fermi::grounding_trust::strength(floor),
         "routed": routed,

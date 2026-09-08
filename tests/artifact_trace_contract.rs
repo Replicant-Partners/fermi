@@ -109,7 +109,10 @@ async fn trace_all(pool: &PgPool, limit: i64) -> Vec<Traced> {
 
         let (reading, token, _silence, owner) =
             artifact_trace::reading(report.violations.len(), &graded, &legibility);
-        let (_, floor) = artifact_trace::fields(&agent, &graded);
+        // `None` for the assessment: this harness measures the corpus over the
+        // retained bytes and has no run record, which is the case `fields()`
+        // degrades honestly for. It asks only for the floor.
+        let (_, floor) = artifact_trace::fields(&agent, &graded, &report, None, &Default::default());
         // Computed the way the handler computes it: the claimed text against the
         // ENFORCED document, never the same value twice.
         let hashes = fermi::artifact_hash::of_episode(None, Some(&text), enforced.as_ref());
