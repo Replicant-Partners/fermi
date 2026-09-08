@@ -1018,42 +1018,30 @@ pub async fn specimen_handler(
             .into_iter()
             .collect();
 
+    // One producer of the verdict.
+    //
+    // This match lived here, and the artifact trace had its own words for the
+    // same five states, and the two disagreed in a way a reader could see:
+    // `unsourced` meant "a standing request, not a defect" on this page and "a
+    // claim we removed" on that one. `field_state::Declared` owns the
+    // vocabulary now and both surfaces read it.
     let mut counts = std::collections::BTreeMap::<&'static str, usize>::new();
     let contract_fields: Vec<Value> = fermi::grounding_trust::contracts_for(&agent_name)
         .map(|c| {
-            let (state, tool, why) = match c.grounding {
-                fermi::grounding_trust::Grounding::Sourced { tool, .. } => {
-                    if dispatchable.contains(tool) {
-                        ("resolved", Some(tool), "a tool is named and the platform can run it")
-                    } else {
-                        (
-                            "error",
-                            Some(tool),
-                            "the contract names a tool the platform cannot dispatch, so                              nothing can ever settle this field",
-                        )
-                    }
-                }
-                fermi::grounding_trust::Grounding::Unsourced => (
-                    "pending",
-                    None,
-                    "no tool exists for this yet. The field must be null and a value                      here is the violation — this is a standing request for an                      integration, not a defect",
-                ),
-                fermi::grounding_trust::Grounding::Derived { .. } => (
-                    "derived",
-                    None,
-                    "computed by the platform from other fields, so it is reproducible                      by construction",
-                ),
-                fermi::grounding_trust::Grounding::Inferred { .. } => (
-                    "inferred",
-                    None,
-                    "a judgement the agent is commissioned to make. An endorsement is                      the terminal verdict, not a weak citation",
-                ),
-                fermi::grounding_trust::Grounding::Narrative => {
-                    ("narrative", None, "prose. There is no proposition to settle")
-                }
+            let declared = fermi::field_state::Declared::of(&c.grounding, |t| {
+                dispatchable.contains(t)
+            });
+            let tool = match c.grounding {
+                fermi::grounding_trust::Grounding::Sourced { tool, .. } => Some(tool),
+                _ => None,
             };
-            *counts.entry(state).or_default() += 1;
-            json!({ "path": c.path, "state": state, "tool": tool, "why": why })
+            *counts.entry(declared.token()).or_default() += 1;
+            json!({
+                "path": c.path,
+                "state": declared.token(),
+                "tool": tool,
+                "why": declared.why(),
+            })
         })
         .collect();
 

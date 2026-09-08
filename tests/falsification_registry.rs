@@ -1045,6 +1045,65 @@ const FALSIFICATIONS: &[Falsification] = &[
                  81 agents with no contract as complete, which is the \
                  three-state problem that made the grounding gate honest.",
     },
+    // ── field_state / completeness::has_value ────────────────────────
+    Falsification {
+        check: "completeness::has_value",
+        owner: "src/completeness.rs",
+        // Permissive reading: "the agent put something here."
+        passes: || fermi::completeness::has_value(&serde_json::json!(0)),
+        fires: || fermi::completeness::has_value(&serde_json::json!([])),
+        models: "The `??`-versus-absent trap this repository keeps finding. A \
+                 chromosome count of ZERO is a measurement; reading it as \
+                 missing reports an agent that answered correctly as one that \
+                 answered nothing. The `passes` world is that exact value. Now \
+                 public because `field_state::Observed::Filled` must ask the \
+                 same question — a second predicate would let one panel say a \
+                 field is filled while the summary above it counts it empty.",
+    },
+    Falsification {
+        check: "field_state::of",
+        owner: "src/field_state.rs",
+        // Permissive reading: "this empty field is the contract working."
+        passes: || {
+            let f = fermi::grounding_trust::GradedField {
+                path: "ratings.elo_current",
+                block: "ratings",
+                value: serde_json::Value::Null,
+                provenance: "unavailable_no_tool_source",
+                settleable_by: None,
+                kind: fermi::grounding_trust::GroundingKind::Unsourced,
+            };
+            fermi::field_state::Observed::of(&f, &fermi::grounding_trust::Report::default(), None)
+                == fermi::field_state::Observed::AbsentByContract
+        },
+        fires: || {
+            let f = fermi::grounding_trust::GradedField {
+                path: "ratings.elo_current",
+                block: "ratings",
+                value: serde_json::Value::Null,
+                provenance: "unavailable_no_tool_source",
+                settleable_by: None,
+                kind: fermi::grounding_trust::GroundingKind::Unsourced,
+            };
+            // Same field, same null — nulled BY US after the model filled it.
+            let stripped = fermi::grounding_trust::Report {
+                violations: vec![fermi::grounding_trust::Violation {
+                    path: "ratings.elo_current".into(),
+                    removed: serde_json::json!(1834),
+                    kind: fermi::grounding_trust::ViolationKind::UngroundedField,
+                }],
+                provenance: vec![],
+            };
+            fermi::field_state::Observed::of(&f, &stripped, None)
+                == fermi::field_state::Observed::AbsentByContract
+        },
+        models: "The football_analyst pulse that produced this module. The two \
+                 worlds are the same field with the same null value, differing \
+                 only in whether the platform emptied it. One is the contract \
+                 being obeyed and one is the model having fabricated, and the \
+                 artifact trace could not tell them apart — which is why `1 \
+                 unsourced claim removed` read as contradicting `4 pending`.",
+    },
     // ── native_evaluators ───────────────────────────────────────────────
     Falsification {
         check: "native_evaluators::Verdict::is_failing",
@@ -2441,6 +2500,17 @@ const EXEMPT: &[(&str, &str)] = &[
          rendering is what reaches a model and a field nobody prints is not \
          the risk.",
     ),
+    ("field_state::token", ACCESSOR),
+    ("field_state::why", ACCESSOR),
+    (
+        "field_state::whose",
+        "A total mapping from a run state to whose gap it is — nobody's, the \
+         world's, or the agent's. One arm per variant and no evidence weighed, \
+         the same argument as `grounding_trust::kind`. The distinction it \
+         encodes is `completeness`'s and is falsified there, by \
+         `a_tool_that_was_asked_and_had_nothing_is_nobodys_fault` and its \
+         sibling.",
+    ),
     ("port_trust::as_tag", ACCESSOR),
     (
         "port_trust::answerers",
@@ -2828,6 +2898,7 @@ const TRUST_MODULES: &[&str] = &[
     "port_trust",
     "completeness",
     "fleet_digest",
+    "field_state",
 ];
 
 // ── assertions ──────────────────────────────────────────────────────────

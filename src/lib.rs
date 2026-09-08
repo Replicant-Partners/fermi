@@ -470,6 +470,11 @@ pub mod coordination_note;
 // meta-agent pattern in `docs/architecture/META_AGENT_FLEET_AWARENESS.md`.
 // Names categories and counts, never members: a meta agent gets the map here
 // and the territory from tools.
+// One field, two clocks: what it can be trusted about (the contract) and what
+// happened to it this pulse (the gates). One vocabulary, shared by the specimen
+// page, the artifact trace and the composition view — so a token means one
+// thing wherever it is printed.
+pub mod field_state;
 pub mod fleet_digest;
 pub mod port_trust;
 // What a caller may rely on, in one token, derived from the verdicts the

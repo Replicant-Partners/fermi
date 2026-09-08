@@ -171,7 +171,12 @@ pub fn assess(fields: &[GradedField], tools_called: &[&str]) -> Assessment {
 /// pair is the `??`-versus-absent trap this repo keeps finding: a chromosome
 /// count of zero is a measurement, and reading it as missing would report an
 /// agent that answered correctly as one that answered nothing.
-fn has_value(v: &serde_json::Value) -> bool {
+///
+/// **Public so `field_state` can ask the same question.** `Observed::Filled`
+/// and this module's `filled` count are the same fact seen from two surfaces;
+/// a second predicate would let them disagree, and two panels disagreeing
+/// about one field is the defect `field_state` exists to remove.
+pub fn has_value(v: &serde_json::Value) -> bool {
     match v {
         serde_json::Value::Null => false,
         serde_json::Value::Array(a) => !a.is_empty(),
