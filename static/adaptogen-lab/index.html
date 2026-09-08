@@ -235,10 +235,12 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
 </div>
 
 <div class="conn">
-  <div class="cf"><span class="cl">ABW Base</span><input id="base-url" class="ci" style="width:210px" placeholder="https://agent-bestiary.world"/></div>
   <div class="cf" id="ws-id-field" style="display:none"><span class="cl">Workspace ID</span><input id="ws-id" class="ci" style="width:260px" placeholder="workspace UUID"/></div>
-  <div class="cf"><span class="cl">API Token</span><input id="token" class="ci" style="width:180px" type="password" placeholder="ferm_..." oninput="onTokenInput()"/></div>
-  <button class="btn" id="run-btn" onclick="runLive()">Run comparison</button>
+  <div id="auth-status" style="font-size:11px;color:var(--t3);display:flex;align-items:center;gap:8px">
+    <span class="spinner"></span> Checking login…
+  </div>
+  <button class="btn" id="run-btn" onclick="runLive()" style="display:none">Run comparison</button>
+  <!-- For third-party embedding: pass ?token=ferm_... to authenticate without cookies -->
 </div>
 
 <div class="body">
@@ -442,25 +444,74 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
 
 <script>
 // ── config ──────────────────────────────────────────────────────────────────
-function getBase() {
-  const p = new URLSearchParams(location.search).get('base');
-  if (p) { localStorage.setItem('abw_base', p); return p; }
-  return localStorage.getItem('abw_base') || 'https://agent-bestiary.world';
-}
-const BASE_CONST = getBase();
+// Auth: uses ABW session cookie automatically when served from agent-bestiary.world.
+// No token pasting needed. For third-party embedding, pass ?token=ferm_... in the URL.
+//
+// API calls use credentials:'include' so the abw_session cookie is sent.
+// The auth middleware order: Bearer header → impersonation cookie → abw_session cookie.
+
+const URL_TOKEN = new URLSearchParams(location.search).get('token'); // third-party embed
+let currentUser = null;
 
 function wsId() {
   const v = document.getElementById('ws-id').value.trim();
   const m = v.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
   return m ? m[0] : v;
 }
-function token() { return document.getElementById('token').value.trim(); }
+
 function base() {
-  const v = document.getElementById('base-url').value.trim();
-  if (v) { localStorage.setItem('abw_base', v); return v; }
-  return BASE_CONST;
+  // Same-origin: use relative URL so cookies work correctly.
+  // Third-party: pass ?base=https://their-instance.com in the URL.
+  const p = new URLSearchParams(location.search).get('base');
+  return p || '';
 }
-function isLiveMode() { return !!(wsId() && token()); }
+
+// authHeaders: adds Authorization only when a URL token is provided (third-party embed).
+// When using same-origin session cookie, no Authorization header is needed.
+function authHeaders() {
+  const h = { 'Content-Type': 'application/json' };
+  if (URL_TOKEN) h['Authorization'] = `Bearer ${URL_TOKEN}`;
+  return h;
+}
+
+function fetchOpts(method, body) {
+  const opts = { method, credentials: 'include', headers: authHeaders() };
+  if (body != null) opts.body = JSON.stringify(body);
+  return opts;
+}
+
+function isLiveMode() { return !!(wsId() && currentUser); }
+
+// ── auth check ─────────────────────────────────────────────────────────────
+async function checkAuth() {
+  const statusEl = document.getElementById('auth-status');
+  try {
+    const res = await fetch(`${base()}/api/auth/me`, { credentials: 'include' });
+    if (res.ok) {
+      currentUser = await res.json();
+      const name = currentUser.display_name || currentUser.email || 'logged in';
+      statusEl.innerHTML = `✓ <strong style="color:var(--t1)">${esc(name)}</strong>
+        <span style="color:var(--t3)">|</span>
+        <a href="/auth/logout" style="color:var(--t3);font-size:10px" onclick="return confirmLogout()">sign out</a>`;
+      document.getElementById('run-btn').style.display = '';
+      fetchWorkspaces();
+    } else {
+      currentUser = null;
+      statusEl.innerHTML = `<a class="btn" href="/auth/google" style="padding:5px 12px;font-size:11px">🔑 Sign in to use live workspaces</a>
+        <span style="color:var(--t3);font-size:11px">(or <a href="/auth/github" style="color:var(--t3)">GitHub</a>)</span>`;
+    }
+  } catch(e) {
+    statusEl.innerHTML = `<span style="color:var(--t3);font-size:11px">Auth check failed — ${esc(e.message)}</span>`;
+  }
+}
+
+function confirmLogout() {
+  if (confirm('Sign out of DPP Studio?')) {
+    fetch('/auth/logout', { method:'POST', credentials:'include' })
+      .then(() => location.reload());
+  }
+  return false;
+}
 
 // ── sidebar tabs ────────────────────────────────────────────────────────────
 function showTab(name) {
@@ -496,12 +547,10 @@ let currentProductName = 'Precision Kombucha — Hibiscus, Cold F2';
 let currentProductSku = 'PKH-F2-330';
 
 async function fetchWorkspaces() {
-  const tok = token();
-  if (!tok) return;
+  if (!currentUser) return;
   try {
-    const res = await fetch(`${base()}/api/apps/adaptogen_lab_regulatory/workspaces`, {
-      headers: { Authorization: `Bearer ${tok}` }
-    });
+    const res = await fetch(`${base()}/api/apps/adaptogen_lab_regulatory/workspaces`,
+      { credentials:'include', headers: authHeaders() });
     if (!res.ok) return;
     const data = await res.json();
     renderWorkspaceList(data.workspaces ?? [], true);
@@ -545,27 +594,21 @@ function selectWorkspace(id, name) {
 }
 
 async function spawnWorkspace() {
-  const tok = token();
-  if (!tok) { alert('Enter your API token first.'); return; }
+  if (!currentUser) { alert('Sign in first.'); return; }
   const name = prompt('Product name for this DPP workspace:', 'New Product DPP');
   if (!name) return;
   try {
-    const res = await fetch(`${base()}/api/apps/adaptogen_lab_regulatory/workspaces`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` },
-      body: JSON.stringify({ name })
-    });
+    const res = await fetch(`${base()}/api/apps/adaptogen_lab_regulatory/workspaces`,
+      fetchOpts('POST', { name }));
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
-    alert(`Workspace spawned: ${data.workspace_id}\nThe regulatory rulesets and composition YAML are now seeded.`);
     document.getElementById('ws-id').value = data.workspace_id;
     fetchWorkspaces();
+    selectWorkspace(data.workspace_id, name);
   } catch(e) { alert(`Spawn failed: ${e.message}`); }
 }
 
-function onTokenInput() {
-  fetchWorkspaces();
-}
+
 
 // ── composition yaml editor ─────────────────────────────────────────────────
 // The composition YAML is the canonical DPP document — the product's source
@@ -612,9 +655,9 @@ source_claims:
 `;
 
 async function loadClaimsYaml() {
-  const id = wsId(), tok = token();
+  const id = wsId();
   const container = document.getElementById('yaml-editor-container');
-  if (!id || !tok) {
+  if (!id) {
     container.innerHTML = `<div class="yaml-not-connected">
       <strong>No workspace connected.</strong><br><br>
       Select a workspace from the Products tab.
@@ -631,7 +674,7 @@ async function loadClaimsYaml() {
 
   try {
     const res = await fetch(`${base()}/api/workspaces/${id}/files/${CLAIMS_PATH}`, {
-      headers: { Authorization: `Bearer ${tok}` }
+      credentials:'include', headers: authHeaders()
     });
     if (res.ok) {
       const data = await res.json();
@@ -664,8 +707,8 @@ async function loadClaimsYaml() {
 }
 
 async function saveClaimsYaml(andRun) {
-  const id = wsId(), tok = token();
-  if (!id || !tok) { alert('Connect a workspace first.'); return; }
+  const id = wsId();
+  if (!id) { alert('Connect a workspace first.'); return; }
   const ta = document.getElementById('composition-ta');
   if (!ta) return;
   const content = ta.value;
@@ -676,7 +719,7 @@ async function saveClaimsYaml(andRun) {
   try {
     const res = await fetch(`${base()}/api/workspaces/${id}/files/${CLAIMS_PATH}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` },
+      headers: authHeaders(),
       body: JSON.stringify({
         content,
         message: `DPP Studio: update claims YAML`,
@@ -701,21 +744,21 @@ async function saveClaimsYaml(andRun) {
 }
 
 async function loadBomYaml() {
-  const id = wsId(), tok = token();
+  const id = wsId();
   const container = document.getElementById('bom-import-area');
   const statusEl = document.getElementById('bom-editor-container');
-  if (!id || !tok) return;
+  if (!id) return;
 
   statusEl.innerHTML = '<div style="font-size:11px;color:var(--t3);padding:8px"><span class="spinner"></span> Loading BOM…</div>';
 
   try {
     // Try new path first, then legacy path
     let res = await fetch(`${base()}/api/workspaces/${id}/files/${COMPOSITION_PATH}`, {
-      headers: { Authorization: `Bearer ${tok}` }
+      credentials:'include', headers: authHeaders()
     });
     if (!res.ok) {
       res = await fetch(`${base()}/api/workspaces/${id}/files/${COMPOSITION_PATH_LEGACY}`, {
-        headers: { Authorization: `Bearer ${tok}` }
+        credentials:'include', headers: authHeaders()
       });
     }
 
@@ -736,8 +779,8 @@ async function loadBomYaml() {
 }
 
 async function saveBomYaml() {
-  const id = wsId(), tok = token();
-  if (!id || !tok) { alert('Connect a workspace first.'); return; }
+  const id = wsId();
+  if (!id) { alert('Connect a workspace first.'); return; }
   const ta = document.getElementById('bom-ta');
   if (!ta || !ta.value.trim()) return;
   const status = document.getElementById('bom-status');
@@ -747,7 +790,7 @@ async function saveBomYaml() {
   try {
     const res = await fetch(`${base()}/api/workspaces/${id}/files/${COMPOSITION_PATH}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}` },
+      headers: authHeaders(),
       body: JSON.stringify({ content: ta.value, message: 'DPP Studio: import BOM / update composition' })
     });
     if (!res.ok) throw new Error(await res.text());
@@ -814,7 +857,7 @@ async function testClaim(i) {
       }));
       const res = await fetch(`${base()}/api/workspaces/${wsId()}/actions/compare_lenses`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+        headers: { 'Content-Type': 'application/json',  },
         body: JSON.stringify({ source_product_id: 'precision_kombucha_hibiscus_f2', override_source_claims: overrides })
       });
       if (!res.ok) throw new Error(await res.text());
@@ -901,7 +944,7 @@ async function hireOracle() {
   try {
     const res = await fetch(`${base()}/api/workspaces/${wsId()}/hire`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+      headers: { 'Content-Type': 'application/json',  },
       body: JSON.stringify({ agent_name: 'supply_chain_oracle' })
     });
     if (!res.ok && !res.status === 409) throw new Error(await res.text());
@@ -943,7 +986,7 @@ async function runBOM() {
     // Send the BOM query to the agent
     await fetch(`${base()}/api/workspaces/${wsId()}/messages`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+      headers: { 'Content-Type': 'application/json',  },
       body: JSON.stringify({ content: JSON.stringify(bomQuery), agent: 'supply_chain_oracle' })
     });
     // Poll for response
@@ -951,7 +994,7 @@ async function runBOM() {
     for (let i = 0; i < 20; i++) {
       await new Promise(r => setTimeout(r, 2000));
       const poll = await fetch(`${base()}/api/workspaces/${wsId()}/messages?limit=10`, {
-        headers: { Authorization: `Bearer ${token()}` }
+        headers: {  }
       });
       if (!poll.ok) continue;
       const msgs = await poll.json();
@@ -1207,25 +1250,22 @@ function renderAll(apiResponse, live) {
 
 // ── live ────────────────────────────────────────────────────────────────────
 async function runLive() {
-  const id = wsId(), tok = token();
+  const id = wsId();
   if (!id) { showEmptyWithMessage('No workspace selected. Pick one from the Products tab.'); return; }
-  if (!tok) { showEmptyWithMessage('Enter your API token above.'); return; }
-  const btn = document.getElementById('run-btn');
+    const btn = document.getElementById('run-btn');
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Running…';
   try {
-    const res = await fetch(`${base()}/api/workspaces/${id}/actions/compare_lenses`, {
-      method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${tok}`},
-      body: JSON.stringify({ source_product_id: 'precision_kombucha_hibiscus_f2' }),
-    });
+    const res = await fetch(`${base()}/api/workspaces/${id}/actions/compare_lenses`,
+      fetchOpts('POST', { source_product_id: 'precision_kombucha_hibiscus_f2' }));
     if (!res.ok) {
       const err = await res.text();
-      // Surface the specific error so we know what’s happening
       showEmptyWithMessage(`API error (${res.status}): ${err}`);
       return;
     }
     renderAll(await res.json(), true);
     // Check if supply chain oracle is already hired
-    const agentsRes = await fetch(`${base()}/api/workspaces/${id}/agents`, { headers:{ Authorization:`Bearer ${tok}` } });
+    const agentsRes = await fetch(`${base()}/api/workspaces/${id}/agents`,
+      { credentials:'include', headers: authHeaders() });
     if (agentsRes.ok) {
       const agentsData = await agentsRes.json();
       const agents = agentsData.agents ?? agentsData ?? [];
@@ -1252,9 +1292,8 @@ function showEmptyWithMessage(msg) {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('base-url').value = BASE_CONST;
   renderKB();
-  if (token()) fetchWorkspaces();
+  checkAuth(); // reads abw_session cookie, populates auth-status, fetches workspaces if logged in
 });
 </script>
 </body>
