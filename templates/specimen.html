@@ -92,6 +92,26 @@
   .h-rem{font-size:0.7rem;color:var(--aqua);margin-top:3px;}
   .h-tok{font-size:0.63rem;color:var(--fg4);border:1px solid var(--bg3);padding:1px 5px;white-space:nowrap;}
 
+  /* ── Coordination notes: the one place Loop 3 meets Loop 1 ──────────────
+
+     `consolidated` is the field that matters. A note sitting in an agent's
+     memory that consolidation has not run over has changed nothing about the
+     agent's behaviour — it is indistinguishable, in what the agent does, from
+     a note nobody sent. So the two states are drawn differently and the
+     un-dreamt one is not drawn as an absence. */
+  .cn{border:1px solid var(--bg2);background:var(--bg0);padding:8px 11px;margin-bottom:7px;}
+  .cn-h{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;}
+  .cn-about{font-size:0.75rem;color:var(--fg2);}
+  .cn-when{font-size:0.66rem;color:var(--fg4);}
+  .cn-state{margin-left:auto;font-size:0.6rem;text-transform:uppercase;letter-spacing:0.05em;
+            padding:1px 6px;border:1px solid;white-space:nowrap;}
+  .cn-state.dreamt{color:var(--green);border-color:var(--green);}
+  .cn-state.not{color:var(--purple,#d3869b);border-color:var(--purple,#d3869b);border-style:dashed;}
+  .cn-note{font-size:0.73rem;color:var(--fg3);line-height:1.5;margin-top:5px;
+           white-space:pre-wrap;max-height:9em;overflow:hidden;}
+  .cn-proxy{font-size:0.68rem;color:var(--fg4);line-height:1.5;margin-top:9px;
+            padding-left:9px;border-left:2px solid var(--bg3);}
+
   /* ── Drawer ── */
   .scrim{position:fixed;inset:0;background:rgba(0,0,0,0.55);display:none;z-index:40;}
   .scrim.open{display:block;}
@@ -451,6 +471,81 @@
     </div>`;
   }
 
+  // ── Coordination notes ──────────────────────────────────────────
+  //
+  // Loaded when the Health tab is first drawn rather than at boot. It is one of
+  // three tabs and the request is keyed by the agent_id the first response
+  // carries, so fetching it eagerly would put a sequential hop on every page
+  // load for a panel most readers never open.
+  //
+  //   undefined  not asked yet
+  //   "loading"  in flight
+  //   null       asked and unreadable — unknown, NOT an absence of notes
+  //   object     the payload
+  let NOTES;
+
+  function loadNotes() {
+    const id = (D.profile || {}).agent_id;
+    if (!id) { NOTES = null; return; }
+    NOTES = "loading";
+    fetch(`/api/agents/${encodeURIComponent(id)}/coordination-notes`)
+      .then(r => r.ok ? r.json() : null)
+      .catch(() => null)
+      .then(v => { NOTES = v; if (TAB === "health") render(); });
+  }
+
+  function coordinationBlock() {
+    const head = `<h3>Coordination notes</h3>
+      <div class="note">What a strategist's coherence run wrote into this agent's
+        episodic memory, and — the column that decides whether it mattered — whether
+        consolidation has run over it since. Dreaming reads episodes, not workspace
+        git, which is why a coordination finding is an episode at all.</div>`;
+
+    if (NOTES === undefined) loadNotes();
+    if (NOTES === "loading")
+      return `<div class="block">${head}<div class="absent">Reading…</div></div>`;
+    if (!NOTES)
+      return `<div class="block">${head}<div class="absent">The coordination notes
+        could not be read. That is <b>unknown</b>, not an absence of notes — this agent
+        may have any number and this page cannot currently see them.</div></div>`;
+
+    const notes = NOTES.notes || [];
+    // Empty is never blank, and which empty it is decides what a reader should
+    // do about it. `detail` distinguishes the two: nobody anywhere has one, or
+    // others have and this one has not. They are not the same instruction and
+    // this page does not compose its own sentence for either.
+    const body = notes.length
+      ? notes.map(n => `<div class="cn">
+          <div class="cn-h">
+            <span class="cn-about">${esc(n.about || "—")}</span>
+            <span class="cn-when">${esc(String(n.received_at || "").slice(0, 16).replace("T", " "))}</span>
+            <span class="cn-state ${n.consolidated ? "dreamt" : "not"}">${
+              n.consolidated ? "dreamt on" : "not consolidated"}</span>
+          </div>
+          ${n.note ? `<div class="cn-note">${esc(n.note)}</div>` : ""}
+          ${n.episode_id ? `<div class="cn-when" style="margin-top:5px">
+            <a href="/trace/${encodeURIComponent(n.episode_id)}">the pulse that carried it →</a>
+          </div>` : ""}
+        </div>`).join("")
+        + (notes.some(n => !n.consolidated) ? `<div class="cn-proxy">
+            A note marked <b>not consolidated</b> is in memory and has changed nothing
+            yet. Until dreaming runs over it, it is indistinguishable — in what this
+            agent does — from a note nobody sent.</div>` : "")
+      : `<div class="absent">${esc(NOTES.detail || "No coordination note on file.")}</div>`;
+
+    // Not served, and worth knowing: `consolidation_jobs` records a window over
+    // an agent's episodes rather than a list of ids, so `consolidated` is
+    // answered by "did a completed job finish after this note arrived". A job
+    // that ran afterwards and processed nothing reads as having consolidated it.
+    const proxy = notes.length ? `<div class="cn-proxy">
+      <b>How “dreamt on” is decided:</b> consolidation records a window over this
+      agent's episodes rather than a list of ids, so this asks whether a completed job
+      finished after the note arrived. A job that ran afterwards and processed nothing
+      would read here as having consolidated it.</div>` : "";
+
+    return `<div class="block">${head}${body}${proxy}</div>`;
+  }
+
   function paneHealth() {
     const h = D.health || [];
     return `<div class="pane">
@@ -476,6 +571,7 @@
           </div>`).join("")
         : `<div class="absent">No agent-scoped panel is declared.</div>`}
       </div>
+      ${coordinationBlock()}
       <div class="block">
         <h3>Clinical detail</h3>
         <div class="note">Eval dimensions, persona drift, dyad state and the anomaly

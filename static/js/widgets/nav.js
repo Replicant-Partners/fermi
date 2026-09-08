@@ -51,6 +51,11 @@ const Nav = {
             <a href="/stream" class="${current === "stream" ? "active" : ""}">Pulses</a>
             <a href="/loops" class="${current === "loops" ? "active" : ""}">Loops</a>
             <a href="/gates" class="${current === "gates" ? "active" : ""}">Gates</a>
+            <!-- The evaluators this group's own comment already promised. Six
+                 checks the platform runs on itself, each with a written remedy,
+                 which were reachable only through the admin schema-health
+                 endpoint and rendered by nothing. -->
+            <a href="/evaluators" class="${current === "evaluators" ? "active" : ""}">Evaluators</a>
             <a href="/observatory" class="${current === "observatory" ? "active" : ""}">Observatory</a>
           </span>
           <span class="nav-group nav-group-quiet">

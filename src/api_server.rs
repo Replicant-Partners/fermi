@@ -3434,6 +3434,12 @@ async fn main() {
         .route("/bestiary", get(handlers::pages::bestiary_view))
         .route("/loops", get(handlers::pages::loops_view))
         .route("/gates", get(handlers::pages::loops_view))
+        // The evaluator board: six checks the platform runs on its own
+        // machinery. `/api/evaluators` shipped with no consumer, so the only
+        // verdicts on the platform that carry a written remedy were reachable
+        // by nobody. Same page as the loops and gates they judge, because a
+        // finding's subject is one of those.
+        .route("/evaluators", get(handlers::pages::loops_view))
         .route("/specimen/:agent_name", get(handlers::pages::specimen_view))
         .route("/trace/:episode_id", get(handlers::pages::trace_view))
         .route("/flow/:workspace_id", get(handlers::pages::flow_view))

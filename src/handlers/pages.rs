@@ -622,8 +622,14 @@ pub async fn bestiary_view() -> Response {
 /// stages carry `gated_by` — so they share a page and a reading vocabulary
 /// rather than competing for two nav slots.
 ///
-/// Served at both `/loops` and `/gates`, because both names are ones a reader
-/// will reach for and neither should 404.
+/// Served at `/loops`, `/gates` and `/evaluators`, because all three are names a
+/// reader will reach for and none should 404. The template picks its opening tab
+/// from the path.
+///
+/// `/evaluators` belongs here rather than on its own page because
+/// `evaluator_api` is the third instance of [`fermi::surface`]'s pattern and its
+/// findings name loops and gates as their subjects. A finding whose subject is
+/// one tab away is actionable; a finding on a separate screen is a report.
 pub async fn loops_view() -> Response {
     app_shell("templates/loops.html")
 }

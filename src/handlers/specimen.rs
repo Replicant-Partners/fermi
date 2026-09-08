@@ -1131,6 +1131,11 @@ pub async fn specimen_handler(
 
     Ok(Json(json!({
         "profile": {
+            // Served because three per-agent endpoints are keyed by the uuid
+            // rather than the name — `coordination-notes` and the two
+            // observatory routes — and a page that only knows the name has to
+            // guess or make a second lookup to reach them.
+            "agent_id": agent_id,
             "agent_name": row.get::<String, _>("agent_name"),
             "label": row.get::<String, _>("label"),
             "description": row.try_get::<Option<String>, _>("description").ok().flatten(),
