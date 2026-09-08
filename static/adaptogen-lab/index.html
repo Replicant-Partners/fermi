@@ -33,12 +33,21 @@ body{background:var(--bg);color:var(--t1);font-family:'Inter',system-ui,sans-ser
 .btn-g:hover{border-color:var(--t1);color:var(--t1)}
 .btn-sm{padding:3px 9px;font-size:11px;border-radius:4px}
 .body{display:flex;flex:1;overflow:hidden;min-height:0}
-.sidebar{width:290px;min-width:290px;display:flex;flex-direction:column;border-right:1px solid var(--b1);overflow:hidden}
+.sidebar{width:240px;min-width:180px;display:flex;flex-direction:column;border-right:1px solid var(--b1);overflow:hidden}
 .sb-tabs{display:flex;border-bottom:1px solid var(--b1);background:var(--s1);flex-shrink:0}
 .sb-tab{flex:1;padding:9px 2px;text-align:center;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--t3);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s}
 .sb-tab.active{color:var(--acc);border-bottom-color:var(--acc)}
 .sb-panel{flex:1;overflow-y:auto;padding:14px}
 .sb-panel.hidden{display:none}
+/* ingredient edit table */
+.ing-edit-table{width:100%;border-collapse:collapse;font-size:11px}
+.ing-edit-table th{font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--t3);padding:4px 6px;text-align:left;border-bottom:1px solid var(--b1)}
+.ing-edit-table td{padding:4px 2px;border-bottom:1px solid var(--b1);vertical-align:middle}
+.ing-edit-table tr:last-child td{border-bottom:none}
+.ing-edit-table input,.ing-edit-table select{width:100%;background:var(--s3);border:1px solid transparent;color:var(--t1);font-size:11px;padding:3px 5px;border-radius:3px;outline:none;font-family:inherit}
+.ing-edit-table input:focus,.ing-edit-table select:focus{border-color:var(--acc);background:var(--s2)}
+.ing-del{background:transparent;border:none;color:var(--t3);cursor:pointer;font-size:12px;padding:0 2px}
+.ing-del:hover{color:var(--red)}
 /* drag handle between sidebar and content */
 .drag-handle{width:4px;background:var(--b1);cursor:col-resize;flex-shrink:0;transition:background .15s;position:relative}
 .drag-handle:hover,.drag-handle.dragging{background:var(--acc)}
@@ -328,20 +337,34 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
 
   <!-- Ingredients tab -->
   <div class="sb-panel hidden" id="tab-ingredients">
-    <div class="sh"><span class="sh-label">Composition (BOM)</span><span class="sh-rule"></span><span style="font-size:9px;color:var(--t3)">dpp/composition.yaml</span></div>
-    <div style="font-size:10px;color:var(--t2);margin-bottom:10px;line-height:1.5">
-      What the product <em>is made of</em>. R&amp;D-owned. Import from SimOps, ERP, or paste a BOM YAML.
-    </div>
+    <div class="sh"><span class="sh-label">Ingredients (BOM)</span><span class="sh-rule"></span><span style="font-size:9px;color:var(--t3)">dpp/composition.yaml</span></div>
     <div id="bom-editor-container">
-      <div style="font-size:11px;color:var(--t3)">Select a workspace to load the BOM.</div>
+      <div style="font-size:11px;color:var(--t3);padding:8px">Select a workspace from Products.</div>
     </div>
-    <div id="bom-import-area" style="display:none">
-      <div class="yaml-editor-wrap" style="height:auto">
-        <textarea class="yaml-ta" id="bom-ta" style="min-height:200px" placeholder="Paste BOM YAML here to import..." spellcheck="false"></textarea>
-        <div class="yaml-actions">
-          <span class="yaml-status info" id="bom-status">Paste BOM YAML and save.</span>
-          <button class="btn-g btn-sm" onclick="saveBomYaml()">Save BOM</button>
+    <!-- ingredient table, shown when BOM is loaded -->
+    <div id="bom-ing-area" style="display:none">
+      <div style="font-size:10px;color:var(--t2);margin-bottom:8px;line-height:1.5">
+        What the product <em>is made of</em>. Edit ingredients below or import a full BOM YAML.
+      </div>
+      <table class="ing-edit-table" id="ing-table">
+        <thead><tr><th>Ingredient</th><th>%</th><th>Category</th><th></th></tr></thead>
+        <tbody id="ing-tbody"></tbody>
+      </table>
+      <button class="add-claim-btn" style="margin-top:6px" onclick="addIngredientRow()">
+        <span>＋</span><span>Add ingredient</span>
+      </button>
+      <!-- advanced YAML toggle -->
+      <details style="margin-top:12px">
+        <summary style="font-size:10px;color:var(--t3);cursor:pointer;user-select:none">Advanced: edit raw YAML</summary>
+        <textarea class="yaml-ta" id="bom-ta" style="min-height:180px;margin-top:6px" spellcheck="false"></textarea>
+        <div style="display:flex;gap:6px;margin-top:6px;align-items:center">
+          <span style="font-size:10px;color:var(--t3)">Import from SimOps, ERP, or paste any BOM YAML — overwrites the ingredient table above.</span>
+          <button class="btn-g btn-sm" onclick="saveBomFromYaml()">Import YAML</button>
         </div>
+      </details>
+      <div style="display:flex;gap:6px;margin-top:10px;padding-top:10px;border-top:1px solid var(--b1);align-items:center">
+        <span style="font-size:11px;flex:1" id="bom-status"></span>
+        <button class="btn btn-sm" onclick="saveBomYaml()">Save Ingredients</button>
       </div>
     </div>
   </div>
@@ -887,64 +910,152 @@ async function saveClaimsFromCards(andRun) {
   }
 }
 
+// ── BOM / ingredient table ───────────────────────────────────────────────────────
+let bomYamlText = ''; // full YAML in memory
+let bomIngredients = []; // extracted ingredient rows
+
+function parseIngredients(yaml) {
+  const ings = [];
+  const lines = yaml.split('\n');
+  let inBlock = false; let cur = null;
+  for (const line of lines) {
+    if (/^ingredients:/.test(line)) { inBlock = true; continue; }
+    if (inBlock && /^[a-z_A-Z]/.test(line) && !line.startsWith(' ')) { inBlock = false; }
+    if (!inBlock) continue;
+    if (/^  - /.test(line)) {
+      if (cur) ings.push(cur);
+      cur = { id:'', display_name:'', composition_pct:'', category:'', raw:[] };
+    }
+    if (cur) {
+      cur.raw.push(line);
+      const m = (k) => line.match(new RegExp(k + ':\\s*(.+)'));
+      if (m('id'))              cur.id = m('id')[1].trim().replace(/^"|"$/g,'');
+      if (m('display_name'))    cur.display_name = m('display_name')[1].trim().replace(/^"|"$/g,'');
+      if (m('composition_pct')) cur.composition_pct = m('composition_pct')[1].trim();
+      if (m('category'))        cur.category = m('category')[1].trim();
+    }
+  }
+  if (cur) ings.push(cur);
+  return ings;
+}
+
+function renderIngTable() {
+  const tbody = document.getElementById('ing-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = bomIngredients.map((ing, i) => `
+    <tr>
+      <td><input value="${esc(ing.display_name||ing.id)}" oninput="updateIng(${i},'display_name',this.value)" placeholder="Ingredient name"></td>
+      <td style="width:52px"><input value="${esc(ing.composition_pct)}" oninput="updateIng(${i},'composition_pct',this.value)" placeholder="%" style="text-align:right"></td>
+      <td style="width:90px">
+        <select onchange="updateIng(${i},'category',this.value)">
+          ${['base','botanical_infusion','processing_culture','acidulant','preservative','flavour','other'].map(c =>
+            `<option value="${c}"${ing.category===c?' selected':''}>${c}</option>`).join('')}
+        </select>
+      </td>
+      <td style="width:24px"><button class="ing-del" onclick="deleteIng(${i})">✕</button></td>
+    </tr>`);
+}
+
+function updateIng(i, field, val) {
+  if (bomIngredients[i]) bomIngredients[i][field] = val;
+}
+
+function deleteIng(i) {
+  bomIngredients.splice(i, 1);
+  renderIngTable();
+}
+
+function addIngredientRow() {
+  bomIngredients.push({ id:'ingredient_'+Date.now(), display_name:'', composition_pct:'', category:'other', raw:[] });
+  renderIngTable();
+  // Focus the new name field
+  const rows = document.querySelectorAll('#ing-tbody tr');
+  const last = rows[rows.length-1];
+  if (last) last.querySelector('input')?.focus();
+}
+
+function spliceIngredientsIntoYaml() {
+  // Replace the ingredients block in bomYamlText with updated data
+  const lines = bomYamlText.split('\n');
+  let start = -1, end = lines.length;
+  for (let i=0; i<lines.length; i++) {
+    if (/^ingredients:/.test(lines[i])) { start = i; continue; }
+    if (start >= 0 && i > start && /^[a-z_A-Z]/.test(lines[i]) && !lines[i].startsWith(' ')) { end = i; break; }
+  }
+  if (start < 0) return bomYamlText; // no ingredients block, leave as-is
+
+  const ingLines = ['ingredients:'];
+  for (const ing of bomIngredients) {
+    const name = ing.display_name || ing.id;
+    const id = ing.id || name.toLowerCase().replace(/[^a-z0-9]+/g,'_');
+    ingLines.push(`  - id: ${id}`);
+    ingLines.push(`    display_name: "${name.replace(/"/g,'\\"')}"`);
+    ingLines.push(`    category: ${ing.category||'other'}`);
+    if (ing.composition_pct) ingLines.push(`    composition_pct: ${ing.composition_pct}`);
+  }
+
+  return [...lines.slice(0, start), ...ingLines, '', ...lines.slice(end)].join('\n');
+}
+
 async function loadBomYaml() {
   const id = wsId();
-  const container = document.getElementById('bom-import-area');
-  const statusEl = document.getElementById('bom-editor-container');
+  const area = document.getElementById('bom-ing-area');
+  const container = document.getElementById('bom-editor-container');
   if (!id) return;
-
-  statusEl.innerHTML = '<div style="font-size:11px;color:var(--t3);padding:8px"><span class="spinner"></span> Loading BOM…</div>';
-
+  if (container) container.innerHTML = '<div style="font-size:10px;color:var(--t3);padding:4px 0"><span class="spinner"></span> Loading…</div>';
   try {
-    // Try new path first, then legacy path
-    let res = await fetch(`${base()}/api/workspaces/${id}/files/${COMPOSITION_PATH}`, {
-      credentials:'include', headers: authHeaders()
-    });
-    if (!res.ok) {
-      res = await fetch(`${base()}/api/workspaces/${id}/files/${COMPOSITION_PATH_LEGACY}`, {
-        credentials:'include', headers: authHeaders()
-      });
-    }
-
+    let res = await fetch(`${base()}/api/workspaces/${id}/files/${COMPOSITION_PATH}`,
+      { credentials:'include', headers: authHeaders() });
+    if (!res.ok) res = await fetch(`${base()}/api/workspaces/${id}/files/${COMPOSITION_PATH_LEGACY}`,
+      { credentials:'include', headers: authHeaders() });
     if (res.ok) {
       const data = await res.json();
-      const content = data.content ?? data.text ?? '';
-      statusEl.innerHTML = `<div style="font-size:10px;color:var(--grn);padding:4px 0">✓ BOM loaded from workspace git (${COMPOSITION_PATH})</div>`;
-      container.style.display = '';
-      document.getElementById('bom-ta').value = content;
+      bomYamlText = data.content ?? data.text ?? '';
+      if (container) container.innerHTML = `<div style="font-size:10px;color:var(--grn);padding:2px 0">✓ ${COMPOSITION_PATH} from workspace git</div>`;
+      bomIngredients = parseIngredients(bomYamlText);
+      if (area) area.style.display = '';
+      const ta = document.getElementById('bom-ta');
+      if (ta) ta.value = bomYamlText;
+      renderIngTable();
     } else {
-      statusEl.innerHTML = `<div style="font-size:10px;color:var(--amb);padding:4px 0">○ No BOM in workspace yet — paste a composition YAML below to import one</div>`;
-      container.style.display = '';
+      bomYamlText = ''; bomIngredients = [];
+      if (container) container.innerHTML = `<div style="font-size:10px;color:var(--amb);padding:2px 0">○ No BOM found — add ingredients below or import a YAML</div>`;
+      if (area) area.style.display = '';
+      renderIngTable();
     }
   } catch(e) {
-    statusEl.innerHTML = `<div style="font-size:10px;color:var(--t3);padding:4px 0">Could not load BOM: ${esc(e.message)}</div>`;
-    container.style.display = '';
+    if (container) container.innerHTML = `<div style="font-size:10px;color:var(--red)">${esc(e.message)}</div>`;
   }
 }
 
 async function saveBomYaml() {
   const id = wsId();
   if (!id) { alert('Connect a workspace first.'); return; }
-  const ta = document.getElementById('bom-ta');
-  if (!ta || !ta.value.trim()) return;
-  const status = document.getElementById('bom-status');
-  status.className = 'yaml-status info';
-  status.textContent = 'Saving BOM…';
-
+  const statusEl = document.getElementById('bom-status');
+  if (statusEl) { statusEl.style.color='var(--t3)'; statusEl.textContent='Saving…'; }
+  const updated = spliceIngredientsIntoYaml();
   try {
-    const res = await fetch(`${base()}/api/workspaces/${id}/files/${COMPOSITION_PATH}`, {
-      method: 'PUT',
-      headers: authHeaders(),
-      body: JSON.stringify({ content: ta.value, message: 'DPP Studio: import BOM / update composition' })
-    });
+    const res = await fetch(`${base()}/api/workspaces/${id}/files/${COMPOSITION_PATH}`,
+      { method:'PUT', credentials:'include', headers: authHeaders(),
+        body: JSON.stringify({ content: updated, message: 'DPP Studio: update ingredients' }) });
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
-    status.className = 'yaml-status ok';
-    status.textContent = `✓ BOM saved — commit ${(data.sha ?? '').slice(0, 8)}`;
+    bomYamlText = updated;
+    const ta = document.getElementById('bom-ta'); if (ta) ta.value = updated;
+    if (statusEl) { statusEl.style.color='var(--grn)'; statusEl.textContent=`✓ Saved — ${(data.sha||'').slice(0,8)}`; }
   } catch(e) {
-    status.className = 'yaml-status err';
-    status.textContent = `Error: ${e.message}`;
+    if (statusEl) { statusEl.style.color='var(--red)'; statusEl.textContent=`Error: ${e.message}`; }
   }
+}
+
+async function saveBomFromYaml() {
+  // Import from the raw YAML textarea (advanced mode)
+  const ta = document.getElementById('bom-ta');
+  if (!ta || !ta.value.trim()) return;
+  bomYamlText = ta.value;
+  bomIngredients = parseIngredients(bomYamlText);
+  renderIngTable();
+  await saveBomYaml();
 }
 
 // ── claims editor ───────────────────────────────────────────────────────────
@@ -1429,13 +1540,21 @@ async function runLive() {
 }
 
 function showEmptyWithMessage(msg) {
-  const main = document.getElementById('main');
-  if (main) main.style.display = 'none';
-  const el = document.getElementById('empty-state');
-  if (!el) return;
-  el.style.display = '';
-  const p = el.querySelector('p') || el;
-  p.innerHTML = `<span style="color:var(--red)">${esc(msg)}</span><br><br>Select a workspace from the Products tab.`;
+  try {
+    const main = document.getElementById('main');
+    if (main) main.style.display = 'none';
+    let el = document.getElementById('empty-state');
+    if (!el) {
+      // Recreate if missing (can happen after DOM manipulation)
+      el = document.createElement('div');
+      el.id = 'empty-state'; el.className = 'empty';
+      const content = document.querySelector('.content');
+      if (content) content.prepend(el); else return;
+    }
+    el.style.display = '';
+    // Always set full innerHTML — avoids querySelector('p') null race
+    el.innerHTML = `<div class="big">⟷</div><p><span style="color:var(--red)">${esc(String(msg))}</span><br><br>Select a workspace from the Products tab.</p>`;
+  } catch(e) { console.warn('showEmptyWithMessage:', e); }
 }
 
 // ── drag handle (sidebar resize) ──────────────────────────────────────────
