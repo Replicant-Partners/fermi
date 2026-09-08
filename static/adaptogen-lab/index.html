@@ -341,31 +341,23 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
     <div id="bom-editor-container">
       <div style="font-size:11px;color:var(--t3);padding:8px">Select a workspace from Products.</div>
     </div>
-    <!-- ingredient table, shown when BOM is loaded -->
     <div id="bom-ing-area" style="display:none">
-      <div style="font-size:10px;color:var(--t2);margin-bottom:8px;line-height:1.5">
-        What the product <em>is made of</em>. Edit ingredients below or import a full BOM YAML.
-      </div>
-      <table class="ing-edit-table" id="ing-table">
-        <thead><tr><th>Ingredient</th><th>Qty</th><th>Category</th><th>Part #</th><th></th></tr></thead>
-        <tbody id="ing-tbody"></tbody>
-      </table>
-      <button class="add-claim-btn" style="margin-top:6px" onclick="addIngredientRow()">
+      <div id="ing-cards-container"></div>
+      <button class="add-claim-btn" id="add-ing-btn" onclick="addIngCard()" style="display:none">
         <span>＋</span><span>Add ingredient</span>
       </button>
-      <!-- advanced YAML toggle -->
-      <details style="margin-top:12px">
-        <summary style="font-size:10px;color:var(--t3);cursor:pointer;user-select:none">Advanced: edit raw YAML</summary>
-        <textarea class="yaml-ta" id="bom-ta" style="min-height:180px;margin-top:6px" spellcheck="false"></textarea>
-        <div style="display:flex;gap:6px;margin-top:6px;align-items:center">
-          <span style="font-size:10px;color:var(--t3)">Import from SimOps, ERP, or paste any BOM YAML — overwrites the ingredient table above.</span>
-          <button class="btn-g btn-sm" onclick="saveBomFromYaml()">Import YAML</button>
+      <div class="claims-footer" id="bom-footer" style="display:none">
+        <span class="claims-save-status" id="bom-status"></span>
+        <button class="btn-g btn-sm" onclick="saveBomYaml()">Save</button>
+      </div>
+      <details style="margin-top:8px">
+        <summary style="font-size:10px;color:var(--t3);cursor:pointer;user-select:none">⇩ Import YAML (SimOps / ERP / paste)</summary>
+        <textarea class="yaml-ta" id="bom-ta" style="min-height:140px;margin-top:6px" spellcheck="false" placeholder="Paste BOM YAML from SimOps cascade, ERP export, or lab analysis…"></textarea>
+        <div style="display:flex;gap:6px;margin-top:5px">
+          <span style="font-size:10px;color:var(--t3);flex:1">Overwrites cards above.</span>
+          <button class="btn-g btn-sm" onclick="saveBomFromYaml()">Import</button>
         </div>
       </details>
-      <div style="display:flex;gap:6px;margin-top:10px;padding-top:10px;border-top:1px solid var(--b1);align-items:center">
-        <span style="font-size:11px;flex:1" id="bom-status"></span>
-        <button class="btn btn-sm" onclick="saveBomYaml()">Save Ingredients</button>
-      </div>
     </div>
   </div>
 
@@ -945,29 +937,78 @@ function parseIngredients(yaml) {
   return ings;
 }
 
-function renderIngTable() {
-  const tbody = document.getElementById('ing-tbody');
-  if (!tbody) return;
-  tbody.innerHTML = bomIngredients.map((ing, i) => {
-    const subBadge = ing.sub_count > 0
-      ? `<span style="font-size:9px;color:var(--t3);margin-left:4px">(${ing.sub_count} sub)</span>` : '';
-    const pn = ing.part_number || '';
-    return `<tr>
-      <td>
-        <input value="${esc(ing.display_name||ing.id)}" oninput="updateIng(${i},'display_name',this.value)" placeholder="Ingredient name">
-        ${subBadge}
-      </td>
-      <td style="width:60px"><input value="${esc(ing.quantity)}" oninput="updateIng(${i},'quantity',this.value)" placeholder="qty"></td>
-      <td style="width:80px">
-        <select onchange="updateIng(${i},'category',this.value)">
-          ${['base','botanical_infusion','processing_culture','acidulant','preservative','flavour','other'].map(c =>
-            `<option value="${c}"${ing.category===c?' selected':''}>${c}</option>`).join('')}
-        </select>
-      </td>
-      <td style="width:80px"><input value="${esc(pn)}" oninput="updateIng(${i},'part_number',this.value)" placeholder="part #"></td>
-      <td style="width:20px"><button class="ing-del" onclick="deleteIng(${i})">✕</button></td>
-    </tr>`;
+function renderIngCards() {
+  const container = document.getElementById('ing-cards-container');
+  if (!container) return;
+  if (!bomIngredients.length) {
+    container.innerHTML = `<div style="font-size:11px;color:var(--t3);padding:10px;background:var(--s2);border:1px dashed var(--b2);border-radius:6px">
+      No ingredients yet. Click “+ Add ingredient” or import a BOM YAML below.
+    </div>`;
+    return;
+  }
+  const roleClass = { principal:'cp-high', consumable:'cp-medium', catalyst:'cp-low' };
+  container.innerHTML = bomIngredients.map((ing, i) => {
+    const rc = roleClass[ing.role] || 'cp-medium';
+    const label = ing.display_name || ing.item_id || ing.id || 'Unnamed';
+    const qty = ing.quantity || '';
+    return `<div class="claim-card" id="ic-${i}">
+      <div class="claim-card-head" onclick="toggleIngCard(${i})">
+        <span class="claim-text">${esc(label)}</span>
+        <span class="claim-pressure ${rc}">${esc(ing.role||'consumable')}</span>
+        <span class="claim-status">${esc(qty)}</span>
+      </div>
+      <div class="claim-edit-body">
+        <div class="claim-field"><label>Name</label>
+          <input type="text" value="${esc(label)}" oninput="updateIng(${i},'display_name',this.value)" placeholder="Ingredient display name">
+        </div>
+        <div style="display:flex;gap:8px">
+          <div class="claim-field" style="flex:1"><label>Quantity</label>
+            <input type="text" value="${esc(qty)}" oninput="updateIng(${i},'quantity',this.value)" placeholder="e.g. 8.5% or trace">
+          </div>
+          <div class="claim-field" style="flex:1"><label>Role</label>
+            <select onchange="updateIng(${i},'role',this.value)">
+              <option value="principal"${ing.role==='principal'?' selected':''}>principal</option>
+              <option value="consumable"${ing.role==='consumable'?' selected':''}>consumable</option>
+              <option value="catalyst"${ing.role==='catalyst'?' selected':''}>catalyst</option>
+            </select>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <div class="claim-field" style="flex:1"><label>Category</label>
+            <select onchange="updateIng(${i},'category',this.value)">
+              ${['base','botanical_infusion','processing_culture','acidulant','preservative','flavour','other'].map(c =>
+                `<option value="${c}"${ing.category===c?' selected':''}>${c}</option>`).join('')}
+            </select>
+          </div>
+          <div class="claim-field" style="flex:1"><label>Part #</label>
+            <input type="text" value="${esc(ing.part_number||'')}" oninput="updateIng(${i},'part_number',this.value)" placeholder="supplier code">
+          </div>
+        </div>
+        <div class="claim-field"><label>Origin</label>
+          <input type="text" value="${esc(ing.origin||'')}" oninput="updateIng(${i},'origin',this.value)" placeholder="country / region">
+        </div>
+        <div class="claim-edit-actions">
+          <span style="font-size:10px;color:var(--t3);font-family:var(--mono)">${esc(ing.item_id||ing.id||'')}</span>
+          <button class="claim-delete-btn" onclick="deleteIng(${i})">Delete</button>
+        </div>
+      </div>
+    </div>`;
   }).join('');
+}
+
+let openIngIdx = null;
+function toggleIngCard(i) {
+  openIngIdx = openIngIdx === i ? null : i;
+  document.querySelectorAll('[id^="ic-"]').forEach((el, j) => el.classList.toggle('editing', j === openIngIdx));
+}
+
+function addIngCard() {
+  bomIngredients.push({ item_id:'ingredient_'+Date.now(), display_name:'', role:'consumable', quantity:'', category:'other', part_number:'', origin:'' });
+  renderIngCards();
+  openIngIdx = bomIngredients.length - 1;
+  document.querySelectorAll('[id^="ic-"]').forEach((el, j) => el.classList.toggle('editing', j === openIngIdx));
+  const inp = document.querySelector(`#ic-${openIngIdx} input`);
+  if (inp) inp.focus();
 }
 
 function updateIng(i, field, val) {
@@ -976,39 +1017,42 @@ function updateIng(i, field, val) {
 
 function deleteIng(i) {
   bomIngredients.splice(i, 1);
-  renderIngTable();
+  openIngIdx = null;
+  renderIngCards();
 }
 
-function addIngredientRow() {
-  bomIngredients.push({ id:'ingredient_'+Date.now(), display_name:'', composition_pct:'', category:'other', raw:[] });
-  renderIngTable();
-  // Focus the new name field
-  const rows = document.querySelectorAll('#ing-tbody tr');
-  const last = rows[rows.length-1];
-  if (last) last.querySelector('input')?.focus();
-}
-
-function spliceIngredientsIntoYaml() {
-  // Replace the ingredients block in bomYamlText with updated data
+function serializeIngredients() {
+  // Replace the consists_of (or ingredients) block in bomYamlText with updated cards.
+  // Writes clean JSON-LD aligned YAML — no cross-reference fields.
   const lines = bomYamlText.split('\n');
   let start = -1, end = lines.length;
-  for (let i=0; i<lines.length; i++) {
-    if (/^ingredients:/.test(lines[i])) { start = i; continue; }
-    if (start >= 0 && i > start && /^[a-z_A-Z]/.test(lines[i]) && !lines[i].startsWith(' ')) { end = i; break; }
-  }
-  if (start < 0) return bomYamlText; // no ingredients block, leave as-is
+  const blockKey = /consists_of:|ingredients:/.test(bomYamlText) ?
+    (bomYamlText.includes('consists_of:') ? 'consists_of:' : 'ingredients:') : null;
 
-  // Write as consists_of (JSON-LD aligned schema)
+  if (blockKey) {
+    for (let i=0; i<lines.length; i++) {
+      if (lines[i].trim() === blockKey) { start = i; continue; }
+      if (start >= 0 && i > start && /^[a-z@_A-Z]/.test(lines[i]) && !lines[i].startsWith(' ')) { end = i; break; }
+    }
+  }
+
   const ingLines = ['consists_of:'];
   for (const ing of bomIngredients) {
-    const name = ing.display_name || ing.id;
-    const id = ing.id || name.toLowerCase().replace(/[^a-z0-9]+/g,'_');
+    const name = ing.display_name || '';
+    const id = ing.item_id || ing.id || name.toLowerCase().replace(/[^a-z0-9]+/g,'_');
     ingLines.push(`  - item_id: ${id}`);
-    ingLines.push(`    display_name: "${name.replace(/"/g,'\\"')}"`);
-    ingLines.push(`    category: ${ing.category||'other'}`);
-    if (ing.composition_pct) ingLines.push(`    composition_pct: ${ing.composition_pct}`);
+    if (name) ingLines.push(`    display_name: "${name.replace(/"/g,'\\"')}"`);
+    if (ing.role) ingLines.push(`    role: ${ing.role}`);
+    if (ing.quantity) ingLines.push(`    quantity: "${ing.quantity}"`);
+    if (ing.category) ingLines.push(`    category: ${ing.category}`);
+    if (ing.part_number) ingLines.push(`    part_number: "${ing.part_number}"`);
+    if (ing.origin) ingLines.push(`    origin: "${ing.origin}"`);
   }
 
+  if (start < 0) {
+    // No existing block — append
+    return bomYamlText.trimEnd() + '\n\n' + ingLines.join('\n') + '\n';
+  }
   return [...lines.slice(0, start), ...ingLines, '', ...lines.slice(end)].join('\n');
 }
 
@@ -1031,12 +1075,20 @@ async function loadBomYaml() {
       if (area) area.style.display = '';
       const ta = document.getElementById('bom-ta');
       if (ta) ta.value = bomYamlText;
-      renderIngTable();
+      renderIngCards();
+      const addBtn = document.getElementById('add-ing-btn');
+      const footer = document.getElementById('bom-footer');
+      if (addBtn) addBtn.style.display = '';
+      if (footer) footer.style.display = '';
     } else {
       bomYamlText = ''; bomIngredients = [];
-      if (container) container.innerHTML = `<div style="font-size:10px;color:var(--amb);padding:2px 0">○ No BOM found — add ingredients below or import a YAML</div>`;
+      if (container) container.innerHTML = `<div style="font-size:10px;color:var(--amb);padding:2px 0">○ No BOM yet — add ingredients or import below</div>`;
       if (area) area.style.display = '';
-      renderIngTable();
+      renderIngCards();
+      const addBtn = document.getElementById('add-ing-btn');
+      const footer = document.getElementById('bom-footer');
+      if (addBtn) addBtn.style.display = '';
+      if (footer) footer.style.display = '';
     }
   } catch(e) {
     if (container) container.innerHTML = `<div style="font-size:10px;color:var(--red)">${esc(e.message)}</div>`;
@@ -1048,7 +1100,7 @@ async function saveBomYaml() {
   if (!id) { alert('Connect a workspace first.'); return; }
   const statusEl = document.getElementById('bom-status');
   if (statusEl) { statusEl.style.color='var(--t3)'; statusEl.textContent='Saving…'; }
-  const updated = spliceIngredientsIntoYaml();
+  const updated = serializeIngredients();
   try {
     const res = await fetch(`${base()}/api/workspaces/${id}/files/${COMPOSITION_PATH}`,
       { method:'PUT', credentials:'include', headers: authHeaders(),
@@ -1069,7 +1121,7 @@ async function saveBomFromYaml() {
   if (!ta || !ta.value.trim()) return;
   bomYamlText = ta.value;
   bomIngredients = parseIngredients(bomYamlText);
-  renderIngTable();
+  renderIngCards();
   await saveBomYaml();
 }
 
