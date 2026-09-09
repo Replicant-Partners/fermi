@@ -312,6 +312,21 @@
   /* The expert views: the ladder, the loops, and the long answers. Below the
      work, collapsed, and each summary states its own headline so that closing
      one hides detail and never a finding. */
+  /* ── The registry's reason, one click away ─────────────────────────
+     Same disclosure grammar as `.expert`, at row scale. It replaces a `.caveat`
+     block that rendered `why_not_control` expanded and permanently — several
+     hundred characters of registry prose, the widest and least
+     artifact-specific text on the page, above the chip it qualified. */
+  .whybox{margin:3px 0 7px;}
+  .whybox > summary{font-size:0.65rem;color:var(--fg4);cursor:pointer;
+                    padding:2px 0;list-style:none;}
+  .whybox > summary::-webkit-details-marker{display:none;}
+  .whybox > summary::before{content:"▸ ";color:var(--bg4,#7c6f64);}
+  .whybox[open] > summary::before{content:"▾ ";}
+  .whybox > summary:hover{color:var(--fg2);}
+  .whybody{border-left:2px solid var(--bg3);padding:6px 0 6px 9px;margin-top:3px;
+           font-size:0.71rem;color:var(--fg3);line-height:1.55;}
+
   .expert{margin-top:10px;}
   .expert > summary{font-size:0.66rem;color:var(--fg4);cursor:pointer;
                     padding:4px 0;list-style:none;}
@@ -766,10 +781,8 @@
     const enf = a.grounding && a.grounding.enforcement;
     const ee = enf ? enforceOf(enf) : null;
     const ceiling = ee
-      ? `<b>A checkpoint read the contents and ${esc(ee.full)}.</b>${
-          a.grounding.why_not_control
-            ? ` It cannot refuse the run: <i>${esc(a.grounding.why_not_control)}</i>`
-            : ""}`
+      ? `<b>A checkpoint read the contents and ${esc(ee.full)}.</b>`
+        + whyBox(enf, a.grounding.why_not_control)
       : `Deepest checkpoint that could have refused: <b>the envelope only</b>.
          Nothing opened the payload, so no verdict here concerns what it says.`;
 
@@ -844,12 +857,55 @@
   // the reason is what tells a later reader whether it was deliberate or
   // drift." The page received that sentence and threw it away, then printed a
   // word that sounded like the platform shrugging.
+  //
+  // `ask` is the question the reason answers, and it exists because one label
+  // for all three modes contradicted the chip beside it. Every non-control gate
+  // printed "Why it cannot refuse", including `amend` — whose chip says
+  // "removes the bad part", and whose registry text opens with "Cannot
+  // refuse:". The page read:
+  //
+  //     grounding · approved · removes the bad part
+  //     Why it cannot refuse: Cannot refuse: a field's grounding is
+  //     unknowable until the model has written it …
+  //
+  // Twice redundant and, next to the chip, self-contradicting: the one mode on
+  // this route that DOES change what the caller receives was the one being
+  // explained as powerless. A gate that amends is not a gate that did nothing;
+  // it is a gate that could not stop the run and did the next available thing.
   const ENFORCE = {
-    control: { chip: "can stop it",          tone: "",     full: "refuses the run" },
-    amend:   { chip: "removes the bad part", tone: "",     full: "strips what the contract cannot support, before the response leaves" },
-    report:  { chip: "tells the caller",     tone: "",     full: "returns the verdict to the caller and alters nothing" },
-    metric:  { chip: "counted, not acted",   tone: "warn", full: "computes the verdict and discards it" },
+    control: { chip: "can stop it",          tone: "",     full: "refuses the run",
+               ask: null },
+    amend:   { chip: "removes the bad part", tone: "",     full: "strips what the contract cannot support, before the response leaves",
+               ask: "why it amends instead of refusing" },
+    report:  { chip: "tells the caller",     tone: "",     full: "returns the verdict to the caller and alters nothing",
+               ask: "why it only reports" },
+    metric:  { chip: "counted, not acted",   tone: "warn", full: "computes the verdict and discards it",
+               ask: "why it cannot refuse" },
   };
+
+  // The reason, behind a disclosure, labelled with the question it answers.
+  //
+  // `why_not_control` is written for whoever is reading `command_registry.rs`,
+  // and it shows: `is_mismatch()`, `bind_input`, `NoTextInput`, and — in
+  // grounding's case — three sentences of changelog about what the enforcement
+  // used to be. Carrying it unparaphrased is still right; it is the platform's
+  // own committed sentence and paraphrasing it here would fork it. Printing it
+  // expanded, permanently, at the widest point of the page was not: it made the
+  // longest text on the trace the least specific to the artifact.
+  //
+  // Folded, it is what the reader asked for — a justification for system
+  // behaviour, in context, one click from the claim it justifies.
+  function whyBox(enforcement, why) {
+    if (!why) return "";
+    const ask = enforceOf(enforcement).ask;
+    // A control with a reason should not exist: `why_not_control` is required
+    // when the enforcement is not control and meaningless when it is. Shown
+    // rather than hidden, because a contradiction in the registry is worth
+    // seeing on the page that depends on it.
+    return `<details class="whybox"><summary>${
+      esc(ask || "why the registry records a reason for a control")
+    }</summary><div class="whybody">${esc(why)}</div></details>`;
+  }
   // An enforcement word this page has not met renders as the discarded case
   // rather than the acting one. A new mode defaulting to "can stop it" would
   // overstate the platform's safety properties, and that is the one direction
@@ -877,9 +933,7 @@
       const cls = verdict === "refused" ? "g-refused"
                 : b.enforcement === "control" ? "g-refuse" : "";
       return `<span class="gate ${cls}"><b>${esc(id)}</b> · ${esc(verdict)} · ${
-        esc(e.chip)}</span>${b.why_not_control
-          ? `<div class="caveat">Why it cannot refuse: ${esc(b.why_not_control)}</div>`
-          : ""}`;
+        esc(e.chip)}</span>${whyBox(b.enforcement, b.why_not_control)}`;
     }).join("");
   }
 
@@ -1085,19 +1139,40 @@ declare it">${esc(id)}</span>`;
       (() => {
         const enf = a.grounding && a.grounding.enforcement;
         const ee = enf ? enforceOf(enf) : null;
+
+        // **Refusal is not hypothetical, and the page has to say so here.**
+        //
+        // A reader asked: *"'Why it cannot refuse' seems to be always there —
+        // is there ever a situation where it could refuse?"* On this very route
+        // two of the four checkpoints are controls, `credit` and `attachment`,
+        // and both print `can stop it`. But an explanation only ever attaches
+        // to a gate that CANNOT refuse, so the only prose about refusal on the
+        // page was prose about its absence — and the reasonable conclusion was
+        // that nothing here ever refuses anything.
+        //
+        // The route-wide count fixes that by stating the distribution rather
+        // than leaving it to be inferred from which chips happen to carry text.
+        // Counted from `a.by`, which is the route's declared checkpoints, so it
+        // reports this route and not the platform.
+        const total = Object.keys(a.by || {}).length;
+        const nRefuse = (a.couldRefuse || []).length;
+        const spread = total
+          ? ` Across this route, <b>${nRefuse} of ${total}</b> checkpoint(s) can
+              refuse the run outright${
+                nRefuse ? "" : " — none of them"}; the rest act later or only watch.`
+          : "";
+
         return { short: "checks that can act",
           tok: ee ? ee.chip : "nothing looked",
-          ans: ee
+          ans: (ee
             ? `A checkpoint read the contents and <b>${esc(ee.full)}</b>.`
-              + (a.grounding.why_not_control
-                  ? ` It cannot refuse the run, and the platform's own reason is:
-                      <i>${esc(a.grounding.why_not_control)}</i>`
-                  : "")
               + (enf === "metric"
                   ? ` <b>This one is a dangling thread</b> — the verdict is computed
                       and discarded, and promoting it to a control is the fix.`
                   : "")
-            : "<b>Nothing opened the answer to look inside it</b>, so no verdict here concerns what it says.",
+            : "<b>Nothing opened the answer to look inside it</b>, so no verdict here concerns what it says.")
+            + spread
+            + (ee ? whyBox(enf, a.grounding.why_not_control) : ""),
           // A ceiling is not a finding. Red is reserved for faults, and the
           // deepest thing wrong here is that somebody left a thread dangling.
           tone: !ee ? "warn" : (ee.tone || "ok"),
