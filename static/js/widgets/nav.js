@@ -321,3 +321,28 @@ const Nav = {
     return d.innerHTML;
   },
 };
+
+// `const Nav` is a binding in the global LEXICAL environment, and that is not
+// the same thing as a property of `window`. In a classic script only `var` and
+// function declarations become `window` properties, so:
+//
+//     Nav.init({ ... })                 // resolves, works
+//     if (window.Nav) Nav.init({ ... }) // window.Nav is undefined, skipped
+//
+// Eighteen templates use the first form. Nine use the second, and every one of
+// them silently rendered with no navigation at all: bestiary, declarations,
+// flow, gate, loops, rounds, specimen, stream, trace. Those are the platform's
+// primary surfaces, and the reason nobody saw a stack trace is that the guard
+// was written to be careful.
+//
+// That is the defect worth naming. `if (window.Nav)` reads as defensive and
+// what it actually did was convert a one-line omission into an invisible loss
+// of the header on the pages that matter most, on every load, for as long as
+// nobody happened to look. A guard whose false branch is silent cannot tell you
+// it took the false branch.
+//
+// So the guard is made TRUE rather than removed: if this file ever fails to
+// load, `window.Nav` is undefined and those nine pages still render their
+// content instead of throwing. That is the check those templates were reaching
+// for, and now it is the check they get.
+window.Nav = Nav;

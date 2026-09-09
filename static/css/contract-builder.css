@@ -4,6 +4,37 @@
    Extracted from templates/agent_create.html rather than copied into a second
    template: two stylesheets for one widget is the drift this repo keeps
    finding, and the builder is now reachable from two places. */
+
+/* ── Every control the widget contains, not every wrapper it happens to use ──
+
+   `601d21ce` fixed "the contract builder was white" by scoping the control
+   styling to `:is(.cb-standalone, .cb-root)`, which was the right ancestor. It
+   then hung the declaration off two specific wrappers:
+
+       .form-group input, .form-group select, .form-group textarea,
+       .cb-field-row input
+
+   So a control the widget renders outside those two wrappers gets the browser
+   default, which is white on white. Three did, and all three are on screen:
+   the agent picker on /contracts, the calibration `select` in view 3, and the
+   `fields` / `one value` shape `select` on every part in the shelf.
+
+   A selector that enumerates places is a list, and a scan is only as good as
+   the list it scans — the most repeated defect in this repository, and here it
+   is again wearing CSS. The property is about the widget's controls, so it is
+   stated over the widget's controls.
+
+   Colour only. Width, padding and font-size stay with the wrapper rules that
+   own layout, and this sits at the top of the file so the specific rules below
+   (`.cb-shape-row input.nm`, `.cb-block-head input.cb-name`, `.cb-field-row
+   input`) still win on source order. A default that cannot be overridden is a
+   different bug. */
+:is(.cb-standalone, .cb-root) :is(input, select, textarea) {
+  background: var(--bg0);
+  border: 1px solid var(--bg2);
+  color: var(--fg1);
+  font-family: inherit;
+}
       /* ─── Three views ─── */
       .cb-viewnav {
         display: flex;
