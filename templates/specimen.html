@@ -43,6 +43,11 @@
   .tab:hover{color:var(--fg2);}
   .tab.active{color:var(--yellow);border-bottom-color:var(--yellow);}
   .tab .badge{font-size:0.6rem;color:var(--fg4);margin-left:5px;}
+  /* A tab that leaves. Same position and size as the two that switch panes,
+     deliberately not the same emphasis, and never `.active` — it is a
+     destination rather than a state of this page. The arrow is the tell. */
+  .tab-out{text-decoration:none;display:inline-block;}
+  .tab-out:hover{color:var(--aqua);border-bottom-color:var(--aqua);}
   .drawer-btn{margin-left:auto;align-self:center;background:transparent;border:1px solid var(--bg3);
               padding:3px 10px;font-size:0.7rem;color:var(--fg4);cursor:pointer;font-family:inherit;}
   .drawer-btn:hover{border-color:var(--yellow);color:var(--yellow);}
@@ -82,15 +87,9 @@
   .dim{color:var(--fg4);}
   .ok{color:var(--green);} .bad{color:var(--red,#fb4934);}
 
-  /* ── Health rows ── */
-  .h-row{display:flex;gap:9px;align-items:flex-start;padding:7px 8px;border-bottom:1px solid var(--bg2);}
-  .h-mark{width:14px;text-align:center;font-weight:bold;flex-shrink:0;}
-  .m-fault{color:var(--red,#fb4934);} .m-idle{color:var(--fg4);} .m-unknown{color:var(--purple,#d3869b);}
-  .h-body{flex:1;min-width:0;}
-  .h-shows{font-size:0.77rem;color:var(--fg2);}
-  .h-detail{font-size:0.7rem;color:var(--fg4);margin-top:2px;line-height:1.45;}
-  .h-rem{font-size:0.7rem;color:var(--aqua);margin-top:3px;}
-  .h-tok{font-size:0.63rem;color:var(--fg4);border:1px solid var(--bg3);padding:1px 5px;white-space:nowrap;}
+  /* The `.h-*` and `.m-*` rules were here, for the Health pane's eleven
+     panel-absence rows. Removed with it: unused CSS is how a deleted view comes
+     back. */
 
   /* ── Coordination notes: the one place Loop 3 meets Loop 1 ──────────────
 
@@ -335,14 +334,34 @@
       <div class="tabs">
         <button class="tab ${TAB==="profile"?"active":""}" data-tab="profile">Profile</button>
         <button class="tab ${TAB==="record"?"active":""}" data-tab="record">Record</button>
-        <button class="tab ${TAB==="health"?"active":""}" data-tab="health">Health
-          ${faults() ? `<span class="badge" style="color:var(--red,#fb4934)">⚑ ${faults()}</span>` : ""}</button>
+        <!-- Health was a third tab here and is now a link out.
+
+             It rendered eleven rows of panel-absence prose: "6 rows against 0
+             opportunities", "20 rows against 218 opportunities", each
+             explaining that an empty panel is a fact about the filter rather
+             than about the subject. Careful, correct, and a reader cannot act
+             on any of it. Two rows read out-of-scope and said so at length.
+
+             The Observatory already answers the question that tab was reaching
+             for, per agent and in numbers with a subject: eval score, runs,
+             open flags, relationships, persona version, and the latest scores
+             by dimension. Two surfaces answering "how is this agent doing" is
+             one too many, and the weaker one was here.
+
+             No backticks in this comment. An HTML comment inside a JS template
+             literal is string content, so the first backtick ends the literal
+             and everything after it parses as code. -->
+        <a class="tab tab-out"
+           href="/observatory?agent=${encodeURIComponent(p.agent_name)}">Health ↗</a>
         <button class="drawer-btn" id="open-drawer">Configure ⚙</button>
       </div>
     </div>`;
   }
 
-  const faults = () => (D.health || []).filter(h => h.reading === "fault").length;
+  // `faults()` was here, counting `D.health` rows whose reading was `fault` for
+  // a badge on the Health tab. The tab is a link now and the count went with
+  // it. `specimen_handler` still serves `health`; nothing on this page reads it,
+  // and that is a loose end worth naming rather than a thing to leave implied.
 
   function studChips(list, typed) {
     if (!list.length) return `<span class="dim">none declared</span>`;
@@ -468,15 +487,21 @@
           : r.episodes.length ? Pulse.rows(r.episodes)
             : `<div class="absent">No pulse recorded.</div>`}
       </div>
+      <!-- Coordination notes came from the Health tab when it became a link.
+           They belong here on their own merits: a note is something a
+           strategist's coherence run WROTE into this agent's episodic memory,
+           which is a record of what happened to it, not a measure of how it is
+           doing. The Observatory has no view of them. -->
+      ${coordinationBlock()}
     </div>`;
   }
 
   // ── Coordination notes ──────────────────────────────────────────
   //
-  // Loaded when the Health tab is first drawn rather than at boot. It is one of
-  // three tabs and the request is keyed by the agent_id the first response
-  // carries, so fetching it eagerly would put a sequential hop on every page
-  // load for a panel most readers never open.
+  // Loaded when the Record tab is first drawn rather than at boot. The request
+  // is keyed by the agent_id the first response carries, so fetching it eagerly
+  // would put a sequential hop on every page load for a panel most readers
+  // never open.
   //
   //   undefined  not asked yet
   //   "loading"  in flight
@@ -491,7 +516,7 @@
     fetch(`/api/agents/${encodeURIComponent(id)}/coordination-notes`)
       .then(r => r.ok ? r.json() : null)
       .catch(() => null)
-      .then(v => { NOTES = v; if (TAB === "health") render(); });
+      .then(v => { NOTES = v; if (TAB === "record") render(); });
   }
 
   function coordinationBlock() {
@@ -546,40 +571,17 @@
     return `<div class="block">${head}${body}${proxy}</div>`;
   }
 
-  function paneHealth() {
-    const h = D.health || [];
-    return `<div class="pane">
-      <div class="block">
-        <h3>What the platform can say about this specimen</h3>
-        <div class="note">
-          Each row is a panel and the contract that answers it. <b>fault</b> means
-          something should have happened for this agent and did not; <b>idle</b> means
-          it has had no occasion; <b>unknown</b> means no contract can tell the two
-          apart. The opportunity count is the evidence, and it is scoped to this
-          specimen rather than the platform.
-        </div>
-        ${h.length ? h.map(x => `
-          <div class="h-row">
-            <div class="h-mark m-${esc(x.reading)}">${esc((x.marker || "").trim() || "·")}</div>
-            <div class="h-body">
-              <div class="h-shows">${esc(x.shows)}</div>
-              <div class="h-detail">${esc(x.detail)}</div>
-              ${x.remediation ? `<div class="h-rem">→ ${esc(x.remediation)}</div>` : ""}
-              <div class="h-detail dim">← ${esc(x.answered_by)} · ${esc(x.marker_word)}</div>
-            </div>
-            <div class="h-tok">${esc(x.token)}</div>
-          </div>`).join("")
-        : `<div class="absent">No agent-scoped panel is declared.</div>`}
-      </div>
-      ${coordinationBlock()}
-      <div class="block">
-        <h3>Clinical detail</h3>
-        <div class="note">Eval dimensions, persona drift, dyad state and the anomaly
-          timeline live in the Observatory, which is the surface built for them.</div>
-        <a href="/observatory?agent=${encodeURIComponent(D.profile.agent_name)}">Open in Observatory →</a>
-      </div>
-    </div>`;
-  }
+  // `paneHealth()` was here.
+  //
+  // Its own last block already said the thing that removed it: "Eval
+  // dimensions, persona drift, dyad state and the anomaly timeline live in the
+  // Observatory, which is the surface built for them." Above that sentence sat
+  // eleven rows of `panel_absence::scoped` explaining, one panel at a time,
+  // that an empty panel is a fact about the filter and not about the subject.
+  // True every time, and never actionable.
+  //
+  // So the tab is a link to the surface built for it, and the one panel here
+  // the Observatory does not have — coordination notes — moved to Record.
 
   // ── The declaration group ────────────────────────────────────────────
   //
@@ -1037,9 +1039,21 @@
     document.getElementById("scrim").classList.remove("open"); };
 
   function render() {
-    const pane = TAB === "profile" ? paneProfile() : TAB === "record" ? paneRecord() : paneHealth();
+    // Two panes, and `profile` is the default rather than the fallthrough.
+    //
+    // This read `TAB === "profile" ? paneProfile() : TAB === "record" ?
+    // paneRecord() : paneHealth()`, so the pane for an unrecognised TAB was
+    // whatever happened to be last in the chain. With Health gone that would
+    // have called a function that no longer exists; written this way an
+    // unknown TAB shows the profile, which is the honest default for a page
+    // about one specimen.
+    const pane = TAB === "record" ? paneRecord() : paneProfile();
     document.getElementById("content").innerHTML = head() + pane;
-    document.querySelectorAll(".tab").forEach(b =>
+    // `.tab[data-tab]`, not `.tab`. The Health entry is an anchor that carries
+    // the tab class for position and no `data-tab`, so the bare selector would
+    // bind a handler setting `TAB = undefined` to a link that then navigates
+    // anyway — a pane switch racing a page load, for no reason.
+    document.querySelectorAll(".tab[data-tab]").forEach(b =>
       b.onclick = () => { TAB = b.dataset.tab; render(); });
     document.getElementById("open-drawer").onclick = openDrawer;
   }
