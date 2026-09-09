@@ -428,6 +428,10 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
       <span style="font-family:var(--mono);font-size:10px;color:var(--grn)">tool_verified</span>
     </div>
 
+    <!-- Warning: claims not found in any ruleset -->
+    <div id="unevaluated-banner" style="display:none;align-items:flex-start;gap:10px;padding:9px 13px;background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.3);border-radius:6px;font-size:12px;color:var(--red);margin-bottom:12px;line-height:1.5">
+    </div>
+
     <div class="cascade-banner" id="cascade-banner">
       <span>⚡</span><span id="cascade-text"></span>
       <button class="btn-g btn-sm" style="margin-left:auto" onclick="resetCascade()">Reset</button>
@@ -1437,18 +1441,31 @@ function closeModal(id) { document.getElementById(id).classList.remove('open'); 
 function esc(s) { return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 function badge(status) {
-  const m = { allowed:['Allowed','ba'], conditionally_allowed:['Conditional','bc'], not_allowed:['Not allowed','bn'],
-    rewritten:['Rewritten','br'], allowed_with_caution:['Caution','bt'], allowed_with_important_note:['Note','bt'], allowed_rewritten:['Rewritten','br'] };
-  const [l, c] = m[status] ?? [status, 'ba'];
+  const m = {
+    allowed:                     ['Allowed',          'ba'],
+    conditionally_allowed:       ['Conditional',      'bc'],
+    not_allowed:                 ['Not allowed',       'bn'],
+    rewritten:                   ['Rewritten',         'br'],
+    allowed_with_caution:        ['Caution',           'bt'],
+    allowed_with_important_note: ['Note',              'bt'],
+    allowed_rewritten:           ['Rewritten',         'br'],
+    // Claims not in the ruleset are NOT evaluated — never green
+    not_in_ruleset:              ['\u26a0 Not evaluated', 'bc'],
+  };
+  // Unknown status: amber warning, not green — unknown ≠ allowed
+  const [l, c] = m[status] ?? ['\u26a0 ' + status, 'bc'];
   return `<span class="badge ${c}">${l}</span>`;
 }
 
-function provChip(mkt, testing) {
+function provChip(mkt, testing, status) {
   if (testing) return `<div class="pchip pen">○ demo rule engine · not tool_verified</div>`;
+  // Claims not found in the ruleset were skipped by the gate — not verified
+  if (status === 'not_in_ruleset') {
+    return `<div class="pchip pen">⚠ not in ruleset · not evaluated · add to ruleset or run regulatory_scanner</div>`;
+  }
   const file = {EU:'eu_reg_1924.yaml', US:'us_fda_ftc.yaml', CN:'cn_gb_samr.yaml'}[mkt] ?? 'ruleset.yaml';
-  const cls = endorsed['expert'] ? 'tv' : 'tv';
   const label = endorsed['expert'] ? `★ ${file} · human_endorsed` : `📄 ${file} · tool_verified`;
-  return `<div class="pchip ${cls}">${label}</div>`;
+  return `<div class="pchip ${endorsed['expert']?'end':'tv'}">${label}</div>`;
 }
 
 function renderTable(claims) {
@@ -1468,7 +1485,14 @@ function renderTable(claims) {
         ? `<div class="stext">— stripped from this market's label —</div>`
         : `<div class="rtext">${esc(m.rendered_text ?? '')}</div>`;
       const note = m.divergence_note ? `<div class="dnote">${esc(m.divergence_note)}</div>` : '';
-      return `<td data-mkt="${code}" style="${hidden?'display:none':''}">${b}${t}${provChip(code, isTesting)}${note}</td>`;
+      // not_in_ruleset: claim was not in the ruleset's claim_renderings —
+      // the gate skipped it. Show warning text, not the claim as allowed.
+      const textBlock = m.status === 'not_allowed'
+        ? `<div class="stext">— stripped from this market's label —</div>`
+        : m.status === 'not_in_ruleset'
+          ? `<div class="stext" style="color:var(--amb)">⚠ not in ruleset — cannot evaluate this claim</div>`
+          : `<div class="rtext">${esc(m.rendered_text ?? '')}</div>`;
+      return `<td data-mkt="${code}" style="${hidden?'display:none':''}">${b}${textBlock}${provChip(code, isTesting, m.status)}${note}</td>`;
     };
 
     const tr = document.createElement('tr');
@@ -1563,6 +1587,25 @@ function renderAll(apiResponse, live) {
   sourceClaims = (out.comparison_table ?? []).map(r => ({...r}));
   renderTable(sourceClaims);
   renderClaimsCards(); // update the structured claim cards from comparison output
+
+  // Warn about claims not in any ruleset — these were NOT evaluated
+  const notInRuleset = (out.comparison_table ?? []).filter(r =>
+    (r.markets ?? []).some(m => m.status === 'not_in_ruleset')
+  );
+  const warnBanner = document.getElementById('unevaluated-banner');
+  if (warnBanner) {
+    if (notInRuleset.length > 0) {
+      warnBanner.style.display = 'flex';
+      warnBanner.innerHTML = `<span>⚠</span>
+        <span><strong>${notInRuleset.length} claim${notInRuleset.length>1?'s':''} not evaluated</strong> —
+        ${notInRuleset.map(r=>r.claim_id).join(', ')} not found in the regulatory rulesets.
+        These claims are <em>unknown</em>, not allowed.
+        Add them to the rulesets or run <code style="color:var(--blu)">regulatory_scanner</code> to evaluate.</span>`;
+    } else {
+      warnBanner.style.display = 'none';
+    }
+  }
+
   renderBeat(out);
   renderIngredients(out);
   renderAppendix(out);
