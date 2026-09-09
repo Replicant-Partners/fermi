@@ -172,7 +172,7 @@
 
   .caveat{border:1px solid var(--bg2);background:var(--bg1);padding:8px 11px;margin-bottom:7px;
           font-size:0.72rem;color:var(--fg3);line-height:1.5;}
-  .caveat .ck{color:var(--green);}
+
   .caveat .dns{color:var(--fg3);margin-top:4px;}
   .caveat .dns b{color:var(--yellow);}
   /* ── A call for a person, made actionable where it is read ──────────────
@@ -2542,19 +2542,25 @@ something specific about each checkpoint.")}</div></div>`;
           tone === "bad" ? "v-silent" : tone === "warm" ? "v-inert" : "v-elsewhere"}">${esc(ts)}</span></div>
       </div>`).join("")}
       <div class="rung-pw" style="margin-top:8px">Loops not listed do not apply to this
-        artifact. <a href="/loops">All loops, by timescale \u2192</a></div>
+        artifact.</div>
     </div>`;
   }
 
-  function caveats(d) {
-    const c = d.caveats || [];
-    if (!c.length) return "";
-    return `<div class="block"><h2>What this does and does not establish</h2>
-      ${c.map(x => `<div class="caveat">
-        <div class="ck">✓ ${esc(x.checked)}</div>
-        <div class="dns"><b>Does not show:</b> ${esc(x.does_not_show)}</div>
-      </div>`).join("")}</div>`;
-  }
+  // `caveats(d)` was here, rendering `artifact_trace::TRACE_CAVEATS` as a block
+  // headed "What this does and does not establish".
+  //
+  // Every word of it is true and none of it is about THIS artifact. Four
+  // paragraphs on what a clean trace fails to prove — that `FIELD_CONTRACTS`
+  // covers 98 fields across 10 agents, that `episodes` records no route
+  // discriminator, that three of four absence tokens are not findings — are
+  // facts about the platform's design, identical on every trace ever rendered.
+  // That is documentation, and it was occupying the bottom of a page whose
+  // subject is one pulse.
+  //
+  // `TRACE_CAVEATS` stays in `src/artifact_trace.rs` and the endpoint keeps
+  // serving it. It is the right content for a page explaining how to read a
+  // trace, which the platform still owes; it is the wrong content for the
+  // trace. Deleting the constant would have thrown away the writing.
 
   function render(d) {
     LAST_TRACE = d;
@@ -2632,7 +2638,7 @@ something specific about each checkpoint.")}</div></div>`;
       + collaboration(d)
       + expert(loopsHead, loopsFed(d), false)
       + expert(substrateHead, substrateBlock(d), false)
-      + chain + caveats(d);
+      + chain;
   }
 
   // The action, posted where it is read.

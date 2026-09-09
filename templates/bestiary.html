@@ -56,13 +56,10 @@
   .controls input{flex:1;min-width:180px;}
   .count{font-size:0.71rem;color:var(--fg4);}
 
-  /* ── Aggregate strip ── */
-  .strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:1px;
-         background:var(--bg2);margin-bottom:14px;}
-  .cell{background:var(--bg0);padding:9px 11px;}
-  .cell-l{font-size:0.63rem;color:var(--fg4);text-transform:uppercase;letter-spacing:0.07em;}
-  .cell-v{font-size:1.05rem;color:var(--aqua);margin-top:2px;}
-  .cell-s{font-size:0.65rem;color:var(--fg4);}
+  /* ── The composability finding ──
+     `.strip` and `.cell*` were here, for the four census counts that went with
+     the `population` lens. Removed rather than kept for a future strip: unused
+     rules are how a deleted view comes back. */
   .warn-strip{border-left:3px solid var(--yellow);background:rgba(215,153,33,0.08);
               padding:9px 12px;margin-bottom:14px;font-size:0.74rem;color:var(--fg3);line-height:1.5;}
   .warn-strip b{color:var(--yellow);}
@@ -114,13 +111,13 @@
   .p-none{background:transparent;border:1px solid var(--bg3);}
   .flags{color:var(--yellow);margin-left:auto;}
 
-  /* ── Table (Population / Health) ── */
+  /* ── Table (Health) ── */
   table{width:100%;border-collapse:collapse;font-size:0.75rem;}
   th{text-align:left;color:var(--fg4);font-weight:normal;font-size:0.65rem;text-transform:uppercase;
      letter-spacing:0.06em;padding:5px 8px;border-bottom:1px solid var(--bg3);}
   td{padding:5px 8px;border-bottom:1px solid var(--bg2);color:var(--fg3);}
   tr:hover td{background:var(--bg1);}
-  .grp{color:var(--yellow);font-size:0.7rem;padding:9px 8px 4px;letter-spacing:0.05em;}
+
   .num{text-align:right;font-variant-numeric:tabular-nums;}
   .dim{color:var(--fg4);}
   .empty{padding:16px 8px;font-size:0.76rem;color:var(--fg4);}
@@ -136,7 +133,6 @@
 
     <div class="lenses">
       <button class="lens active" data-lens="discover">Discover</button>
-      <button class="lens" data-lens="population">Population</button>
       <button class="lens" data-lens="health">Health</button>
     </div>
     <div class="lens-note" id="lens-note"></div>
@@ -162,14 +158,27 @@
 
   const NOTES = {
     discover: "Which specimens exist, and which do you want. The card is meant to be enough to decide with — cost is always the same corner, so you can scan a column of costs alone.",
-    population: "How the population is distributed and where it came from. Grouping is taxonomic; the provenance dot says whether a place was reviewed or merely taken.",
     health: "Which specimens need attention. Sorted by open flags, then by silence — an agent nobody has run is not the same as one that is failing.",
   };
 
+  // The `population` lens is gone, and with it its six taxonomic groupings.
+  //
+  // It answered "how is the population distributed" with a table of 111 rows
+  // grouped by family, each row naming a genus and a provenance. Every fact on
+  // it was true and none of it was a question anybody had: taxonomy is how this
+  // platform NAMES agents, not a property you act on, and `Investigatidae · 15`
+  // is a grouping of a naming scheme by itself.
+  //
+  // `discover` already answers "which specimens exist and which do I want" with
+  // cards you can decide from, and `health` answers "which need attention".
+  // Those are the two questions. A third lens that reorganised the same rows by
+  // the vocabulary used to label them was a view of the register's index rather
+  // than of the register.
+  //
+  // The one finding it carried survives — see `renderAggregate`.
   const GROUPS = {
-    discover:   [["runs","Most run"],["name","Name"],["tier","Stratum"],["type","Niche"]],
-    population: [["family","Family"],["kingdom","Kingdom"],["genus","Genus"],["type","Niche"],["tier","Stratum"],["provenance","Provenance"]],
-    health:     [["flags","Open flags"],["silence","Longest silent"],["runs","Most run"]],
+    discover: [["runs","Most run"],["name","Name"],["tier","Stratum"],["type","Niche"]],
+    health:   [["flags","Open flags"],["silence","Longest silent"],["runs","Most run"]],
   };
 
   function tier(t) { return ["system","curated","community"].includes(t) ? t : "none"; }
@@ -300,17 +309,10 @@
     </a>`;
   }
 
-  function keyOf(s, g) {
-    switch (g) {
-      case "family":   return s.taxonomy?.family  || "Incertae sedis";
-      case "kingdom":  return s.taxonomy?.kingdom || "Incertae sedis";
-      case "genus":    return s.genus             || "Incertae sedis";
-      case "type":     return s.agent_type        || "unclassified";
-      case "tier":     return s.tier              || "unstratified";
-      case "provenance": return s.provenance      || "no membership";
-      default: return "";
-    }
-  }
+  // `keyOf` was here. It mapped a grouping to a bucket label — family, kingdom,
+  // genus, provenance — and the only caller was the `population` lens. Deleted
+  // with it rather than left: a grouping function with no grouping is the kind
+  // of thing the next reader reinstates a view around.
 
   function sortRows(rows, g) {
     const by = {
@@ -349,29 +351,6 @@
       return;
     }
 
-    if (LENS === "population") {
-      const groups = {};
-      rows.forEach(s => { (groups[keyOf(s, g)] ||= []).push(s); });
-      // `Incertae sedis` sorts last: it is a real bucket, not a failure of the
-      // sort, and putting it first would bury the described population.
-      const keys = Object.keys(groups).sort((a, b) =>
-        a.startsWith("Incertae") ? 1 : b.startsWith("Incertae") ? -1
-        : groups[b].length - groups[a].length);
-      el.innerHTML = keys.map(k => `
-        <div class="grp">${esc(k)} · ${groups[k].length}</div>
-        <table><tbody>${groups[k].map(s => `
-          <tr>
-            <td><span class="prov p-${esc(s.provenance || "none")}"></span>
-                <a href="/specimen/${encodeURIComponent(s.agent_name)}">${esc(s.label)}</a></td>
-            <td class="dim">${esc(s.agent_type || "—")}</td>
-            <td class="dim">${s.genus ? esc(s.genus + " " + (s.species || "")) : "<i>undescribed</i>"}</td>
-            <td class="dim">${esc(s.tier || "—")}</td>
-            <td class="dim">${esc(s.provenance || "—")}</td>
-            <td class="num dim">${s.runs}</td>
-          </tr>`).join("")}</tbody></table>`).join("");
-      return;
-    }
-
     // Health
     el.innerHTML = `<table>
       <thead><tr><th>Specimen</th><th>Niche</th><th class="num">Flags</th>
@@ -387,23 +366,26 @@
         </tr>`).join("")}</tbody></table>`;
   }
 
+  // The census strip went with the `population` lens; the composability
+  // finding did not, and it moved to `discover`.
+  //
+  // Deleting it with the rest would have left nothing on the platform saying
+  // that 98% of declared port labels cannot form a seam — which is not a fact
+  // about taxonomy, it is the reason a drag-and-snap composer would not work,
+  // and it is decision-relevant exactly where a reader is choosing agents to
+  // put together. So it renders on the lens where that choice is made.
+  //
+  // Specimens / Described / Niches / Port-labels went. Four counts of the
+  // register's own size are a description of the page, not of anything on it,
+  // and `111 of 111` is already in the corner of the controls row.
   function renderAggregate() {
     const el = document.getElementById("aggregate");
-    if (LENS !== "population") { el.innerHTML = ""; return; }
+    if (LENS !== "discover") { el.innerHTML = ""; return; }
 
-    const c = DATA.census, s = DATA.seams;
+    const s = DATA.seams;
     const pct = s.distinct_labels ? Math.round(100 * s.orphans / s.distinct_labels) : 0;
 
     el.innerHTML = `
-      <div class="strip">
-        <div class="cell"><div class="cell-l">Specimens</div><div class="cell-v">${c.total}</div></div>
-        <div class="cell"><div class="cell-l">Described</div><div class="cell-v">${c.described}</div>
-          <div class="cell-s">${c.undescribed} undescribed</div></div>
-        <div class="cell"><div class="cell-l">Niches</div>
-          <div class="cell-v">${Object.keys(c.by_niche).length}</div></div>
-        <div class="cell"><div class="cell-l">Port labels</div><div class="cell-v">${s.distinct_labels}</div>
-          <div class="cell-s">${s.seam_forming} can form a seam</div></div>
-      </div>
       <div class="warn-strip">
         <b>Composability is a naming problem.</b>
         ${s.orphans} of ${s.distinct_labels} declared port labels (${pct}%) appear on only one

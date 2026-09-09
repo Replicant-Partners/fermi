@@ -37,25 +37,55 @@ const Nav = {
             <span class="nav-group-label">compose</span>
             <a href="/bestiary" class="${current === "bestiary" ? "active" : ""}">Bestiary</a>
             <a href="/apps" class="${current === "apps" ? "active" : ""}">Apps</a>
-            <!-- New and Contracts were reachable and not navigable. Six
-                 pages link to /agents/new and one links to /contracts, so
-                 neither was orphaned — but the platform's primary verb had no
-                 entry in the persistent nav, which meant you could only start
-                 creating from somewhere that already thought to offer it.
-                 Both sit in the compose group because that is what the group is for. -->
+            <!-- New belongs here: the platform's primary verb had no entry in
+                 the persistent nav, so you could only start creating from
+                 somewhere that already thought to offer it.
+
+                 Contracts was here too and is gone. A contract is not a thing
+                 you go and make on its own. It is a step of composing an agent
+                 (view 4 of /agents/new) and a panel of configuring one (the
+                 Configure shelf on /specimen/:name). It is the same widget in
+                 both, static/js/widgets/contract-builder.js, and both places
+                 already carry it. A third entry point to a component that is
+                 meaningless without an agent to attach it to invited a reader
+                 to build one in a vacuum, which is exactly what the standalone
+                 page allowed and nothing could then use.
+
+                 /contracts still serves. It is where the two hosts mount from
+                 and it is a legitimate scratch surface; it is simply not a
+                 destination the nav proposes.
+
+                 NOTE: no backticks in this comment, and that is load-bearing.
+                 An HTML comment inside a JS template literal is string content,
+                 not a comment, so the first backtick ends the literal and the
+                 rest of the file parses as code. This has been written five
+                 times in this repository, most recently right here. -->
             <a href="/agents/new" class="${current === "agents-new" ? "active" : ""}">New</a>
-            <a href="/contracts" class="${current === "contracts" ? "active" : ""}">Contracts</a>
           </span>
           <span class="nav-group">
             <span class="nav-group-label">curate</span>
             <a href="/stream" class="${current === "stream" ? "active" : ""}">Pulses</a>
-            <a href="/loops" class="${current === "loops" ? "active" : ""}">Loops</a>
-            <a href="/gates" class="${current === "gates" ? "active" : ""}">Gates</a>
-            <!-- The evaluators this group's own comment already promised. Six
-                 checks the platform runs on itself, each with a written remedy,
-                 which were reachable only through the admin schema-health
-                 endpoint and rendered by nothing. -->
-            <a href="/evaluators" class="${current === "evaluators" ? "active" : ""}">Evaluators</a>
+            <!-- Loops, Gates and Evaluators were three entries pointing at one
+                 page, /loops, distinguished by which of its four tabs opened.
+                 All three are gone.
+
+                 Not because the machinery is wrong. The loops turn, the gates
+                 decide, the evaluators score. But none of the four views told a
+                 reader anything they could act on: loop4 NOT WIRED, SILENT 61
+                 arrow anchored 0, a wall of UNGRADED artifacts. Platform-wide
+                 aggregates over machinery, with no subject a person has any
+                 relationship to.
+
+                 There is no useful GLOBAL view of a loop. A loop is a path an
+                 artifact takes, so the place it becomes legible is the artifact.
+                 Pulses lists them and a trace shows one crossing its
+                 checkpoints, with the gate that decided each and whether it
+                 could refuse. That answers the same questions about a subject
+                 the reader chose, which is the difference between information
+                 and a dashboard.
+
+                 Observatory keeps its entry: it is per-agent, and per-agent is
+                 where scores and flags for a specimen belong. -->
             <a href="/observatory" class="${current === "observatory" ? "active" : ""}">Observatory</a>
           </span>
           <span class="nav-group nav-group-quiet">
