@@ -1,0 +1,95 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Regulatory Claim Patterns — growing ontology
+#
+# This file is written and extended by the regulatory_lens_translator agent
+# as it evaluates claims against actual regulatory corpora via web_search.
+# Each entry is a cross-claim pattern: a generalisation from specific evaluated
+# claims that can be applied to similar novel claims.
+#
+# Provenance:
+#   sourced:         derived from a specific web_search evaluation (cite it)
+#   model_inference: agent reasoning over multiple sourced entries
+#   human_endorsed:  regulatory expert has reviewed and endorsed
+#
+# This file grows. Every novel claim evaluated adds to it.
+# Human experts review entries in pending_review/ and endorse patterns here.
+# ─────────────────────────────────────────────────────────────────────────────
+
+patterns_version: "0.1"
+last_updated: null
+entry_count: 0
+
+# Seed patterns (structural — derived from regulatory framework documents,
+# not from individual claim evaluations. These are architecture-level rules,
+# not corpus-searched verdicts. Each needs a real corpus evaluation to become
+# human_endorsed.)
+patterns:
+
+  - id: disease_treatment_claim
+    description: >
+      Any claim that a food treats, cures, prevents, reverses, or improves a
+      medical condition or disease. Requires drug-level authorisation in all
+      three markets. This is not a question of evidence — it is a categorical
+      classification. A food making this claim is regulated as a drug.
+    applies_to_markets: [EU, US, CN]
+    status_in_all_markets: not_allowed
+    regulatory_basis:
+      eu: "EU Reg 1924/2006 Art. 3 — claims must not imply a disease can be treated"
+      us: "FDCA 201(g) — drug definition includes claims to treat/cure/prevent disease"
+      cn: "普通食品 prohibited from making disease treatment claims; triggers 保健食品 or drug classification"
+    provenance: model_inference
+    needs_corpus_validation: true
+    endorsed_by: null
+    examples_triggering_this_pattern:
+      - "proven to improve erectile dysfunction"
+      - "cures diabetes"
+      - "prevents cancer"
+      - "treats depression"
+      - "reverses Alzheimer's"
+
+  - id: probiotic_word_eu
+    description: >
+      The word 'probiotic' as a health claim label term is prohibited in the EU.
+      EFSA evaluated all Art.13(5) probiotic health claims 2010–2011 and rejected
+      them all due to insufficient specificity. Named organisms are permitted;
+      'probiotic' as a benefit claim is not.
+    applies_to_markets: [EU]
+    status_in_market: not_allowed
+    regulatory_basis:
+      eu: "EFSA 2010/2011 bulk evaluation — all probiotic claim submissions rejected"
+    provenance: model_inference
+    needs_corpus_validation: true
+    endorsed_by: null
+
+  - id: antioxidant_health_food_cn
+    description: >
+      In China, '抗氧化' (antioxidant) as a health function claim is one of the
+      27 approved 保健食品 function categories. Making an antioxidant function claim
+      on ordinary food triggers reclassification to the health food track.
+      Note: naming a compound (e.g., '富含花青素' — rich in anthocyanins) is a
+      compositional descriptor and is permitted on ordinary food.
+    applies_to_markets: [CN]
+    status_in_market: not_allowed_on_ordinary_food
+    regulatory_basis:
+      cn: "SAMR 保健食品 27 approved function categories — 抗氧化 is category #8 (approximate)"
+    provenance: model_inference
+    needs_corpus_validation: true
+    endorsed_by: null
+
+  # ── Gap patterns — unknown, need corpus search ─────────────────────────────
+  # These patterns have been OBSERVED in user-authored claims but not yet
+  # evaluated against the actual corpus. The agent should search and fill these.
+
+  - id: gut_health_general
+    description: >
+      General gut health claims ('improves gut health', 'supports digestive
+      health') — status varies significantly by market and specific wording.
+      Needs corpus evaluation.
+    applies_to_markets: [EU, US, CN]
+    status_in_all_markets: needs_evaluation
+    provenance: pending_corpus_search
+    notes: >
+      EU: likely not_allowed without specific authorized claim (e.g., EFSA may
+      have authorized specific probiotic-linked gut claims). US: structure/function
+      claim possible with FTC substantiation. CN: 'improves intestinal flora' is
+      a 保健食品 function — needs market check.

@@ -32,6 +32,7 @@ use fermi::grounding_anomaly;
 use fermi::lens_rendering::{self, Market, Ruleset};
 
 // ─── Shared helpers ──────────────────────────────────────────────────────────
+// ─── Shared helpers ────────────────────────────────────────────
 
 fn parse_market(s: &str) -> Result<Market, (StatusCode, String)> {
     match s {
@@ -465,9 +466,30 @@ pub async fn compare_lenses_handler(
             }
         }
 
+        let candidate_text = claim
+            .get("candidate_text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
         let mut market_rows: Vec<Value> = Vec::new();
         let mut status_strs: Vec<String> = Vec::new();
 
+        // ── Ruleset cache lookup ────────────────────────────────────────────────────
+        // The rulesets are a cache of previously evaluated claims — either
+        // seeded from the platform rulesets or written back by the
+        // regulatory_lens_translator agent after a live corpus search.
+        //
+        // Cache miss (not_in_ruleset): the claim has not been evaluated yet.
+        // The handler returns not_in_ruleset honestly. The UI surfaces this
+        // as a gap and prompts the user to invoke the agent for evaluation.
+        // The agent calls web_search against the actual regulatory corpus,
+        // returns a structured evaluation, and writes it back to the workspace
+        // as a new cache entry. Next run: cache hit.
+        //
+        // This handler is NOT the place to hardcode prohibited patterns.
+        // That would be static rules replacing a dynamic corpus — the same
+        // architectural mistake as static rulesets. The agent is the
+        // evaluator; this handler is the cache reader.
         for (market, rs) in market_rulesets.iter() {
             if !active_markets.contains(market) {
                 continue;
