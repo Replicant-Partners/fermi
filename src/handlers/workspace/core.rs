@@ -8,8 +8,8 @@ use axum::{
 };
 use fermi::gas::charge_gas;
 use fermi_auth::{
-    credit_charge, credit_charge_purchased_only, credit_deposit_typed, get_or_create_wallet, teams,
-    AuthPrincipal,
+    credit_charge, credit_charge_purchased_only, credit_deposit_typed, credit_get_transactions,
+    get_or_create_wallet, teams, AuthPrincipal,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -506,6 +506,96 @@ pub async fn create_workspace_agent_handler(
 #[derive(Deserialize)]
 pub struct FundWorkspaceRequest {
     amount: i32,
+}
+
+/// GET /api/workspaces/:workspace_id/budget — balance, and what has been spent.
+///
+/// The path already had a POST (`fund_workspace_handler`) and no GET, so there
+/// was no way to read what a workspace had or what an agent run had cost.
+/// `GET /api/wallet/transactions` does not answer it: that reads the *user's*
+/// wallet, and agent execution is charged to the *workspace's*
+/// (`get_or_create_wallet(db, "workspace", id)`).
+///
+/// Which meant a surface could spend a user's credits and then had nothing to
+/// show them for it. The DPP Studio's claim evaluator runs real web searches
+/// for tens of seconds per claim, and "how much did that cost" had no answer
+/// anywhere in the API.
+///
+/// `charges` is the ledger, newest first, unfiltered. `execution_fees`
+/// summarises the agent-run subset, because that is the line an operator is
+/// actually deciding about — `charge_and_distribute` writes those with
+/// `tx_type = "execution_fee"` and a description carrying the agent, the
+/// action and the token count (`rabble_workspace.rs:511`).
+///
+/// Read-only and not gas-charged. Serving a number the platform already holds
+/// is not an agent doing work, and metering the answer to "what am I
+/// spending?" would be its own small absurdity.
+pub async fn workspace_budget_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(workspace_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let user_id = principal.user_id();
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
+
+    let role = teams::get_member_role(&state.db, ws_uuid, &user_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if role.is_none() {
+        return Err((StatusCode::FORBIDDEN, "Not a workspace member".to_string()));
+    }
+
+    let wallet = get_or_create_wallet(&state.db, "workspace", &workspace_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Wallet error: {e}")))?;
+
+    let txs = credit_get_transactions(&state.db, wallet.wallet_id, 100)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Ledger error: {e}")))?;
+
+    let charges: Vec<Value> = txs
+        .iter()
+        .map(|t| {
+            json!({
+                "tx_id": t.tx_id,
+                "amount": t.amount,
+                "balance_after": t.balance_after,
+                "tx_type": t.tx_type,
+                "description": t.description,
+                "created_at": t.created_at,
+            })
+        })
+        .collect();
+
+    // Agent runs only. `amount` is negative for a charge, so the spend is the
+    // negated sum; reporting the raw sum would show spending as a credit.
+    let exec: Vec<&fermi_auth::CreditTransaction> =
+        txs.iter().filter(|t| t.tx_type == "execution_fee").collect();
+    let exec_total: i32 = exec.iter().map(|t| t.amount).sum::<i32>();
+
+    Ok(Json(json!({
+        "workspace_id": workspace_id,
+        "balance": wallet.balance,
+        "charges": charges,
+        "execution_fees": {
+            "count": exec.len(),
+            "credits_spent": -exec_total,
+            "most_recent": exec.first().map(|t| json!({
+                "amount": -t.amount,
+                "description": t.description,
+                "created_at": t.created_at,
+            })),
+        },
+        // So a caller can show what the next run will cost without
+        // rediscovering the formula. See `gas::GasFees::execution_fee`.
+        "gas_model": {
+            "execution_min": state.gas_fees.execution_min,
+            "execution_gas_pct": state.gas_fees.execution_gas_pct,
+            "formula": "credits = max(execution_min, tokens / 1000) + max(1, that * execution_gas_pct)",
+        },
+    })))
 }
 
 pub async fn fund_workspace_handler(

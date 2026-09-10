@@ -3961,6 +3961,12 @@ async fn main() {
             "/api/workspaces/:workspace_id/budget",
             post(handlers::workspace::fund_workspace_handler),
         )
+        // The read half. POST existed alone, so a surface could spend a
+        // workspace's credits and then had no way to say what it had cost.
+        .route(
+            "/api/workspaces/:workspace_id/budget",
+            get(handlers::workspace::workspace_budget_handler),
+        )
         // ── Workspace-aware cascade (reads process + twin from workspace git) ──
         .route(
             "/api/workspaces/:workspace_id/cascade",

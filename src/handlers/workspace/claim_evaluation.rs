@@ -377,6 +377,14 @@ struct ClaimOutcome {
     claim_id: String,
     doc: Value,
     report: grounding_trust::Report,
+    /// Wall-clock for this claim's agent run.
+    ///
+    /// Measured here rather than derived, because "the evaluator is slow" is a
+    /// complaint no number in the API could previously answer. Each claim is
+    /// up to two `web_search` calls per market inside a five-iteration tool
+    /// loop, so tens of seconds is expected and worth stating rather than
+    /// leaving a caller to guess whether it has hung.
+    duration_ms: u64,
 }
 
 /// Run the evaluator over one claim and gate the result.
@@ -395,6 +403,7 @@ async fn evaluate_one(
         .to_string();
 
     let query = build_query(&claim, &composition, &markets);
+    let started = std::time::Instant::now();
 
     let reply = tokio::time::timeout(
         std::time::Duration::from_secs(PER_CLAIM_TIMEOUT_SECS),
@@ -475,6 +484,7 @@ async fn evaluate_one(
         claim_id,
         doc,
         report,
+        duration_ms: started.elapsed().as_millis() as u64,
     })
 }
 
@@ -579,6 +589,7 @@ pub async fn evaluate_claims_handler(
     Json(req): Json<EvaluateClaimsRequest>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let user_id = principal.user_id();
+    let request_started = std::time::Instant::now();
     let (ws_uuid, slug) = resolve_workspace(&state, &workspace_id, &user_id).await?;
 
     // ── Preflight: refuse rather than degrade ────────────────────────────
@@ -753,6 +764,7 @@ pub async fn evaluate_claims_handler(
             "markets": markets,
             "written_paths": [],
             "grounding_summary": { "is_clean": true, "violation_count": 0 },
+            "duration_ms": request_started.elapsed().as_millis() as u64,
             "note": "Nothing to evaluate. Every claim in scope already has a \
                      stored evaluation for every market requested.",
         })));
@@ -822,6 +834,7 @@ pub async fn evaluate_claims_handler(
                     claim_id,
                     doc,
                     report,
+                    duration_ms,
                 } = outcome;
 
                 all_clean &= report.is_clean();
@@ -857,6 +870,7 @@ pub async fn evaluate_claims_handler(
 
                 evaluated.push(json!({
                     "claim_id": claim_id,
+                    "duration_ms": duration_ms,
                     "document": doc,
                     "grounding": {
                         "is_clean": report.is_clean(),
@@ -937,9 +951,17 @@ pub async fn evaluate_claims_handler(
         "remaining": remaining,
         "markets": markets,
         "written_paths": written,
-        "grounding_summary": {
-            "is_clean": all_clean,
-            "violation_count": any_violations,
+        "duration_ms": request_started.elapsed().as_millis() as u64,
+        // Credits are charged by `dispatch_rabble_action` in a background task
+        // AFTER this response is built, so no cost can honestly be reported
+        // here. Read `GET /api/workspaces/:id/budget` once the run settles —
+        // the ledger is the only authoritative answer, and quoting an estimate
+        // beside a real duration would read as though both were measured.
+        "cost": {
+            "credits_charged": Value::Null,
+            "where": "GET /api/workspaces/{workspace_id}/budget",
+            "note": "Charged asynchronously after this response. The ledger \
+                     entry carries the agent, action and token count.",
         },
     })))
 }

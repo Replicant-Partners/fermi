@@ -1366,16 +1366,40 @@ async function hireOracle() {
   const btn = document.getElementById('sco-hire-btn');
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Hiring…';
   try {
-    // HireAddRequest { agent_id: AgentRef, include_optional: bool } — the field
-    // is `agent_id`, and AgentRef is #[serde(untagged)] Uuid | Handle, so the
-    // handle string is accepted. The old body sent `agent_name`, which is not
-    // a field on the struct: 422.
-    const res = await fetch(`${base()}/api/workspaces/${wsId()}/hire`,
-      fetchOpts('POST', { agent_id: 'supply_chain_oracle' }));
-    // 409 CONFLICT is the handler saying "already in this workspace" — success
-    // for our purposes. (The old `!res.status === 409` was always false:
-    // !res.status coerces the number to a boolean first.)
-    if (!res.ok && res.status !== 409) throw new Error(await res.text());
+    // /hire and /add take the same body and differ only in who may be
+    // brought in: `hire_agent_handler` REFUSES an agent the caller owns
+    // ("Use /add for your own agents", messages.rs:1381) and `/add` is the
+    // path for those.
+    //
+    // Which agent is "yours" is not a property of the agent — it is a
+    // property of who is asking. `seed_agents_to_database` sets `owner_id` on
+    // every curated agent to the first admin user, so for that user every
+    // curated agent is self-owned and /hire is always the wrong endpoint;
+    // for everyone else /hire is the right one. A client cannot know which it
+    // is without reading the agent row, so it tries both rather than
+    // guessing, and reports only if both refuse.
+    //
+    // 409 CONFLICT from either means "already in this workspace", which is
+    // the state we wanted.
+    async function bring(where) {
+      return fetch(`${base()}/api/workspaces/${wsId()}/${where}`,
+        fetchOpts('POST', { agent_id: 'supply_chain_oracle' }));
+    }
+    let res = await bring('hire');
+    if (!res.ok && res.status !== 409) {
+      const first = await res.text();
+      // Only fall through on the ownership refusal. Anything else — no
+      // permission, no such agent, no budget — is a real answer and must not
+      // be retried against a second endpoint that will fail the same way.
+      if (/use \/add|own agents/i.test(first)) {
+        res = await bring('add');
+        if (!res.ok && res.status !== 409) {
+          throw new Error(`hire refused (${first.trim()}); add also refused: ${await res.text()}`);
+        }
+      } else {
+        throw new Error(first);
+      }
+    }
     oracleHired = true;
     document.getElementById('sco-badge').textContent = '✓ hired';
     document.getElementById('sco-badge').className = 'sco-badge sb-hired';
@@ -1633,6 +1657,42 @@ function unevaluatedClaimIds(rows) {
     .map(r => r.claim_id).filter(Boolean);
 }
 
+// What the run actually cost, read from the ledger rather than estimated.
+//
+// `dispatch_rabble_action` charges in a background task AFTER the response is
+// sent, so the number does not exist yet when the last batch returns. This
+// baselines before the run and re-reads after, polling briefly for the charge
+// to land. If it has not, it says so — an unsettled cost reported as 0 would
+// be the same class of lie as a fixture priced confidently.
+async function readSpend() {
+  const id = wsId();
+  if (!id) return null;
+  try {
+    const res = await fetch(`${base()}/api/workspaces/${id}/budget`,
+      { credentials: 'include', headers: authHeaders() });
+    if (!res.ok) return null;
+    const d = await res.json();
+    return { spent: d.execution_fees?.credits_spent ?? null, balance: d.balance ?? null };
+  } catch { return null; }
+}
+
+async function settleSpend(before) {
+  if (!before || before.spent == null) return;
+  for (let i = 0; i < 6; i++) {
+    await new Promise(r => setTimeout(r, 1500));
+    const now = await readSpend();
+    if (now && now.spent != null && now.spent > before.spent) {
+      evalRun.creditsSpent = now.spent - before.spent;
+      evalRun.balanceAfter = now.balance;
+      renderEvalPanel();
+      return;
+    }
+  }
+  evalRun.creditsSpent = null;
+  evalRun.costNote = 'charge had not settled in the ledger yet — re-open the Activity panel to refresh';
+  renderEvalPanel();
+}
+
 function evalPanelHTML() {
   if (!evalRun) return '';
   const r = evalRun;
@@ -1641,7 +1701,15 @@ function evalPanelHTML() {
   const pct = known ? Math.min(100, Math.round((r.done / known) * 100)) : (r.active ? 4 : 100);
   const head = r.active
     ? `<div class="eval-head"><span class="spinner"></span> ${EVALUATOR} · evaluating ${esc(r.label)} · ${r.done}/${known || '?'} · ${secs}s</div>`
-    : `<div class="eval-head">${r.failed.length ? '⚠' : '✓'} ${EVALUATOR} · ${r.done} claim${r.done===1?'':'s'} evaluated in ${secs}s</div>`;
+    : `<div class="eval-head">${r.failed.length ? '⚠' : '✓'} ${EVALUATOR} · ${r.done} claim${r.done===1?'':'s'} evaluated in ${secs}s${
+        r.creditsSpent != null ? ` · ${r.creditsSpent} credits` : ''
+      }${
+        r.creditsSpent === undefined && !r.active ? ' · <span style="color:var(--t3)">reading cost…</span>' : ''
+      }${
+        r.costNote ? ` · <span style="color:var(--amb)">${esc(r.costNote)}</span>` : ''
+      }${
+        r.balanceAfter != null ? ` · <span style="color:var(--t3)">${r.balanceAfter} left</span>` : ''
+      }</div>`;
   const bar = `<div class="eval-bar"><div class="eval-bar-fill" style="width:${pct}%"></div></div>`;
   const scope = `<div class="eval-line">markets: <span style="font-family:var(--mono)">${r.markets.join(' · ')}</span>
     · batch ${r.batches} of at most ${EVAL_BATCH_CEILING} · ${MAX_CLAIMS_PER_REQUEST} claims per request
@@ -1662,12 +1730,39 @@ function evalPanelHTML() {
   return head + bar + scope + waiting + notes + failed + skipped + gate + paths;
 }
 
+// One home for the run log, one line for it in the sidebar.
+//
+// This used to write the SAME html into `#eval-panel` (main column) and
+// `#rlt-result` (the sidebar card). Two copies of a growing log, one of them
+// in a 300px column, which pushed the launch affordances off the card while
+// the run was going — the thing you are least able to reach when you most
+// want it. The main column owns the detail; the card keeps a status line.
 function renderEvalPanel() {
-  const html = evalPanelHTML();
   const panel = document.getElementById('eval-panel');
-  if (panel) { panel.innerHTML = html; panel.classList.toggle('show', !!evalRun); }
+  if (panel) {
+    panel.innerHTML = evalPanelHTML();
+    panel.classList.toggle('show', !!evalRun);
+  }
   const side = document.getElementById('rlt-result');
-  if (side) side.innerHTML = html;
+  if (side) side.innerHTML = evalStatusLine();
+}
+
+// The compact form: enough to know whether it is running and what it cost,
+// with the detail one glance away in the main column.
+function evalStatusLine() {
+  if (!evalRun) return '';
+  const r = evalRun;
+  const secs = Math.round((Date.now() - r.startedAt) / 1000);
+  if (r.active) {
+    return `<div style="font-size:10px;color:var(--tea);line-height:1.7">
+      <span class="spinner"></span> running · ${r.done}/${r.total || '?'} claims · ${secs}s
+      <div style="color:var(--t3)">detail in the Activity panel \u2192</div></div>`;
+  }
+  const bad = (r.failed?.length ?? 0);
+  return `<div style="font-size:10px;line-height:1.7;color:${bad ? 'var(--amb)' : 'var(--grn)'}">
+    ${bad ? '\u26a0' : '\u2713'} last run: ${r.done} evaluated${bad ? `, ${bad} failed` : ''} · ${secs}s
+    ${r.creditsSpent != null ? `<div style="color:var(--t3)">${r.creditsSpent} credits</div>` : ''}
+    </div>`;
 }
 
 function evaluateUnevaluated() {
@@ -1708,7 +1803,8 @@ async function drainEvaluation({ claimIds, force, total, label }) {
   const markets = evalMarkets();
   evalRun = { active:true, label: label ?? 'claims', markets, done:0, total: total ?? 0,
               remaining:0, batches:0, failed:[], skipped:[], written:[], notes:[],
-              violations:0, startedAt: Date.now() };
+              violations:0, startedAt: Date.now(), creditsSpent: undefined };
+  const spendBefore = await readSpend();
   document.querySelectorAll('.eval-launch').forEach(b => { b.disabled = true; });
   renderEvalPanel();
   if (evalTicker) clearInterval(evalTicker);
@@ -1779,6 +1875,10 @@ async function drainEvaluation({ claimIds, force, total, label }) {
   // Re-read the comparison so the table now serves the stored evaluations.
   await runLive();
   renderEvalPanel();
+  // Then settle the cost. Deliberately last: the table refresh is what the
+  // user is waiting for, and the ledger read is worth nothing until the
+  // background charge has landed anyway.
+  await settleSpend(spendBefore);
 }
 
 // ── knowledge build timeline ────────────────────────────────────────────────
