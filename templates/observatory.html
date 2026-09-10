@@ -1721,10 +1721,26 @@ function devActFor(stageId) {
     return `<span class="dev-noact" title="Cycles have completed and produced no rules. Dreaming again will not help: check the extractor's model and credentials, and the embedding coverage below.">not the button</span>`;
   }
   if (stageId === "retrieved") {
-    // The one this platform genuinely cannot offer an action for, and the most
-    // important stage on the page. 77 of 84 agents that have fed Loop 1 have
-    // never had a rule retrieved (`src/outcome_trust.rs:495`).
-    return `<span class="dev-noact" title="Retrieval is embedding-gated on both paths and needs a query similar enough to a stored rule. Nothing on this page can force it. An unembedded rule can never be retrieved at all -- see embeddings below.">no control</span>`;
+    // Measured 2026-09-10, and the answer was not what this row implied.
+    //
+    // The similarity gate is NOT the blocker: replaying it against stored data
+    // -- `episodes.embedding` IS a query embedding, so the decision is
+    // reproducible -- 93.3% of episodes clear MIN_SIMILARITY = 0.30 against
+    // their own agent's rules, median best similarity 0.499, and the gate is
+    // reachable for 50 of the 54 agents that have rules and embedded episodes.
+    // Retrieval also demonstrably works: 724 recorded applications, one rule
+    // read back 125 times.
+    //
+    // The counter was wired on 2026-08-19, and retrieval only happens when the
+    // agent RUNS. Of the agents with rules that had not run since that date,
+    // 0 of 35 had retrieved -- correctly, because nothing had asked them
+    // anything. Of those that had run, 11 of 27 retrieved.
+    //
+    // So a bare `0` here means one of two completely different things, and
+    // rendering it as a fault was inventing a defect for 35 agents whose loop
+    // is simply unexercised. The affordance for an agent nobody has asked
+    // anything is to ask it something.
+    return `<span class="dev-noact" title="Retrieval happens only when the agent runs: a query is embedded, rules above the similarity gate are put in the prompt, and the credit is written then. A 0 on an agent that has not run recently means unexercised, not broken - measured across this platform, 93% of episodes clear the gate and the median best match is 0.50. Nothing on this page can force a retrieval; running the agent is what causes one.">run it to find out</span>`;
   }
   return "";
 }

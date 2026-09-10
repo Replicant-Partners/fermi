@@ -69,7 +69,7 @@ pub async fn extractor_self_knowledge(
     use sqlx::Row as _;
 
     let rows = sqlx::query(
-        "SELECT rule_content, rule_description, confidence_score, verification_status
+        "SELECT rule_id, rule_content, rule_description, confidence_score, verification_status
            FROM semantic_rules
           WHERE agent_id = $1 AND is_active AND invalidated_at IS NULL
           ORDER BY (verification_status = 'verified') DESC, confidence_score DESC
@@ -80,6 +80,63 @@ pub async fn extractor_self_knowledge(
     .fetch_all(pool)
     .await
     .ok()?;
+
+    // Credit the rules this actually put in front of the model.
+    //
+    // # This is the extractor's half of Loop 1, and it was uncounted
+    //
+    // `application_count` is the platform's only answer to "is anything the
+    // agent learned ever read back", and the one writer is
+    // `kg_context::record_rule_retrievals`, on the agent-execution paths.
+    // Consolidation is not one of those paths: the worker is handed a bare
+    // `LLMProvider` and calls `generate_raw`, which is the same reason this
+    // function had to exist at all.
+    //
+    // So the extractor read its own rules into every cycle's prompt and none of
+    // it counted. Measured 2026-09-10: `ontologist` had 8 active embedded
+    // rules, 68 runs since the counter was wired, and `retrieved = 0` — which
+    // the Observatory renders as a loop that writes and nothing reads. The
+    // reading was wrong, and it was wrong in the direction that invents a
+    // defect: the rules WERE being retrieved, by the one agent that reads them
+    // every single cycle.
+    //
+    // Ordinary retrieval, not a special case. A rule placed in a prompt is a
+    // rule that was wanted back, and that is the whole definition the column
+    // carries.
+    //
+    // Best-effort and not awaited on the caller's behalf, matching
+    // `record_rule_retrievals`: failing to credit a retrieval must not fail a
+    // consolidation cycle. Reported rather than swallowed, because a silent
+    // `.ok()` here would rebuild exactly the blind spot this closes.
+    let credited: Vec<uuid::Uuid> = rows
+        .iter()
+        .filter_map(|r| r.try_get::<uuid::Uuid, _>("rule_id").ok())
+        .collect();
+    if !credited.is_empty() {
+        let res = sqlx::query(
+            "UPDATE semantic_rules
+                SET application_count = application_count + 1,
+                    last_validated_at = NOW()
+              WHERE rule_id = ANY($1)",
+        )
+        .bind(&credited)
+        .execute(pool)
+        .await;
+        match res {
+            Ok(done) if done.rows_affected() as usize != credited.len() => tracing::warn!(
+                retrieved = credited.len(),
+                updated = done.rows_affected(),
+                "extractor_retrieval_credit_partial"
+            ),
+            Err(e) => tracing::warn!(
+                error = %e,
+                rules = credited.len(),
+                "extractor_retrieval_credit_failed: the extractor read its own \
+                 rules and the retrieval was not recorded"
+            ),
+            _ => {}
+        }
+    }
 
     let mut out = String::new();
     for r in &rows {
