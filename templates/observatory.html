@@ -1702,7 +1702,48 @@ function renderDevelopment() {
     : `<div class="dev-stop ok">Every stage of this chain has produced.
          ${escHtml(l1.detail || "")}</div>`;
 
-  box.innerHTML = rows + stop + devEmbeddings() + devBudget();
+  box.innerHTML = rows + stop + devVerification() + devEmbeddings() + devBudget();
+}
+
+// The judgement the loop never makes.
+//
+// The chain above ends at `retrieved`, and a retrieved rule is a rule that got
+// used — not one that was ever found to be right. `verification_status` is the
+// column for that and nothing writes it: measured 2026-09-10, all 264 real
+// rules are `pending`, the only `verified` rows are inactive `unit_test`
+// fixtures, and the worker reports `rules_verified: 0` unconditionally.
+//
+// Stated here because this panel claims to answer "is the agent developing",
+// and an agent accumulating unadjudicated rules is developing in a way nobody
+// has checked. Rendered as a gap rather than a fault: nothing is wrong with
+// these rules, and nothing is known about them either.
+function devVerification() {
+  const o = (_dream && _dream.ontology) || null;
+  if (!o) return "";
+  const rules = o.semantic_rules || 0;
+  if (!rules) return "";
+  const verified = o.verified_rules || 0;
+
+  if (verified > 0) {
+    return `<div class="dev-sub">
+      <div class="dev-sub-h">Verification
+        <span style="color:var(--fg4)">${verified} of ${rules} rule(s) adjudicated</span>
+      </div></div>`;
+  }
+  return `<div class="dev-sub">
+    <div class="dev-sub-h">Verification
+      <span style="color:var(--fg4)">unadjudicated \u00b7 ${rules} rule(s) at
+        <code>pending</code></span></div>
+    <div class="dev-note dev-gap">No rule on this platform has ever been judged
+      right or wrong. Retrieval says a rule was <b>used</b>; nothing says it was
+      <b>correct</b>. Read <code>0 verified</code> as not-yet-judged, not as
+      judged-and-failed \u2014 the two have identical ontology sizes and opposite
+      fixes.
+      <b>No affordance, and the reason is measurable:</b> adjudication needs
+      evidence this platform does not record. Rule retrieval increments a
+      counter and discards which episode the rule went into, so no rule can be
+      set against the outcome of a run that used it.</div>
+  </div>`;
 }
 
 // The control for the stage that is stuck. Null where the platform has none,
@@ -2708,16 +2749,37 @@ function renderDreamingTab() {
   // The three-ledger comparison. `verification_rate` is the one number that
   // separates "the ontologist proposed nothing" from "it proposed plenty and
   // verification threw all of it out" — identical ontology size, opposite fix.
+  //
+  // AND IT HAS NEVER RUN. Measured 2026-09-10: every one of the 264 real rules
+  // on this platform is `pending`. The only 25 `verified` rows carry
+  // `verification_method = unit_test` and are inactive fixtures. `rules_verified`
+  // and `rules_rejected` are hardcoded `0` in the consolidation worker
+  // (`memory/src/consolidation.rs:932`), so `verification_rate` is not a low
+  // rate, it is the absence of a rate.
+  //
+  // So `0 verified of 265` invited exactly the wrong conclusion — that the
+  // ontologist produces junk — when nothing has ever adjudicated a single rule
+  // either way. Absent must look different from bad, and this read as bad.
   const vr = y.verification_rate;
+  const adjudicated = (y.rules_verified||0) + (y.rules_rejected||0) > 0
+                   || (o.verified_rules||0) > 0;
   const rows = [
     ["Cycles", `${cy.completed||0} completed`, `${cy.failed||0} failed · ${cy.running||0} running · ${cy.zero_yield||0} produced nothing`],
     ["Episodes processed", y.episodes_processed||0, `${y.clusters_identified||0} clusters identified`],
     ["Rules", `${y.rules_extracted||0} extracted`,
       `${y.rules_verified||0} verified · ${y.rules_rejected||0} rejected` +
-      (vr!=null?` · ${pct(vr)}% survived verification`:" · verification has adjudicated none")],
+      (vr!=null?` · ${pct(vr)}% survived verification`
+               :" · verification has never run — not a low rate, no rate")],
     ["Entities / facts", `${y.entities_created||0} / ${y.facts_created||0} created`,
       `${o.entities||0} / ${o.facts||0} currently in the graph`],
-    ["Verified rules", `${o.verified_rules||0}`, `of ${o.semantic_rules||0} in the graph`],
+    ["Verified rules",
+      adjudicated ? `${o.verified_rules||0}` : "unadjudicated",
+      adjudicated
+        ? `of ${o.semantic_rules||0} in the graph`
+        : `all ${o.semantic_rules||0} rule(s) sit at <code>pending</code>. Nothing on
+           this platform promotes a rule out of it: the worker reports
+           <code>rules_verified: 0</code> unconditionally and there is no
+           verifier. Read this as “not yet judged”, not as “judged and failed”.`],
   ];
   document.getElementById("dream-ledger").innerHTML = rows.map(([k,v,note])=>`
     <div class="prov-row" style="grid-template-columns:160px 160px 1fr;">

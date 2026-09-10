@@ -51,11 +51,29 @@ fn compose_system_prompt(base: &str, guidance: Option<&str>) -> String {
 ///
 /// SELECTION
 ///
-/// Verified rules first, then by confidence. Verification does not run yet
-/// (`rules_verified`/`rules_rejected` are hardcoded 0 below, and
-/// `update_semantic_rule_verification` has no production caller), so today this
-/// is effectively "highest-confidence active rules". The ordering is written to
-/// prefer verified ones the moment that changes.
+/// Verified rules first, then by confidence. **Verification does not run, and
+/// there is nothing to wire it to.** `rules_verified` / `rules_rejected` are
+/// hardcoded 0 below, and the previous version of this comment named
+/// `update_semantic_rule_verification` as "having no production caller" — that
+/// function does not exist either, in this crate or any other. The comment
+/// described a mechanism with no callee and no caller, which reads as a wiring
+/// gap and is an absence.
+///
+/// Measured 2026-09-10: all 264 real rules on this deployment are `pending`.
+/// The only 25 `verified` rows carry `verification_method = unit_test` and are
+/// inactive fixtures. So this ordering has never had anything to put first and
+/// is effectively "highest-confidence active rules".
+///
+/// The cheap proxies were measured and none of them holds. Near-duplicate rules
+/// to reject: **0 pairs** at cosine >= 0.95. Corroboration by an independent
+/// episode cluster: **6 of 265** rules, too thin to be a mechanism. A
+/// human-correction corpus to adjudicate against: **none**. What is missing is
+/// specific rather than vague: `kg_context::record_rule_retrievals` increments
+/// a counter and discards WHICH episode the rule was injected into, so no rule
+/// can be set against the outcome of a run that used it. Recording that pairing
+/// is the prerequisite, and it is a schema addition rather than a fix.
+///
+/// The ordering stays, because it is correct the moment that changes.
 ///
 /// Capped at `limit`. This text rides on EVERY extraction call in a cycle — one
 /// per cluster plus entity and fact batches — so an uncapped preamble would
