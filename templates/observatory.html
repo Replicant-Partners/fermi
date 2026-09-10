@@ -254,6 +254,13 @@
   /* A gap the platform cannot close is still a finding, and it is marked as
      one rather than blended into the surrounding prose. */
   .dev-gap{border-left:2px dashed var(--bg4,var(--bg3));padding-left:8px;}
+  /* The model that wrote the vectors. `asserted` is a backfilled provenance:
+     the identity is claimed, not observed at write time, and the two must not
+     look alike on a page about portability. */
+  .dev-models{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;}
+  .dev-model{font-size:0.62rem;color:var(--fg3);border:1px solid var(--bg3);
+             padding:1px 5px;cursor:help;}
+  .dev-model.asserted{border-style:dashed;color:var(--fg4);}
   .mh-src{font-size:0.6rem;color:var(--fg4);font-style:italic;margin-top:5px;opacity:0.8;}
   .mh-flag{font-size:0.6rem;color:var(--orange,var(--yellow));border:1px solid var(--orange,var(--yellow));padding:0 3px;margin-right:3px;}
   /* Standing note that the colour scale is a presentation convention. There is
@@ -1722,7 +1729,36 @@ function devActFor(stageId) {
   return "";
 }
 
-// Episode embedding coverage, and the affordance that does not exist.
+// Episode embedding coverage, the model that wrote the vectors, and what the
+// endpoint cannot see.
+//
+// # This block was written wrong first, and the database corrected it
+//
+// The first version led with "2,770 episodes have no vector" from a code
+// comment in `dreaming_maturity.rs:139` and called it "the commonest reason a
+// cycle completes and extracts nothing". Measured against production instead:
+//
+//   month     episodes  embedded   pct
+//   2026-09         52        45  86.5
+//   2026-08        599       566  94.5
+//   2026-07         79         0   0.0
+//   2026-06      1,581         0   0.0
+//   2026-05        781       352  45.1
+//
+// The pipeline works. The gap is a historical backlog dominated by one outage
+// in June, and it is the SAME outage `dreaming_maturity` already special-cases
+// for extraction ("43 of 45 agents banded unproductive whose last cycle was in
+// June are one outage that is over"). Embedding stopped and extraction stopped
+// because they are the same window.
+//
+// Zero mock vectors exist on this deployment — `MOCK_EMBED_VERSION` is
+// `mock-v1` and no row carries it — so the fallback embedder has never run in
+// production, and the ontology is 89-91% embedded, not unembedded.
+//
+// So: coverage is reported as a LIFETIME figure and labelled as one, because
+// that is what the endpoint returns. A low number here is as likely to be a
+// closed outage as a live fault, and this panel cannot tell them apart — which
+// is said rather than papered over with a colour.
 function devEmbeddings() {
   if (!_emb || _emb._error || !_emb.episodes) {
     return `<div class="dev-note">Embedding coverage could not be read${
@@ -1734,27 +1770,47 @@ function devEmbeddings() {
   const withV = e.with_vector || 0;
   const missing = Math.max(0, total - withV);
   const cov = total ? withV / total : null;
-  const bad = cov != null && cov < 0.9 && missing > 0;
+
+  // Which model actually wrote them. This is the Spec 22 payoff and it is
+  // working: every vector on this deployment carries a model id and a source
+  // text, and `trusted` separates vectors this platform generated from ones
+  // whose provenance was backfilled and is therefore asserted rather than
+  // observed. Naming the model is the difference between "embedded" and
+  // "embedded with something you can port".
+  const models = (e.by_model || [])
+    .filter(m => (m.episodes_with_vector || 0) > 0)
+    .map(m => `<span class="dev-model${m.trusted?"":" asserted"}" title="${
+        escHtml((m.trusted
+          ? "Provenance observed at write time."
+          : "Provenance backfilled, so the model identity is asserted rather than observed.")
+        + ` dim ${m.dim ?? "?"}`)}">${escHtml(m.model_id || "unstamped")}${
+        m.model_version?` \u00b7 ${escHtml(m.model_version)}`:""} \u00b7 ${m.episodes_with_vector}</span>`)
+    .join("");
 
   return `<div class="dev-sub">
     <div class="dev-sub-h">Embeddings
-      <span style="color:${bad?"var(--yellow)":"var(--fg4)"}">${
-        total ? `${withV} of ${total} episodes carry a vector${cov!=null?` \u00b7 ${pct(cov)}%`:""}`
+      <span style="color:var(--fg4)">${
+        total ? `${withV} of ${total} episodes carry a vector${cov!=null?` \u00b7 ${pct(cov)}%`:""} \u00b7 lifetime`
               : "no episodes"}</span></div>
-    ${missing ? `<div class="dev-note">${missing} episode(s) have no vector. An
-      unembedded episode returns zero neighbours from clustering, so it fails
-      the minimum-cluster test, becomes noise, and can never become a rule \u2014
-      it is the commonest reason a cycle completes and extracts nothing.</div>` : ""}
-    <div class="dev-note dev-gap"><b>No affordance.</b> There is no re-embed
-      endpoint, worker or binary on this platform \u2014 Spec 22 Phase 3 is deferred
-      and <code>re_embed_episodes</code> is referenced by a script and declared
-      nowhere. Backfilling is an operator task against
-      <code>scripts/loop1_retrievability_census.sql</code>. This is stated
-      rather than omitted: the gap is the finding.</div>
-    <div class="dev-note">Coverage is over <b>episodes</b> only, which is what
-      the endpoint returns. Whether this agent's <b>rules and entities</b> carry
-      vectors is not exposed by any endpoint, so an agent can read
-      <code>mature</code> here while nothing it learned is retrievable.</div>
+    ${models ? `<div class="dev-models">${models}</div>` : ""}
+    ${missing ? `<div class="dev-note">${missing} episode(s) have no vector, and
+      an unembedded episode returns zero neighbours from clustering \u2014 it fails
+      the minimum-cluster test, becomes noise, and can never become a rule.
+      <b>This is a lifetime count.</b> Most unembedded episodes on this platform
+      predate a fixed outage rather than reflecting a live fault, and this panel
+      cannot tell the two apart: the endpoint returns totals, not a trend. The
+      History tab and <code>scripts/loop1_retrievability_census.sql</code>
+      can.</div>` : ""}
+    ${missing ? `<div class="dev-note dev-gap">Recovering a backlog has no
+      control here. There is no re-embed endpoint, worker or binary \u2014 Spec 22
+      Phase 3 is deferred and <code>re_embed_episodes</code> is referenced by
+      <code>scripts/migrate_embedding_dimensions.rs</code> and declared nowhere.
+      A backfill is an operator task. Stated rather than omitted, and stated as
+      a backlog tool rather than an outage: new episodes are being embedded.</div>` : ""}
+    <div class="dev-note">Coverage is over <b>episodes</b>, which is what the
+      endpoint returns. Whether this agent's <b>rules and entities</b> carry
+      vectors \u2014 the thing retrieval actually reads \u2014 is exposed by no endpoint,
+      so it is absent here rather than assumed either way.</div>
   </div>`;
 }
 
