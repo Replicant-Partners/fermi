@@ -393,6 +393,68 @@ pub const CROSS_CHECK_EXEMPTIONS: &[(&str, &str, &str)] = &[
          call the `project` exemption above already wants, so both close \
          together or neither does.",
     ),
+    // ── regulatory_lens_translator ──────────────────────────────────
+    //
+    // Three entries, one cause, stated once. The platform holds no copy of
+    // the EFSA claims register, of 21 CFR, or of the SAMR/GB standards. There
+    // is no second copy of a regulatory provision one JOIN away, the way
+    // `genome_profiler.taxonomy` had a GBIF-verified row on the creature.
+    //
+    // Two routes out, in increasing order of what they catch:
+    //
+    //   * URL REPLAY — re-fetch each cited URL and confirm the quoted snippet
+    //     still appears at it. Catches a URL that never existed and a snippet
+    //     never on the page, which is the fabrication that matters most here:
+    //     a plausible provision number is indistinguishable from a real one
+    //     without opening the register, and nobody reading a label opens it.
+    //     Needs an egress allowance on the checking side and must tolerate
+    //     link rot, so a failure has to mean "could not confirm" rather than
+    //     "fabricated" — which is the design work, not the fetching.
+    //
+    //   * TOOL-RESULT JOIN — confirm every cited URL appeared in a
+    //     `web_search` result within the same episode. Strictly stronger than
+    //     the replay: it catches a real URL the agent never actually
+    //     retrieved, which the replay passes. Blocked on storage, not on
+    //     design — `episodes.response_text` is retained (mig-199) but tool
+    //     CALL RESULTS are not persisted anywhere, so today the query would
+    //     join against nothing, count zero mismatches and report clean. That
+    //     is the `fermi_leaderboard` shape this tier exists to refuse, so it
+    //     is deliberately not declared until the results are stored.
+    //
+    // Until one lands, the falsifiable claim is narrower than it looks and
+    // the split contract says so: the citations are `Sourced` and unverified,
+    // while every verdict resting on them is `Inferred` and stamped
+    // `model_inference` rather than borrowing the citation's strength.
+    (
+        "regulatory_lens_translator",
+        "eu_evidence.citations",
+        "The platform holds no copy of the EFSA claims register, so a cited \
+         provision can only be confirmed by fetching it. URL replay is the \
+         first route and needs egress plus a link-rot-tolerant verdict; the \
+         tool-result join is the stronger one and is blocked on web_search \
+         results not being persisted per episode. Highest-value check on this \
+         agent, because a fabricated provision number on a food label is both \
+         the most damaging error and the least visible one.",
+    ),
+    (
+        "regulatory_lens_translator",
+        "us_evidence.citations",
+        "No platform copy of 21 CFR or FTC guidance exists to compare against. \
+         Same two routes as the EU block — URL replay, then the tool-result \
+         join once web_search results are persisted. eCFR is the most \
+         replay-friendly of the three corpora (stable, versioned, public URLs), \
+         so this is the entry to write the replay against first.",
+    ),
+    (
+        "regulatory_lens_translator",
+        "cn_evidence.citations",
+        "No platform copy of the SAMR announcements or GB standards. Same two \
+         routes as the EU block, and the hardest of the three to replay: GB \
+         standards are frequently paywalled or PDF-only and SAMR reorganises \
+         URLs, so a fetch failure here will often be link rot rather than \
+         fabrication. That makes the tool-result join the route that actually \
+         settles this market, not the replay.",
+    ),
 ];
 
 /// Is this `Sourced` field knowingly un-cross-checked?
@@ -958,32 +1020,125 @@ pub enum LeakRule {
 }
 
 /// Patterns in a [`Grounding::Narrative`] field that assert something only
-/// an unsourced block could support, paired with the block that would have
-/// to be sourced for the claim to be legitimate.
+/// an unsourced block could support, paired with the agent whose document the
+/// rule is about and the block that would have to be sourced for the claim to
+/// be legitimate.
 ///
 /// Deliberately narrow, and matched against a lowercased haystack.
-pub const NARRATIVE_LEAKS: &[(&str, LeakRule)] = &[
-    ("genome", LeakRule::Quantity("mb")),
-    ("genome", LeakRule::Quantity("gb")),
-    ("genome", LeakRule::Quantity("kb")),
-    ("genome", LeakRule::Word("megabase")),
-    ("genome", LeakRule::Word("gigabase")),
-    ("genome", LeakRule::Word("chromosom")),
-    ("genome", LeakRule::Word("karyotype")),
-    ("genome", LeakRule::Word("diploid")),
-    ("genome", LeakRule::Word("haploid")),
-    ("genome", LeakRule::Word("2n=")),
-    ("genome", LeakRule::Word("2n =")),
-    ("phylogeny", LeakRule::Quantity("mya")),
-    ("phylogeny", LeakRule::Word("million years")),
-    ("phylogeny", LeakRule::Word("diverged")),
-    ("phylogeny", LeakRule::Word("divergence")),
-    ("conservation", LeakRule::Word("iucn")),
-    ("conservation", LeakRule::Word("least concern")),
-    ("conservation", LeakRule::Word("endangered")),
-    ("conservation", LeakRule::Word("vulnerable")),
-    ("conservation", LeakRule::Word("red list")),
+///
+/// ## Why the agent id is part of the key
+///
+/// It was not, and the omission was not theoretical. The table was keyed on
+/// block name alone and every rule was therefore evaluated against every
+/// contracted agent. `block_is_sourced` returns `None` for a block the agent
+/// does not declare, `None` is not `Some(true)`, so the rule was checked —
+/// which meant a rule about a block an agent has never had could null that
+/// agent's prose.
+///
+/// `regulatory_lens_translator` is where it surfaced. Its whole subject is
+/// how one claim reads differently in three markets; one of its own action
+/// types is `flag_divergence`. The word **"divergence"** is a `phylogeny`
+/// needle, `phylogeny` belongs to `genome_profiler`, and
+/// `regulatory_lens_translator` has no such block — so its central prose
+/// output was nulled as a fabricated species-divergence date. "Vulnerable"
+/// did the same via `conservation`, and "vulnerable consumer groups" is
+/// ordinary food-labelling language.
+///
+/// Two conflated facts, which this codebase keeps having to separate: "this
+/// agent has that block and did not source it" is a leak; "this agent has no
+/// such block" is a rule about somebody else's document. Only the first is
+/// adjudicable, and a check that fires on correct output gets switched off —
+/// see [`LeakRule::Quantity`]'s note about `GBIF`.
+pub const NARRATIVE_LEAKS: &[(&str, &str, LeakRule)] = &[
+    ("genome_profiler", "genome", LeakRule::Quantity("mb")),
+    ("genome_profiler", "genome", LeakRule::Quantity("gb")),
+    ("genome_profiler", "genome", LeakRule::Quantity("kb")),
+    ("genome_profiler", "genome", LeakRule::Word("megabase")),
+    ("genome_profiler", "genome", LeakRule::Word("gigabase")),
+    ("genome_profiler", "genome", LeakRule::Word("chromosom")),
+    ("genome_profiler", "genome", LeakRule::Word("karyotype")),
+    ("genome_profiler", "genome", LeakRule::Word("diploid")),
+    ("genome_profiler", "genome", LeakRule::Word("haploid")),
+    ("genome_profiler", "genome", LeakRule::Word("2n=")),
+    ("genome_profiler", "genome", LeakRule::Word("2n =")),
+    ("genome_profiler", "phylogeny", LeakRule::Quantity("mya")),
+    (
+        "genome_profiler",
+        "phylogeny",
+        LeakRule::Word("million years"),
+    ),
+    ("genome_profiler", "phylogeny", LeakRule::Word("diverged")),
+    ("genome_profiler", "phylogeny", LeakRule::Word("divergence")),
+    ("genome_profiler", "conservation", LeakRule::Word("iucn")),
+    (
+        "genome_profiler",
+        "conservation",
+        LeakRule::Word("least concern"),
+    ),
+    (
+        "genome_profiler",
+        "conservation",
+        LeakRule::Word("endangered"),
+    ),
+    (
+        "genome_profiler",
+        "conservation",
+        LeakRule::Word("vulnerable"),
+    ),
+    (
+        "genome_profiler",
+        "conservation",
+        LeakRule::Word("red list"),
+    ),
+    // ── regulatory_lens_translator: naming an authority you did not consult ──
+    //
+    // These fire on `explanation` when the paired `<market>_evidence` block
+    // came back with no citations. The failure they catch is specific and is
+    // the one a compliance surface cannot tolerate: prose that cites EFSA or
+    // 21 CFR by name, sounding exactly like a register lookup, when the
+    // search for that market returned nothing and the verdict is really the
+    // model's recollection.
+    //
+    // A regulatory citation is the highest-value thing to fabricate here and
+    // the hardest for a reader to check, because a plausible provision number
+    // is indistinguishable from a real one without opening the register.
+    // Needles are the authority names and provision numbers a reader would
+    // take as evidence of retrieval.
+    //
+    // Chosen for distinctiveness, not coverage. "gras" is deliberately absent
+    // — it is a substring of "grassroots" and of ordinary words, and a leak
+    // rule that fires on honest prose gets switched off, which is worse than
+    // not having it (see LeakRule::Quantity's note about "GBIF").
+    (RLT, "eu_evidence", LeakRule::Word("efsa")),
+    (RLT, "eu_evidence", LeakRule::Word("1924/2006")),
+    (RLT, "eu_evidence", LeakRule::Word("claims register")),
+    (
+        RLT,
+        "eu_evidence",
+        LeakRule::Word("authorised health claim"),
+    ),
+    (
+        RLT,
+        "eu_evidence",
+        LeakRule::Word("authorized health claim"),
+    ),
+    (RLT, "us_evidence", LeakRule::Word("21 cfr")),
+    (
+        RLT,
+        "us_evidence",
+        LeakRule::Word("generally recognized as safe"),
+    ),
+    (RLT, "us_evidence", LeakRule::Word("structure/function")),
+    (RLT, "us_evidence", LeakRule::Word("ftc")),
+    (RLT, "cn_evidence", LeakRule::Word("samr")),
+    (RLT, "cn_evidence", LeakRule::Word("gb 28050")),
+    (RLT, "cn_evidence", LeakRule::Word("gb28050")),
+    (RLT, "cn_evidence", LeakRule::Word("药食同源")),
+    (RLT, "cn_evidence", LeakRule::Word("保健食品")),
 ];
+
+/// Spelled once so the leak table stays readable at the width rustfmt wants.
+const RLT: &str = "regulatory_lens_translator";
 
 impl LeakRule {
     /// Does this rule fire against an already-lowercased haystack?
@@ -2918,6 +3073,268 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               are correctly enforced.",
         cross_check_sql: None,
     },
+    // ── regulatory_lens_translator, EVALUATION document ────────────────────
+    //
+    // A second, different document from the render/compare one above, and the
+    // distinction is the whole point of this block.
+    //
+    // Above, the agent is a DISPATCHER: the handler reads a hand-authored
+    // ruleset YAML and the fields are `Derived`. That path can only ever
+    // restate what someone already typed into the ruleset, and the shipped
+    // rulesets are declared `synthetic_representative` — which is to say a
+    // human guessed them. A claim absent from the YAML could never be
+    // answered at all, and every user-authored claim is absent by
+    // construction, because the UI mints `claim_<timestamp>` ids.
+    //
+    // This document is the other mode, and here the agent is the EVALUATOR:
+    // it calls `web_search` against the live regulatory corpus and returns a
+    // verdict per market. So the grounding is genuinely different, and it is
+    // split deliberately down one seam:
+    //
+    //   <market>_evidence   what the corpus actually returned      Sourced
+    //   <market>            what the agent concluded from it       Inferred
+    //
+    // Two blocks rather than one, because block provenance is stamped per
+    // top-level key. Folding the verdict in beside its citations would stamp
+    // the whole thing `tool_verified` and a regulatory STATUS would inherit a
+    // retrieval verdict it has not earned. Nothing in the corpus says
+    // "not_allowed" about this specific sentence; the agent reads Art. 10(1)
+    // and concludes it. That conclusion is the product and it is an inference
+    // over retrieved text — so `<market>_provenance` reads `model_inference`
+    // while `<market>_evidence_provenance` reads `tool_verified`, and a
+    // surface can show a verdict alongside the honest strength of its basis.
+    //
+    // Collapsing the two would reproduce, in a compliance tool, precisely the
+    // `iucn_status` failure in docs/ABW_VERIFICATION_RECONCILIATION.md §7.7:
+    // the appearance of having consulted the register, indistinguishable from
+    // having consulted it. Here that would be a fabricated legal basis on a
+    // food label.
+    //
+    // `not_evaluated` remains expressible in `status` and is the correct
+    // answer when search returns nothing. `tool_no_match` on the evidence
+    // block is a GAP, never a clearance — see the `needs_expert` contract.
+    FieldContract {
+        agent_id: "regulatory_lens_translator",
+        path: "eu_evidence.citations",
+        grounding: Grounding::Sourced {
+            tool: "web_search",
+            response_field: "results[].url, results[].title, results[].description",
+        },
+        why: "The retrieved regulatory text underlying the EU verdict. This is \
+              the only field on the EU side that a tool supplies, so it is the \
+              only one that may be stamped `tool_verified`. An empty array \
+              after a search is `tool_no_match` — the corpus was asked and had \
+              nothing, which is a gap needing expert review, not clearance.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "regulatory_lens_translator",
+        path: "us_evidence.citations",
+        grounding: Grounding::Sourced {
+            tool: "web_search",
+            response_field: "results[].url, results[].title, results[].description",
+        },
+        why: "Retrieved regulatory text underlying the US verdict. Same seam as \
+              the EU block: citations are sourced, the verdict over them is \
+              not.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "regulatory_lens_translator",
+        path: "cn_evidence.citations",
+        grounding: Grounding::Sourced {
+            tool: "web_search",
+            response_field: "results[].url, results[].title, results[].description",
+        },
+        why: "Retrieved regulatory text underlying the CN verdict. Same seam as \
+              the EU block. The 药食同源 ingredient list is the most likely \
+              fabrication target on this market — the model knows it from \
+              training — so the citation requirement carries the most weight \
+              here.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "regulatory_lens_translator",
+        path: "eu.status",
+        grounding: Grounding::Inferred {
+            from: "the regulatory text returned into eu_evidence.citations by \
+                   web_search, read against the candidate claim text",
+        },
+        why: "The verdict. No search result states a status for this specific \
+              sentence — the agent reads the provision and concludes one, which \
+              is the judgement it is commissioned to make. Stamped \
+              `model_inference` so no run can present a reasoned verdict as a \
+              retrieved fact, and so a reviewer can see that the thing needing \
+              endorsement is the reasoning, not the retrieval.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "regulatory_lens_translator",
+        path: "eu.basis",
+        grounding: Grounding::Inferred {
+            from: "identification of the governing provision among the retrieved \
+                   citations in eu_evidence",
+        },
+        why: "Which provision governs is a judgement about the retrieved text, \
+              not a field the search returned. The provision's WORDING is in \
+              the citation; the assertion that it is the one that applies here \
+              is inference.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "regulatory_lens_translator",
+        path: "eu.rendered_text",
+        grounding: Grounding::Inferred {
+            from: "the candidate claim rewritten to satisfy the identified \
+                   provision, or null where no compliant rendering exists",
+        },
+        why: "A proposed compliant wording is drafting, not retrieval — this is \
+              the agent writing label copy. Inferred and endorsable: a \
+              regulatory affairs reviewer signs off the wording, and until they \
+              do it carries `model_inference`. Null is the correct value when \
+              the claim cannot be rendered compliantly at all.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "regulatory_lens_translator",
+        path: "eu.needs_expert",
+        grounding: Grounding::Inferred {
+            from: "whether the retrieved evidence was sufficient to settle the \
+                   claim — set when citations are thin, absent, or in tension",
+        },
+        why: "The agent's own assessment that a human must look. Kept as \
+              inference rather than derived from citation count, because \
+              'three citations that do not address the claim' and 'one that \
+              settles it' are the case the count cannot distinguish and the \
+              agent can. A `tool_no_match` evidence block with \
+              needs_expert: false is a contradiction the UI should surface.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "regulatory_lens_translator",
+        path: "us.status",
+        grounding: Grounding::Inferred {
+            from: "the regulatory text returned into us_evidence.citations by \
+                   web_search, read against the candidate claim text",
+        },
+        why: "The US verdict. Same seam as eu.status: no result states a status \
+              for this sentence, the agent concludes one. The US-specific risk \
+              is that structure/function doctrine makes a permissive verdict \
+              easy to reach from memory alone, so the inference label matters \
+              most on the market most likely to return `allowed`.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "regulatory_lens_translator",
+        path: "us.basis",
+        grounding: Grounding::Inferred {
+            from: "identification of the governing provision among the retrieved \
+                   citations in us_evidence",
+        },
+        why: "Which US provision governs. The distinction between a nutrient \
+              content claim (21 CFR 101.13), a health claim (101.14) and a \
+              structure/function claim under DSHEA is the entire verdict here, \
+              and choosing among them is inference over the retrieved text — \
+              the search returns the parts, not the classification.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "regulatory_lens_translator",
+        path: "us.rendered_text",
+        grounding: Grounding::Inferred {
+            from: "the candidate claim rewritten to satisfy the identified \
+                   provision, or null where no compliant rendering exists",
+        },
+        why: "Proposed US label wording — drafting, not retrieval. This is the \
+              block where structure/function doctrine most often permits a \
+              rewrite the EU lens refuses outright, which makes it the field \
+              most likely to be lifted straight onto a label. Endorsable, and \
+              `model_inference` until a reviewer signs it.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "regulatory_lens_translator",
+        path: "us.needs_expert",
+        grounding: Grounding::Inferred {
+            from: "whether the retrieved evidence was sufficient to settle the \
+                   claim — set when citations are thin, absent, or in tension",
+        },
+        why: "The agent's assessment that a US verdict needs a human. Kept as \
+              inference for the same reason as the EU flag, with one addition: \
+              FTC substantiation is a body of enforcement practice rather than \
+              a published permitted-claims list, so thin search results are the \
+              normal case here and must not read as a settled `allowed`.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "regulatory_lens_translator",
+        path: "cn.status",
+        grounding: Grounding::Inferred {
+            from: "the regulatory text returned into cn_evidence.citations by \
+                   web_search, read against the candidate claim text",
+        },
+        why: "The CN verdict. The two-track split (普通食品 ordinary food vs \
+              保健食品 health food) means the status usually turns on which \
+              track the product sits on — a classification the retrieved \
+              standard does not make for this product. That choice is the \
+              inference, and it changes the answer completely.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "regulatory_lens_translator",
+        path: "cn.basis",
+        grounding: Grounding::Inferred {
+            from: "identification of the governing provision among the retrieved \
+                   citations in cn_evidence",
+        },
+        why: "Which CN provision governs. GB 28050 (nutrition labelling), \
+              GB 7718 (general labelling) and the 保健食品 registration regime \
+              answer different questions, and selecting the applicable one is \
+              inference over the retrieved standards rather than something a \
+              search result asserts.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "regulatory_lens_translator",
+        path: "cn.rendered_text",
+        grounding: Grounding::Inferred {
+            from: "the candidate claim rewritten to satisfy the identified \
+                   provision, or null where no compliant rendering exists",
+        },
+        why: "Proposed CN label wording — drafting, not retrieval. Carries an \
+              extra hazard the other two markets do not: a rendering that reads \
+              as a health-function claim pushes the product onto the 保健食品 \
+              track and into a registration requirement, so a well-meant \
+              rewrite here can change the product's regulatory category.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "regulatory_lens_translator",
+        path: "cn.needs_expert",
+        grounding: Grounding::Inferred {
+            from: "whether the retrieved evidence was sufficient to settle the \
+                   claim — set when citations are thin, absent, or in tension",
+        },
+        why: "The agent's assessment that a CN verdict needs a human. Weighted \
+              hardest of the three: the corpus is the least searchable in \
+              English, GB standards are often paywalled or PDF-only, and the \
+              药食同源 list authorises an INGREDIENT while saying nothing about \
+              claims made about it — a conflation the agent must flag, not \
+              resolve.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: "regulatory_lens_translator",
+        path: "explanation",
+        grounding: Grounding::Narrative,
+        why: "The prose the operator actually reads: why this claim lands \
+              differently in each market. It is the product of the whole \
+              exercise and it is also the channel a fabrication moves to once \
+              the structured fields are enforced — so it is scanned for \
+              regulatory-authority words whose market block returned no \
+              citations. See NARRATIVE_LEAKS.",
+        cross_check_sql: None,
+    },
 ];
 
 // ─── enforcement ───────────────────────────────────────────────────────
@@ -3712,7 +4129,15 @@ pub fn enforce(agent_id: &str, doc: &mut Value) -> Report {
         };
         let haystack = text.to_ascii_lowercase();
         let mut leaked = false;
-        for (block, rule) in NARRATIVE_LEAKS {
+        for (leak_agent, block, rule) in NARRATIVE_LEAKS {
+            // Rules belong to the document they were written about. Without
+            // this, every rule was adjudicated against every contracted
+            // agent, and a needle for a block the agent has never declared
+            // nulled its prose — `phylogeny`'s "divergence" against
+            // `regulatory_lens_translator`, whose subject that word IS.
+            if *leak_agent != agent_id {
+                continue;
+            }
             // Only a leak if that block is not actually sourced here.
             if block_is_sourced(block) == Some(true) {
                 continue;
@@ -4086,8 +4511,146 @@ mod tests {
         );
     }
 
-    /// The identification block must never rank above a judgement, whatever the
-    /// model claims about its own certainty.
+    // ── regulatory_lens_translator: the evaluation document ────────────────
+
+    /// A claim evaluation with real citations behind it.
+    fn evaluated_claim() -> Value {
+        json!({
+            "claim_id": "claim_1788945073542",
+            "candidate_text": "improves gut health",
+            "eu": {
+                "status": "not_allowed",
+                "basis": "Reg 1924/2006 Art. 10(1) — health claims require authorisation",
+                "rendered_text": null,
+                "needs_expert": false
+            },
+            "eu_evidence": {
+                "queries_run": ["EFSA authorised claims register gut health"],
+                "citations": [{
+                    "url": "https://ec.europa.eu/food/safety/labelling_nutrition/claims/register_en",
+                    "title": "EU Register of nutrition and health claims",
+                    "snippet": "Only claims authorised under Article 13 or 14 may be made.",
+                    "provision": "Reg (EC) 1924/2006 Art. 10(1)"
+                }]
+            },
+            "explanation": "The markets show real divergence here.",
+            "summary": "Not permitted as worded in the EU."
+        })
+    }
+
+    /// **The seam this document exists for.**
+    ///
+    /// A verdict must never inherit its citation's strength. Fold the two into
+    /// one block and `eu_provenance` reads `tool_verified` for a status no
+    /// search result ever stated — the `iucn_status` failure of
+    /// `docs/ABW_VERIFICATION_RECONCILIATION.md` §7.7, arriving on a food
+    /// label as a fabricated legal basis.
+    #[test]
+    fn a_regulatory_verdict_never_inherits_its_citations_strength() {
+        let mut doc = evaluated_claim();
+        enforce("regulatory_lens_translator", &mut doc);
+
+        assert_eq!(
+            doc.get("eu_evidence_provenance").and_then(|v| v.as_str()),
+            Some(PROV_TOOL),
+            "a citation that came back from web_search is tool_verified"
+        );
+        assert_eq!(
+            doc.get("eu_provenance").and_then(|v| v.as_str()),
+            Some(PROV_INFERRED),
+            "the verdict over those citations is a judgement, not a retrieval"
+        );
+        assert!(
+            strength(PROV_INFERRED) < strength(PROV_TOOL),
+            "the whole split is pointless if the two rank equally"
+        );
+        // And the verdict itself survives. It is the product.
+        assert_eq!(
+            doc.pointer("/eu/status").and_then(|v| v.as_str()),
+            Some("not_allowed")
+        );
+    }
+
+    /// An empty search is a gap, and must be distinguishable from a clearance.
+    #[test]
+    fn a_corpus_that_returned_nothing_is_a_gap_not_a_clearance() {
+        let mut doc = evaluated_claim();
+        doc["eu_evidence"]["citations"] = json!([]);
+        doc["eu"]["status"] = json!("not_evaluated");
+        // Prose must not name the authority it failed to reach.
+        doc["explanation"] = json!("No authorising provision was located.");
+        enforce("regulatory_lens_translator", &mut doc);
+
+        assert_eq!(
+            doc.get("eu_evidence_provenance").and_then(|v| v.as_str()),
+            Some(PROV_NO_MATCH),
+            "searched-and-found-nothing must not read as verified"
+        );
+        assert_ne!(
+            doc.get("eu_evidence_provenance").and_then(|v| v.as_str()),
+            Some(PROV_TOOL)
+        );
+    }
+
+    /// **The regression that made this scoping change necessary.**
+    ///
+    /// `divergence` is a `phylogeny` needle and this agent has no phylogeny
+    /// block. While the leak table was keyed on block name alone, the rule was
+    /// adjudicated anyway and nulled the prose — so the agent whose entire
+    /// subject is regulatory divergence could not use the word. That is a
+    /// check firing on correct output, which is worse than no check because it
+    /// gets switched off and the switching-off looks like cleanup.
+    #[test]
+    fn the_word_divergence_survives_in_the_agent_whose_subject_it_is() {
+        let mut doc = evaluated_claim();
+        doc["explanation"] = json!(
+            "The sharpest divergence is EU versus US: the same sentence is \
+             prohibited under one regime and permitted under another, and \
+             vulnerable consumer groups are treated differently again."
+        );
+        let report = enforce("regulatory_lens_translator", &mut doc);
+
+        assert!(
+            doc.get("explanation").and_then(|v| v.as_str()).is_some(),
+            "the explanation was nulled: a needle belonging to another \
+             agent's block is firing again. Violations: {:?}",
+            report.violations
+        );
+        assert!(
+            !report
+                .violations
+                .iter()
+                .any(|v| v.kind == ViolationKind::NarrativeLeak),
+            "no leak should be reported for honest regulatory prose"
+        );
+    }
+
+    /// Prose may not name an authority whose evidence block came back empty.
+    ///
+    /// The complement of the test above, and the reason the needles exist at
+    /// all: scoping the table must narrow it to the right agent, not disarm
+    /// it. A paragraph citing EFSA reads exactly like a register lookup, and
+    /// is the one thing a reader cannot check without opening the register.
+    #[test]
+    fn prose_may_not_cite_a_register_the_search_never_reached() {
+        let mut doc = evaluated_claim();
+        doc["eu_evidence"]["citations"] = json!([]);
+        doc["explanation"] =
+            json!("The EFSA register carries no authorised claim for this wording.");
+        let report = enforce("regulatory_lens_translator", &mut doc);
+
+        assert!(
+            doc.get("explanation").map(|v| v.is_null()).unwrap_or(false),
+            "prose naming EFSA survived with no EU citation behind it"
+        );
+        assert!(report
+            .violations
+            .iter()
+            .any(|v| v.kind == ViolationKind::NarrativeLeak));
+    }
+
+    /// The identification block must never rank above a judgement, whatever
+    /// the model claims about its own certainty.
     #[test]
     fn a_forage_identification_is_always_a_judgement() {
         let mut doc = serde_json::json!({
@@ -4166,7 +4729,7 @@ mod tests {
 
     #[test]
     fn provenance_values_are_closed() {
-        for (_, rule) in NARRATIVE_LEAKS {
+        for (_, _, rule) in NARRATIVE_LEAKS {
             let needle = match rule {
                 LeakRule::Word(w) => *w,
                 LeakRule::Quantity(u) => *u,
@@ -4179,13 +4742,101 @@ mod tests {
                  uppercase needle can never fire: {needle}"
             );
         }
-        for (block, _) in NARRATIVE_LEAKS {
+        // The block must exist **on the agent the rule names**, not merely
+        // somewhere in the corpus. The weaker check passed while every rule
+        // was silently being applied to every agent, which is precisely the
+        // bug it should have caught.
+        for (agent, block, _) in NARRATIVE_LEAKS {
             assert!(
-                FIELD_CONTRACTS.iter().any(|c| block_of(c.path) == *block),
-                "leak rule names block `{block}`, which no field contract \
-                 mentions — the rule can never be adjudicated"
+                FIELD_CONTRACTS
+                    .iter()
+                    .any(|c| c.agent_id == *agent && block_of(c.path) == *block),
+                "leak rule {agent}/{block} names a block that agent's own \
+                 field contracts do not mention — the rule can never be \
+                 adjudicated, and until it was agent-scoped it would instead \
+                 have fired against unrelated agents' prose"
             );
         }
+    }
+
+    /// Which agents can have prose that outruns their own evidence.
+    ///
+    /// An agent with `Sourced` blocks and a `Narrative` field needs leak rules
+    /// of its own, or the prose channel is unpoliced: every structured field
+    /// can be correctly enforced while the paragraph a person actually reads
+    /// asserts a retrieval that never happened. That is the exact route
+    /// `genome_profiler`'s fabrication took.
+    ///
+    /// Nine agents are in that position and only two have rules. **This is a
+    /// pre-existing gap that agent-scoping `NARRATIVE_LEAKS` revealed rather
+    /// than caused** — and the distinction matters, so it is worth being
+    /// precise about what changed.
+    ///
+    /// Before scoping, these agents were not covered either. They were
+    /// *adjudicated against `genome_profiler`'s needles*, because the table
+    /// was keyed on block name alone. So `football_analyst`'s prose was
+    /// checked for "karyotype" and "red list", and `weather_oracle`'s for
+    /// "diploid". None of those can fire on honest output in those domains,
+    /// and none of the words those agents could actually over-claim with were
+    /// checked at all. The coverage was zero and looked like twenty rules.
+    ///
+    /// A shrink-only list rather than a hard assertion, for the reason this
+    /// repo keeps arriving at: turning it red now would block unrelated work
+    /// behind eight agents' worth of domain vocabulary, and the pressure would
+    /// be to delete the check. Shrink-only means the debt is named, cannot
+    /// grow, and a new contracted agent must bring its own needles.
+    #[test]
+    fn narrative_leak_coverage_only_shrinks() {
+        /// Agents with `Sourced` blocks and unpoliced prose. Remove entries;
+        /// never add one.
+        const UNPOLICED_PROSE: &[&str] = &[
+            "enemy_sensor",
+            "football_analyst",
+            "forage_identify",
+            "forage_scout",
+            "hud_field_scout",
+            "prey_locator",
+            "video_analyst",
+            "weather_oracle",
+        ];
+
+        let mut unpoliced: Vec<&str> = Vec::new();
+        for c in FIELD_CONTRACTS {
+            if c.grounding != Grounding::Narrative || unpoliced.contains(&c.agent_id) {
+                continue;
+            }
+            let has_sourced = FIELD_CONTRACTS.iter().any(|o| {
+                o.agent_id == c.agent_id && matches!(o.grounding, Grounding::Sourced { .. })
+            });
+            let has_rules = NARRATIVE_LEAKS.iter().any(|(a, _, _)| *a == c.agent_id);
+            if has_sourced && !has_rules {
+                unpoliced.push(c.agent_id);
+            }
+        }
+
+        let fresh: Vec<&&str> = unpoliced
+            .iter()
+            .filter(|a| !UNPOLICED_PROSE.contains(a))
+            .collect();
+        assert!(
+            fresh.is_empty(),
+            "{:?} declare Sourced blocks and a Narrative field but no leak \
+             rules of their own. Add needles for the vocabulary that agent \
+             could over-claim with — the words a reader would take as proof \
+             the tool was consulted. Do not extend UNPOLICED_PROSE.",
+            fresh
+        );
+
+        let fixed: Vec<&&str> = UNPOLICED_PROSE
+            .iter()
+            .filter(|a| !unpoliced.contains(a))
+            .collect();
+        assert!(
+            fixed.is_empty(),
+            "{:?} now have leak rules — remove them from UNPOLICED_PROSE so \
+             the ratchet keeps its teeth",
+            fixed
+        );
     }
 
     /// No card may declare a provenance value the runtime cannot emit.

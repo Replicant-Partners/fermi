@@ -1377,6 +1377,22 @@ async fn run_migrations(db: &PgPool) {
         // (selection performance consolidation) updates these over time based on
         // observed selection outcomes. NULL = use platform defaults.
         "migrations/231_workspace_selection_weights.sql",
+        // 232 — extends `workspace_action_log_action_type_check`. The original
+        // constraint (mig-125) named six action types; `log_observation` and
+        // `identify` were then added as handlers without a migration, and the
+        // three DPP Studio actions after them. This formalises the full set.
+        //
+        // It was written but never registered here, which is why both DPP
+        // handlers wrap their action-log INSERT in `.ok()` and fall back to a
+        // generated UUID — the row was failing the constraint and the comment
+        // in `lens_actions.rs` says "migration 232 pending". Registering it is
+        // what makes those actions actually auditable.
+        "migrations/232_lens_action_types.sql",
+        // 234 — admits `evaluate_claims` to the same constraint. Unlike its
+        // three DPP neighbours, that action runs an agent against the live
+        // regulatory corpus and spends credits, so its log row is the audit
+        // anchor tying a stored regulatory verdict to who asked for it.
+        "migrations/234_evaluate_claims_action_type.sql",
     ];
 
     // Bootstrap the ledger before anything is recorded into it.
@@ -3992,6 +4008,14 @@ async fn main() {
         .route(
             "/api/workspaces/:workspace_id/actions/compare_lenses",
             post(handlers::workspace::lens_actions::compare_lenses_handler),
+        )
+        // The evaluating half of the DPP Studio. `compare_lenses` reads stored
+        // evaluations; this produces them by running the evaluator agent
+        // against the live regulatory corpus. Unlike its neighbours it costs
+        // credits and takes seconds, because it is a real agent run.
+        .route(
+            "/api/workspaces/:workspace_id/actions/evaluate_claims",
+            post(handlers::workspace::claim_evaluation::evaluate_claims_handler),
         )
         .route(
             "/api/workspaces/:workspace_id/actions/flag_divergence",

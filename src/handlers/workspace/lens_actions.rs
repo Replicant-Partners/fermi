@@ -92,6 +92,80 @@ async fn read_ruleset(
     })
 }
 
+// ─── stored agent evaluations ────────────────────────────────────────────────
+
+/// One market's verdict for one claim, as written by
+/// [`super::claim_evaluation`] after the grounding gate ran.
+///
+/// This is the primary source for a comparison. The ruleset YAMLs are a
+/// fallback and a weaker one: they are hand-authored and declared
+/// `synthetic_representative`, so a row served from them is a human's guess
+/// about a regime, not a reading of it.
+#[derive(Debug, serde::Deserialize)]
+struct StoredEvaluation {
+    status: String,
+    #[serde(default)]
+    basis: Option<String>,
+    #[serde(default)]
+    rendered_text: Option<String>,
+    #[serde(default)]
+    needs_expert: Option<bool>,
+    #[serde(default)]
+    provenance: StoredProvenance,
+    #[serde(default)]
+    citations: Vec<Value>,
+    /// The searches that were actually issued.
+    ///
+    /// Carried through because it is a substantial part of why a reader should
+    /// believe a verdict — "we searched the EFSA register for this wording and
+    /// it returned nothing" is a much stronger statement than "not permitted",
+    /// and it is the only field that makes a `tool_no_match` legible as work
+    /// done rather than work skipped.
+    #[serde(default)]
+    queries_run: Vec<Value>,
+    #[serde(default)]
+    explanation: Option<String>,
+    #[serde(default)]
+    evaluated_at: Option<String>,
+    /// A qualified reviewer's sign-off, or `None` if nobody has signed.
+    /// Distinct from a rejection, which is why this is not a bool.
+    #[serde(default)]
+    endorsement: Option<Value>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct StoredProvenance {
+    #[serde(default)]
+    verdict: Option<String>,
+    #[serde(default)]
+    evidence: Option<String>,
+}
+
+/// Read a stored evaluation, if the evaluator has produced one.
+///
+/// Workspace git only — no platform fallback, deliberately. An evaluation is
+/// something this workspace's agent did for this workspace's claim, against
+/// the corpus at a particular moment. A shipped copy would be exactly the
+/// pre-baked answer this handler is being fixed to stop serving.
+async fn read_stored_evaluation(
+    state: &AppState,
+    slug: &str,
+    market: Market,
+    claim_id: &str,
+) -> Option<StoredEvaluation> {
+    let path = format!(
+        "regulatory-lens/ontology/evaluated/{}/{claim_id}.yaml",
+        market.as_str().to_lowercase()
+    );
+    let git = state.workspace_git.clone();
+    let slug_s = slug.to_string();
+    let bytes = tokio::task::spawn_blocking(move || git.read_file_bytes(&slug_s, &path).ok())
+        .await
+        .ok()
+        .flatten()?;
+    serde_yaml::from_slice(&bytes).ok()
+}
+
 /// Classify the status family for divergence scoring.
 fn status_family(status: &str) -> &'static str {
     if status.starts_with("allowed") {
@@ -304,6 +378,23 @@ pub struct CompareLensesRequest {
     pub claim_id: Option<String>,
     pub override_source_claims: Option<Vec<OverrideClaim>>,
     pub source_message_id: Option<String>,
+    /// Fall back to the hand-authored ruleset YAMLs for claims that have no
+    /// stored evaluation.
+    ///
+    /// **Defaults to false, and that is a deliberate behaviour change.**
+    ///
+    /// The rulesets declare `data_status: synthetic_representative` — they are
+    /// a person's sketch of what each regime would say, written to demonstrate
+    /// the shape of the divergence. Serving them as the default made the app
+    /// look like it had evaluated seven claims when it had looked up five
+    /// hardcoded ids and could never have matched the other two, because the
+    /// UI mints claim ids as `claim_<timestamp>`.
+    ///
+    /// So the default is now: a claim is `not_evaluated` until the evaluator
+    /// has actually evaluated it. Pass `true` to see the seed rows, which
+    /// arrive tagged `synthetic_seed` and must be rendered as such.
+    #[serde(default)]
+    pub include_synthetic_seed: bool,
 }
 
 pub async fn compare_lenses_handler(
@@ -474,27 +565,72 @@ pub async fn compare_lenses_handler(
         let mut market_rows: Vec<Value> = Vec::new();
         let mut status_strs: Vec<String> = Vec::new();
 
-        // ── Ruleset cache lookup ────────────────────────────────────────────────────
-        // The rulesets are a cache of previously evaluated claims — either
-        // seeded from the platform rulesets or written back by the
-        // regulatory_lens_translator agent after a live corpus search.
+        // ── Where a row comes from, in order of authority ─────────────────────
         //
-        // Cache miss (not_in_ruleset): the claim has not been evaluated yet.
-        // The handler returns not_in_ruleset honestly. The UI surfaces this
-        // as a gap and prompts the user to invoke the agent for evaluation.
-        // The agent calls web_search against the actual regulatory corpus,
-        // returns a structured evaluation, and writes it back to the workspace
-        // as a new cache entry. Next run: cache hit.
+        //   1. a stored agent evaluation — the evaluator read the live corpus
+        //      for THIS claim and the grounding gate passed on the result
+        //   2. the ruleset YAML, only if the caller asked for it — a
+        //      hand-authored synthetic sketch, tagged as one
+        //   3. not_evaluated — nobody has looked yet
         //
-        // This handler is NOT the place to hardcode prohibited patterns.
-        // That would be static rules replacing a dynamic corpus — the same
-        // architectural mistake as static rulesets. The agent is the
-        // evaluator; this handler is the cache reader.
+        // What changed here, and why: this loop used to consult only (2), so a
+        // claim absent from the YAML came back `not_in_ruleset` with no way to
+        // ever become anything else, and the UI's prompt to "run
+        // regulatory_scanner" was text with no code behind it. The evaluator
+        // now has an endpoint (`POST /actions/evaluate_claims`) and writes
+        // here, so (1) exists and this reads it.
+        //
+        // Still NOT the place for a prohibited-pattern table. A rule list in
+        // this file would be the synthetic ruleset again, one layer down and
+        // harder to see. The corpus decides, the agent judges, this reads.
         for (market, rs) in market_rulesets.iter() {
             if !active_markets.contains(market) {
                 continue;
             }
-            match rs.rendering_for(&claim_id) {
+
+            if let Some(ev) = read_stored_evaluation(&state, &slug, *market, &claim_id).await {
+                status_strs.push(ev.status.clone());
+                // `endorsement` outranks the agent's own stamp: a qualified
+                // reviewer having signed the verdict is a stronger fact than
+                // how the verdict was reached.
+                let verdict_prov = if ev.endorsement.as_ref().is_some_and(|e| !e.is_null()) {
+                    grounding_trust::PROV_HUMAN_ENDORSED.to_string()
+                } else {
+                    ev.provenance
+                        .verdict
+                        .clone()
+                        .unwrap_or_else(|| grounding_trust::PROV_INFERRED.to_string())
+                };
+                market_rows.push(json!({
+                    "market": market.as_str(),
+                    "status": ev.status,
+                    "rendered_text": ev.rendered_text,
+                    "basis": ev.basis,
+                    "divergence_note": ev.explanation,
+                    "needs_expert": ev.needs_expert.unwrap_or(true),
+                    // Two stamps, never collapsed into one. The verdict is a
+                    // reading of the evidence and the evidence is what a tool
+                    // returned; a surface that shows one number for both is
+                    // claiming the reading was retrieved.
+                    "source": "agent_evaluation",
+                    "provenance": {
+                        "verdict": verdict_prov,
+                        "evidence": ev.provenance.evidence
+                            .clone()
+                            .unwrap_or_else(|| grounding_trust::PROV_UNAVAILABLE.to_string()),
+                    },
+                    "citations": ev.citations,
+                    "queries_run": ev.queries_run,
+                    "evaluated_at": ev.evaluated_at,
+                    "endorsed": ev.endorsement.as_ref().is_some_and(|e| !e.is_null()),
+                }));
+                continue;
+            }
+
+            match rs
+                .rendering_for(&claim_id)
+                .filter(|_| req.include_synthetic_seed)
+            {
                 Some(r) => {
                     status_strs.push(r.status.clone());
                     market_rows.push(json!({
@@ -503,24 +639,72 @@ pub async fn compare_lenses_handler(
                         "rendered_text": r.rendered_text,
                         "basis": r.basis,
                         "divergence_note": r.divergence_note,
+                        "needs_expert": true,
+                        // Named so a surface cannot render this like an
+                        // evaluated row. It is a hand-authored sketch of the
+                        // regime, and the ruleset says so in `data_status`.
+                        "source": "synthetic_seed",
+                        "provenance": {
+                            "verdict": "synthetic_seed",
+                            "evidence": grounding_trust::PROV_UNAVAILABLE,
+                        },
+                        // Emitted on every branch, so a consumer never has to
+                        // tell an absent key from an empty one.
+                        "citations": [],
+                        "queries_run": [],
+                        "evaluated_at": null,
+                        "endorsed": false,
                     }));
                 }
                 None => {
-                    status_strs.push("not_in_ruleset".to_string());
+                    // `not_evaluated`, not `not_in_ruleset`. The old token
+                    // described where the handler had looked; this one
+                    // describes what is true of the claim, and it is the token
+                    // the evaluator also emits, so one vocabulary covers both.
+                    status_strs.push("not_evaluated".to_string());
                     market_rows.push(json!({
                         "market": market.as_str(),
-                        "status": "not_in_ruleset",
+                        "status": "not_evaluated",
                         "rendered_text": null,
                         "basis": null,
                         "divergence_note": null,
+                        "needs_expert": true,
+                        "source": "none",
+                        "provenance": {
+                            "verdict": grounding_trust::PROV_UNAVAILABLE,
+                            "evidence": grounding_trust::PROV_UNAVAILABLE,
+                        },
+                        "citations": [],
+                        "queries_run": [],
+                        "evaluated_at": null,
+                        "endorsed": false,
+                        "action_required": "evaluate_claims",
                     }));
                 }
             }
         }
 
         let status_refs: Vec<&str> = status_strs.iter().map(|s| s.as_str()).collect();
-        let score = divergence_score(&status_refs);
         let is_demo_beat = claim_id == "hibiscus_wellness" || claim_id == "live_cultures_present";
+
+        // How many of the markets in scope actually have a verdict.
+        let evaluated_count = market_rows
+            .iter()
+            .filter(|r| r.get("status").and_then(|s| s.as_str()) != Some("not_evaluated"))
+            .count();
+        let fully_evaluated = evaluated_count == market_rows.len() && evaluated_count > 0;
+
+        // A divergence score across unknowns is not a low score, it is not a
+        // score. Three `not_evaluated` markets agree perfectly and mean
+        // nothing; emitting 0 there rendered as "no divergence" — an answer —
+        // when the truth is that nobody has looked. Null instead, so a surface
+        // has to decide what to show rather than being handed a reassuring
+        // number.
+        let score = if fully_evaluated {
+            Some(divergence_score(&status_refs))
+        } else {
+            None
+        };
 
         comparison_table.push(json!({
             "claim_id": claim_id,
@@ -528,6 +712,9 @@ pub async fn compare_lenses_handler(
             "claim_pressure": claim.get("claim_pressure"),
             "markets": market_rows,
             "divergence_score": score,
+            "evaluated_markets": evaluated_count,
+            "markets_in_scope": market_rows.len(),
+            "fully_evaluated": fully_evaluated,
             "demo_beat": is_demo_beat,
         }));
     }
@@ -567,6 +754,36 @@ pub async fn compare_lenses_handler(
         }
     });
 
+    // What the rows in this response actually rest on.
+    //
+    // `data_status` used to be copied straight from the EU ruleset, so every
+    // response said `synthetic_representative` regardless of what it
+    // contained. Now it reports the mix, because with the evaluator wired up a
+    // single response can legitimately carry agent-evaluated rows, synthetic
+    // seed rows and unevaluated ones at once, and a single label for all three
+    // is false whichever one it picks.
+    let mut row_sources: std::collections::BTreeMap<String, usize> = Default::default();
+    for row in comparison_table
+        .iter()
+        .filter_map(|c| c.get("markets").and_then(|m| m.as_array()))
+        .flatten()
+    {
+        let src = row
+            .get("source")
+            .and_then(|s| s.as_str())
+            .unwrap_or("none")
+            .to_string();
+        *row_sources.entry(src).or_insert(0) += 1;
+    }
+    let has_synthetic = row_sources.contains_key("synthetic_seed");
+    let has_evaluated = row_sources.contains_key("agent_evaluation");
+    let data_status = match (has_evaluated, has_synthetic) {
+        (true, true) => "mixed_agent_evaluated_and_synthetic_seed",
+        (true, false) => "agent_evaluated_against_live_corpus",
+        (false, true) => "synthetic_representative",
+        (false, false) => "unevaluated",
+    };
+
     let mut combined_output = json!({
         "source_product_id": product_id,
         "comparison_table": comparison_table,
@@ -576,7 +793,9 @@ pub async fn compare_lenses_handler(
             "markets": ingredient_divergence,
         },
         "verification_appendix": eu_rs.verify_sources,
-        "data_status": eu_rs.data_status,
+        "data_status": data_status,
+        "row_sources": row_sources,
+        "ruleset_data_status": eu_rs.data_status,
     });
 
     // Run grounding gate (EU ruleset as representative for appendix / data_status checks).
@@ -830,4 +1049,199 @@ pub async fn flag_divergence_handler(
         "action_id": action_id,
         "divergence_report": divergence_report,
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// **The seam between the two handlers.**
+    ///
+    /// `claim_evaluation` writes the per-market YAML; this module reads it back
+    /// to serve a comparison. Nothing else connects them — not a shared type,
+    /// not a schema, just a file path and a field layout agreed in two places.
+    ///
+    /// That is exactly the shape of the bug this app already had once. The UI
+    /// posted `{content, agent}` to a handler whose request struct had no
+    /// `agent` field, serde dropped it silently, and the feature looked wired
+    /// for as long as nobody checked. A writer and a reader that disagree about
+    /// a key behave identically: the value simply arrives as `None`, the row
+    /// renders as unevaluated, and the evaluation that cost real search calls
+    /// is invisible with no error anywhere.
+    ///
+    /// So this test does not check the YAML looks reasonable. It checks that
+    /// the bytes the writer actually produces deserialise into the reader's
+    /// struct with every consequential field populated.
+    #[test]
+    fn a_written_evaluation_is_readable_by_the_comparison_handler() {
+        let doc = json!({
+            "claim_id": "claim_1788945073542",
+            "candidate_text": "improves gut health",
+            "eu": {
+                "status": "not_allowed",
+                "basis": "Reg 1924/2006 Art. 10(1)",
+                "rendered_text": null,
+                "needs_expert": false
+            },
+            "eu_evidence": {
+                "queries_run": ["EFSA register gut health"],
+                "citations": [{
+                    "url": "https://ec.europa.eu/food/safety/labelling_nutrition/claims/register_en",
+                    "title": "EU Register of nutrition and health claims",
+                    "snippet": "Only authorised claims may be made.",
+                    "provision": "Art. 10(1)"
+                }]
+            },
+            "explanation": "Prohibited as worded in the EU.",
+            "eu_provenance": "model_inference",
+            "eu_evidence_provenance": "tool_verified"
+        });
+
+        let yaml = super::super::claim_evaluation::evaluation_yaml(
+            &doc,
+            "claim_1788945073542",
+            "eu",
+            Uuid::nil(),
+            "model_inference",
+            "tool_verified",
+        );
+
+        let read: StoredEvaluation = serde_yaml::from_str(&yaml)
+            .expect("the comparison handler cannot read what the evaluator wrote");
+
+        assert_eq!(read.status, "not_allowed");
+        assert_eq!(read.basis.as_deref(), Some("Reg 1924/2006 Art. 10(1)"));
+        assert_eq!(read.rendered_text, None, "a prohibited claim has no text");
+        assert_eq!(read.needs_expert, Some(false));
+        assert_eq!(read.citations.len(), 1, "the citation did not survive");
+
+        // The two stamps must arrive separately. Collapsing them is the one
+        // thing the document's shape exists to prevent.
+        assert_eq!(read.provenance.verdict.as_deref(), Some("model_inference"));
+        assert_eq!(read.provenance.evidence.as_deref(), Some("tool_verified"));
+
+        // Nobody has signed this off, and that must be distinguishable from a
+        // rejection rather than collapsing to `false`.
+        assert!(
+            read.endorsement.is_none() || read.endorsement == Some(Value::Null),
+            "an unsigned evaluation must not read as endorsed"
+        );
+        assert!(read.evaluated_at.is_some(), "no timestamp was written");
+    }
+
+    /// A searched-and-found-nothing market must not read as a clearance once it
+    /// has been through the file.
+    #[test]
+    fn an_empty_search_survives_the_round_trip_as_a_gap() {
+        let doc = json!({
+            "candidate_text": "proven to improve erectile dysfunction",
+            "cn": {
+                "status": "not_evaluated",
+                "basis": null,
+                "rendered_text": null,
+                "needs_expert": true
+            },
+            "cn_evidence": { "queries_run": ["SAMR ..."], "citations": [] }
+        });
+
+        let yaml = super::super::claim_evaluation::evaluation_yaml(
+            &doc,
+            "claim_1788945159688",
+            "cn",
+            Uuid::nil(),
+            "model_inference",
+            "tool_no_match",
+        );
+
+        let read: StoredEvaluation = serde_yaml::from_str(&yaml).expect("unreadable");
+        assert_eq!(read.status, "not_evaluated");
+        assert!(read.citations.is_empty());
+        assert_eq!(read.provenance.evidence.as_deref(), Some("tool_no_match"));
+        assert_eq!(
+            read.needs_expert,
+            Some(true),
+            "a gap that does not ask for a human is worse than no gap"
+        );
+    }
+
+    /// **The non-terminating drain.**
+    ///
+    /// A caller pages by re-requesting while `remaining > 0`. If the evaluator
+    /// omits a market block, and the writer therefore writes no file, that
+    /// claim stays a candidate forever and the queue never empties — the
+    /// client can only discover this by giving up. So a market the evaluator
+    /// did not answer for must still produce a readable record.
+    ///
+    /// It must also record which of the two things happened. "Asked, got no
+    /// answer for CN" and "nobody has asked yet" are different facts, and
+    /// collapsing them is the failure this whole pipeline is built to avoid.
+    #[test]
+    fn a_market_the_evaluator_skipped_is_still_recorded() {
+        // A reply with EU only. `cn` is absent entirely.
+        let doc = json!({
+            "candidate_text": "low in sugar",
+            "eu": { "status": "conditionally_allowed", "needs_expert": true },
+            "eu_evidence": { "citations": [] }
+        });
+
+        let yaml = super::super::claim_evaluation::evaluation_yaml(
+            &doc,
+            "low_sugar",
+            "cn",
+            Uuid::nil(),
+            "unavailable_no_tool_source",
+            "unavailable_no_tool_source",
+        );
+
+        let read: StoredEvaluation = serde_yaml::from_str(&yaml)
+            .expect("a skipped market produced nothing readable — the drain cannot terminate");
+        assert_eq!(
+            read.status, "not_evaluated",
+            "a market with no verdict must not inherit one"
+        );
+        assert!(read.citations.is_empty());
+        assert_eq!(
+            read.needs_expert,
+            Some(true),
+            "an unanswered market must ask for a human"
+        );
+
+        // And the record says the evaluator returned nothing for it, rather
+        // than looking like a considered `not_evaluated`.
+        let raw: serde_yaml::Value = serde_yaml::from_str(&yaml).expect("parse");
+        assert_eq!(
+            raw.get("market_block_returned").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+
+        // The market the evaluator DID answer for is marked the other way.
+        let eu = super::super::claim_evaluation::evaluation_yaml(
+            &doc,
+            "low_sugar",
+            "eu",
+            Uuid::nil(),
+            "model_inference",
+            "tool_no_match",
+        );
+        let raw_eu: serde_yaml::Value = serde_yaml::from_str(&eu).expect("parse");
+        assert_eq!(
+            raw_eu.get("market_block_returned").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+    }
+
+    /// `needs_expert` must default to the cautious value when the key is
+    /// missing, not to `false` via `Option::unwrap_or_default`.
+    #[test]
+    fn a_missing_expert_flag_does_not_default_to_safe() {
+        let yaml = "status: allowed\ncitations: []\n";
+        let read: StoredEvaluation = serde_yaml::from_str(yaml).expect("parse");
+        assert_eq!(read.needs_expert, None);
+        // The handler substitutes `true` for `None` when building the row.
+        assert!(
+            read.needs_expert.unwrap_or(true),
+            "an absent flag must be read as needing review"
+        );
+    }
 }

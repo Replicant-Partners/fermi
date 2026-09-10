@@ -202,6 +202,54 @@ td:first-child{width:190px}
 .pchip{display:inline-flex;align-items:center;gap:3px;margin-top:4px;font-size:9px;font-family:var(--mono);color:var(--t3);border:1px solid var(--b1);border-radius:2px;padding:1px 5px}
 .pchip.tv{color:var(--grn);border-color:rgba(34,197,94,.3)}.pchip.inf{color:var(--blu);border-color:rgba(96,165,250,.3)}
 .pchip.pen{color:var(--amb);border-color:rgba(245,158,11,.3)}
+/* ── provenance stamps ────────────────────────────────────────────────────
+   An evaluated market carries TWO stamps: how the verdict was reached and
+   whether a tool really returned the citations under it. They are never
+   merged, and `gap` (tool_no_match — searched, found nothing) is never
+   allowed to look greener than `tv`. */
+.pchip.end{color:var(--pur);border-color:rgba(167,139,250,.4)}
+.pchip.gap{color:var(--amb);border-color:rgba(245,158,11,.45);background:rgba(245,158,11,.06)}
+.pchip.syn{color:var(--t2);border-style:dashed;border-color:var(--b3)}
+.pchip.na{color:var(--t3);border-color:var(--b1)}
+.prov-stack{display:flex;flex-direction:column;align-items:flex-start;gap:2px;margin-top:4px}
+.flag-expert{display:inline-block;margin-top:4px;font-size:9px;font-weight:700;padding:2px 6px;border-radius:3px;background:rgba(245,158,11,.12);color:var(--amb);border:1px solid rgba(245,158,11,.35)}
+.flag-contra{display:block;margin-top:4px;font-size:9px;font-weight:700;padding:3px 6px;border-radius:3px;background:rgba(239,68,68,.1);color:var(--red);border:1px solid rgba(239,68,68,.35);line-height:1.45}
+details.cits{margin-top:5px}
+details.cits summary{font-size:9px;font-family:var(--mono);color:var(--blu);cursor:pointer;list-style:none}
+details.cits summary::-webkit-details-marker{display:none}
+details.cits summary::before{content:"\25b8 "}
+details.cits[open] summary::before{content:"\25be "}
+.cit{border-left:2px solid var(--b2);padding:3px 0 3px 7px;margin-top:4px}
+.cit a{font-size:10px;color:var(--blu);text-decoration:none;word-break:break-all}
+.cit a:hover{text-decoration:underline}
+.cit-prov{font-size:9px;font-family:var(--mono);color:var(--tea)}
+.cit-snip{font-size:10px;color:var(--t3);line-height:1.45;margin-top:2px}
+.q-list{margin-top:5px;font-size:9px;font-family:var(--mono);color:var(--t3);line-height:1.7;list-style:none}
+.q-list li::before{content:"\1f50d "}
+.q-none{font-size:9px;font-family:var(--mono);color:var(--t3);margin-top:4px}
+/* ── agent launch vs file read ────────────────────────────────────────────
+   btn-agent spends credits and issues real web searches. btn-cheap reads
+   three files. They must not look alike. */
+.btn-agent{background:rgba(20,184,166,.14);border:1px solid var(--tea);color:var(--tea);border-radius:5px;padding:6px 13px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:5px;font-family:inherit}
+.btn-agent:hover{background:rgba(20,184,166,.26)}
+.btn-agent:disabled{opacity:.45;cursor:not-allowed}
+.btn-agent.btn-sm{padding:3px 9px;font-size:11px;border-radius:4px}
+.btn-cheap{background:transparent;border:1px dashed var(--b3);color:var(--t2);border-radius:5px;padding:5px 11px;font-size:12px;font-weight:500;cursor:pointer;font-family:inherit}
+.btn-cheap:hover{border-color:var(--t2);color:var(--t1)}
+.btn-cheap:disabled{opacity:.4;cursor:not-allowed}
+.cost-note{font-size:9px;color:var(--t3);font-family:var(--mono);line-height:1.5}
+.sb-cost{background:rgba(20,184,166,.12);color:var(--tea)}
+/* evaluation run panel */
+.eval-panel{display:none;background:var(--s2);border:1px solid rgba(20,184,166,.3);border-left:3px solid var(--tea);border-radius:0 6px 6px 0;padding:11px 13px;margin-bottom:12px}
+.eval-panel.show{display:block}
+.eval-head{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;color:var(--tea)}
+.eval-bar{height:4px;background:var(--s3);border-radius:2px;margin-top:8px;overflow:hidden}
+.eval-bar-fill{height:100%;background:var(--tea);transition:width .3s}
+.eval-line{font-size:11px;color:var(--t2);margin-top:6px;line-height:1.5}
+.eval-fail{font-size:11px;color:var(--red);background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.25);border-radius:4px;padding:6px 8px;margin-top:6px;font-family:var(--mono);line-height:1.5;word-break:break-word}
+.eval-skip{font-size:10px;color:var(--t3);margin-top:5px;font-family:var(--mono);line-height:1.5}
+.eval-paths{font-size:9px;color:var(--t3);font-family:var(--mono);margin-top:6px;line-height:1.6;word-break:break-all}
+.unev-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:9px}
 .dnote{font-size:11px;color:var(--t3);margin-top:5px;border-left:2px solid var(--b1);padding-left:7px;display:none}
 tr:hover .dnote{display:block}
 .beat-box{background:var(--s2);border:1px solid var(--b1);border-left:3px solid var(--acc);border-radius:0 7px 7px 0;padding:14px 16px;margin-bottom:20px}
@@ -285,7 +333,18 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
   <div id="auth-status" style="font-size:11px;color:var(--t3);display:flex;align-items:center;gap:8px">
     <span class="spinner"></span> Checking login…
   </div>
-  <button class="btn" id="run-btn" onclick="runLive()" style="display:none">Run comparison</button>
+  <!-- Run comparison is three file reads. It is styled as the cheap thing it is;
+       the agent launch (btn-agent) is the one that spends credits. -->
+  <div id="run-group" style="display:none;align-items:center;gap:8px">
+    <div style="display:flex;flex-direction:column;gap:1px">
+      <button class="btn-cheap" id="run-btn" onclick="runLive()">Run comparison</button>
+      <span class="cost-note">reads stored evaluations · free · instant · no agent</span>
+    </div>
+    <label style="display:flex;align-items:center;gap:5px;font-size:10px;color:var(--t3);cursor:pointer" title="The three ruleset YAMLs are data_status: synthetic_representative — hand-authored sketches. Off by default.">
+      <input type="checkbox" id="seed-toggle" onchange="runLive()" style="accent-color:var(--amb);cursor:pointer">
+      include hand-authored seed rows
+    </label>
+  </div>
   <!-- For third-party embedding: pass ?token=ferm_... to authenticate without cookies -->
 </div>
 
@@ -316,9 +375,30 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
 
   <!-- Claims tab -->
   <div class="sb-panel hidden" id="tab-claims">
+    <div class="sh"><span class="sh-label">Regulatory Evaluator</span><span class="sh-rule"></span></div>
+    <!-- Same card pattern as supply_chain_oracle: this is the same class of
+         thing — an agent that runs, costs credits, and returns sourced work. -->
+    <div class="sco-card" id="rlt-card">
+      <div class="sco-header">
+        <span class="sco-icon">⚖</span>
+        <span class="sco-name">regulatory_lens_translator</span>
+        <span class="sco-badge sb-cost" id="rlt-badge">spends credits</span>
+      </div>
+      <div class="sco-desc">
+        Evaluates each claim against the <strong>live regulatory corpus</strong> with
+        <code style="color:var(--blu);font-size:10px">web_search</code> — EFSA register and Reg 1924/2006, 21 CFR 101 and FTC substantiation guidance, SAMR announcements and the GB standards. Returns a per-market verdict with the citations it actually retrieved, gated by <code style="color:var(--blu);font-size:10px">grounding_trust::enforce</code> before anything is stored.
+      </div>
+      <button class="btn-agent eval-launch" id="rlt-run-btn" onclick="evaluateUnevaluated()" style="width:100%;justify-content:center">⚡ Evaluate claims →</button>
+      <div class="cost-note" style="margin-top:5px">
+        real web searches · up to ~210s per claim · 3 claims per batch · charges the workspace wallet
+      </div>
+      <div class="sco-prov">verdict: model_inference · citations: tool_verified | tool_no_match · written to regulatory-lens/ontology/evaluated/</div>
+      <div id="rlt-result" class="sco-result"></div>
+    </div>
+
     <div class="sh"><span class="sh-label">Source Claims</span><span class="sh-rule"></span><span style="font-size:9px;color:var(--t3)">dpp/claims.yaml</span></div>
     <div style="font-size:10px;color:var(--t2);margin-bottom:10px;line-height:1.5">
-      What you want to <em>say</em> about the product. Each claim is tested against EU, US, and China rules. Save and run the comparison to see how each renders.
+      What you want to <em>say</em> about the product. Write the claims here, save them, then launch the evaluator above — nothing is evaluated until an agent has actually looked.
     </div>
     <div id="claims-cards-container">
       <div style="font-size:11px;color:var(--t3);padding:12px;background:var(--s2);border:1px solid var(--b1);border-radius:6px">
@@ -331,7 +411,7 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
     <div class="claims-footer" id="claims-footer" style="display:none">
       <span class="claims-save-status" id="claims-save-status"></span>
       <button class="btn-g btn-sm" onclick="saveClaimsFromCards(false)">Save</button>
-      <button class="btn btn-sm" onclick="saveClaimsFromCards(true)">Save &amp; run</button>
+      <button class="btn-cheap btn-sm" onclick="saveClaimsFromCards(true)" title="Saves the claims, then re-reads stored evaluations. Does not run an agent.">Save &amp; re-read</button>
     </div>
   </div>
 
@@ -373,10 +453,11 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
       <div class="sco-desc">
         Uses <code style="color:var(--blu);font-size:10px">web_search</code> to get real current mid-market prices for every ingredient in the DPP composition. Prices are <strong>sourced from live web data</strong> — not generated. Returns risk flags (single_source, seasonal, substitution_risk…) as model inference over the sourced prices.
       </div>
-      <div style="display:flex;gap:6px;margin-bottom:8px">
+      <div style="display:flex;gap:6px;margin-bottom:5px">
         <button class="btn btn-sm" id="sco-hire-btn" onclick="hireOracle()" style="flex:1">Hire agent →</button>
-        <button class="btn-g btn-sm" id="sco-run-btn" onclick="runBOM()" style="flex:1;display:none">Run BOM pricing</button>
+        <button class="btn-agent btn-sm" id="sco-run-btn" onclick="runBOM()" style="flex:1;justify-content:center;display:none">⚡ Run BOM pricing</button>
       </div>
+      <div class="cost-note" style="margin-bottom:8px">real web searches · charges the workspace wallet</div>
       <div class="sco-prov">items: sourced (web_search) · risks: model_inference · summary: model_inference</div>
       <div id="sco-result" class="sco-result"></div>
     </div>
@@ -422,15 +503,20 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
     <div class="sbar">
       <span class="sd sd-demo" id="sb-dot"></span>
       <span id="sb-text">Demo mode</span>
-      <span class="pill sy" id="sb-data">⚠ synthetic data</span>
+      <span class="pill sy" id="sb-data">⚠ no data yet</span>
       <span class="pill ok" id="sb-gate">✓ gate clean · 0 violations</span>
-      <span style="color:var(--t3);font-size:10px">rendered_claims:</span>
-      <span style="font-family:var(--mono);font-size:10px;color:var(--grn)">tool_verified</span>
+      <span style="color:var(--t3);font-size:10px">row sources:</span>
+      <span id="sb-sources" style="font-family:var(--mono);font-size:10px;color:var(--t3)">—</span>
     </div>
 
-    <!-- Warning: claims not found in any ruleset -->
-    <div id="unevaluated-banner" style="display:none;align-items:flex-start;gap:10px;padding:9px 13px;background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.3);border-radius:6px;font-size:12px;color:var(--red);margin-bottom:12px;line-height:1.5">
+    <!-- Gap banner: claims nobody has evaluated yet. Amber, not red and never
+         green — "nobody looked" is a gap, not a failure and not a clearance.
+         Carries the launch affordance for regulatory_lens_translator. -->
+    <div id="unevaluated-banner" style="display:none;flex-direction:column;padding:10px 13px;background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.32);border-radius:6px;font-size:12px;color:var(--amb);margin-bottom:12px;line-height:1.5">
     </div>
+
+    <!-- Live progress for an evaluate_claims drain (batches of 3) -->
+    <div class="eval-panel" id="eval-panel"></div>
 
     <div class="cascade-banner" id="cascade-banner">
       <span>⚡</span><span id="cascade-text"></span>
@@ -470,9 +556,7 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
 
     <div class="sh"><span class="sh-label">Verification Appendix</span><span class="sh-rule"></span></div>
     <div class="va">
-      <p class="va-intro">
-        This DPP uses <strong>structurally representative</strong> rulesets — the regulatory logic is accurate; specific wording and thresholds must be verified before commercial use. The next enrichment step: run <code style="color:var(--blu);font-size:11px">regulatory_scanner</code> against each jurisdiction to pull live web citations from the sources below.
-      </p>
+      <p class="va-intro" id="va-intro"></p>
       <ul class="va-list" id="va-list"></ul>
     </div>
 
@@ -559,7 +643,7 @@ async function checkAuth() {
       statusEl.innerHTML = `✓ <strong style="color:var(--t1)">${esc(name)}</strong>
         <span style="color:var(--t3)">|</span>
         <a href="/auth/logout" style="color:var(--t3);font-size:10px" onclick="return confirmLogout()">sign out</a>`;
-      document.getElementById('run-btn').style.display = '';
+      document.getElementById('run-group').style.display = 'flex';
       fetchWorkspaces();
     } else {
       currentUser = null;
@@ -784,14 +868,26 @@ function renderClaimsCards() {
   container.innerHTML = claimsData.map((c, i) => {
     const pressureClass = {high:'cp-high',medium:'cp-medium',low:'cp-low'}[c.claim_pressure] ?? 'cp-medium';
     const isBeat = c.claim_pressure === 'high';
+    // Evaluation state for this claim, as reported by the last comparison.
+    const cmp = (sourceClaims ?? []).find(r => r.claim_id === c.id);
+    const gaps = cmp ? (cmp.markets ?? []).filter(m => m.status === 'not_evaluated' || m.source === 'none').length : 0;
+    const evalTag = !cmp
+      ? `<span class="claim-status">${c.status||'draft'}</span>`
+      : gaps
+        ? `<span class="claim-status" style="color:var(--amb)" title="${gaps} market(s) have no verdict.">⚠ ${gaps} gap${gaps===1?'':'s'}</span>`
+        : `<span class="claim-status" style="color:var(--grn)" title="Every market in scope has a stored agent evaluation.">✓ evaluated</span>`;
+    const evalBtn = (cmp && gaps)
+      ? `<button class="btn-agent btn-sm eval-launch" style="width:100%;justify-content:center;margin-bottom:7px"
+           onclick="evaluateOneClaim('${jsq(c.id)}')" title="Runs ${EVALUATOR} over live web searches. Spends credits, up to ~210s.">⚡ Evaluate this claim</button>` : '';
     return `<div class="claim-card" id="cc-${i}">
       <div class="claim-card-head" onclick="toggleClaimCard(${i})">
         ${isBeat ? '<span class="claim-beat-star">\u2605</span>' : ''}
         <span class="claim-text">"${esc(c.candidate_text || 'Empty claim \u2014 click to edit')}"</span>
         <span class="claim-pressure ${pressureClass}">${c.claim_pressure||'medium'}</span>
-        <span class="claim-status">${c.status||'draft'}</span>
+        ${evalTag}
       </div>
       <div class="claim-edit-body">
+        ${evalBtn}
         <div class="claim-field">
           <label>Claim text</label>
           <textarea oninput="updateClaim(${i},'candidate_text',this.value)">${esc(c.candidate_text||'')}</textarea>
@@ -1182,11 +1278,10 @@ async function testClaim(i) {
         id: c.claim_id,
         candidate_text: j === i ? newText : c.candidate_text
       }));
-      const res = await fetch(`${base()}/api/workspaces/${wsId()}/actions/compare_lenses`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json',  },
-        body: JSON.stringify({ source_product_id: 'precision_kombucha_hibiscus_f2', override_source_claims: overrides })
-      });
+      const res = await fetch(`${base()}/api/workspaces/${wsId()}/actions/compare_lenses`,
+        fetchOpts('POST', { source_product_id: 'precision_kombucha_hibiscus_f2',
+                            override_source_claims: overrides,
+                            include_synthetic_seed: includeSyntheticSeed() }));
       if (!res.ok) throw new Error(await res.text());
       renderAll(await res.json(), true);
     } catch(e) {
@@ -1269,12 +1364,16 @@ async function hireOracle() {
   const btn = document.getElementById('sco-hire-btn');
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Hiring…';
   try {
-    const res = await fetch(`${base()}/api/workspaces/${wsId()}/hire`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json',  },
-      body: JSON.stringify({ agent_name: 'supply_chain_oracle' })
-    });
-    if (!res.ok && !res.status === 409) throw new Error(await res.text());
+    // HireAddRequest { agent_id: AgentRef, include_optional: bool } — the field
+    // is `agent_id`, and AgentRef is #[serde(untagged)] Uuid | Handle, so the
+    // handle string is accepted. The old body sent `agent_name`, which is not
+    // a field on the struct: 422.
+    const res = await fetch(`${base()}/api/workspaces/${wsId()}/hire`,
+      fetchOpts('POST', { agent_id: 'supply_chain_oracle' }));
+    // 409 CONFLICT is the handler saying "already in this workspace" — success
+    // for our purposes. (The old `!res.status === 409` was always false:
+    // !res.status coerces the number to a boolean first.)
+    if (!res.ok && res.status !== 409) throw new Error(await res.text());
     oracleHired = true;
     document.getElementById('sco-badge').textContent = '✓ hired';
     document.getElementById('sco-badge').className = 'sco-badge sb-hired';
@@ -1309,34 +1408,74 @@ async function runBOM() {
     ],
     currency: 'EUR'
   };
+  const resultEl = document.getElementById('sco-result');
   try {
-    // Send the BOM query to the agent
-    await fetch(`${base()}/api/workspaces/${wsId()}/messages`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json',  },
-      body: JSON.stringify({ content: JSON.stringify(bomQuery), agent: 'supply_chain_oracle' })
-    });
-    // Poll for response
+    // PostMessageRequest { content, message_type, metadata } — there is no
+    // `agent` field and no deny_unknown_fields, so the old body's
+    // `agent: 'supply_chain_oracle'` was discarded silently and no agent ran.
+    //
+    // The invocation is declared the way the handler actually reads it:
+    // message_type == "agent_invocation" makes `metadata.target_agent`
+    // authoritative (messages.rs:296-314). `metadata.query` is omitted on
+    // purpose — the handler falls back to `req.content` for the query
+    // (`.unwrap_or(&req.content)`), so the BOM JSON is carried once rather
+    // than duplicated into the message row.
+    const postRes = await fetch(`${base()}/api/workspaces/${wsId()}/messages`,
+      fetchOpts('POST', {
+        content: JSON.stringify(bomQuery),
+        message_type: 'agent_invocation',
+        metadata: { target_agent: 'supply_chain_oracle' }
+      }));
+    if (!postRes.ok) throw new Error(`invocation rejected (${postRes.status}): ${await postRes.text()}`);
+    const posted = await postRes.json();
+    // Anchor the delta query on the server's own timestamp for our message, so
+    // clock skew cannot make us miss or replay the reply.
+    let since = posted.created_at ?? new Date().toISOString();
+
+    resultEl.innerHTML = '<div style="font-size:11px;color:var(--t3)"><span class="spinner"></span> supply_chain_oracle running — web_search per BOM line…</div>';
+
     let response = null;
-    for (let i = 0; i < 20; i++) {
+    let hardFailure = null;
+    for (let i = 0; i < 20 && !response && !hardFailure; i++) {
       await new Promise(r => setTimeout(r, 2000));
-      const poll = await fetch(`${base()}/api/workspaces/${wsId()}/messages?limit=10`, {
-        headers: {  }
-      });
+      // Delta query rather than re-fetching the last 10 messages.
+      const poll = await fetch(`${base()}/api/workspaces/${wsId()}/messages/poll?since=${encodeURIComponent(since)}`,
+        { credentials:'include', headers: authHeaders() });
       if (!poll.ok) continue;
-      const msgs = await poll.json();
-      const agentMsg = (msgs.messages ?? []).find(m => m.sender_type === 'agent' && m.sender_name === 'supply_chain_oracle');
-      if (agentMsg?.content) {
-        try {
-          const json = JSON.parse(agentMsg.content.match(/\{[\s\S]*\}/)?.[0] ?? agentMsg.content);
-          response = json; break;
-        } catch { /* keep polling */ }
+      const fresh = (await poll.json()).messages ?? [];
+      if (!fresh.length) continue;
+      // Advance the cursor so each message is considered once.
+      const newest = fresh[fresh.length - 1]?.created_at;
+      if (newest) since = newest;
+      for (const m of fresh) {
+        // Match on sender_id (the agent_name the result message is written
+        // under) — NOT sender_name, which is the display_alias and may differ.
+        if (m.sender_type === 'agent' && m.sender_id === 'supply_chain_oracle'
+            && m.message_type === 'execution_result') {
+          if (m.metadata?.error) { hardFailure = m.content || 'the agent run failed'; break; }
+          // raw_response is the verbatim LLM output; `content` may carry an
+          // appended **Evidence:** block (format_execution_result_content).
+          const text = m.metadata?.raw_response || m.content || '';
+          try {
+            response = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? text);
+          } catch {
+            hardFailure = `the agent replied but the reply was not JSON:\n${text.slice(0, 400)}`;
+          }
+          break;
+        }
+        // The two ways this silently stalled before: the agent is not in the
+        // workspace, or it is missing a required secret. Both arrive as system
+        // messages and both used to be invisible behind a 40s timeout.
+        if (m.sender_type === 'system' && /not in this workspace|needs credentials/i.test(m.content ?? '')) {
+          hardFailure = m.content; break;
+        }
       }
     }
     if (response) renderBOMResult(response);
-    else document.getElementById('sco-result').innerHTML = '<div style="font-size:11px;color:var(--amb)">Agent response timed out. The agent may still be running — check the workspace messages.</div>';
+    else if (hardFailure) resultEl.innerHTML = `<div style="font-size:11px;color:var(--red);line-height:1.5;white-space:pre-wrap">${esc(hardFailure)}</div>`;
+    else resultEl.innerHTML = '<div style="font-size:11px;color:var(--amb)">No reply within 40s. The agent may still be running — check the workspace messages.</div>';
   } catch(e) {
-    document.getElementById('sco-result').innerHTML = `<div style="font-size:11px;color:var(--red)">Error: ${esc(e.message)}</div>`;
+    resultEl.innerHTML = `<div style="font-size:11px;color:var(--red)">Error: ${esc(e.message)}</div>`;
   } finally {
     btn.disabled = false; btn.textContent = 'Run BOM pricing';
   }
@@ -1376,13 +1515,194 @@ function renderBOMResult(data) {
     <div style="font-size:9px;color:var(--t3);margin-top:6px">risks: model_inference · summary: model_inference</div>`;
 }
 
+// ── claim evaluation · regulatory_lens_translator ───────────────────────────
+// POST /api/workspaces/:id/actions/evaluate_claims
+//
+// This is the expensive half of the app and the only one that produces a
+// verdict. It runs a real agent over real web searches (up to ~210s per claim,
+// PER_CLAIM_TIMEOUT_SECS in claim_evaluation.rs) and charges the workspace
+// wallet, so it gets no client-side timeout, a live progress state, and every
+// failure is shown with its error text.
+//
+// compare_lenses only *reads* what this wrote. That is why the two controls do
+// not look alike.
+
+const EVALUATOR = 'regulatory_lens_translator';
+const MAX_CLAIMS_PER_REQUEST = 3;  // MAX_CLAIMS_PER_REQUEST, claim_evaluation.rs
+const EVAL_BATCH_CEILING = 12;     // loop guard — see drainEvaluation()
+
+// Evaluation documents from this session's runs, keyed by claim_id. This is
+// the only place `queries_run` is available: compare_lenses' market rows carry
+// `citations` but not the searches that produced them.
+let evalDocs = {};
+let evalRun = null;
+let evalTicker = null;
+
+// Markets in scope follow the jurisdiction filter, so a user looking at one
+// market is not charged for three.
+function evalMarkets() { return activeJuri === 'all' ? ['EU','US','CN'] : [activeJuri]; }
+
+function unevaluatedClaimIds(rows) {
+  return (rows ?? sourceClaims ?? [])
+    .filter(r => (r.markets ?? []).some(m => m.status === 'not_evaluated' || m.source === 'none'))
+    .map(r => r.claim_id).filter(Boolean);
+}
+
+function evalPanelHTML() {
+  if (!evalRun) return '';
+  const r = evalRun;
+  const known = Math.max(r.total, r.done + (r.remaining || 0));
+  const secs = Math.round((Date.now() - r.startedAt) / 1000);
+  const pct = known ? Math.min(100, Math.round((r.done / known) * 100)) : (r.active ? 4 : 100);
+  const head = r.active
+    ? `<div class="eval-head"><span class="spinner"></span> ${EVALUATOR} · evaluating ${esc(r.label)} · ${r.done}/${known || '?'} · ${secs}s</div>`
+    : `<div class="eval-head">${r.failed.length ? '⚠' : '✓'} ${EVALUATOR} · ${r.done} claim${r.done===1?'':'s'} evaluated in ${secs}s</div>`;
+  const bar = `<div class="eval-bar"><div class="eval-bar-fill" style="width:${pct}%"></div></div>`;
+  const scope = `<div class="eval-line">markets: <span style="font-family:var(--mono)">${r.markets.join(' · ')}</span>
+    · batch ${r.batches} of at most ${EVAL_BATCH_CEILING} · ${MAX_CLAIMS_PER_REQUEST} claims per request
+    · server reports <strong>${r.remaining}</strong> still in scope</div>`;
+  const waiting = r.active
+    ? `<div class="eval-line" style="color:var(--t3)">web_search against the EFSA register, 21 CFR / FTC guidance and SAMR / GB standards. Up to ~210s per claim — this request is deliberately not timed out client-side.</div>`
+    : '';
+  // failed[] is surfaced with its error text, never swallowed.
+  const failed = r.failed.map(f => `<div class="eval-fail">✖ ${esc(f.claim_id ?? 'unknown claim')} — ${esc(f.error ?? 'no error text returned')}</div>`).join('');
+  const skipped = r.skipped.length
+    ? `<div class="eval-skip">skipped: ${r.skipped.map(s => `${esc(s.claim_id)} (${esc(s.reason ?? 'no reason')})`).join(' · ')}</div>` : '';
+  const notes = r.notes.map(n => `<div class="eval-line" style="color:var(--amb)">⚠ ${esc(n)}</div>`).join('');
+  const paths = r.written.length
+    ? `<div class="eval-paths">committed: ${r.written.map(esc).join('<br>')}</div>` : '';
+  const gate = r.violations
+    ? `<div class="eval-line" style="color:var(--amb)">⚠ grounding gate: ${r.violations} violation(s) — fields the agent could not ground were nulled before storage.</div>`
+    : '';
+  return head + bar + scope + waiting + notes + failed + skipped + gate + paths;
+}
+
+function renderEvalPanel() {
+  const html = evalPanelHTML();
+  const panel = document.getElementById('eval-panel');
+  if (panel) { panel.innerHTML = html; panel.classList.toggle('show', !!evalRun); }
+  const side = document.getElementById('rlt-result');
+  if (side) side.innerHTML = html;
+}
+
+function evaluateUnevaluated() {
+  const pending = unevaluatedClaimIds();
+  drainEvaluation({
+    claimIds: null,               // let the handler pick the unevaluated ones
+    force: false,
+    total: pending.length,        // best known estimate; refined from `remaining`
+    label: pending.length ? `${pending.length} unevaluated claim${pending.length===1?'':'s'}` : 'unevaluated claims',
+  });
+}
+
+function evaluateOneClaim(claimId) {
+  drainEvaluation({ claimIds: [claimId], force: false, total: 1, label: claimId });
+}
+
+function reEvaluateClaim(claimId) {
+  if (!confirm(`Re-evaluate "${claimId}" from scratch?\n\nThis discards the stored verdict for the markets in scope and runs ${EVALUATOR} again over live web searches. It costs credits and takes up to ~210s.`)) return;
+  drainEvaluation({ claimIds: [claimId], force: true, total: 1, label: claimId + ' (forced)' });
+}
+
+// Drain the evaluation queue in batches of MAX_CLAIMS_PER_REQUEST.
+//
+// Two modes, and the difference matters:
+//   claimIds === null  — the handler picks candidates. We re-call while it
+//                        reports `remaining`, and stop if a batch touches no
+//                        claim we have not already attempted.
+//   claimIds given     — we chunk client-side and never re-send an id. With
+//                        force:true the server would otherwise hand back the
+//                        same first three claims forever, since a forced claim
+//                        never leaves the candidate set.
+async function drainEvaluation({ claimIds, force, total, label }) {
+  const id = wsId();
+  if (!isLiveMode()) { alert('Select a product workspace first — evaluation runs against its claims and wallet.'); return; }
+  if (evalRun?.active) { alert('An evaluation run is already in flight.'); return; }
+  if (claimIds && !claimIds.length) { alert('Nothing to evaluate.'); return; }
+
+  const markets = evalMarkets();
+  evalRun = { active:true, label: label ?? 'claims', markets, done:0, total: total ?? 0,
+              remaining:0, batches:0, failed:[], skipped:[], written:[], notes:[],
+              violations:0, startedAt: Date.now() };
+  document.querySelectorAll('.eval-launch').forEach(b => { b.disabled = true; });
+  renderEvalPanel();
+  if (evalTicker) clearInterval(evalTicker);
+  evalTicker = setInterval(renderEvalPanel, 1000);
+
+  const queue = claimIds ? claimIds.slice() : null;
+  const attempted = new Set();
+  try {
+    for (let b = 0; b < EVAL_BATCH_CEILING; b++) {
+      let chunk = null;
+      if (queue) {
+        chunk = queue.splice(0, MAX_CLAIMS_PER_REQUEST);
+        if (!chunk.length) break;
+      }
+      const body = { markets, force: !!force };
+      if (chunk) body.claim_ids = chunk;
+      evalRun.batches = b + 1;
+      renderEvalPanel();
+
+      // No client-side timeout: one claim can legitimately take ~210s.
+      const res = await fetch(`${base()}/api/workspaces/${id}/actions/evaluate_claims`,
+        fetchOpts('POST', body));
+      if (!res.ok) {
+        evalRun.failed.push({ claim_id: chunk ? chunk.join(', ') : '(handler-selected batch)',
+                              error: `HTTP ${res.status}: ${(await res.text()).slice(0, 500)}` });
+        break;
+      }
+      const data = await res.json();
+
+      for (const e of (data.evaluated ?? [])) {
+        if (e.claim_id) evalDocs[e.claim_id] = e.document ?? {};
+        evalRun.done += 1;
+        evalRun.violations += e.grounding?.violation_count ?? 0;
+      }
+      evalRun.failed.push(...(data.failed ?? []));
+      evalRun.skipped.push(...(data.skipped ?? []));
+      evalRun.written.push(...(data.written_paths ?? []));
+      evalRun.remaining = data.remaining ?? 0;
+      if (data.note) evalRun.notes.push(data.note);
+      // The handler returns the evaluations even when the git commit failed.
+      // Say so: compare_lenses will not find them.
+      if (data.persistence_error) evalRun.notes.push(data.persistence_error);
+      renderEvalPanel();
+
+      const touched = [...(data.evaluated ?? []), ...(data.failed ?? []), ...(data.skipped ?? [])]
+        .map(x => x.claim_id).filter(Boolean);
+      const fresh = touched.filter(t => !attempted.has(t));
+      touched.forEach(t => attempted.add(t));
+
+      if (queue) { if (!queue.length) break; continue; }
+      if (!evalRun.remaining) break;
+      if (!fresh.length) {
+        evalRun.notes.push(`The handler still reports ${evalRun.remaining} claim(s) in scope but the last batch made no progress on a new claim — stopping rather than looping. Launch again to retry.`);
+        break;
+      }
+      if (b === EVAL_BATCH_CEILING - 1 && evalRun.remaining) {
+        evalRun.notes.push(`Stopped after ${EVAL_BATCH_CEILING} batches with ${evalRun.remaining} claim(s) still unevaluated. Launch again to continue.`);
+      }
+    }
+  } catch(e) {
+    evalRun.failed.push({ claim_id: null, error: `network/transport: ${e.message}` });
+  } finally {
+    evalRun.active = false;
+    if (evalTicker) { clearInterval(evalTicker); evalTicker = null; }
+    renderEvalPanel();
+    document.querySelectorAll('.eval-launch').forEach(b => { b.disabled = false; });
+  }
+  // Re-read the comparison so the table now serves the stored evaluations.
+  await runLive();
+  renderEvalPanel();
+}
+
 // ── knowledge build timeline ────────────────────────────────────────────────
 const KB = [
   { s:'ok',   t:'Composition loaded',          d:'precision_kombucha_hibiscus_f2.yaml from workspace git', a:'lens_actions::compare_lenses_handler' },
   { s:'ok',   t:'Rulesets loaded (3 markets)', d:'eu_reg_1924.yaml · us_fda_ftc.yaml · cn_gb_samr.yaml',   a:'workspace_git.read_file_bytes' },
   { s:'ok',   t:'Grounding gate ran',          d:'gate_lens_output · 5 claims · 0 violations · tool_verified', a:'lens_rendering::gate_lens_output' },
   { s:'ok',   t:'Comparison committed',        d:'regulatory-lens/comparisons/three-lens.json', a:'workspace_git.commit_file' },
-  { s:'pend', t:'Web search verification',     d:'EFSA register · 21 CFR updates · SAMR announcements', a:'regulatory_scanner · web_search', id:'web' },
+  { s:'pend', t:'Web search verification',     d:'EFSA register · 21 CFR updates · SAMR announcements', a:'regulatory_lens_translator · web_search · POST /actions/evaluate_claims', id:'web' },
   { s:'wait', t:'Expert endorsement',          d:'Regulatory consultant review · human-in-the-loop sign-off', a:'pending_human_check → human_endorsed', id:'expert' },
 ];
 let endorsed = {};
@@ -1393,7 +1713,11 @@ function renderKB() {
   const dotClass = { ok:'d-ok', pend:'d-pend', wait:'d-wait', endorsed:'d-end' };
   const dotIcon  = { ok:'✓', pend:'○', wait:'·', endorsed:'★' };
   el.innerHTML = KB.map(item => {
-    const st = (item.id && endorsed[item.id]) ? 'endorsed' : item.s;
+    // The 'web' step is done once at least one row is served from a stored
+    // agent evaluation — read from row_sources, not asserted.
+    const st = (item.id && endorsed[item.id]) ? 'endorsed'
+      : (item.id === 'web' && (lastRowSources?.agent_evaluation ?? 0) > 0) ? 'ok'
+      : item.s;
     const endBtn = item.id && !endorsed[item.id]
       ? `<button class="end-btn" onclick="openEndorse('${item.id}','${esc(item.t)}','${esc(item.d)}')">Endorse →</button>`
       : (endorsed[item.id] ? `<div style="font-size:10px;color:var(--pur);margin-top:3px">★ Endorsed · provenance: human_endorsed</div>` : '');
@@ -1437,8 +1761,10 @@ function confirmEndorse() {
 }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 
-// ── render ──────────────────────────────────────────────────────────────────
+// ── render ───────────────────────────────────────────────────────────
 function esc(s) { return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+// For a value interpolated into a single-quoted JS string inside an on* attribute.
+function jsq(s) { return esc(String(s??'').replace(/\\/g,'\\\\').replace(/'/g,"\\'")).replace(/"/g,'&quot;'); }
 
 function badge(status) {
   const m = {
@@ -1449,23 +1775,121 @@ function badge(status) {
     allowed_with_caution:        ['Caution',           'bt'],
     allowed_with_important_note: ['Note',              'bt'],
     allowed_rewritten:           ['Rewritten',         'br'],
-    // Claims not in the ruleset are NOT evaluated — never green
-    not_in_ruleset:              ['\u26a0 Not evaluated', 'bc'],
+    // Nobody has looked yet. Amber, never green: "not evaluated" is a gap,
+    // and a gap is not a clearance. This is the token compare_lenses now
+    // emits in place of the retired `not_in_ruleset`.
+    not_evaluated:               ['\u26a0 Not evaluated', 'bc'],
+    // Legacy token from comparisons committed before the evaluator existed.
+    not_in_ruleset:              ['\u26a0 Not evaluated (legacy token)', 'bc'],
   };
   // Unknown status: amber warning, not green — unknown ≠ allowed
   const [l, c] = m[status] ?? ['\u26a0 ' + status, 'bc'];
   return `<span class="badge ${c}">${l}</span>`;
 }
 
-function provChip(mkt, testing, status) {
+// ── provenance rendering ─────────────────────────────────────────────────
+// An agent_evaluation row gets TWO stamps and they are never merged. The
+// verdict is the agent's reading; the evidence is what a tool returned. A
+// verdict must not inherit its citation's strength, and `tool_no_match` —
+// searched, found nothing — must read as a gap, never as clearance.
+const PROV_CLASS = {
+  tool_verified:'tv', tool_no_match:'gap', unavailable_no_tool_source:'na',
+  model_inference:'inf', platform_derived:'inf',
+  human_endorsed:'end', human_sourced:'end', human_vouched:'end',
+  pending_tool_check:'pen', pending_human_check:'pen',
+  rejected:'gap', synthetic_seed:'syn',
+};
+const PROV_ICON = { tv:'📄', gap:'⚠', inf:'◇', end:'★', syn:'✎', na:'○', pen:'○' };
+const PROV_WHY = {
+  tool_verified: 'web_search returned the citations listed below. The retrieval is verified; the verdict over it is not.',
+  tool_no_match: 'The corpus was searched and had nothing bearing on this claim. A GAP — not a clearance. Do not read an absent citation as permission.',
+  unavailable_no_tool_source: 'No tool in this agent\u2019s kit can supply this block.',
+  model_inference: 'The agent\u2019s judgement over the retrieved text. Reasoning, not retrieval.',
+  human_endorsed: 'A qualified reviewer signed this verdict off. Outranks the agent\u2019s own stamp.',
+  synthetic_seed: 'Hand-authored ruleset YAML (data_status: synthetic_representative). Somebody\u2019s sketch of the regime, not a reading of it.',
+  rejected: 'Checked, and found wrong.',
+};
+
+function stamp(kind, token) {
+  const t = token || 'unavailable_no_tool_source';
+  const cls = PROV_CLASS[t] ?? 'na';
+  return `<div class="pchip ${cls}" title="${esc(PROV_WHY[t] ?? '')}">${PROV_ICON[cls]} ${esc(kind)}: ${esc(t)}</div>`;
+}
+
+// The searches actually issued. compare_lenses' market rows do not carry
+// queries_run — only the evaluate_claims response does — so this is available
+// for claims evaluated in this session and honestly absent otherwise.
+function evalQueries(claimId, market) {
+  const ev = evalDocs[claimId]?.[String(market ?? '').toLowerCase() + '_evidence'];
+  return Array.isArray(ev?.queries_run) ? ev.queries_run : null;
+}
+
+function citationsBlock(m, claimId) {
+  const cits = Array.isArray(m.citations) ? m.citations : [];
+  const queries = evalQueries(claimId, m.market);
+  if (!cits.length && !queries) return '';
+  const label = `${cits.length} citation${cits.length===1?'':'s'}`
+    + (queries ? ` · ${queries.length} search${queries.length===1?'':'es'} issued` : '');
+  const citHtml = cits.length ? cits.map(c => `<div class="cit">
+      ${c.url ? `<a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.title || c.url)}</a>`
+               : `<span style="font-size:10px;color:var(--t3)">${esc(c.title || 'untitled result')} · url: not available</span>`}
+      ${c.provision ? `<div class="cit-prov">${esc(c.provision)}</div>` : `<div class="cit-prov" style="color:var(--t3)">provision: not available</div>`}
+      ${c.snippet ? `<div class="cit-snip">${esc(c.snippet)}</div>` : ''}
+    </div>`).join('')
+    : `<div class="cit" style="border-color:rgba(245,158,11,.4)"><span style="font-size:10px;color:var(--amb)">No citation came back for this market.</span></div>`;
+  const qHtml = queries
+    ? `<ul class="q-list">${queries.map(q => `<li>${esc(q)}</li>`).join('')}</ul>`
+    : `<div class="q-none">queries_run: not returned by compare_lenses — visible on the evaluation run only</div>`;
+  return `<details class="cits"><summary>${label}</summary>${citHtml}${qHtml}</details>`;
+}
+
+function provChip(mkt, testing, m, claimId) {
   if (testing) return `<div class="pchip pen">○ demo rule engine · not tool_verified</div>`;
-  // Claims not found in the ruleset were skipped by the gate — not verified
-  if (status === 'not_in_ruleset') {
-    return `<div class="pchip pen">⚠ not in ruleset · not evaluated · add to ruleset or run regulatory_scanner</div>`;
+  if (!m) return '';
+  const source = m.source ?? (m.status === 'not_evaluated' ? 'none' : null);
+  const verdictProv = m.provenance?.verdict;
+  const evidenceProv = m.provenance?.evidence;
+
+  // Nobody has looked. Amber, and it carries the launch.
+  if (source === 'none' || m.status === 'not_evaluated' || m.status === 'not_in_ruleset') {
+    const action = `<button class="btn-agent btn-sm eval-launch" style="margin-top:5px" onclick="evaluateOneClaim('${jsq(claimId)}')"
+           title="Runs ${EVALUATOR} over live web searches for this claim. Spends credits, up to ~210s.">⚡ Evaluate · ${EVALUATOR}</button>`;
+    return `<div class="prov-stack">
+        <div class="pchip gap" title="No agent has evaluated this claim for this market. Unknown, not permitted.">⚠ not evaluated · no verdict exists</div>
+      </div>${action}`;
   }
-  const file = {EU:'eu_reg_1924.yaml', US:'us_fda_ftc.yaml', CN:'cn_gb_samr.yaml'}[mkt] ?? 'ruleset.yaml';
-  const label = endorsed['expert'] ? `★ ${file} · human_endorsed` : `📄 ${file} · tool_verified`;
-  return `<div class="pchip ${endorsed['expert']?'end':'tv'}">${label}</div>`;
+
+  if (source === 'synthetic_seed') {
+    return `<div class="prov-stack">
+      <div class="pchip syn" title="${esc(PROV_WHY.synthetic_seed)}">✎ hand-authored sketch · not authoritative</div>
+      ${stamp('verdict', verdictProv || 'synthetic_seed')}
+      ${stamp('evidence', evidenceProv || 'unavailable_no_tool_source')}
+    </div>
+    <div class="cost-note" style="margin-top:4px">ruleset YAML · nobody searched anything for this row. Launch ${EVALUATOR} to get a real verdict.</div>
+    <button class="btn-agent btn-sm eval-launch" style="margin-top:5px" onclick="evaluateOneClaim('${jsq(claimId)}')">⚡ Evaluate · ${EVALUATOR}</button>`;
+  }
+
+  // agent_evaluation (or an older row that reported no source at all).
+  const two = `<div class="prov-stack">
+      ${stamp('verdict', verdictProv)}
+      ${stamp('evidence', evidenceProv)}
+    </div>`;
+  // Said in words, not only in a tooltip: an empty search is a gap.
+  const gapWhy = evidenceProv === 'tool_no_match'
+    ? `<div class="cost-note" style="color:var(--amb);margin-top:3px">the corpus was searched and had nothing — a gap, not a clearance</div>` : '';
+  const expert = m.needs_expert === true
+    ? `<div class="flag-expert" title="The evaluator flagged the evidence as thin, absent or in tension.">⚑ needs_expert — a qualified reviewer must confirm this</div>` : '';
+  // The contradiction worth shouting about: nothing was retrieved, yet the
+  // agent did not ask for a human.
+  const contra = (m.needs_expert === false && evidenceProv === 'tool_no_match')
+    ? `<div class="flag-contra">⚠ contradiction: evidence is tool_no_match (searched, found nothing) but needs_expert is false. Treat this verdict as unsupported.</div>` : '';
+  const endorsedNote = m.endorsed
+    ? `<div class="pchip end" style="margin-top:4px">★ endorsed by a reviewer</div>` : '';
+  const when = m.evaluated_at
+    ? `<div class="cost-note" style="margin-top:4px">evaluated ${esc(String(m.evaluated_at).slice(0,19).replace('T',' '))}Z</div>` : '';
+  const noSource = !m.source
+    ? `<div class="cost-note" style="margin-top:4px">source: not reported by this response</div>` : '';
+  return two + gapWhy + endorsedNote + expert + contra + citationsBlock(m, claimId) + when + noSource;
 }
 
 function renderTable(claims) {
@@ -1479,21 +1903,40 @@ function renderTable(claims) {
     const cell = code => {
       const m = bm[code];
       const hidden = activeJuri !== 'all' && activeJuri !== code;
-      if (!m) return `<td data-mkt="${code}" style="${hidden?'display:none':''}"><span style="color:var(--t3);font-size:11px">—</span></td>`;
+      if (!m) return `<td data-mkt="${code}" style="${hidden?'display:none':''}"><span style="color:var(--t3);font-size:11px">— market not in scope —</span></td>`;
       const b = badge(m.status);
-      const t = m.status === 'not_allowed'
-        ? `<div class="stext">— stripped from this market's label —</div>`
-        : `<div class="rtext">${esc(m.rendered_text ?? '')}</div>`;
       const note = m.divergence_note ? `<div class="dnote">${esc(m.divergence_note)}</div>` : '';
-      // not_in_ruleset: claim was not in the ruleset's claim_renderings —
-      // the gate skipped it. Show warning text, not the claim as allowed.
+      // A null is rendered as "not available" — never as an empty success.
+      const rendered = m.rendered_text
+        ? `<div class="rtext">${esc(m.rendered_text)}</div>`
+        : `<div class="stext" style="color:var(--t3)">rendered_text: not available</div>`;
       const textBlock = m.status === 'not_allowed'
         ? `<div class="stext">— stripped from this market's label —</div>`
-        : m.status === 'not_in_ruleset'
-          ? `<div class="stext" style="color:var(--amb)">⚠ not in ruleset — cannot evaluate this claim</div>`
-          : `<div class="rtext">${esc(m.rendered_text ?? '')}</div>`;
-      return `<td data-mkt="${code}" style="${hidden?'display:none':''}">${b}${textBlock}${provChip(code, isTesting, m.status)}${note}</td>`;
+        : (m.status === 'not_evaluated' || m.status === 'not_in_ruleset')
+          ? `<div class="stext" style="color:var(--amb)">⚠ nobody has evaluated this claim for this market</div>`
+          : rendered;
+      const basis = (m.status === 'not_evaluated' || m.status === 'not_in_ruleset') ? ''
+        : m.basis ? `<div class="cost-note" style="margin-top:3px">basis: ${esc(m.basis)}</div>`
+                  : `<div class="cost-note" style="margin-top:3px">basis: not available</div>`;
+      return `<td data-mkt="${code}" style="${hidden?'display:none':''}">${b}${textBlock}${basis}${provChip(code, isTesting, m, row.claim_id)}${note}</td>`;
     };
+
+    // divergence_score is null unless every market in scope has a verdict.
+    // Null is "unknown", not zero pips — three unevaluated markets agree
+    // perfectly and mean nothing.
+    const score = row.divergence_score;
+    const divBlock = (score == null)
+      ? `<div class="cost-note" style="margin-top:5px" title="divergence_score is null until every market in scope has a verdict.">divergence: unknown${
+            row.markets_in_scope != null ? ` · ${row.evaluated_markets ?? 0}/${row.markets_in_scope} markets evaluated` : ''}</div>`
+      : `<div class="cpips" title="divergence_score: ${score}">${[1,2,3].map(n=>`<span class="cpip${n<=score?' on':''}"></span>`).join('')}</div>`;
+    const gapMarkets = (row.markets ?? []).filter(m => m.status === 'not_evaluated' || m.source === 'none');
+    const rowLaunch = gapMarkets.length
+      ? `<button class="btn-agent btn-sm eval-launch" style="margin-top:6px" onclick="evaluateOneClaim('${jsq(row.claim_id)}')"
+           title="Runs ${EVALUATOR} over live web searches for this claim. Spends credits, up to ~210s.">⚡ Evaluate · ${gapMarkets.length} gap${gapMarkets.length===1?'':'s'}</button>`
+      : (row.fully_evaluated
+          ? `<button class="claim-delete-btn eval-launch" style="color:var(--tea);margin:6px 0 0;font-size:10px" onclick="reEvaluateClaim('${jsq(row.claim_id)}')"
+               title="Re-runs ${EVALUATOR} with force:true. Spends credits.">↻ re-evaluate (spends credits)</button>`
+          : '');
 
     const tr = document.createElement('tr');
     tr.className = `cr${isBeat?' beat':''}${isTesting?' testing':''}`;
@@ -1504,7 +1947,7 @@ function renderTable(claims) {
         ${isTesting?'<span style="font-size:9px;color:var(--acc);font-weight:700;text-transform:uppercase;letter-spacing:.05em">⚡ testing</span>':''}
       </div>
       <div class="ccan">"${esc(row.candidate_text)}"</div>
-      <div class="cpips">${[1,2,3].map(n=>`<span class="cpip${n<=(row.divergence_score??0)?' on':''}"></span>`).join('')}</div>
+      ${divBlock}${rowLaunch}
     </td>${cell('EU')}${cell('US')}${cell('CN')}`;
     tbody.appendChild(tr);
   });
@@ -1515,10 +1958,16 @@ function renderBeat(data) {
   const bm = {}; (hib.markets??[]).forEach(m => { bm[m.market] = m; });
   const mcard = (code, flag, label) => {
     const m = bm[code] ?? {};
-    const b = badge(m.status ?? 'not_allowed');
+    // No row for this market means nobody evaluated it. Defaulting to
+    // `not_allowed` here would invent a verdict.
+    const b = badge(m.status ?? 'not_evaluated');
     const t = m.status==='not_allowed'
       ? `<div style="font-size:11px;color:var(--red);font-style:italic">Stripped — no authorized claim</div>`
-      : `<div class="bb-text">${esc(m.rendered_text??'')}</div>`;
+      : (m.status == null || m.status==='not_evaluated')
+        ? `<div style="font-size:11px;color:var(--amb);font-style:italic">Not evaluated — no verdict exists</div>`
+        : m.rendered_text
+          ? `<div class="bb-text">${esc(m.rendered_text)}</div>`
+          : `<div style="font-size:11px;color:var(--t3);font-style:italic">rendered_text: not available</div>`;
     const why = m.divergence_note ? `<div class="bb-why">${esc(m.divergence_note.split('.').slice(0,2).join('.')+'.')}</div>` : '';
     return `<div class="bb-mkt"><div class="bb-mname">${flag} ${label}</div>${b}${t}${why}</div>`;
   };
@@ -1555,8 +2004,32 @@ function renderIngredients(data) {
     </div>`;
 }
 
+const RULESET_STATUS_COPY = {
+  synthetic_representative: 'hand-authored and declared <strong>synthetic_representative</strong> — a person\u2019s sketch of each regime, not a reading of it',
+};
+
 function renderAppendix(data) {
   const sources = data.verification_appendix ?? [];
+  const intro = document.getElementById('va-intro');
+  if (intro) {
+    const rs = data.row_sources ?? {};
+    const evaluatedRows = rs.agent_evaluation ?? 0;
+    const seedRows = rs.synthetic_seed ?? 0;
+    const gapRows = rs.none ?? 0;
+    const rulesetCopy = RULESET_STATUS_COPY[data.ruleset_data_status]
+      ?? `declared <strong>${esc(data.ruleset_data_status ?? 'unknown')}</strong>`;
+    intro.innerHTML = `
+      <strong>${evaluatedRows}</strong> market row${evaluatedRows===1?'':'s'} in this response came from a stored
+      <code style="color:var(--blu);font-size:11px">${EVALUATOR}</code> evaluation — an agent read the live corpus
+      with <code style="color:var(--blu);font-size:11px">web_search</code> and the grounding gate ran over the reply
+      before it was stored. Each such row carries two separate stamps: how the verdict was reached, and whether a tool
+      really returned the citations under it.
+      ${seedRows ? `<br><br><strong>${seedRows}</strong> row${seedRows===1?'':'s'} came from the shipped rulesets, which are ${rulesetCopy}. Those rows are labelled <code style="color:var(--amb);font-size:11px">synthetic_seed</code> and must not be relied on.` : ''}
+      ${gapRows ? `<br><br><strong>${gapRows}</strong> row${gapRows===1?'':'s'} ${gapRows===1?'has':'have'} no verdict at all. Launch the evaluator to close ${gapRows===1?'it':'them'}.` : ''}
+      <br><br>Verify against the primary sources below before commercial use. A verdict is an inference over retrieved
+      text, and <code style="color:var(--amb);font-size:11px">tool_no_match</code> means the corpus was searched and
+      had nothing — a gap, never a clearance.`;
+  }
   const vaList = document.getElementById('va-list');
   if (!vaList) return;
   vaList.innerHTML = sources.map(s => {
@@ -1582,25 +2055,46 @@ function copyJ() {
   setTimeout(()=>b.textContent='Copy', 1500);
 }
 
+// Top-level data_status vocabulary from compare_lenses_handler.
+const DATA_STATUS_PILL = {
+  agent_evaluated_against_live_corpus:  ['ok', '✓ agent-evaluated against live corpus'],
+  mixed_agent_evaluated_and_synthetic_seed: ['sy', '⚠ mixed — agent-evaluated + hand-authored seed'],
+  synthetic_representative:             ['sy', '⚠ hand-authored seed rows only'],
+  unevaluated:                          ['sy', '⚠ unevaluated — nobody has looked'],
+};
+let lastRowSources = null;
+
 function renderAll(apiResponse, live) {
   const out = apiResponse.output ?? apiResponse;
   sourceClaims = (out.comparison_table ?? []).map(r => ({...r}));
   renderTable(sourceClaims);
   renderClaimsCards(); // update the structured claim cards from comparison output
 
-  // Warn about claims not in any ruleset — these were NOT evaluated
-  const notInRuleset = (out.comparison_table ?? []).filter(r =>
-    (r.markets ?? []).some(m => m.status === 'not_in_ruleset')
+  // The gap banner. `not_evaluated` means no agent has looked — unknown, not
+  // permitted — and the fix is a control, not a sentence telling the user to
+  // go run something. The old copy named `regulatory_scanner`, which takes a
+  // process config + jurisdiction and has no claim-evaluation contract at all.
+  const unevaluated = (out.comparison_table ?? []).filter(r =>
+    (r.markets ?? []).some(m => m.status === 'not_evaluated' || m.status === 'not_in_ruleset' || m.source === 'none')
   );
   const warnBanner = document.getElementById('unevaluated-banner');
   if (warnBanner) {
-    if (notInRuleset.length > 0) {
+    if (unevaluated.length > 0) {
+      const gaps = unevaluated.reduce((n, r) =>
+        n + (r.markets ?? []).filter(m => m.status === 'not_evaluated' || m.source === 'none').length, 0);
       warnBanner.style.display = 'flex';
-      warnBanner.innerHTML = `<span>⚠</span>
-        <span><strong>${notInRuleset.length} claim${notInRuleset.length>1?'s':''} not evaluated</strong> —
-        ${notInRuleset.map(r=>r.claim_id).join(', ')} not found in the regulatory rulesets.
-        These claims are <em>unknown</em>, not allowed.
-        Add them to the rulesets or run <code style="color:var(--blu)">regulatory_scanner</code> to evaluate.</span>`;
+      warnBanner.innerHTML = `<div style="display:flex;align-items:flex-start;gap:10px">
+          <span>⚠</span>
+          <span><strong>${unevaluated.length} claim${unevaluated.length>1?'s':''} not evaluated</strong>
+          — ${gaps} market gap${gaps===1?'':'s'} across ${esc(unevaluated.map(r=>r.claim_id).join(', '))}.
+          No agent has read the corpus for ${unevaluated.length>1?'these':'this'} claim${unevaluated.length>1?'s':''} yet, so
+          ${unevaluated.length>1?'they are':'it is'} <em>unknown</em> — not allowed, and not refused.
+          <span style="color:var(--t2)">Run comparison cannot fix this: it only re-reads stored evaluations.</span></span>
+        </div>
+        <div class="unev-actions">
+          <button class="btn-agent eval-launch" onclick="evaluateUnevaluated()">⚡ Evaluate with ${EVALUATOR} →</button>
+          <span class="cost-note">real web_search calls · up to ~210s per claim · ${MAX_CLAIMS_PER_REQUEST} per batch · charges the workspace wallet<br>markets in scope: ${evalMarkets().join(' · ')}</span>
+        </div>`;
     } else {
       warnBanner.style.display = 'none';
     }
@@ -1609,6 +2103,7 @@ function renderAll(apiResponse, live) {
   renderBeat(out);
   renderIngredients(out);
   renderAppendix(out);
+  lastRowSources = out.row_sources ?? null;
   renderKB();
   renderApiPanel(apiResponse);
   const esEl = document.getElementById('empty-state');
@@ -1620,19 +2115,43 @@ function renderAll(apiResponse, live) {
   document.getElementById('sb-dot').className = `sd ${live?'sd-live':'sd-demo'}`;
   document.getElementById('sb-text').textContent = live ? `Live workspace · ${sourceClaims.length} claims` : `Demo mode · ${sourceClaims.length} claims`;
   document.getElementById('sb-gate').textContent = `${clean?'✓ gate clean':'⚠ violations'} · ${viols} violations`;
+  // What the rows in this response actually rest on — read from the response,
+  // not asserted by the page.
+  const ds = out.data_status;
+  const dataEl = document.getElementById('sb-data');
+  if (dataEl) {
+    const [cls, label] = DATA_STATUS_PILL[ds] ?? ['sy', `⚠ ${ds ?? 'data_status not reported'}`];
+    dataEl.className = `pill ${cls}`;
+    dataEl.textContent = label;
+  }
+  const srcEl = document.getElementById('sb-sources');
+  if (srcEl) {
+    const rs = out.row_sources ?? {};
+    const keys = Object.keys(rs);
+    srcEl.textContent = keys.length ? keys.map(k => `${k}=${rs[k]}`).join(' · ') : 'not reported';
+    srcEl.style.color = (rs.agent_evaluation && !rs.none && !rs.synthetic_seed) ? 'var(--grn)' : 'var(--amb)';
+  }
   document.getElementById('ch-name').textContent = currentProductName;
   document.getElementById('ch-sku').textContent = currentProductSku;
 }
 
 // ── live ────────────────────────────────────────────────────────────────────
+function includeSyntheticSeed() {
+  return !!document.getElementById('seed-toggle')?.checked;
+}
+
 async function runLive() {
   const id = wsId();
   if (!id) { showEmptyWithMessage('No workspace selected. Pick one from the Products tab.'); return; }
     const btn = document.getElementById('run-btn');
-  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Running…';
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Reading…';
   try {
+    // Three file reads. Free, instant, no agent. `include_synthetic_seed`
+    // defaults to false server-side and stays false unless the user asks for
+    // the hand-authored rows.
     const res = await fetch(`${base()}/api/workspaces/${id}/actions/compare_lenses`,
-      fetchOpts('POST', { source_product_id: 'precision_kombucha_hibiscus_f2' }));
+      fetchOpts('POST', { source_product_id: 'precision_kombucha_hibiscus_f2',
+                          include_synthetic_seed: includeSyntheticSeed() }));
     if (!res.ok) {
       const err = await res.text();
       showEmptyWithMessage(`API error (${res.status}): ${err}`);

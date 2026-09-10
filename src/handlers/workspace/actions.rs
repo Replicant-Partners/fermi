@@ -88,7 +88,12 @@ pub(crate) async fn resolve_workspace(
 }
 
 /// Insert an action into workspace_action_log and return its ID.
-async fn log_action(
+///
+/// `pub(crate)` so `super::claim_evaluation` logs through the same insert
+/// rather than open-coding a second one. `lens_actions` predates this and
+/// still has its own inline copy with a soft-fail wrapper; that duplication is
+/// worth collapsing but is not this change's job.
+pub(crate) async fn log_action(
     state: &AppState,
     workspace_id: Uuid,
     action_type: &str,

@@ -119,11 +119,25 @@ async function runComparison() {
 
   status.textContent = 'Calling compare_lenses…';
 
-  // ── The API call. This is it. ────────────────────────────────────────────────
+  // ── The API call. This is it. ─────────────────────────────────────────
   //
-  // One POST. The server reads the ruleset YAMLs from your workspace,
-  // runs the grounding gate, builds the comparison, and returns structured JSON.
-  // You don't need to know anything about EU Regulation 1924/2006 or GB 28050.
+  // One POST. The server reads the stored claim evaluations from your
+  // workspace, runs the grounding gate, builds the comparison, and returns
+  // structured JSON. You don't need to know anything about EU Regulation
+  // 1924/2006 or GB 28050.
+  //
+  // `compare_lenses` READS. It does not evaluate, and it will report every
+  // claim as `not_evaluated` until something has evaluated it. That something
+  // is `POST /api/workspaces/:id/actions/evaluate_claims`, which runs the
+  // `regulatory_lens_translator` agent against the live regulatory corpus,
+  // costs credits, and takes seconds per claim. Run it once; read many times.
+  //
+  // `include_synthetic_seed: true` below falls back to the shipped ruleset
+  // YAMLs so this example returns something on a workspace that has never
+  // been evaluated. Those rows arrive tagged `source: "synthetic_seed"` and
+  // are hand-authored sketches of each regime — fine for seeing the response
+  // shape, not fine for deciding what goes on a label. Drop the flag to see
+  // only real evaluations.
   //
   const inputBase = document.getElementById('base-url').value.trim();
   const effectiveBase = inputBase || BASE;
@@ -136,6 +150,7 @@ async function runComparison() {
     },
     body: JSON.stringify({
       source_product_id: 'precision_kombucha_hibiscus_f2',
+      include_synthetic_seed: true,
       // markets: ['EU', 'US', 'CN']  ← default; pass a subset to focus
       // claim_id: 'hibiscus_wellness' ← optional: focus on one claim
     }),

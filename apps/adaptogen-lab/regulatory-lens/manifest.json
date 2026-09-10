@@ -11,8 +11,12 @@
     "$schema": "adaptogen-lab-regulatory/1",
     "description": "Action grammar for the regulatory_lens_translator agent. Three action types: render a single lens, compare across lenses, flag a specific divergence point.",
     "canonical_document": {
-      "path": "regulatory-lens/sku/precision_kombucha_hibiscus_f2.yaml",
-      "description": "The product composition source document — the single source of truth that all lens renderings are generated from. Never modified by the lens rendering process."
+      "path": "dpp/claims.yaml",
+      "description": "The label claims the user authored — what the product wants to say. This is what gets evaluated. The bill of materials lives beside it in dpp/composition.yaml and is passed to the evaluator as product context, because an ingredient-dependent claim cannot be settled without it. Both are user-editable via PUT /api/workspaces/:id/files/<path>. The legacy single-document path regulatory-lens/sku/{product_id}.yaml is still read as a fallback."
+    },
+    "knowledge_asset": {
+      "path": "regulatory-lens/ontology/",
+      "description": "What the App accumulates. `evaluated/{market}/{claim_id}.yaml` holds one grounding-enforced verdict per claim per market, written by the platform after evaluate_claims runs — not by the agent, so that nothing bypasses the gate. `patterns.yaml` holds cross-claim regulatory patterns and IS the agent's to write. Evaluations carry an `endorsement` field for a qualified reviewer's sign-off, which outranks the agent's own provenance stamp when compare_lenses reads it back."
     },
     "action_types": [
       {
@@ -35,17 +39,40 @@
         }
       },
       {
+        "type": "evaluate_claims",
+        "description": "Run the regulatory_lens_translator agent against the live regulatory corpus to evaluate label claims that have not been evaluated yet. This is the only action that produces a verdict for a claim nobody pre-authored — which is every claim a user writes, since claim ids are minted client-side. It calls web_search per market, returns a per-market verdict with citations, and persists the grounding-enforced result to regulatory-lens/ontology/evaluated/{market}/{claim_id}.yaml where compare_lenses will find it. Unlike the other three actions this costs credits and takes seconds per claim; it refuses with 503 if BRAVE_SEARCH_API_KEY is unset rather than answering from model memory.",
+        "api_endpoint": "POST /api/workspaces/:id/actions/evaluate_claims",
+        "fields": {
+          "claim_ids": { "type": "array",   "required": false, "description": "Claims to evaluate. If omitted, the handler selects the ones with no stored evaluation." },
+          "markets":   { "type": "array",   "required": false, "default": ["EU", "US", "CN"] },
+          "force":     { "type": "boolean", "required": false, "default": false, "description": "Re-evaluate claims that already have a stored evaluation. When true, page using the returned `attempted` list — `remaining` will not decrease." }
+        },
+        "response": {
+          "action_id":         "UUID",
+          "evaluated":         "Array of {claim_id, document, grounding}. `document` carries a verdict block and a separate evidence block per market: <mkt> = {status, basis, rendered_text, needs_expert}, <mkt>_evidence = {queries_run, citations[]}. The two are stamped separately — <mkt>_provenance is model_inference, <mkt>_evidence_provenance is tool_verified or tool_no_match — so a verdict never inherits its citation's strength.",
+          "skipped":           "Array of {claim_id, reason, detail} — already evaluated unless force",
+          "failed":            "Array of {claim_id, error}",
+          "attempted":         "Claim ids this request took a run at. Page on this, not on `remaining`.",
+          "remaining":         "Claims still in scope. At most 3 are evaluated per request.",
+          "written_paths":     "Workspace paths committed",
+          "grounding_summary": "{is_clean, violation_count}"
+        }
+      },
+      {
         "type": "compare_lenses",
-        "description": "Run the same source composition through multiple regulatory lenses and produce a side-by-side comparison, optionally focused on a specific claim.",
+        "description": "Read the stored per-market evaluations and produce a side-by-side comparison, optionally focused on a specific claim. This action READS — it is free, instant and involves no agent. A claim reports `not_evaluated` until evaluate_claims has evaluated it.",
         "api_endpoint": "POST /api/workspaces/:id/actions/compare_lenses",
         "fields": {
           "source_product_id": { "type": "string",  "required": false, "default": "precision_kombucha_hibiscus_f2" },
           "markets":           { "type": "array",   "required": false, "default": ["EU", "US", "CN"], "description": "Markets to include in the comparison" },
-          "claim_id":          { "type": "string",  "required": false, "description": "Focus the comparison on a specific claim. If omitted, compares all claims." }
+          "claim_id":          { "type": "string",  "required": false, "description": "Focus the comparison on a specific claim. If omitted, compares all claims." },
+          "include_synthetic_seed": { "type": "boolean", "required": false, "default": false, "description": "Fall back to the shipped ruleset YAMLs for claims with no stored evaluation. Those rulesets are data_status: synthetic_representative — hand-authored sketches of each regime. Off by default so an unevaluated claim reads as unevaluated rather than as answered. Seed rows arrive tagged source: 'synthetic_seed'." }
         },
         "response": {
           "action_id":        "UUID",
-          "comparison_table": "Array of {claim_id, eu_rendering, us_rendering, cn_rendering, divergence_type, summary}",
+          "comparison_table": "Array of {claim_id, candidate_text, markets[], divergence_score, evaluated_markets, markets_in_scope, fully_evaluated}. Each markets[] entry carries source ('agent_evaluation' | 'synthetic_seed' | 'none'), provenance {verdict, evidence}, citations[], queries_run[], needs_expert, endorsed. divergence_score is null unless fully_evaluated — a score across unknowns is not a low score, it is not a score.",
+          "data_status":      "What the rows rest on: agent_evaluated_against_live_corpus | synthetic_representative | mixed_agent_evaluated_and_synthetic_seed | unevaluated",
+          "row_sources":      "Count of rows by source",
           "demo_beat":        "The scripted demo moment — highest-divergence claim highlighted with one-line regulatory attribution per market"
         }
       },
@@ -113,8 +140,9 @@
     "live_label_renderer": "Camera input → extract source facts → run against selected ruleset → render compliant mutation live (§8 of spec). Depends on static demo proving the mechanism first."
   },
   "data_honesty": {
-    "status": "synthetic_representative",
-    "caveat": "Rulesets are structurally representative of each regime's regulatory logic but are not certified compliance documents. Specific authorized claim wording, current threshold values, and regulatory status should be verified against primary sources (EFSA register, current 21 CFR, current SAMR announcements) before any commercial use.",
+    "status": "two_sources_labelled_separately",
+    "caveat": "This App now has two sources of truth and every row says which one it came from. (1) AGENT EVALUATION — regulatory_lens_translator searched the live corpus for that specific claim and returned citations. The citations are tool_verified; the verdict over them is model_inference, stamped separately so a status never inherits its citation's strength. Not legal advice, and `needs_expert` marks the ones the agent itself thinks need a human. (2) SYNTHETIC SEED — the shipped ruleset YAMLs, hand-authored to be structurally representative of each regime's logic. These are NOT certified compliance documents and are off by default (`include_synthetic_seed`); a row served from them is tagged `synthetic_seed`. Anything with neither reads `not_evaluated`, which means nobody has looked — never that the claim is permitted. `tool_no_match` likewise means the corpus was searched and had nothing: a gap, not a clearance. Verify against the primary sources below before any commercial use, whichever source a row came from.",
+    "what_would_make_a_verdict_stronger": "A qualified reviewer signing the `endorsement` field on a stored evaluation, which outranks the agent's own stamp when compare_lenses reads it back. Beyond that, the citations are not yet cross-checked: the platform holds no copy of the EFSA register, 21 CFR or the GB standards, so a cited URL is currently unverified. See CROSS_CHECK_EXEMPTIONS in src/grounding_trust.rs for the two routes out (URL replay, and joining citations to the web_search results of the same episode) and why neither has landed.",
     "verification_sources": {
       "eu": "https://ec.europa.eu/food/safety/labelling_nutrition/claims/register_en",
       "us": "https://www.ecfr.gov/current/title-21/chapter-I/part-101",

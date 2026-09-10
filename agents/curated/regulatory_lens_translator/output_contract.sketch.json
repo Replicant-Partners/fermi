@@ -1,20 +1,21 @@
 {
   "domain": "regulatory-lens",
   "produces_schema": "adaptogen-lab/action_intent",
-  "title": "Regulatory lens translator — action intent and conversational framing",
+  "title": "Regulatory lens translator — action intent, and the per-claim evaluation document",
 
-  "_architecture_note": "This agent is a DISPATCHER. The grounded regulatory computation lives in the action handlers (src/handlers/workspace/lens_actions.rs), which read the ruleset YAMLs from the workspace git and derive structured output. The agent's job is to understand user intent and emit the correct action block. Its conversational responses (explaining what the comparison shows, answering follow-up questions) are model inference from the handler results visible in the workspace context plus training-data understanding of regulatory philosophy. There are no Sourced blocks in this contract because the agent does not call tools to retrieve regulatory data on the conversational path.",
+  "_architecture_note": "This agent has TWO modes and this sketch covers both, because one card declares one schema.\n\nMODE A — DISPATCHER (render_lens / compare_lenses). The grounded regulatory computation lives in the action handlers (src/handlers/workspace/lens_actions.rs), which read the ruleset YAMLs from the workspace git and derive structured output. The agent's job is to understand user intent and emit the correct action block; its conversational response is model inference over the handler results visible in the workspace context. Blocks: `action`, `disclaimer`. No Sourced blocks — on this path the agent calls no tool to retrieve regulatory data.\n\nMODE B — EVALUATOR (POST /api/workspaces/:id/actions/evaluate_claims, src/handlers/workspace/claim_evaluation.rs). Here the agent does call a tool: `web_search` against the live regulatory corpus, because the shipped rulesets are `synthetic_representative` and the UI mints `claim_<timestamp>` ids, so a user-authored claim is absent from the cache by construction. Blocks: `claim_id`, `candidate_text`, `<market>` and `<market>_evidence` for eu/us/cn, `summary`. The handler owns the output shape and states it in the query on every run; it then runs `grounding_trust::enforce` and persists the ENFORCED document to regulatory-lens/ontology/evaluated/{market}/{claim_id}.yaml itself. The agent does not write that file.\n\nThe seam that matters in Mode B: `<market>_evidence` is what the corpus returned (Sourced, stamped tool_verified or tool_no_match) and `<market>` is what the agent concluded from it (Inferred, stamped model_inference). Two blocks rather than one because provenance is stamped per top-level key, and folding a verdict in beside its citations would hand a regulatory STATUS a retrieval verdict it has not earned.\n\nMode-specific blocks are therefore `required: false`: a Mode A reply carries no market blocks and a Mode B document carries no `action`. `explanation` is required because both documents carry it.\n\nKnown gap, recorded rather than papered over: the render-path FieldContracts in src/grounding_trust.rs (`rendered_claims`, `allergen_block`, `ingredient_status`, `verification_appendix`, `summary_divergence`) are Grounding::Derived, a status the sketch mini-language cannot express (card_contract::GROUNDING_STATUSES has no `derived` token), and they are not declared here.",
 
   "synthesis": "pipeline",
 
   "blocks": [
     {
       "name": "action",
+      "required": false,
       "source": {
         "status": "inferred",
         "from": "user's stated task, product composition context in the workspace, and active market selection"
       },
-      "why": "The agent decides which action to emit (render_lens, compare_lenses, flag_divergence) based on the user's request. This is a routing judgement over context — the action intent is model inference. The handler the action triggers is where grounding lives: it reads the workspace YAML, derives structured output, and runs gate_lens_output before committing. The agent dispatches; the handler computes.",
+      "why": "The agent decides which action to emit (render_lens, compare_lenses, flag_divergence) based on the user's request. This is a routing judgement over context — the action intent is model inference. The handler the action triggers is where grounding lives: it reads the workspace YAML, derives structured output, and runs gate_lens_output before committing. The agent dispatches; the handler computes. Optional because the evaluate_claims document emits no action block: there the action was chosen by the caller, not by the agent.",
       "fields": {
         "type": "enum:render_lens|compare_lenses|flag_divergence",
         "target_market": "string?",
@@ -25,29 +26,187 @@
       }
     },
     {
-      "name": "explanation",
-      "source": {
-        "status": "inferred",
-        "from": "handler results returned in the workspace context after the action completes, plus agent training-data understanding of regulatory philosophy (positive-list vs risk-based vs two-track)"
-      },
-      "why": "The agent's conversational explanation of what the comparison shows — why claims differ across markets, what the divergence type means, what a producer should do next. This is model inference: the agent reads the handler output from the workspace context and reasons about it. It is NOT sourced from the ruleset YAMLs directly; those travel through the handler layer. The regulatory philosophy framing (e.g. 'EU is positive-list; a claim not on the authorized list is prohibited regardless of evidence') comes from the agent's training data. Stamped model_inference.",
-      "fields": {
-        "summary": "string",
-        "divergence_note": "string?",
-        "next_step": "string?"
-      }
-    },
-    {
       "name": "disclaimer",
+      "required": false,
       "source": {
         "status": "inferred",
         "from": "required verbatim constant from the system prompt"
       },
-      "why": "The data-honesty caveat (synthetic-representative rulesets, verify before commercial use) is required in every conversational response that discusses a specific claim status or ingredient approval. It is a constant the agent must include — not sourced from a tool, but required by the contract. Its presence is checked by the gate; its content is fixed by the system prompt.",
+      "why": "The data-honesty caveat (synthetic-representative rulesets, verify before commercial use) is required in every conversational response that discusses a specific claim status or ingredient approval. It is a constant the agent must include — not sourced from a tool, but required by the contract. Its presence is checked by the gate; its content is fixed by the system prompt. Optional because the evaluate_claims document carries the same honesty in structure instead: a per-market provenance stamp and a needs_expert flag say more precisely what the caveat says in prose.",
       "fields": {
         "data_status": "string",
         "verify_before_use": "string"
       }
+    },
+    {
+      "name": "claim_id",
+      "required": false,
+      "value": "string",
+      "source": {
+        "status": "inferred",
+        "from": "the claim id the evaluate_claims handler dispatched; it overwrites whatever the reply carried before enforcement runs"
+      },
+      "why": "Which claim this evaluation is about. The handler echoes the id from its own request rather than trusting the reply's, so a hallucinated id cannot file an evaluation against the wrong claim — and the on-disk path evaluated/{market}/{claim_id}.yaml is built from the echoed value. Declared `inferred` rather than `sourced` because no tool returns it: it is a platform-written echo, and card_contract::GROUNDING_STATUSES has no `derived` token, so understating a reproducible value is the safe direction.",
+      "description": "Echoed from the request by the handler, not taken from the reply."
+    },
+    {
+      "name": "candidate_text",
+      "required": false,
+      "value": "string?",
+      "source": {
+        "status": "inferred",
+        "from": "the candidate_text the handler read out of dpp/claims.yaml and put in the query; echoed back from the request rather than from the reply"
+      },
+      "why": "The exact wording under evaluation, carried into the stored document so a reviewer sees the sentence the verdict was reached about rather than a paraphrase of it. Platform-written from the request for the same reason as claim_id: an evaluation filed against text the agent restated is an evaluation of something nobody proposed to print. Null when the claim carries no candidate text at all, which is a real state in the authoring UI.",
+      "description": "Echoed from the request by the handler, not taken from the reply."
+    },
+    {
+      "name": "eu_evidence",
+      "required": false,
+      "source": {
+        "status": "sourced",
+        "tool": "web_search",
+        "response_field": "results[].url, results[].title, results[].description",
+        "coverage": "complete"
+      },
+      "why": "The retrieved regulatory text underlying the EU verdict: `queries_run` records what was asked, `citations` what came back. This is the only half of the EU pair a tool supplies, so it is the only half that may ever be stamped `tool_verified`. Coverage is `complete` rather than `partial` or `deferred` because web_search answers for every field in this block and is always called on this path — nothing here is unobtainable and nothing is left until later, so `unavailable_no_tool_source` and `pending_tool_check` would both be untrue. An empty `citations` array after a real search is the honest `tool_no_match` that `complete` keeps reachable: the corpus was asked and had nothing, which is a gap needing expert review and never a clearance. Drafted from the `eu_evidence.citations` FieldContract in src/grounding_trust.rs.",
+      "fields": {
+        "queries_run": {
+          "type": "string[]",
+          "description": "The web_search queries actually issued for the EU corpus on this run."
+        },
+        "citations": {
+          "type": "object[]",
+          "description": "Results actually received this run: {url, title, snippet, provision}. A URL that was not retrieved is the one failure this pipeline exists to prevent."
+        }
+      }
+    },
+    {
+      "name": "eu",
+      "required": false,
+      "source": {
+        "status": "inferred",
+        "from": "eu_evidence.citations — the regulatory text web_search returned, read against the candidate claim text"
+      },
+      "why": "The EU verdict. No search result states a status for this specific sentence: the agent reads the provision and concludes one, which is the judgement it is commissioned to make. `basis` is which provision governs — the provision's WORDING is in the citation, the assertion that it applies here is inference. `rendered_text` is drafting rather than retrieval, and null is the correct value when the claim cannot be rendered compliantly at all. `needs_expert` stays a judgement rather than a count, because 'three citations that do not address the claim' and 'one that settles it' are the case a count cannot distinguish. Stamped `model_inference`, so no run can present a reasoned verdict as a retrieved fact and a reviewer can see that what needs endorsement is the reasoning, not the retrieval. Drafted from the `eu.status`, `eu.basis`, `eu.rendered_text` and `eu.needs_expert` FieldContracts in src/grounding_trust.rs.",
+      "fields": {
+        "status": "enum:allowed|conditionally_allowed|not_allowed|not_evaluated",
+        "basis": {
+          "type": "string?",
+          "description": "The provision concluded to govern this claim, or null."
+        },
+        "rendered_text": {
+          "type": "string?",
+          "description": "Compliant wording for the EU, or null when no compliant rendering exists."
+        },
+        "needs_expert": {
+          "type": "boolean",
+          "description": "True whenever the evidence is thin, absent, or in tension. False alongside a tool_no_match evidence block is a contradiction a surface should show."
+        }
+      }
+    },
+    {
+      "name": "us_evidence",
+      "required": false,
+      "source": {
+        "status": "sourced",
+        "tool": "web_search",
+        "response_field": "results[].url, results[].title, results[].description",
+        "coverage": "complete"
+      },
+      "why": "Retrieved regulatory text underlying the US verdict — same seam as the EU block: the citations are sourced, the verdict over them is not. Coverage `complete` for the same reason, and `tool_no_match` matters more here than anywhere: FTC substantiation is a body of enforcement practice rather than a published permitted-claims list, so thin or empty results are the normal case on this market and must not read as a settled `allowed`. Drafted from the `us_evidence.citations` FieldContract in src/grounding_trust.rs.",
+      "fields": {
+        "queries_run": {
+          "type": "string[]",
+          "description": "The web_search queries actually issued for the US corpus on this run."
+        },
+        "citations": {
+          "type": "object[]",
+          "description": "Results actually received this run: {url, title, snippet, provision}."
+        }
+      }
+    },
+    {
+      "name": "us",
+      "required": false,
+      "source": {
+        "status": "inferred",
+        "from": "us_evidence.citations — the regulatory text web_search returned, read against the candidate claim text"
+      },
+      "why": "The US verdict. Same seam as the EU block, with a market-specific risk: structure/function doctrine makes a permissive verdict easy to reach from memory alone, so the inference label matters most on the market most likely to come back `allowed`. `basis` is the whole answer here — nutrient content claim (21 CFR 101.13) versus health claim (101.14) versus a structure/function claim under DSHEA — and choosing among them is inference over retrieved text, because the search returns the parts and not the classification. `rendered_text` is the field most likely to be lifted straight onto a label, which is why it stays `model_inference` until a reviewer signs it. Drafted from the `us.*` FieldContracts in src/grounding_trust.rs.",
+      "fields": {
+        "status": "enum:allowed|conditionally_allowed|not_allowed|not_evaluated",
+        "basis": {
+          "type": "string?",
+          "description": "The provision concluded to govern this claim, or null."
+        },
+        "rendered_text": {
+          "type": "string?",
+          "description": "Compliant wording for the US, or null when no compliant rendering exists."
+        },
+        "needs_expert": {
+          "type": "boolean",
+          "description": "True whenever the evidence is thin, absent, or in tension."
+        }
+      }
+    },
+    {
+      "name": "cn_evidence",
+      "required": false,
+      "source": {
+        "status": "sourced",
+        "tool": "web_search",
+        "response_field": "results[].url, results[].title, results[].description",
+        "coverage": "complete"
+      },
+      "why": "Retrieved regulatory text underlying the CN verdict — same seam as the EU block, and the citation requirement carries the most weight here: the 药食同源 ingredient list is the most likely fabrication target on this market because the model knows it from training. Coverage `complete`, and `tool_no_match` is expected often: the corpus is the least searchable in English and GB standards are frequently paywalled or PDF-only. That must present as a gap rather than as absence of restriction. Drafted from the `cn_evidence.citations` FieldContract in src/grounding_trust.rs.",
+      "fields": {
+        "queries_run": {
+          "type": "string[]",
+          "description": "The web_search queries actually issued for the CN corpus on this run."
+        },
+        "citations": {
+          "type": "object[]",
+          "description": "Results actually received this run: {url, title, snippet, provision}."
+        }
+      }
+    },
+    {
+      "name": "cn",
+      "required": false,
+      "source": {
+        "status": "inferred",
+        "from": "cn_evidence.citations — the regulatory text web_search returned, read against the candidate claim text"
+      },
+      "why": "The CN verdict. The two-track split (普通食品 ordinary food versus 保健食品 health food) means the status usually turns on which track the product sits on, a classification no retrieved standard makes for this product — that choice is the inference and it changes the answer completely. `basis` selects among GB 28050 (nutrition labelling), GB 7718 (general labelling) and the 保健食品 registration regime, which answer different questions. `rendered_text` carries a hazard the other two markets do not: wording that reads as a health-function claim pushes the product onto the 保健食品 track and into a registration requirement, so a well-meant rewrite can change the product's regulatory category. `needs_expert` is weighted hardest of the three, not least because 药食同源 authorises an INGREDIENT while saying nothing about claims made about it — a conflation to flag rather than resolve. Drafted from the `cn.*` FieldContracts in src/grounding_trust.rs.",
+      "fields": {
+        "status": "enum:allowed|conditionally_allowed|not_allowed|not_evaluated",
+        "basis": {
+          "type": "string?",
+          "description": "The provision concluded to govern this claim, or null."
+        },
+        "rendered_text": {
+          "type": "string?",
+          "description": "Compliant wording for China, or null when no compliant rendering exists."
+        },
+        "needs_expert": {
+          "type": "boolean",
+          "description": "True whenever the evidence is thin, absent, or in tension."
+        }
+      }
+    },
+    {
+      "name": "explanation",
+      "source": { "status": "narrative" },
+      "why": "The prose the operator actually reads: why this claim lands differently in each market on the evaluation path, and what a comparison shows on the render path. It is the product of the whole exercise and it is also the channel a fabrication moves to once the structured fields are enforced, so it is scanned for regulatory-authority words — EFSA, 1924/2006, 21 CFR, FTC, SAMR, GB 28050, 药食同源, 保健食品 — whose market evidence block came back with no citations, and nulled in full when one fires. Nulled rather than flagged, because a gate cannot rewrite a sentence into honesty, and a legal basis moved out of a stripped field and into a paragraph is still a fabrication on a food label. Narrative blocks get no provenance stamp: a retrieval verdict about a sentence is a category error. See grounding_trust::NARRATIVE_LEAKS. Drafted from the `explanation` FieldContract in src/grounding_trust.rs.",
+      "value": "string?"
+    },
+    {
+      "name": "summary",
+      "required": false,
+      "source": { "status": "narrative" },
+      "why": "One or two sentences: the headline for this claim, and the string a reader is most likely to see on its own — parse_evidence_text lifts it into the episode digest, so it travels further than the document does. Free prose, permitted and checked: it must not assert a claim status or an ingredient approval the market blocks cannot support, which is exactly the failure that moves here when the structured fields are correctly enforced. Scanned by the same NARRATIVE_LEAKS needles as `explanation` and nulled whole on a hit. Drafted from the `summary` FieldContract in src/grounding_trust.rs.",
+      "value": "string?"
     }
   ]
 }

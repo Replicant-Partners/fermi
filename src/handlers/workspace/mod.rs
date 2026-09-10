@@ -7,9 +7,12 @@
 //! - messages.rs  Chat, SSE stream, agent hire/add/remove
 //! - coherence.rs Coherence eval, ontology, files, git log, workflow
 //! - actions.rs   Generalised App action protocol (mutate_document, fork_state, etc.)
+//! - lens_actions.rs      DPP Studio: render/compare/flag from stored evaluations
+//! - claim_evaluation.rs  DPP Studio: run the evaluator agent against the corpus
 
 pub mod actions;
 pub mod agent_params_hook;
+pub mod claim_evaluation;
 mod coherence;
 mod core;
 pub mod lens_actions;
