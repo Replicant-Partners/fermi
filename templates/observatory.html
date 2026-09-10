@@ -227,6 +227,33 @@
             font-size:0.7rem;border-top:1px solid var(--bg1);align-items:baseline;}
   .conf-name{color:var(--fg3);}
   .conf-msg{color:var(--fg4);line-height:1.45;}
+
+  /* ── Development ────────────────────────────────────────────
+     count · stage · what it produces · what drives it · what to press, in that
+     order, always. Only the stage that stops carries a control: pressing Dream
+     on an agent whose rules are never retrieved buys nothing. */
+  .dev-row{display:grid;grid-template-columns:56px 96px 1fr 210px 108px;gap:8px;
+           padding:4px 6px;font-size:0.72rem;align-items:baseline;
+           border-top:1px solid var(--bg1);}
+  .dev-row.stuck{background:color-mix(in srgb,var(--yellow) 8%,transparent);}
+  .dev-n{text-align:right;color:var(--fg2);font-variant-numeric:tabular-nums;}
+  .dev-id{color:var(--fg3);}
+  .dev-what{color:var(--fg4);}
+  .dev-trig{font-size:0.63rem;}
+  .dev-eng{color:var(--fg4);}
+  .dev-off{color:var(--yellow);}
+  .dev-act{text-align:right;}
+  .dev-noact{font-size:0.6rem;color:var(--fg4);border:1px dashed var(--bg3);padding:0 4px;cursor:help;}
+  .dev-stop{margin-top:8px;font-size:0.72rem;color:var(--fg3);line-height:1.5;
+            border-left:2px solid var(--yellow);padding:4px 0 4px 8px;}
+  .dev-stop.ok{border-left-color:var(--green);}
+  .dev-sub{margin-top:10px;border-top:1px solid var(--bg2);padding-top:7px;}
+  .dev-sub-h{display:flex;align-items:center;gap:8px;font-size:0.72rem;
+             color:var(--yellow);margin-bottom:3px;}
+  .dev-note{font-size:0.68rem;color:var(--fg4);line-height:1.5;margin-top:3px;}
+  /* A gap the platform cannot close is still a finding, and it is marked as
+     one rather than blended into the surrounding prose. */
+  .dev-gap{border-left:2px dashed var(--bg4,var(--bg3));padding-left:8px;}
   .mh-src{font-size:0.6rem;color:var(--fg4);font-style:italic;margin-top:5px;opacity:0.8;}
   .mh-flag{font-size:0.6rem;color:var(--orange,var(--yellow));border:1px solid var(--orange,var(--yellow));padding:0 3px;margin-right:3px;}
   /* Standing note that the colour scale is a presentation convention. There is
@@ -518,6 +545,23 @@
           <div id="scores-legend"></div>
           <div class="eval-grid" id="evaluator-cards"></div>
         </div>
+        <!-- Development — the other question this page exists to answer.
+
+             Latest scores says how the agent PERFORMED. This says whether any
+             of it was retained and whether the retention changed anything. An
+             agent can hold a healthy score forever having learned nothing, and
+             the two are not visible in the same numbers.
+
+             Every figure here already existed. The four-stage chain is
+             loop1 from the loops endpoint, which the Loops tab rendered as one
+             row among six; the budget is on the dreaming endpoint, which the
+             Dreaming tab rendered without the retrieval stage. Neither was on
+             the surface a reader lands on. -->
+        <div class="panel">
+          <div class="panel-title">Development
+            <span id="dev-meta" style="color:var(--fg4);font-weight:normal;text-transform:none;letter-spacing:0;"></span></div>
+          <div id="dev-box"></div>
+        </div>
       </div>
 
       <!-- ── HISTORY ── -->
@@ -642,6 +686,7 @@ let _rels         = null;
 let _dream        = null; // GET /api/agents/:id/dreaming
 let _loops        = null; // GET /api/observatory/agents/:id/loops
 let _checks       = null; // GET /api/agents/:id/publish-checks
+let _emb          = null; // GET /api/agents/:id/embeddings/stats
 let _testCases    = [];
 let _filterMaturity = null;
 let _filterProvider = "";
@@ -997,7 +1042,7 @@ async function loadAgentData() {
   //
   // If an issue is surfaced, the corrective affordance has to be available. A
   // button that performs the surfacing is the affordance pointing at itself.
-  const [tl, dyads, anoms, calib, runs, rels, tcData, dream, loops, checks] = await Promise.all([
+  const [tl, dyads, anoms, calib, runs, rels, tcData, dream, loops, checks, emb] = await Promise.all([
     fetchJson(`/api/observatory/agents/${enc(id)}/timeline?window=${win}`).catch(()=>null),
     fetchJson(`/api/observatory/agents/${enc(id)}/dyads`).catch(()=>null),
     fetchJson(`/api/observatory/agents/${enc(id)}/anomalies?limit=50`).catch(()=>null),
@@ -1008,10 +1053,23 @@ async function loadAgentData() {
     fetchJson(`/api/agents/${enc(id)}/dreaming`).catch(()=>null),
     fetchJson(`/api/observatory/agents/${enc(id)}/loops`).catch(e=>({_error:e.message})),
     fetchJson(`/api/agents/${enc(id)}/publish-checks`).catch(e=>({_error:e.message})),
+    // Episode embedding coverage. New to this page, and it is the single
+    // largest cause of empty ontologies on this deployment: 2,770 of 3,688
+    // episodes carry no vector (`handlers/dreaming_maturity.rs:139`), and an
+    // unembedded episode returns zero neighbours from DBSCAN
+    // (`memory/src/clustering.rs:42-46`), fails `min_samples`, becomes noise
+    // and can never become a rule.
+    //
+    // `/dreaming` COMPUTES this count (`dreaming_maturity.rs:326`) and does not
+    // emit it — it reaches a human only inside a prose diagnosis, and only when
+    // the ontology is completely empty. So it is read from the endpoint that
+    // does return it.
+    fetchJson(`/api/agents/${enc(id)}/embeddings/stats`).catch(e=>({_error:e.message})),
   ]);
 
   _tl = tl; _dyads = dyads; _anoms = anoms; _calib = calib;
   _evalRuns = runs; _rels = rels; _dream = dream; _loops = loops; _checks = checks;
+  _emb = emb;
   _testCases = tcData?.test_cases || [];
 
   // Signals for latest run
@@ -1568,6 +1626,155 @@ function renderOverviewTab(fa) {
 
   // Evaluator cards (latest run signals)
   renderEvalCards();
+
+  renderDevelopment();
+}
+
+// ── Development: whether the agent is learning, and what to press ──────────
+//
+// Read, never computed. The chain is `loop1` from
+// /api/observatory/agents/:id/loops, whose stages arrive with `rows`,
+// `is_first_empty`, `trigger_label`, `trigger_env` and `what` already decided
+// server-side against real tables. `stops_at` is the platform's own answer to
+// "where does this break", and it is not re-derived here.
+//
+// `trigger_env` exists for precisely the reason this panel exists. Its own doc:
+// "A finding that cannot terminate in an action is the shape of finding that
+// gets ignored." The field was added so a surface could name the knob, and no
+// surface named it.
+function renderDevelopment() {
+  const box  = document.getElementById("dev-box");
+  const meta = document.getElementById("dev-meta");
+  if (!box) return;
+
+  const l1 = (_loops && Array.isArray(_loops.loops))
+    ? _loops.loops.find(l => l.id === "loop1") : null;
+
+  if (!l1 || !Array.isArray(l1.stages)) {
+    meta.textContent = "\u00b7 not read";
+    meta.style.color = "var(--yellow)";
+    box.innerHTML = `<div class="dev-note">The learning chain could not be read${
+      _loops && _loops._error ? ` \u2014 ${escHtml(_loops._error)}` : ""
+    }. No verdict is shown rather than a guessed one.</div>`;
+    return;
+  }
+
+  const band = (_dream && _dream.maturity) || null;
+  meta.innerHTML = band
+    ? `\u00b7 <span style="color:${dreamColor()}">${escHtml(band)}</span>`
+    : "";
+
+  // The chain. `is_first_empty` marks where it stops, which is the only row
+  // whose affordance matters — pressing Dream on an agent whose rules are never
+  // retrieved buys nothing, and topping up a budget that is not the blocker is
+  // spending money on the wrong stage.
+  const rows = l1.stages.map(s => {
+    const stuck = !!s.is_first_empty;
+    const n = s.rows == null ? "\u2014" : s.rows;
+    // The engine, and the knob when the engine is off. `sweeper` with
+    // `trigger_default_on: false` and nothing set is the state of Loop 1 on
+    // this deployment: it turns only when a human presses Dream, while the
+    // stage is TYPED as scheduled — which is also why `/api/loops/actions`
+    // never advertises the button that is in fact the only mechanism.
+    const engine = s.trigger_label === "sweeper" && s.trigger_default_on === false
+      ? `<span class="dev-off">sweeper \u00b7 off unless <code>${escHtml(s.trigger_env||"?")}</code> is set</span>`
+      : `<span class="dev-eng">${escHtml(s.trigger_label||"")}</span>`;
+    return `<div class="dev-row${stuck?" stuck":""}">
+      <span class="dev-n">${n}</span>
+      <span class="dev-id">${escHtml(s.id)}</span>
+      <span class="dev-what">${escHtml(s.what||"")}</span>
+      <span class="dev-trig">${engine}</span>
+      <span class="dev-act">${stuck ? devActFor(s.id) : ""}</span>
+    </div>`;
+  }).join("");
+
+  // The platform's sentence about where it stops, not one composed here.
+  const stop = l1.stops_at
+    ? `<div class="dev-stop">Stops at <code>${escHtml(l1.stops_at)}</code> \u2014
+         ${escHtml(l1.detail || "")}</div>`
+    : `<div class="dev-stop ok">Every stage of this chain has produced.
+         ${escHtml(l1.detail || "")}</div>`;
+
+  box.innerHTML = rows + stop + devEmbeddings() + devBudget();
+}
+
+// The control for the stage that is stuck. Null where the platform has none,
+// said out loud rather than left as an empty cell.
+function devActFor(stageId) {
+  if (stageId === "consolidated") {
+    return `<button class="dim-fix" onclick="triggerDream()"
+      title="Run one consolidation cycle: cluster unconsolidated episodes, extract entities, facts and rules. Costs 1 dreaming credit + gas.">\u263e Dream</button>`;
+  }
+  if (stageId === "episodes") {
+    return `<span class="dev-noact" title="Episodes are written by every execute path. An agent with none has not been run.">run the agent</span>`;
+  }
+  if (stageId === "rules") {
+    // Cycles ran and extracted nothing. Dreaming again is the wrong advice --
+    // that is the `unproductive` band, and the fix is upstream of the button.
+    return `<span class="dev-noact" title="Cycles have completed and produced no rules. Dreaming again will not help: check the extractor's model and credentials, and the embedding coverage below.">not the button</span>`;
+  }
+  if (stageId === "retrieved") {
+    // The one this platform genuinely cannot offer an action for, and the most
+    // important stage on the page. 77 of 84 agents that have fed Loop 1 have
+    // never had a rule retrieved (`src/outcome_trust.rs:495`).
+    return `<span class="dev-noact" title="Retrieval is embedding-gated on both paths and needs a query similar enough to a stored rule. Nothing on this page can force it. An unembedded rule can never be retrieved at all -- see embeddings below.">no control</span>`;
+  }
+  return "";
+}
+
+// Episode embedding coverage, and the affordance that does not exist.
+function devEmbeddings() {
+  if (!_emb || _emb._error || !_emb.episodes) {
+    return `<div class="dev-note">Embedding coverage could not be read${
+      _emb && _emb._error ? ` \u2014 ${escHtml(_emb._error)}` : ""
+    }, so nothing here says whether what this agent learned can be recalled.</div>`;
+  }
+  const e = _emb.episodes;
+  const total = e.total || 0;
+  const withV = e.with_vector || 0;
+  const missing = Math.max(0, total - withV);
+  const cov = total ? withV / total : null;
+  const bad = cov != null && cov < 0.9 && missing > 0;
+
+  return `<div class="dev-sub">
+    <div class="dev-sub-h">Embeddings
+      <span style="color:${bad?"var(--yellow)":"var(--fg4)"}">${
+        total ? `${withV} of ${total} episodes carry a vector${cov!=null?` \u00b7 ${pct(cov)}%`:""}`
+              : "no episodes"}</span></div>
+    ${missing ? `<div class="dev-note">${missing} episode(s) have no vector. An
+      unembedded episode returns zero neighbours from clustering, so it fails
+      the minimum-cluster test, becomes noise, and can never become a rule \u2014
+      it is the commonest reason a cycle completes and extracts nothing.</div>` : ""}
+    <div class="dev-note dev-gap"><b>No affordance.</b> There is no re-embed
+      endpoint, worker or binary on this platform \u2014 Spec 22 Phase 3 is deferred
+      and <code>re_embed_episodes</code> is referenced by a script and declared
+      nowhere. Backfilling is an operator task against
+      <code>scripts/loop1_retrievability_census.sql</code>. This is stated
+      rather than omitted: the gap is the finding.</div>
+    <div class="dev-note">Coverage is over <b>episodes</b> only, which is what
+      the endpoint returns. Whether this agent's <b>rules and entities</b> carry
+      vectors is not exposed by any endpoint, so an agent can read
+      <code>mature</code> here while nothing it learned is retrievable.</div>
+  </div>`;
+}
+
+// Dream credits, with the top-up the Observatory has never offered.
+function devBudget() {
+  const bu = (_dream && _dream.budget) || null;
+  if (!bu) return "";
+  const exhausted = !!bu.exhausted || (bu.remaining != null && bu.remaining <= 0);
+  return `<div class="dev-sub">
+    <div class="dev-sub-h">Dream credits
+      <span style="color:${exhausted?"var(--red)":"var(--fg4)"}">${
+        bu.remaining ?? "\u2014"} remaining of ${bu.total ?? 0}</span>
+      <button class="dim-fix" onclick="topupDreaming()"
+        title="Add dreaming credits to this agent. Charges your wallet.">Top up</button>
+    </div>
+    ${exhausted ? `<div class="dev-note" style="color:var(--red)">Exhausted \u2014
+      consolidation stops here, and an agent that has stopped learning looks
+      exactly like one with nothing to learn. <code>/api/me/rounds</code> has
+      been reporting this and no surface read it.</div>` : ""}
+  </div>`;
 }
 
 // ── ABW conformance, in two standards ──────────────────────────────────
@@ -2379,20 +2586,28 @@ function renderDreamingTab() {
   diagEl.textContent = _dream.diagnosis || "";
   diagEl.style.borderLeftColor = dreamColor();
 
-  // A dreaming-pipeline member is the machinery, not a subject of it. Saying so
-  // stops "dormant / never dreamt" reading as neglect for the agent that runs
-  // everyone else's cycles. The flag comes from the loops endpoint, which
-  // resolves it from dream_coordinator's declared members.
-  const svc = (_loops?.loops||[]).find(l=>l.id==="1a")?.evidence?.off_ledger_service;
-  if (svc) {
-    diagEl.innerHTML =
-      `<div style="color:var(--purple,var(--aqua));margin-bottom:6px;"><strong>Dreaming-pipeline service.</strong> `
-      + `This agent runs other agents' consolidation cycles — everything it extracts is filed `
-      + `under the agent being dreamt, not here. The figures below are about it as a <em>subject</em> `
-      + `of dreaming, which it has never been. Its work appears under Sessions, tagged `
-      + `<code>dream_pipeline</code>.</div>`
-      + `<div>${escHtml(_dream.diagnosis || "")}</div>`;
-  }
+  // A dreaming-pipeline note used to render here, and it never once rendered.
+  //
+  // It read `_loops.loops.find(l => l.id === "1a")?.evidence?.off_ledger_service`.
+  // No loop the page receives has the id `1a`: `/api/observatory/agents/:id/loops`
+  // is served by `handlers::loops::agent_loops_handler`, whose ids come from
+  // `loop_model::LOOPS` and are `loop1`..`loop5b`. The `1a` scheme belongs to
+  // `handlers::observatory::agent_loops_handler` — 610 lines, still in the file,
+  // with its own tests, and routed by nothing. `api_server.rs:3007` records that
+  // the current handler "replaces" it. The template was not updated with the
+  // route.
+  //
+  // Renaming the id would not revive it: `off_ledger_service` is computed only
+  // in the unrouted handler, so the served payload has never carried the field
+  // under any name. A conditional nobody can see is false is the same defect as
+  // a gate whose verdict nobody reads — so it is deleted rather than repaired
+  // into something that looks live.
+  //
+  // The underlying fact is real and worth restoring one day:
+  // `consolidation::is_dream_pipeline_member` still exists, and an agent that
+  // runs everyone else's cycles reads `dormant / never dreamt` here, which is
+  // machinery being scored as neglect. Restoring it means serving the flag from
+  // the live endpoint, not resurrecting the dead one.
 
   const bg = _dream.backlog || {}, bu = _dream.budget || {}, cy = _dream.cycles || {};
   const y = _dream.yield || {}, o = _dream.ontology || {};
@@ -2526,6 +2741,33 @@ async function pollDreamJob(jobId, tries=0) {
 // offering "Re-run with judge" cannot rely on the reader having found it, so
 // this sets it, and leaves it set, so the strip and the checkbox agree
 // afterwards instead of the page acting on a value it did not show.
+// The corrective affordance for an exhausted dream budget.
+//
+// `POST /dreaming/topup` charges the caller's wallet and requires Admin on the
+// agent; it has existed and been reachable by nothing. Its free sibling
+// `PUT /dreaming/budget` is deliberately NOT used here — it also zeroes
+// `dreaming_credits_used`, which is the spend history the maturity band and
+// `/api/me/rounds` both read.
+async function topupDreaming() {
+  if (!_agent) return;
+  const raw = prompt("How many dreaming credits to add? This charges your wallet.", "10");
+  if (raw == null) return;
+  const credits = parseInt(raw, 10);
+  if (!Number.isFinite(credits) || credits < 1) {
+    setStatus("Top-up cancelled: credits must be a positive number", "error");
+    return;
+  }
+  setStatus(`Adding ${credits} dreaming credit(s)\u2026`, "scanning");
+  try {
+    await fetchJson(`/api/agents/${enc(_agent.agent_id)}/dreaming/topup`, {
+      method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ credits }),
+    });
+    setStatus(`Added ${credits} dreaming credit(s)`, "done");
+    await loadAgentData();
+  } catch(e) { setStatus("Top-up failed: "+e.message, "error"); }
+}
+
 async function rerunWithJudge() {
   const box = document.getElementById("eval-judge");
   if (box) box.checked = true;
