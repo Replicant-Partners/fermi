@@ -527,16 +527,47 @@ pub struct SetBudgetRequest {
     budget_credits: i32,
 }
 
+/// Set an agent's dreaming budget.
+///
+/// # Two holes, and they compounded each other
+///
+/// This took `_principal: AuthPrincipal` — authenticated, and nothing more.
+/// Its sibling `topup_dreaming_budget_handler` charges the caller's wallet and
+/// calls `rbac::require_admin_on` before adding a single credit. This one
+/// granted an arbitrary budget to **any agent on the platform**, for free, to
+/// **any signed-in user**. The paid path was the one with the lock on it.
+///
+/// It also reset `dreaming_credits_used = 0`. That column is not a counter the
+/// platform can spare: `dreaming_maturity` reads cycles and yield against spend
+/// to tell a loop that runs and learns nothing from one that has simply not run
+/// yet, and `/api/me/rounds` reads the remaining budget to say "this agent has
+/// stopped learning". Zeroing it silently rewrote the history both of those
+/// read. Setting a budget is not the same act as forgiving what has been spent,
+/// and one endpoint did both while asking permission for neither.
+///
+/// Now: Admin on the agent, and the budget only. `dreaming_credits_used` is
+/// left alone, so "raise the budget" adds headroom without erasing the ledger.
 pub async fn set_dreaming_budget(
     State(state): State<AppState>,
-    _principal: AuthPrincipal,
+    principal: AuthPrincipal,
     Path(agent_id): Path<String>,
     Json(body): Json<SetBudgetRequest>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let db_agent = resolve_agent(&state, &agent_id).await?;
 
+    rbac::require_admin_on(
+        &state.db,
+        &principal,
+        ObjectType::Agent,
+        &db_agent.agent_id.to_string(),
+        db_agent.owner_id.as_deref().unwrap_or(""),
+        Visibility::Private,
+    )
+    .await?;
+
     sqlx::query(
-        "UPDATE agents SET dreaming_budget_credits = $1, dreaming_credits_used = 0, dreaming_budget_reset_at = NOW() WHERE agent_id = $2",
+        "UPDATE agents SET dreaming_budget_credits = $1, dreaming_budget_reset_at = NOW() \
+         WHERE agent_id = $2",
     )
     .bind(body.budget_credits)
     .bind(db_agent.agent_id)

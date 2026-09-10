@@ -456,11 +456,38 @@ pub(crate) async fn execute_select_agent(
         let output_sid: Option<String> = row.get("output_schema_id");
         let competition: Option<serde_json::Value> = row.try_get("competition").unwrap_or(None);
 
-        // Brier: mean forecast_calibration score from eval_signals (Brier inverted
-        // to 0-1 where higher = better calibrated, consistent with calibration_score).
+        // Mean `forecast_calibration` from eval_signals. Already 0-1 with
+        // higher = better calibrated, consistent with `calibration_score`.
+        //
+        // TWO BUGS, AND THE SECOND ONLY EXISTED ONCE THE FIRST WAS FIXED.
+        //
+        // The predicate read `signal_type = 'forecast_calibration'`. There is
+        // no `signal_type` column on `eval_signals`; migration 104 names it
+        // `dimension` (104_evaluator_signals.sql:47), and this was the only
+        // reference to that spelling in the repository. So the query errored on
+        // every call, `.ok().flatten().flatten()` swallowed it, and
+        // `brier_component` sat at the 0.5 prior forever — reported to the
+        // caller, accurately but misleadingly, as "no calibration data". A
+        // ranking input that had never once been read, on a live routing path.
+        //
+        // The inversion was the trap underneath. `.map(|b| 1.0 - b)` and its
+        // comment "Brier inverted: lower raw = higher calibration" assumed the
+        // column stores a raw Brier score. It does not: BOTH writers store the
+        // already-inverted value. `BrierEvaluator` computes
+        // `let calibration = 1.0 - brier_clamped` (evaluators/src/scoring.rs:109)
+        // and `brier_forecast_resolver` binds the same quantity
+        // (handlers/forecasts.rs:1908); `calibration.rs:66-80` reads it back
+        // with no inversion at all, which is the correct reading.
+        //
+        // So repairing the column name on its own would have computed
+        // `1 - (1 - brier) = brier` and ranked WORSE-calibrated agents higher,
+        // on a decision that is persisted to `select_agent_decisions`. A dead
+        // query returning a neutral prior is a much cheaper failure than a live
+        // one that is backwards, and fixing half of this would have traded the
+        // first for the second.
         let brier_score: Option<f64> = sqlx::query_scalar(
             "SELECT AVG(score) FROM eval_signals
-             WHERE agent_id = $1 AND signal_type = 'forecast_calibration'
+             WHERE agent_id = $1 AND dimension = 'forecast_calibration'
                AND score IS NOT NULL",
         )
         .bind(agent_id)
@@ -468,8 +495,7 @@ pub(crate) async fn execute_select_agent(
         .await
         .ok()
         .flatten()
-        .flatten()
-        .map(|b: f64| 1.0 - b); // Brier inverted: lower raw = higher calibration
+        .flatten();
 
         // Cost: lower price = higher score. Free (0) → 1.0; 100 credits → 0.0.
         let price = competition

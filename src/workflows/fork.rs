@@ -6,6 +6,36 @@ use fermi_auth::{credit_charge, credit_deposit_typed, get_or_create_wallet};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+/// Report an ontology-copy statement that did not run.
+///
+/// These three statements are best-effort by design: a fork whose ontology copy
+/// fails should still produce a working agent, so the error is not propagated.
+/// It was previously not *reported* either — `.execute(pool).await.ok()` — and
+/// that is how the `facts` copy ran against four non-existent column names for
+/// the entire life of the feature without anyone seeing a line about it.
+///
+/// Swallowing is a decision; swallowing silently is the decision plus a
+/// guarantee that nobody will ever find out. This keeps the first and drops the
+/// second.
+fn warn_if_failed(what: &str, r: Result<sqlx::postgres::PgQueryResult, sqlx::Error>) {
+    match r {
+        Ok(done) => {
+            if done.rows_affected() == 0 {
+                // Legitimately common — a source agent with an empty ontology
+                // copies nothing — so this is info, not a warning. It is worth
+                // a line because "copied nothing" and "could not copy" looked
+                // identical from the outside for as long as both were silent.
+                tracing::info!(table = what, "fork: ontology copy affected no rows");
+            }
+        }
+        Err(e) => tracing::warn!(
+            table = what,
+            error = %e,
+            "fork: ontology copy failed; the forked agent is missing this table"
+        ),
+    }
+}
+
 /// Fork a published agent. Returns the new agent's ID.
 pub async fn fork_agent(
     pool: &PgPool,
@@ -173,8 +203,14 @@ pub async fn fork_agent(
     // the actual schema (see migrations/010) and preserves embedding-provenance
     // columns so forked vectors carry their original model identity forward.
     if include_ontology {
-        // Copy entities (including embedding + Spec 22 provenance columns)
-        sqlx::query(
+        // Copy entities (including embedding + Spec 22 provenance columns).
+        //
+        // `forked_from_entity` is new and it is what makes the facts copy below
+        // possible. Each row gets a fresh `gen_random_uuid()`, and Postgres
+        // cannot RETURNING a column it did not insert, so without recording the
+        // source id inside the row there is no way to map old entity ids to new
+        // ones afterwards — and a fact is nothing but a pair of entity ids.
+        let entities = sqlx::query(
             "INSERT INTO entities (
                 entity_id, agent_id, entity_name, entity_type, summary,
                 t_valid, t_invalid, source_episodes, extraction_confidence,
@@ -188,7 +224,8 @@ pub async fn fork_agent(
                    embedding_model_id, embedding_model_version, embedding_dim,
                    source_text,
                    COALESCE(source_ref, '{}'::jsonb)
-                       || jsonb_build_object('forked_from', $1::text),
+                       || jsonb_build_object('forked_from', $1::text,
+                                             'forked_from_entity', entity_id::text),
                    provenance_trusted
               FROM entities
              WHERE agent_id = $1 AND t_invalid IS NULL",
@@ -196,11 +233,11 @@ pub async fn fork_agent(
         .bind(source_id)
         .bind(new_id)
         .execute(pool)
-        .await
-        .ok();
+        .await;
+        warn_if_failed("entities", entities);
 
         // Copy semantic_rules (real table name)
-        sqlx::query(
+        let rules = sqlx::query(
             "INSERT INTO semantic_rules (
                 rule_id, agent_id, rule_content, rule_description, confidence_score,
                 verification_status, verification_method, source_episode_cluster,
@@ -222,27 +259,56 @@ pub async fn fork_agent(
         .bind(source_id)
         .bind(new_id)
         .execute(pool)
-        .await
-        .ok();
+        .await;
+        warn_if_failed("semantic_rules", rules);
 
-        // Copy facts (no embedding column on facts; see migration 010)
-        sqlx::query(
+        // Copy facts (no embedding column on facts; see migration 010).
+        //
+        // This statement has never once succeeded. It named four columns the
+        // table does not have — `subject_entity_id`, `predicate`,
+        // `object_entity_id`, `confidence_score` — against a schema that calls
+        // them `source_entity_id`, `relation_type`, `target_entity_id` and
+        // `confidence` (migrations/010:131-146), and omitted
+        // `relation_cardinality`, which is NOT NULL with no default. Every fork
+        // since the feature shipped has produced an agent with entities and
+        // rules and zero relationships between them, and `.ok()` meant nobody
+        // could see it.
+        //
+        // The column names were only the visible half. A fact IS a pair of
+        // entity ids, and the entity copy above mints fresh ones, so carrying
+        // `source_entity_id` across verbatim would have pointed the fork's
+        // facts at the SOURCE agent's entities — an FK that resolves, to
+        // somebody else's ontology. Fixing the names alone would have turned a
+        // statement that always failed into one that always succeeded and was
+        // wrong, which is harder to notice and worse to have. The joins below
+        // remap through `forked_from_entity`.
+        //
+        // INNER JOIN on both endpoints, deliberately: the entity copy filters
+        // `t_invalid IS NULL`, so a fact touching a retired entity has no
+        // counterpart here and is dropped rather than dangling.
+        let facts = sqlx::query(
             "INSERT INTO facts (
-                fact_id, agent_id, subject_entity_id, predicate, object_entity_id,
-                confidence_score, source_episodes,
-                t_valid, t_invalid, t_created
+                fact_id, agent_id, source_entity_id, target_entity_id,
+                relation_type, relation_cardinality, confidence, reasoning,
+                source_episodes, t_valid, t_invalid, t_created
             )
-            SELECT gen_random_uuid(), $2, subject_entity_id, predicate, object_entity_id,
-                   confidence_score, source_episodes,
-                   t_valid, t_invalid, NOW()
-              FROM facts
-             WHERE agent_id = $1 AND t_invalid IS NULL",
+            SELECT gen_random_uuid(), $2, se.entity_id, te.entity_id,
+                   f.relation_type, f.relation_cardinality, f.confidence, f.reasoning,
+                   f.source_episodes, f.t_valid, f.t_invalid, NOW()
+              FROM facts f
+              JOIN entities se
+                ON se.agent_id = $2
+               AND se.source_ref->>'forked_from_entity' = f.source_entity_id::text
+              JOIN entities te
+                ON te.agent_id = $2
+               AND te.source_ref->>'forked_from_entity' = f.target_entity_id::text
+             WHERE f.agent_id = $1 AND f.t_invalid IS NULL",
         )
         .bind(source_id)
         .bind(new_id)
         .execute(pool)
-        .await
-        .ok();
+        .await;
+        warn_if_failed("facts", facts);
     }
 
     // 10. Optionally copy embeddings (episodes with embeddings).
