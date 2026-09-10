@@ -318,6 +318,59 @@ fn build_query(claim: &Value, composition: &Value, markets: &[&str]) -> String {
     q
 }
 
+// ─── search credential ───────────────────────────────────────────────
+
+/// Where this run's `brave_search` key would come from, or `None`.
+///
+/// Store first, because that is what AGENT_CREDENTIAL_MODEL.md §2 makes
+/// authoritative — "Never env vars" — and `api_server`'s startup bootstrap
+/// seeds `(abw-system, brave_search, '*')` from the env var once so an
+/// operator can move a key in without a migration.
+///
+/// env second, and this is a compromise worth naming rather than hiding.
+/// `web_search` cannot read the store: `ToolContext` carries no encryptor
+/// (agent_backend/tools/context.rs), so the tool still reads env at runtime.
+/// Checking the store alone would refuse runs that would in fact have worked;
+/// checking env alone would be the legacy path the spec replaced. Either
+/// satisfies the preflight, and the refusal message names the store first.
+///
+/// The honest consequence: a key present in the store but absent from env
+/// passes here and then fails inside the tool. That asymmetry belongs to
+/// `web_search` and to the fact that platform-tier agents have no
+/// tool-secret path at all (`resolve_agent_owner_secrets` returns `None` for
+/// curated and system tiers by design). Fixing it means giving tools a way to
+/// reach the store, which is a change to shared credential plumbing and not
+/// something a claims endpoint should make on its own.
+async fn resolve_search_credential(
+    state: &AppState,
+    agent: &agent_bestiary_memory::types::Agent,
+) -> Option<&'static str> {
+    if let Some(encryptor) = state.secret_encryptor.as_ref() {
+        let principal = crate::funding_principal_for(agent)
+            .unwrap_or_else(|| "abw-system".to_string());
+        if let Ok(Some(key)) = fermi_auth::resolve_agent_credential(
+            &state.db,
+            encryptor,
+            &principal,
+            "brave_search",
+            &agent.agent_name,
+        )
+        .await
+        {
+            if !key.trim().is_empty() {
+                return Some("credential_store");
+            }
+        }
+    }
+    if std::env::var("BRAVE_SEARCH_API_KEY")
+        .map(|k| !k.trim().is_empty())
+        .unwrap_or(false)
+    {
+        return Some("env_bootstrap");
+    }
+    None
+}
+
 // ─── evaluation of one claim ─────────────────────────────────────────────────
 
 struct ClaimOutcome {
@@ -528,43 +581,63 @@ pub async fn evaluate_claims_handler(
     let user_id = principal.user_id();
     let (ws_uuid, slug) = resolve_workspace(&state, &workspace_id, &user_id).await?;
 
-    // ── Refuse rather than degrade ──────────────────────────────────────
+    // ── Preflight: refuse rather than degrade ────────────────────────────
     //
-    // `web_search` reads `BRAVE_SEARCH_API_KEY` at call time and, if it is
-    // unset, returns the words "BRAVE_SEARCH_API_KEY environment variable not
-    // set" as its tool RESULT (src/agent_backend/tools/domains/platform.rs
-    // :1077). That is not an error the executor raises — it is a string handed
-    // to the model, which will then do the only thing it can: answer the
-    // regulatory question from training data.
+    // Two things must be true before spending anything: the evaluator has to
+    // be installed, and the corpus has to be reachable.
     //
-    // The run would succeed. Every citation would be absent, so the evidence
-    // blocks would be stamped `tool_no_match`, which reads as "the corpus was
-    // searched and had nothing" — when the corpus was never reached. The
-    // stored evaluation would be indistinguishable from a real search that
-    // came up empty, and it would be cached and served by `compare_lenses`
-    // afterwards.
+    // The second one is why this check exists at all. `web_search` reads its
+    // key at call time and, when absent, returns the words "BRAVE_SEARCH_API_KEY
+    // environment variable not set" as its tool RESULT rather than raising
+    // (tools/domains/platform.rs:1077). That string is handed to the model,
+    // which then does the only thing it can: answers the regulatory question
+    // from training data. The run SUCCEEDS. Every citation is absent, so each
+    // evidence block is stamped `tool_no_match` — "the corpus was searched and
+    // had nothing" — when the corpus was never reached. The result is then
+    // cached and served by `compare_lenses`, indistinguishable from a real
+    // search that came up empty.
     //
-    // That is the exact failure this app exists to demonstrate the absence of,
-    // so the answer is to refuse the request and say why. A missing key is an
-    // operator problem with a one-line fix; a workspace full of evaluations
-    // that quietly came from model memory is not fixable at all, because
-    // nothing distinguishes them from the real ones.
-    if std::env::var("BRAVE_SEARCH_API_KEY")
-        .map(|k| k.trim().is_empty())
-        .unwrap_or(true)
-    {
-        return Err((
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Claim evaluation is unavailable: BRAVE_SEARCH_API_KEY is not set, \
-             so web_search cannot reach the regulatory corpus. Running anyway \
-             would produce verdicts from the model's training data, stamped \
-             `tool_no_match`, which is indistinguishable from a real search \
-             that found nothing — and those would then be cached and served as \
-             evaluations. Set the key (https://brave.com/search/api/) and \
-             retry. Until then `compare_lenses` will correctly report these \
-             claims as not_evaluated."
-                .to_string(),
-        ));
+    // A missing key is an operator problem with a one-line fix. A workspace of
+    // evaluations that quietly came from model memory is not fixable at all,
+    // because nothing separates them from the real ones. So: refuse.
+    let db_agent = crate::resolve_agent(&state, EVALUATOR)
+        .await
+        .map_err(|(_code, msg)| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                format!(
+                    "Claim evaluation is unavailable: the evaluator `{EVALUATOR}` \
+                     is not installed on this platform ({msg}). Its agent card \
+                     must load and be seeded before it can be run."
+                ),
+            )
+        })?;
+
+    match resolve_search_credential(&state, &db_agent).await {
+        Some(_source) => {}
+        None => {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                format!(
+                    "Claim evaluation is unavailable: no `brave_search` credential \
+                     is reachable, so web_search cannot query the regulatory \
+                     corpus. Running anyway would produce verdicts from the \
+                     model's training data stamped `tool_no_match`, which is \
+                     indistinguishable from a real search that found nothing — \
+                     and those would be cached and served as evaluations. \
+                     \n\nPut the key in the credential store as \
+                     (principal `{}`, provider `brave_search`), which is where \
+                     docs/specs/AGENT_CREDENTIAL_MODEL.md §2 requires it to live. \
+                     Setting BRAVE_SEARCH_API_KEY in the environment also works \
+                     and seeds the store once at startup, but it is a bootstrap \
+                     seed rather than the source of truth. Until one of the two \
+                     is present, `compare_lenses` will correctly report these \
+                     claims as not_evaluated.",
+                    crate::funding_principal_for(&db_agent)
+                        .unwrap_or_else(|| "abw-system".to_string()),
+                ),
+            ));
+        }
     }
 
     // Markets in scope.

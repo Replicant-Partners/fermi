@@ -2571,6 +2571,22 @@ async fn main() {
             ("DEEPSEEK_API_KEY", "deepseek"),
             ("KIMI_API_KEY", "kimi"),
             ("GEMINI_API_KEY", "gemini"),
+            // Not an LLM provider — a tool credential, and the first to travel
+            // this path. `web_search` (Brave) is what grounds any agent that
+            // answers from a live corpus instead of from training data, so it
+            // is funded like a provider key: the store is authoritative and
+            // env is a one-time bootstrap seed.
+            //
+            // mig-171 scoped `agent_credentials` to LLM/embedding providers
+            // and left tool secrets in `user_secrets`. That split cannot serve
+            // a platform-service agent: `resolve_agent_owner_secrets` returns
+            // `None` for curated and system tiers by design, because those
+            // agents have no owner to hold a secret. So a curated agent had no
+            // store path to a tool key at all, and `web_search` reads env
+            // directly — the one thing AGENT_CREDENTIAL_MODEL.md §2 says never
+            // to do. Seeding it here is what makes the key manageable through
+            // ABW rather than only through the deploy environment.
+            ("BRAVE_SEARCH_API_KEY", "brave_search"),
         ] {
             if let Ok(key) = std::env::var(env_var) {
                 match fermi_auth::bootstrap_agent_credential_if_absent(
