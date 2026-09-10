@@ -1019,7 +1019,7 @@ function parseIngredients(yaml) {
     if (!inBlock) continue;
     if (/^  - /.test(line)) {
       if (cur) ings.push(cur);
-      cur = { id:'', display_name:'', quantity:'', category:'', part_number:'', sub_count:0 };
+      cur = { id:'', display_name:'', quantity:'', category:'', role:'', origin:'', part_number:'', sub_count:0 };
     }
     if (/^    - /.test(line)) { if (cur) cur.sub_count++; continue; } // count sub-components
     if (cur) {
@@ -1030,6 +1030,8 @@ function parseIngredients(yaml) {
       if (m('quantity'))        cur.quantity = m('quantity')[1].trim().replace(/^"|"$/g,'');
       if (m('composition_pct')) cur.quantity = cur.quantity || m('composition_pct')[1].trim(); // legacy
       if (m('category'))        cur.category = m('category')[1].trim();
+      if (m('role'))            cur.role = m('role')[1].trim().replace(/^"|"$/g,'');
+      if (m('origin'))          cur.origin = m('origin')[1].trim().replace(/^"|"$/g,'').replace(/^null$/,'');
       if (m('part_number'))     cur.part_number = m('part_number')[1].trim().replace(/^null$/,'');
     }
   }
@@ -1393,19 +1395,102 @@ async function hireOracle() {
   }
 }
 
+// ── BOM pricing query, built from the BOM the user actually wrote ──────────
+//
+// This used to send a hardcoded four-line array. The numbers in it were not
+// arbitrary — they were this composition's percentages times its 330 ml
+// serving (0.8% -> 2.64 g, 8.5% -> 28.05 g) — which is exactly what made it
+// hard to notice: the pricing looked right for the seeded product and was
+// wrong for every edit to it, and for every other product. Fixing the
+// transport without fixing this made it worse, because the agent then really
+// ran and returned confident pricing for a BOM nobody had written.
+
+// The serving basis the percentages are relative to.
+function bomBasisMl() {
+  const m = bomYamlText.match(/^\s*volume_ml:\s*([\d.]+)/m);
+  return m ? parseFloat(m[1]) : null;
+}
+
+function bomProductName() {
+  const m = bomYamlText.match(/^display_name:\s*"?([^"\n]+)"?/m);
+  return m ? m[1].trim() : (currentProductName || 'Unnamed product');
+}
+
+// `scro/bom-query/1` wants a numeric `qty` and a `unit`. A DPP composition
+// states percentages of the formulation. Converting needs a basis, so the
+// conversion and its assumption are both made explicit rather than baked into
+// constants — an unstated assumption here is a price per kilo that silently
+// means something else.
+function buildBomItems(basisMl) {
+  const items = [];
+  const unresolved = [];
+  for (const ing of bomIngredients) {
+    const name = (ing.display_name || ing.id || '').trim();
+    if (!name) continue;
+    const raw = String(ing.quantity ?? '').trim();
+    const item = {
+      name,
+      role: ing.role || ing.category || 'unspecified',
+      quantity_declared: raw || null,
+    };
+    if (ing.origin) item.origin = ing.origin;
+    if (ing.part_number) item.part_number = ing.part_number;
+
+    const pct = raw.match(/^([\d.]+)\s*%$/);
+    const abs = raw.match(/^([\d.]+)\s*(kg|g|mg|l|ml|unit|units|pcs)$/i);
+    if (pct && basisMl) {
+      // w/v against the serving basis, 1 ml treated as 1 g for an aqueous
+      // beverage. Stated in process_context so the agent prices the same
+      // thing the label describes.
+      item.qty = +(parseFloat(pct[1]) / 100 * basisMl).toFixed(4);
+      item.unit = 'g';
+      item.basis = `${pct[1]}% w/v of a ${basisMl} ml serving`;
+    } else if (abs) {
+      item.qty = parseFloat(abs[1]);
+      item.unit = abs[2].toLowerCase();
+    } else {
+      // Neither a percentage with a basis nor an absolute quantity. Sent
+      // anyway, with no invented number — the agent can still identify and
+      // source the material, and `quantity_declared` says what the document
+      // actually holds.
+      item.qty = null;
+      item.unit = null;
+      unresolved.push(`${name}: ${raw || '(no quantity)'}`);
+    }
+    items.push(item);
+  }
+  return { items, unresolved };
+}
+
 async function runBOM() {
   if (!isLiveMode()) { alert('Connect a workspace first.'); return; }
   const btn = document.getElementById('sco-run-btn');
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Pricing BOM…';
+  const basisMl = bomBasisMl();
+  const { items, unresolved } = buildBomItems(basisMl);
+  const resultEl0 = document.getElementById('sco-result');
+  if (!items.length) {
+    // Refuse rather than price nothing. An empty BOM priced silently is how
+    // the hardcoded fixture went unnoticed for as long as it did.
+    if (resultEl0) resultEl0.innerHTML =
+      '<div style="font-size:11px;color:var(--amb)">\u26a0 No bill of materials to price. '
+      + 'Add ingredients on the BOM tab and save to <code>dpp/composition.yaml</code> first.</div>';
+    btn.disabled = false; btn.textContent = 'Run BOM pricing';
+    return;
+  }
+  const notes = [];
+  if (!basisMl) notes.push('No serving.volume_ml in the composition, so percentage quantities could not be converted to mass.');
+  if (unresolved.length) notes.push('Quantities not resolvable to a number: ' + unresolved.join('; ') + '.');
   const bomQuery = {
     task: 'resolve_bom',
-    process_context: { process_name: 'Precision Kombucha F2', production_scale: 'small_batch' },
-    bom_items: [
-      { name:'Hibiscus sabdariffa L. calyces (dried)', qty:28.05, unit:'g', role:'botanical_infusion', stage_id:'cold_steep' },
-      { name:'Organic black tea (Camellia sinensis)', qty:2.64, unit:'g', role:'substrate', stage_id:'primary_fermentation' },
-      { name:'Cane sugar (residual post-F1)', qty:6.93, unit:'g', role:'carbon_source', stage_id:'primary_fermentation' },
-      { name:'Citric acid (E330)', qty:0.99, unit:'g', role:'acidulant', stage_id:'post_f2' }
-    ],
+    process_context: {
+      process_name: bomProductName(),
+      production_scale: 'small_batch',
+      basis: basisMl ? `one ${basisMl} ml serving; percentages read as w/v, 1 ml treated as 1 g` : 'unstated \u2014 no serving volume in the composition',
+      source_document: COMPOSITION_PATH,
+      notes: notes.length ? notes.join(' ') : undefined,
+    },
+    bom_items: items,
     currency: 'EUR'
   };
   const resultEl = document.getElementById('sco-result');

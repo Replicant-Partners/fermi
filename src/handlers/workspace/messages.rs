@@ -558,11 +558,30 @@ pub async fn post_workspace_message_handler(
                         // Enforcement, the grading and the gate's ledger row are
                         // this one call; the route stamp and the grounding stamp
                         // ride with the write in `close` below.
-                        // No card loaded on this path — falls back to
-                        // FIELD_CONTRACTS via enforce_from_output_contract.
+                        // The card's compiled contract, which every other
+                        // caller of `grade` already passes: `a2a.rs:400`,
+                        // `a2a.rs:783`, `execution.rs:441`,
+                        // `execution_stream.rs:315`. This one passed `None`
+                        // under a comment claiming "no card loaded on this
+                        // path" — and `card` is resolved forty lines above and
+                        // cloned into the `ExecutionContext` just below it.
+                        //
+                        // The cost was the asymmetry `Pulse::grade`'s own
+                        // comment predicted: an agent with a compiled contract
+                        // had it enforced when another AGENT called it and
+                        // ignored when a PERSON did. Ten agents are typed
+                        // only via the card map — `equity_analyst`,
+                        // `species_resolver` and the whole weather composition
+                        // among them — so on the busiest human-facing path
+                        // they recorded `Gate::Grounding` as `undetermined`,
+                        // "no contract", while carrying one the platform
+                        // already knew how to apply.
+                        //
+                        // `FIELD_CONTRACTS` still wins where it exists; the
+                        // precedence lives on `enforce_from_output_contract`.
                         let graded = pulse.grade(
                             &agent_name2,
-                            None,
+                            card.capabilities.output_contract.as_ref(),
                             output.raw_response.as_deref(),
                         );
 
