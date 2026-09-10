@@ -24,18 +24,41 @@
         "description": "Render the source composition through a single regulatory lens, producing a valid label for that market with claim renderings, allergen block, divergence notes, and a verification appendix.",
         "api_endpoint": "POST /api/workspaces/:id/actions/render_lens",
         "fields": {
-          "target_market":     { "type": "string",  "required": true,  "enum": ["EU", "US", "CN"], "description": "Which regulatory lens to render through" },
-          "source_product_id": { "type": "string",  "required": false, "default": "precision_kombucha_hibiscus_f2", "description": "Product composition document ID" },
-          "claim_ids":         { "type": "array",   "required": false, "description": "Specific claim IDs to render. If omitted, renders all source_claims." },
-          "include_verification_appendix": { "type": "boolean", "required": false, "default": true, "description": "Include the verification appendix in the output (recommended: always true)" }
+          "target_market": {
+            "type": "string",
+            "required": true,
+            "enum": [
+              "EU",
+              "US",
+              "CN"
+            ],
+            "description": "Which regulatory lens to render through"
+          },
+          "source_product_id": {
+            "type": "string",
+            "required": false,
+            "default": "precision_kombucha_hibiscus_f2",
+            "description": "Product composition document ID"
+          },
+          "claim_ids": {
+            "type": "array",
+            "required": false,
+            "description": "Specific claim IDs to render. If omitted, renders all source_claims."
+          },
+          "include_verification_appendix": {
+            "type": "boolean",
+            "required": false,
+            "default": true,
+            "description": "Include the verification appendix in the output (recommended: always true)"
+          }
         },
         "response": {
-          "action_id":              "UUID of the action log entry",
-          "target_market":          "EU | US | CN",
-          "rendered_claims":        "Array of {claim_id, rendered_text, status, basis, divergence_note}",
-          "allergen_block":         "{standard, mechanism, this_product}",
-          "ingredient_status":      "Array of notable ingredient-status notes for this market",
-          "verification_appendix":  "Array of {item, source, url}"
+          "action_id": "UUID of the action log entry",
+          "target_market": "EU | US | CN",
+          "rendered_claims": "Array of {claim_id, rendered_text, status, basis, divergence_note}",
+          "allergen_block": "{standard, mechanism, this_product}",
+          "ingredient_status": "Array of notable ingredient-status notes for this market",
+          "verification_appendix": "Array of {item, source, url}"
         }
       },
       {
@@ -43,18 +66,35 @@
         "description": "Run the regulatory_lens_translator agent against the live regulatory corpus to evaluate label claims that have not been evaluated yet. This is the only action that produces a verdict for a claim nobody pre-authored — which is every claim a user writes, since claim ids are minted client-side. It calls web_search per market, returns a per-market verdict with citations, and persists the grounding-enforced result to regulatory-lens/ontology/evaluated/{market}/{claim_id}.yaml where compare_lenses will find it. Unlike the other three actions this costs credits and takes seconds per claim; it refuses with 503 if BRAVE_SEARCH_API_KEY is unset rather than answering from model memory.",
         "api_endpoint": "POST /api/workspaces/:id/actions/evaluate_claims",
         "fields": {
-          "claim_ids": { "type": "array",   "required": false, "description": "Claims to evaluate. If omitted, the handler selects the ones with no stored evaluation." },
-          "markets":   { "type": "array",   "required": false, "default": ["EU", "US", "CN"] },
-          "force":     { "type": "boolean", "required": false, "default": false, "description": "Re-evaluate claims that already have a stored evaluation. When true, page using the returned `attempted` list — `remaining` will not decrease." }
+          "claim_ids": {
+            "type": "array",
+            "required": false,
+            "description": "Claims to evaluate. If omitted, the handler selects the ones with no stored evaluation."
+          },
+          "markets": {
+            "type": "array",
+            "required": false,
+            "default": [
+              "EU",
+              "US",
+              "CN"
+            ]
+          },
+          "force": {
+            "type": "boolean",
+            "required": false,
+            "default": false,
+            "description": "Re-evaluate claims that already have a stored evaluation. When true, page using the returned `attempted` list — `remaining` will not decrease."
+          }
         },
         "response": {
-          "action_id":         "UUID",
-          "evaluated":         "Array of {claim_id, document, grounding}. `document` carries a verdict block and a separate evidence block per market: <mkt> = {status, basis, rendered_text, needs_expert}, <mkt>_evidence = {queries_run, citations[]}. The two are stamped separately — <mkt>_provenance is model_inference, <mkt>_evidence_provenance is tool_verified or tool_no_match — so a verdict never inherits its citation's strength.",
-          "skipped":           "Array of {claim_id, reason, detail} — already evaluated unless force",
-          "failed":            "Array of {claim_id, error}",
-          "attempted":         "Claim ids this request took a run at. Page on this, not on `remaining`.",
-          "remaining":         "Claims still in scope. At most 3 are evaluated per request.",
-          "written_paths":     "Workspace paths committed",
+          "action_id": "UUID",
+          "evaluated": "Array of {claim_id, document, grounding}. `document` carries a verdict block and a separate evidence block per market: <mkt> = {status, basis, rendered_text, needs_expert}, <mkt>_evidence = {queries_run, citations[]}. The two are stamped separately — <mkt>_provenance is model_inference, <mkt>_evidence_provenance is tool_verified or tool_no_match — so a verdict never inherits its citation's strength.",
+          "skipped": "Array of {claim_id, reason, detail} — already evaluated unless force",
+          "failed": "Array of {claim_id, error}",
+          "attempted": "Claim ids this request took a run at. Page on this, not on `remaining`.",
+          "remaining": "Claims still in scope. At most 3 are evaluated per request.",
+          "written_paths": "Workspace paths committed",
           "grounding_summary": "{is_clean, violation_count}"
         }
       },
@@ -63,17 +103,39 @@
         "description": "Read the stored per-market evaluations and produce a side-by-side comparison, optionally focused on a specific claim. This action READS — it is free, instant and involves no agent. A claim reports `not_evaluated` until evaluate_claims has evaluated it.",
         "api_endpoint": "POST /api/workspaces/:id/actions/compare_lenses",
         "fields": {
-          "source_product_id": { "type": "string",  "required": false, "default": "precision_kombucha_hibiscus_f2" },
-          "markets":           { "type": "array",   "required": false, "default": ["EU", "US", "CN"], "description": "Markets to include in the comparison" },
-          "claim_id":          { "type": "string",  "required": false, "description": "Focus the comparison on a specific claim. If omitted, compares all claims." },
-          "include_synthetic_seed": { "type": "boolean", "required": false, "default": false, "description": "Fall back to the shipped ruleset YAMLs for claims with no stored evaluation. Those rulesets are data_status: synthetic_representative — hand-authored sketches of each regime. Off by default so an unevaluated claim reads as unevaluated rather than as answered. Seed rows arrive tagged source: 'synthetic_seed'." }
+          "source_product_id": {
+            "type": "string",
+            "required": false,
+            "default": "precision_kombucha_hibiscus_f2"
+          },
+          "markets": {
+            "type": "array",
+            "required": false,
+            "default": [
+              "EU",
+              "US",
+              "CN"
+            ],
+            "description": "Markets to include in the comparison"
+          },
+          "claim_id": {
+            "type": "string",
+            "required": false,
+            "description": "Focus the comparison on a specific claim. If omitted, compares all claims."
+          },
+          "include_synthetic_seed": {
+            "type": "boolean",
+            "required": false,
+            "default": false,
+            "description": "Fall back to the shipped ruleset YAMLs for claims with no stored evaluation. Those rulesets are data_status: synthetic_representative — hand-authored sketches of each regime. Off by default so an unevaluated claim reads as unevaluated rather than as answered. Seed rows arrive tagged source: 'synthetic_seed'."
+          }
         },
         "response": {
-          "action_id":        "UUID",
+          "action_id": "UUID",
           "comparison_table": "Array of {claim_id, candidate_text, markets[], divergence_score, evaluated_markets, markets_in_scope, fully_evaluated}. Each markets[] entry carries source ('agent_evaluation' | 'synthetic_seed' | 'none'), provenance {verdict, evidence}, citations[], queries_run[], needs_expert, endorsed. divergence_score is null unless fully_evaluated — a score across unknowns is not a low score, it is not a score.",
-          "data_status":      "What the rows rest on: agent_evaluated_against_live_corpus | synthetic_representative | mixed_agent_evaluated_and_synthetic_seed | unevaluated",
-          "row_sources":      "Count of rows by source",
-          "demo_beat":        "The scripted demo moment — highest-divergence claim highlighted with one-line regulatory attribution per market"
+          "data_status": "What the rows rest on: agent_evaluated_against_live_corpus | synthetic_representative | mixed_agent_evaluated_and_synthetic_seed | unevaluated",
+          "row_sources": "Count of rows by source",
+          "demo_beat": "The scripted demo moment — highest-divergence claim highlighted with one-line regulatory attribution per market"
         }
       },
       {
@@ -81,40 +143,61 @@
         "description": "Surface and explain a specific divergence point between two markets on a specific claim or ingredient, attributed to the underlying regulatory philosophy difference.",
         "api_endpoint": "POST /api/workspaces/:id/actions/flag_divergence",
         "fields": {
-          "claim_id":        { "type": "string", "required": false, "description": "The claim driving the divergence" },
-          "ingredient_id":   { "type": "string", "required": false, "description": "The ingredient driving the divergence (if ingredient-status divergence)" },
-          "market_a":        { "type": "string", "required": true,  "enum": ["EU", "US", "CN"] },
-          "market_b":        { "type": "string", "required": true,  "enum": ["EU", "US", "CN"] }
+          "claim_id": {
+            "type": "string",
+            "required": false,
+            "description": "The claim driving the divergence"
+          },
+          "ingredient_id": {
+            "type": "string",
+            "required": false,
+            "description": "The ingredient driving the divergence (if ingredient-status divergence)"
+          },
+          "market_a": {
+            "type": "string",
+            "required": true,
+            "enum": [
+              "EU",
+              "US",
+              "CN"
+            ]
+          },
+          "market_b": {
+            "type": "string",
+            "required": true,
+            "enum": [
+              "EU",
+              "US",
+              "CN"
+            ]
+          }
         },
         "response": {
-          "action_id":        "UUID",
-          "divergence_type":  "philosophy | threshold | ingredient_status | format",
+          "action_id": "UUID",
+          "divergence_type": "philosophy | threshold | ingredient_status | format",
           "market_a_position": "How market_a handles this claim/ingredient",
           "market_b_position": "How market_b handles this claim/ingredient",
-          "explanation":       "One-sentence explanation tied to specific regulatory logic — not 'they're stricter'",
-          "reinstatement":     "What it would take to make this claim valid in the market where it's currently not allowed"
+          "explanation": "One-sentence explanation tied to specific regulatory logic — not 'they're stricter'",
+          "reinstatement": "What it would take to make this claim valid in the market where it's currently not allowed"
         }
       }
     ]
   },
   "workspace_template": {
+    "initial_budget": 400,
+    "default_name_pattern": "DPP Studio — {date}",
+    "auto_hire": [
+      "regulatory_lens_translator"
+    ],
     "git_init": true,
     "initial_files": [
       {
-        "path": "regulatory-lens/sku/precision_kombucha_hibiscus_f2.yaml",
-        "source": "apps/adaptogen-lab/regulatory-lens/sku/precision_kombucha_hibiscus_f2.yaml"
+        "path": "dpp/claims.yaml",
+        "content": "# ─────────────────────────────────────────────────────────────────────────────\n# DPP Claims — Label / Regulatory Claims\n# Owner: marketing / regulatory affairs\n# Lifecycle: changes when regulatory strategy changes, not when recipe changes\n#\n# These are candidate claims run through the regulatory lenses (EU, US, CN).\n# The compare_lenses action reads this file + composition.yaml and returns\n# a grounded comparison showing which claims are allowed in each market.\n#\n# Claim status lifecycle:\n#   draft → under_review → endorsed → archived\n# ─────────────────────────────────────────────────────────────────────────────\n\nproduct_id: precision_kombucha_hibiscus_f2\nclaims_version: \"1.0\"\nbom_ref: \"composition.yaml\"       # which BOM these claims are for\n\nsource_claims:\n  - id: live_cultures_present\n    candidate_text: \"Contains live cultures\"\n    claim_pressure: high\n    status: draft\n    notes: \"Factual descriptor — CFU count substantiated by lot testing\"\n\n  - id: antioxidant_character\n    candidate_text: \"Naturally rich in antioxidants\"\n    claim_pressure: medium\n    status: draft\n    notes: \"Anthocyanins from hibiscus; vitamin C also present\"\n\n  - id: hibiscus_wellness\n    candidate_text: \"Hibiscus — traditionally used for wellbeing\"\n    claim_pressure: high\n    status: draft\n    notes: \"Traditional use reference — not a clinical health claim\"\n\n  - id: fermentation_process\n    candidate_text: \"Naturally fermented using traditional kombucha culture\"\n    claim_pressure: low\n    status: draft\n    notes: \"Process descriptor — factually accurate\"\n\n  - id: low_sugar\n    candidate_text: \"Low in sugar\"\n    claim_pressure: medium\n    status: draft\n    notes: \"8.8g per 330ml serving — verify threshold per market\"\n"
       },
       {
-        "path": "regulatory-lens/rulesets/eu_reg_1924.yaml",
-        "source": "apps/adaptogen-lab/regulatory-lens/rulesets/eu_reg_1924.yaml"
-      },
-      {
-        "path": "regulatory-lens/rulesets/us_fda_ftc.yaml",
-        "source": "apps/adaptogen-lab/regulatory-lens/rulesets/us_fda_ftc.yaml"
-      },
-      {
-        "path": "regulatory-lens/rulesets/cn_gb_samr.yaml",
-        "source": "apps/adaptogen-lab/regulatory-lens/rulesets/cn_gb_samr.yaml"
+        "path": "dpp/composition.yaml",
+        "content": "# ─────────────────────────────────────────────────────────────────────────────\n# DPP Composition — Bill of Materials\n# Schema: bom:Item / bom:consistsOf (JSON-LD aligned)\n#\n# This is the canonical DPP document for product composition.\n# Sources:  hand-authored | derived from SimOps cascade | imported from ERP\n# Consumers: supply_chain_oracle (pricing), compare_lenses (regulatory),\n#            label_generator (output), regulatory_scanner (compliance)\n#\n# role vocabulary matches SimOps InputRole exactly:\n#   principal   — primary flow; declared as ingredient on label\n#   consumable  — additive; included in final product; declared on label\n#   catalyst    — process aid (e.g. SCOBY); not declared as ingredient\n#\n# DATA: [SYNTHETIC] — structurally representative only.\n# ─────────────────────────────────────────────────────────────────────────────\n\nitem_type: bom:Item\nproduct_id: precision_kombucha_hibiscus_f2\ndisplay_name: \"Precision Kombucha — Hibiscus, Cold F2\"\npart_number: \"PKH-F2-330\"\nbom_version: \"1.1\"\nbom_source: \"hand_authored\"\n\nserving:\n  volume_ml: 330\n  servings_per_unit: 1\n\nconsists_of:\n\n  - item_id: water\n    display_name: \"Water (process grade)\"\n    role: principal\n    quantity: \"88.3%\"\n    category: base\n\n  - item_id: black_tea\n    display_name: \"Black tea (Camellia sinensis)\"\n    role: consumable\n    quantity: \"0.8%\"\n    category: base\n    part_number: \"TEA-BLK-SL\"\n    origin: \"Sri Lanka\"\n\n  - item_id: cane_sugar_residual\n    display_name: \"Cane sugar (residual post-F1)\"\n    role: consumable\n    quantity: \"2.1%\"\n    category: base\n    origin: \"Brazil / Australia\"\n\n  - item_id: starter_scoby\n    display_name: \"SCOBY starter culture\"\n    role: catalyst\n    quantity: \"trace\"\n    category: processing_culture\n    part_number: \"SCOBY-F2-CULTURE\"\n\n  - item_id: hibiscus_infusion\n    display_name: \"Hibiscus infusion\"\n    role: consumable\n    quantity: \"8.5%\"\n    category: botanical_infusion\n    part_number: \"HSB-CALYCES-DRIED\"\n    origin: \"Egypt / Sudan\"\n    botanical: \"Hibiscus sabdariffa L.\"\n\n  - item_id: citric_acid\n    display_name: \"Citric acid\"\n    role: consumable\n    quantity: \"0.3%\"\n    category: acidulant\n    part_number: \"E330\"\n\nnutrition_per_serving:\n  energy_kcal: 38\n  energy_kj: 159\n  fat_g: 0.0\n  carbohydrate_g: 9.2\n  of_which_sugars_g: 8.8\n  protein_g: 0.2\n  salt_g: 0.01\n  vitamin_c_mg: 14.2\n\nphysical:\n  ph_at_pack: 3.1\n  alcohol_abv_pct: 0.4\n  colour: deep_ruby_red\n  carbonation: mild_effervescent\n  shelf_life_days: 180\n  storage: refrigerated_2_8c\n\ncarbon_intensity:\n  mode: synthetic\n  value_kg_per_kg: 0.41\n  scope_3_dominant: hibiscus_infusion\n\nallergens:\n  present: []\n  may_contain: []\n  gluten_free: true\n  vegan: true\n"
       }
     ],
     "shared_memory_schema": {
@@ -122,15 +205,17 @@
       "last_comparison": "comparison_table | null"
     }
   },
-  "auto_hire": ["regulatory_lens_translator"],
   "visibility": "public",
   "spawn_defaults": {
-    "workspace_name": "Regulatory Lens — {product_name}",
     "initial_message": "I have the Precision Kombucha Hibiscus Cold F2 composition loaded. Which regulatory lens would you like to run first — EU, US, or China? Or ask me to run all three side by side and show you where they diverge."
   },
   "suite": {
     "name": "Adaptogen Lab",
-    "demos": ["info_card_generator", "cold_chain_forecast", "regulatory_lens_translator"],
+    "demos": [
+      "info_card_generator",
+      "cold_chain_forecast",
+      "regulatory_lens_translator"
+    ],
     "shared_sku": "precision_kombucha_hibiscus_f2",
     "pitch_line": "Same grounding architecture that stops a fabricated claim also produces a legitimately different, legitimately compliant claim depending on where you're standing."
   },
