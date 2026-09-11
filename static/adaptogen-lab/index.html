@@ -131,6 +131,24 @@ body{background:var(--bg);color:var(--t1);font-family:'Inter',system-ui,sans-ser
 .sco-desc{font-size:11px;color:var(--t2);margin-bottom:10px;line-height:1.6}
 .sco-prov{font-size:10px;color:var(--t3);margin-top:8px;padding-top:8px;border-top:1px solid var(--b1);font-family:var(--mono)}
 .sco-result{margin-top:10px}
+.act-filters{display:flex;gap:6px;align-items:center;margin:8px 0 10px}
+.act-filter{font-size:9px;text-transform:uppercase;letter-spacing:.04em;font-weight:700;padding:3px 8px;border-radius:3px;cursor:pointer;color:var(--t3);border:1px solid var(--b1)}
+.act-filter.active{color:var(--acc);border-color:rgba(245,197,24,.4);background:rgba(245,197,24,.07)}
+.act-refresh{margin-left:auto;font-size:9px;color:var(--t3);cursor:pointer}
+.act-refresh:hover{color:var(--t1)}
+.act-ev{border-left:2px solid var(--b1);padding:6px 0 7px 8px;margin-bottom:7px}
+.act-ev.sev-success{border-left-color:var(--grn)}
+.act-ev.sev-warn{border-left-color:var(--amb)}
+.act-ev.sev-error{border-left-color:var(--red)}
+.act-ev.sev-info{border-left-color:var(--blu)}
+.act-ev.sev-trace{border-left-color:var(--b1)}
+.act-sum{font-size:11px;color:var(--t1);line-height:1.5;display:flex;gap:5px}
+.act-meta{font-size:9px;color:var(--t3);font-family:var(--mono);margin-top:3px}
+.act-ctx{font-size:9px;color:var(--t2);font-family:var(--mono);margin-top:4px;line-height:1.7}
+.act-ctx b{color:var(--t3);font-weight:400}
+.act-detail{font-size:10px;color:var(--t2);margin-top:4px;line-height:1.6;white-space:pre-wrap}
+.act-count{font-size:9px;color:var(--t3);border:1px solid var(--b1);border-radius:8px;padding:0 5px}
+.act-empty{font-size:11px;color:var(--t3);line-height:1.6}
 .bom-row{display:flex;justify-content:space-between;align-items:flex-start;padding:6px 9px;background:var(--s3);border-radius:4px;margin-bottom:4px;gap:8px}
 .bom-name{font-size:11px;color:var(--t2);flex:1}
 .bom-right{text-align:right}
@@ -355,6 +373,7 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
     <div class="sb-tab" onclick="showTab('claims')">Claims</div>
     <div class="sb-tab" onclick="showTab('ingredients')">BOM</div>
     <div class="sb-tab" onclick="showTab('carbon')">Supply Chain</div>
+    <div class="sb-tab" onclick="showTab('activity')">Activity</div>
     <div class="sb-tab" onclick="showTab('build')">Build</div>
   </div>
 
@@ -472,6 +491,19 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
   </div>
 
   <!-- Build -->
+  <div class="sb-panel hidden" id="tab-activity">
+    <div class="sb-h">WORKSPACE ACTIVITY</div>
+    <div class="sb-sub">Every agent run and action in this workspace, newest first. Persisted
+      entries come from the workspace action log, so they survive a reload; live entries are
+      added as a run proceeds.</div>
+    <div class="act-filters">
+      <span class="act-filter active" id="actf-all" onclick="activitySetFilter('all')">All</span>
+      <span class="act-filter" id="actf-problems" onclick="activitySetFilter('problems')">Problems</span>
+      <span class="act-refresh" onclick="activityLoad()">\u21bb refresh</span>
+    </div>
+    <div id="activity-list"></div>
+  </div>
+
   <div class="sb-panel hidden" id="tab-build">
     <div class="sh"><span class="sh-label">Knowledge Build</span><span class="sh-rule"></span></div>
     <div style="font-size:10px;color:var(--t3);margin-bottom:12px;line-height:1.5">
@@ -665,15 +697,16 @@ function confirmLogout() {
 
 // ── sidebar tabs ────────────────────────────────────────────────────────────
 function showTab(name) {
-  ['products','claims','ingredients','carbon','build'].forEach(t => {
+  ['products','claims','ingredients','carbon','activity','build'].forEach(t => {
     const el = document.getElementById('tab-' + t);
     if (el) el.classList.toggle('hidden', t !== name);
   });
   document.querySelectorAll('.sb-tab').forEach((el, i) => {
-    el.classList.toggle('active', ['products','claims','ingredients','carbon','build'][i] === name);
+    el.classList.toggle('active', ['products','claims','ingredients','carbon','activity','build'][i] === name);
   });
   if (name === 'claims' && wsId()) loadClaimsCards();
   if (name === 'ingredients' && wsId()) loadBomYaml();
+  if (name === 'activity') activityLoad();
 }
 
 // ── jurisdiction filter ─────────────────────────────────────────────────────
@@ -733,7 +766,39 @@ function renderWorkspaceList(workspaces, live) {
   }).join('')}</div>`;
 }
 
+// Clear everything scoped to the workspace we are leaving.
+function resetWorkspaceState() {
+  if (evalTicker) { clearInterval(evalTicker); evalTicker = null; }
+  evalRun = null;
+  evalDocs = {};
+  oracleHired = false;
+  const badge = document.getElementById('sco-badge');
+  if (badge) { badge.textContent = 'not hired'; badge.className = 'sco-badge sb-not'; }
+  const hireBtn = document.getElementById('sco-hire-btn');
+  if (hireBtn) { hireBtn.style.display = ''; hireBtn.disabled = false; hireBtn.textContent = 'Hire agent \u2192'; }
+  const runBtn = document.getElementById('sco-run-btn');
+  if (runBtn) runBtn.style.display = 'none';
+  for (const id of ['sco-result', 'rlt-result', 'eval-panel']) {
+    const el = document.getElementById(id);
+    if (el) { el.innerHTML = ''; el.classList?.remove('show'); }
+  }
+  document.querySelectorAll('.eval-launch').forEach(b => { b.disabled = false; });
+  activityReset();
+}
+
 function selectWorkspace(id, name) {
+  // Everything below the workspace is per-workspace, and none of it was
+  // being cleared. The symptoms looked unrelated: the supply-chain card read
+  // "hired" in a workspace the agent had never been added to (so the run came
+  // back "not in this workspace"), and a finished run's panel followed you
+  // from one product to the next.
+  //
+  // `evalDocs` was the one that mattered. It holds per-claim citations and
+  // verdicts, keyed by claim id, and claim ids are minted per workspace — so
+  // one product's regulatory evidence could render under another product's
+  // claim. A provenance surface showing the wrong product's citations is
+  // worse than showing none.
+  resetWorkspaceState();
   currentWsId = id;
   document.getElementById('ws-id').value = id; // internal only, field hidden
   currentProductName = name;
@@ -1684,12 +1749,24 @@ async function settleSpend(before) {
     if (now && now.spent != null && now.spent > before.spent) {
       evalRun.creditsSpent = now.spent - before.spent;
       evalRun.balanceAfter = now.balance;
+      activityPush({
+        severity: 'info', source: 'ledger', node: null,
+        summary: `Run charged ${evalRun.creditsSpent} credits`,
+        context: [['balance', now.balance], ['claims', evalRun.done],
+                  ['elapsed', `${Math.round((Date.now() - evalRun.startedAt)/1000)}s`]],
+      });
       renderEvalPanel();
       return;
     }
   }
   evalRun.creditsSpent = null;
   evalRun.costNote = 'charge had not settled in the ledger yet — re-open the Activity panel to refresh';
+  activityPush({
+    severity: 'warn', source: 'ledger', node: null,
+    summary: 'Cost not yet readable',
+    detail: 'The execution fee is charged in a background task after the response. '
+          + 'It had not appeared in the ledger within ~9s. Refresh to re-read.',
+  });
   renderEvalPanel();
 }
 
@@ -1775,8 +1852,23 @@ function evaluateUnevaluated() {
   });
 }
 
-function evaluateOneClaim(claimId) {
-  drainEvaluation({ claimIds: [claimId], force: false, total: 1, label: claimId });
+// A pill sitting in the EU column used to evaluate EU, US and CN — three
+// markets' worth of searches and credits for a click that named one. The
+// affordance said "this cell" and the behaviour said "this row", which is
+// why the per-claim pills felt like they were launching globally.
+//
+// `evaluate_claims` already takes `markets`, so a cell pill now scopes to its
+// own column. This is also the lever for cost: a claim across five markets is
+// five times the work, and targeting one is how you avoid paying for the
+// other four before you know whether the first is even worth pursuing.
+function evaluateOneClaim(claimId, market) {
+  drainEvaluation({
+    claimIds: [claimId],
+    force: false,
+    total: 1,
+    label: market ? `${claimId} \u00b7 ${market}` : claimId,
+    markets: market ? [market] : null,
+  });
 }
 
 function reEvaluateClaim(claimId) {
@@ -1794,17 +1886,24 @@ function reEvaluateClaim(claimId) {
 //                        force:true the server would otherwise hand back the
 //                        same first three claims forever, since a forced claim
 //                        never leaves the candidate set.
-async function drainEvaluation({ claimIds, force, total, label }) {
+async function drainEvaluation({ claimIds, force, total, label, markets: marketOverride }) {
   const id = wsId();
   if (!isLiveMode()) { alert('Select a product workspace first — evaluation runs against its claims and wallet.'); return; }
   if (evalRun?.active) { alert('An evaluation run is already in flight.'); return; }
   if (claimIds && !claimIds.length) { alert('Nothing to evaluate.'); return; }
 
-  const markets = evalMarkets();
+  // An explicit override (a market-cell pill) beats the jurisdiction filter.
+  const markets = marketOverride ?? evalMarkets();
   evalRun = { active:true, label: label ?? 'claims', markets, done:0, total: total ?? 0,
               remaining:0, batches:0, failed:[], skipped:[], written:[], notes:[],
               violations:0, startedAt: Date.now(), creditsSpent: undefined };
   const spendBefore = await readSpend();
+  activityPush({
+    severity: 'info', source: `agent:${EVALUATOR}`, node: label,
+    summary: `Evaluating ${label}`,
+    context: [['markets', markets.join(' ')], ['force', force ? 'true' : 'false'],
+              ['balance before', spendBefore?.balance ?? 'unknown']],
+  });
   document.querySelectorAll('.eval-launch').forEach(b => { b.disabled = true; });
   renderEvalPanel();
   if (evalTicker) clearInterval(evalTicker);
@@ -1837,7 +1936,32 @@ async function drainEvaluation({ claimIds, force, total, label }) {
       for (const e of (data.evaluated ?? [])) {
         if (e.claim_id) evalDocs[e.claim_id] = e.document ?? {};
         evalRun.done += 1;
-        evalRun.violations += e.grounding?.violation_count ?? 0;
+        const v = e.grounding?.violation_count ?? 0;
+        evalRun.violations += v;
+        // Per claim, because "the agent is slow" is a question about a
+        // particular claim and the answer differs a lot between them.
+        activityPush({
+          severity: v ? 'warn' : 'success',
+          source: `agent:${EVALUATOR}`,
+          node: e.claim_id,
+          summary: v
+            ? `${e.claim_id} evaluated \u2014 ${v} field(s) nulled by the grounding gate`
+            : `${e.claim_id} evaluated`,
+          detail: v ? 'Fields the agent could not ground were nulled before storage.' : null,
+          context: [
+            ['duration', e.duration_ms != null ? `${(e.duration_ms/1000).toFixed(1)}s` : 'n/a'],
+            ['markets', (data.markets ?? []).join(' ')],
+            ['gate', e.grounding?.is_clean ? 'clean' : `${v} violation(s)`],
+          ],
+        });
+      }
+      for (const f of (data.failed ?? [])) {
+        activityPush({
+          severity: 'error', source: `agent:${EVALUATOR}`, node: f.claim_id,
+          summary: `${f.claim_id ?? 'batch'} failed to evaluate`,
+          detail: f.error,
+          context: [['markets', (data.markets ?? []).join(' ')]],
+        });
       }
       evalRun.failed.push(...(data.failed ?? []));
       evalRun.skipped.push(...(data.skipped ?? []));
@@ -1879,6 +2003,137 @@ async function drainEvaluation({ claimIds, force, total, label }) {
   // user is waiting for, and the ledger read is worth nothing until the
   // background charge has landed anyway.
   await settleSpend(spendBefore);
+}
+
+
+// ── Activity log ────────────────────────────────────────────────────────────
+//
+// Mirrors the event model the Fermi console already uses
+// (`crates/fermi-activity/src/lib.rs`): an event is
+// {seq, at, severity, source, node, summary, detail, context[], count},
+// with a two-state filter (All / Problems) and coalescing of repeats.
+// Keeping the vocabulary identical matters more than sharing code here —
+// a second, subtly different notion of "severity" across two surfaces of
+// the same platform is how the two stop being comparable.
+//
+// Two sources feed it:
+//   persisted — GET /api/workspaces/:id/actions, the attributed action log.
+//               Survives reload, and already records evaluate_claims,
+//               compare_lenses, render_lens and flag_divergence.
+//   live      — pushed as a run proceeds, so a 200s evaluation is legible
+//               while it is happening rather than only after.
+//
+// `context` is where duration and credits live, which is the whole reason
+// the panel is worth having: "the agent is slow and I cannot tell what it
+// cost" is a question about a specific run, and it needs the run's own row.
+let activityEvents = [];
+let activitySeq = 0;
+let activityFilter = 'all';
+
+const ACT_GLYPH = { trace:'\u00b7', info:'\u25cb', success:'\u2713', warn:'\u26a0', error:'\u2715' };
+
+function activityReset() {
+  activityEvents = [];
+  activitySeq = 0;
+  activityRender();
+}
+
+// Coalesce a repeat rather than stacking it, matching the console's log.
+function activityPush({ severity='info', source='system', node=null, summary, detail=null, context=[], at=null }) {
+  const last = activityEvents[0];
+  if (last && last.severity === severity && last.source === source && last.summary === summary) {
+    last.count += 1;
+    last.last_at = at || new Date().toISOString();
+    activityRender();
+    return last;
+  }
+  const ev = { seq: ++activitySeq, at: at || new Date().toISOString(),
+               last_at: at || new Date().toISOString(),
+               severity, source, node, summary, detail, context, count: 1 };
+  activityEvents.unshift(ev);
+  if (activityEvents.length > 300) activityEvents.pop();
+  activityRender();
+  return ev;
+}
+
+function activitySetFilter(f) {
+  activityFilter = f;
+  document.getElementById('actf-all')?.classList.toggle('active', f === 'all');
+  document.getElementById('actf-problems')?.classList.toggle('active', f === 'problems');
+  activityRender();
+}
+
+function relTime(iso) {
+  const d = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (!isFinite(d)) return '';
+  if (d < 60) return `${Math.max(0, Math.round(d))}s ago`;
+  if (d < 3600) return `${Math.round(d / 60)}m ago`;
+  if (d < 86400) return `${Math.round(d / 3600)}h ago`;
+  return new Date(iso).toISOString().slice(0, 10);
+}
+
+function activityRender() {
+  const el = document.getElementById('activity-list');
+  if (!el) return;
+  const shown = activityFilter === 'problems'
+    ? activityEvents.filter(e => e.severity === 'warn' || e.severity === 'error')
+    : activityEvents;
+  if (!shown.length) {
+    el.innerHTML = `<div class="act-empty">${activityEvents.length
+      ? 'No problems recorded for this workspace.'
+      : 'Nothing yet. Agent runs and workspace actions appear here as they happen.'}</div>`;
+    return;
+  }
+  el.innerHTML = shown.map(e => `
+    <div class="act-ev sev-${e.severity}">
+      <div class="act-sum">
+        <span style="flex-shrink:0">${ACT_GLYPH[e.severity] ?? '\u00b7'}</span>
+        <span>${esc(e.summary)}</span>
+        ${e.count > 1 ? `<span class="act-count">\u00d7${e.count}</span>` : ''}
+      </div>
+      <div class="act-meta">${esc(e.source)}${e.node ? ' \u00b7 ' + esc(e.node) : ''} \u00b7 ${relTime(e.last_at)}</div>
+      ${e.detail ? `<div class="act-detail">${esc(e.detail)}</div>` : ''}
+      ${e.context?.length ? `<div class="act-ctx">${e.context
+          .filter(([, v]) => v !== null && v !== undefined && v !== '')
+          .map(([k, v]) => `<b>${esc(k)}</b> ${esc(String(v))}`).join(' \u00b7 ')}</div>` : ''}
+    </div>`).join('');
+}
+
+// Seed from the persisted action log. `GET /actions` is the known pattern —
+// the same feed the CLI and MCP surfaces read — so the panel shows what the
+// platform recorded rather than only what this browser tab happened to see.
+async function activityLoad() {
+  const id = wsId();
+  if (!id) { activityReset(); return; }
+  try {
+    const res = await fetch(`${base()}/api/workspaces/${id}/actions`,
+      { credentials: 'include', headers: authHeaders() });
+    if (!res.ok) return;
+    const data = await res.json();
+    const live = activityEvents.filter(e => e.source !== 'action-log');
+    const persisted = (data.actions ?? []).map(a => {
+      const p = a.payload ?? {};
+      const ctx = [];
+      if (p.markets) ctx.push(['markets', (p.markets || []).join(' ')]);
+      if (p.claim_ids) ctx.push(['claims', (p.claim_ids || []).length]);
+      if (p.evaluator) ctx.push(['agent', p.evaluator]);
+      if (p.force) ctx.push(['force', 'true']);
+      ctx.push(['by', `${a.emitted_by_type}:${a.emitted_by_id}`]);
+      return {
+        seq: 0,
+        at: a.created_at, last_at: a.created_at,
+        severity: a.action_type === 'evaluate_claims' ? 'success' : 'info',
+        source: 'action-log',
+        node: a.action_type,
+        summary: `${a.action_type} recorded`,
+        detail: null, context: ctx, count: 1,
+      };
+    });
+    activityEvents = [...live, ...persisted]
+      .sort((a, b) => new Date(b.last_at) - new Date(a.last_at))
+      .slice(0, 300);
+    activityRender();
+  } catch { /* the panel is a view; a failed read must not break the page */ }
 }
 
 // ── knowledge build timeline ────────────────────────────────────────────────
@@ -2037,8 +2292,8 @@ function provChip(mkt, testing, m, claimId) {
 
   // Nobody has looked. Amber, and it carries the launch.
   if (source === 'none' || m.status === 'not_evaluated' || m.status === 'not_in_ruleset') {
-    const action = `<button class="btn-agent btn-sm eval-launch" style="margin-top:5px" onclick="evaluateOneClaim('${jsq(claimId)}')"
-           title="Runs ${EVALUATOR} over live web searches for this claim. Spends credits, up to ~210s.">⚡ Evaluate · ${EVALUATOR}</button>`;
+    const action = `<button class="btn-agent btn-sm eval-launch" style="margin-top:5px" onclick="evaluateOneClaim('${jsq(claimId)}','${jsq(m.market)}')"
+           title="Runs ${EVALUATOR} over live web searches for this claim in ${esc(m.market)} only. Spends credits, up to ~210s.">⚡ Evaluate · ${esc(m.market)}</button>`;
     return `<div class="prov-stack">
         <div class="pchip gap" title="No agent has evaluated this claim for this market. Unknown, not permitted.">⚠ not evaluated · no verdict exists</div>
       </div>${action}`;
@@ -2051,7 +2306,7 @@ function provChip(mkt, testing, m, claimId) {
       ${stamp('evidence', evidenceProv || 'unavailable_no_tool_source')}
     </div>
     <div class="cost-note" style="margin-top:4px">ruleset YAML · nobody searched anything for this row. Launch ${EVALUATOR} to get a real verdict.</div>
-    <button class="btn-agent btn-sm eval-launch" style="margin-top:5px" onclick="evaluateOneClaim('${jsq(claimId)}')">⚡ Evaluate · ${EVALUATOR}</button>`;
+    <button class="btn-agent btn-sm eval-launch" style="margin-top:5px" onclick="evaluateOneClaim('${jsq(claimId)}','${jsq(m.market)}')">⚡ Evaluate · ${esc(m.market)}</button>`;
   }
 
   // agent_evaluation (or an older row that reported no source at all).
