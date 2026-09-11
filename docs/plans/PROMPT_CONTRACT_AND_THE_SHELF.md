@@ -196,13 +196,142 @@ prevent.
 
 1. **Tabs**, per §3.2 — once the prompt panel exists there is a first tab worth
    opening onto.
-2. **The rungs' prose**, per §3.2 — `unlocks` / `without_it` behind a per-rung
-   disclosure, with the shared sentence said once.
+2. ~~**The rungs' prose**, per §3.2 — `unlocks` / `without_it` behind a per-rung
+   disclosure, with the shared sentence said once.~~ **Shipped**, together with
+   §5c below — the disclosure alone would have tidied the wall without fixing
+   what made it a wall.
 3. **The ladder as a policy surface**, per §3.4, including renaming
    `capability_gates`.
-4. **The builder's empty state**, per §3.3 — the create path.
-5. **Version history**, per §3.5 — cheap, and newly meaningful.
+4. ~~**The builder's empty state**, per §3.3 — the create path.~~ **Shipped**, see §5d.
+5. ~~**Version history**, per §3.5 — cheap, and newly meaningful.~~ **Shipped.**
+   The prompt field is three views of one text — `write` (the textarea that was
+   always there, same `data-field`, same diff on save), `read` (the Markdown an
+   author already writes, rendered), and `history` (`GET /api/agents/:id/versions`,
+   one row per save). Reading an old version offers **load into editor** rather
+   than `POST .../restore`: the rollback becomes an edit the author reviews and
+   saves through the same diff, instead of a write that lands on the click.
+   Held by `scripts/check_agent_fields.js` §5b, including the escaping property —
+   a preview is HTML built from author-supplied text on the surface that edits a
+   live agent.
 6. **Composition and the judge**, per §3.6 — needs a decision first, not code.
+
+### 5d. The builder's empty state — an editor asked to be a creator
+
+Of §3.3's three points, the first was already fixed and pinned: the white
+inputs were `contract-builder.css` theming its controls under
+`.cb-standalone`, a class that existed on one `<body>` in the repo, and
+`contract_builder_headless::the_widget_root_class_is_the_class_its_controls_are_themed_under`
+holds it. The other two were live, and measuring them turned up two defects.
+
+**The empty state named the better route and did not offer it.** With no
+blocks, view 1 rendered a hint: *"add one here, or start from a tool in view 2
+— which is often faster."* Both the palette of ready-made parts and the
+`Declared tools` input that feeds it live on view 2, so the one view a creator
+lands on could offer only `+ Add a part`, which appends an unnamed block with
+a status nobody chose. The editor knew the faster path and made the reader go
+and find it.
+
+The empty state is now a set of opening moves: the worked example (already
+built, previously a low-emphasis toolbar button beside `Clear`), an empty part
+for someone who knows the shape, and **the four kinds of part rendered inline**
+— by the same `cbPaletteChips` that fills view 2, not a second copy. `Borrow a
+shape` was already in view 1 and stays. When no tools are declared, the start
+panel offers a control onto view 2 rather than saying "add some above" about an
+input that is not above it.
+
+**Two defects underneath:**
+
+* `cbAddGap()` pushed `cbNewBlock("")`. The document preview renders only
+  blocks with a name, the view nav counts only those, and it arrived
+  collapsed — so `declare a gap`, whose entire purpose is to record an
+  ambition the platform cannot yet meet, appeared to do nothing. The natural
+  response to that is to press it again.
+* `cbAddJudgement` and `cbAddProse` hard-coded `assessment` and `summary`.
+  Two presses made two blocks with one name: they compile to a single
+  property, the later silently replacing the earlier, and `cbOpen` is keyed by
+  name so expanding one expanded both. `cbFreeName` now applies to all four
+  adders.
+
+`cbNewBlock`'s default status of `inferred` was left alone deliberately. It is
+the status that needs no source, which looks like the wrong default — but
+`Sketch::compile` refuses any block whose `why` is under `card_contract::MIN_WHY`
+(40 characters), and `why` is the one field the compiler will not write. The
+default cannot ship silently, so changing it would move a decision the author
+is already forced to make.
+
+Held by `scripts/check_contract_builder.js` §0, §0b and §0c.
+
+### 5c. "What it can be trusted about" was four essays and one button
+
+The review's *"the text up top is just documentation… it's a wall of text"*
+(§3.2) was answered by cutting the panel notes, and the rungs' own prose grew
+back into the same wall. But the deeper report was different and worse:
+
+> all four text sections are primarily documentation and not visual — they
+> aren't things you can *do*, other than in the contract builder.
+
+That is correct, and measuring it turned up a defect underneath.
+
+**The defect: the shelf mounted an editor it could not save.** `ContractBuilder`
+writes no save button of its own — its *host* provides one. `/contracts` has
+`Save to agent`; the create wizard saves at the end of its flow; the shelf
+mounted the editor and provided **nothing**. `closeDrawer` hides the shelf and
+the next `openDrawer` rebuilds it from scratch, so every contract edited from
+the surface an owner actually configures agents from was discarded on close,
+silently, with the editor's own status chip reading `Draft is ready to save`
+next to no way to save it. A mounted editor with no save is worse than no
+editor, because it invites exactly the work it then throws away.
+
+Fixed: a sticky action bar on the mount calling `ContractBuilder.saveTo`, a
+dirty flag tracked by the host (the builder has no such concept and inventing
+one inside 1,800 lines to serve one host is the wrong place for it), and a
+confirm on close while dirty — the scrim is one stray click wide.
+
+**Ports were the idea that most needed drawing.** A port is a stud: another
+agent's `produces` clicks into this agent's `accepts` wherever the label
+matches, and that join is the whole basis of composition here. It was rendered
+as two rows of a definition list and three lines of prose — the same
+information and none of the idea — and it omitted the one fact that makes a
+port worth declaring: **who is on the other side**. The page already fetched
+`/api/bestiary` and threw the per-agent detail away to keep a `Set` of bare
+labels. It now keeps two maps, and each stud says how many agents can join it
+and names them as links. No backend work.
+
+**The three contract rungs are one rung.** `output_type`, `output_schema` and
+`field_contract` are written by one editor in one PUT. Three rows, each with a
+heading and a paragraph and only the last carrying a button, read as three
+pieces of work — and the sentence "these three are one save" existed to
+apologise for a layout that said otherwise. They are one row now, with the
+three parts as segments of one card, so the claim is structural rather than
+prose. `unlocks` / `without_it` moved behind a per-rung `<details>`: the
+sentences are good and they are not what an author opened the shelf to read.
+
+Held by `scripts/check_specimen_shelf.js` §4c-ii and §4d, including the rule
+this page keeps re-learning — if the register fails to load, no port may claim
+"nothing on the other side", because that is a claim about the whole fleet
+written by an empty map.
+
+### 5b. The healthy row was read backwards
+
+The `resolved` state of fact 1 read:
+
+> Nothing in the prompt trips `prompt_demands_structured_output`, so the tool
+> loop runs.
+
+An author's report: *"I'm not sure what 'trips' means — it sounds like the
+prompt can invoke the tools."* Two faults in one line. It named a Rust symbol
+as though the reader could look it up, and the verb pointed the wrong way: the
+prompt does not act, the **platform reads the prompt** and decides from it
+whether tools exist for that run. The one row describing the mechanism that
+silently removes an agent's tools is the last one that may be read backwards.
+
+Rewritten in that direction, and the phrases themselves are now printed rather
+than alluded to — `STRUCTURED_OUTPUT_PATTERNS` is served from the single Rust
+definition (rule 1 above still holds: no copy in JavaScript), and
+`tool_executor::tests::the_printed_patterns_are_the_patterns_the_executor_matches`
+asserts the printed set is the set the predicate matches. A shelf stating a
+rule the executor does not follow is worse than a silent one, because the
+author would trust it.
 
 ## 6. The measurement to keep
 

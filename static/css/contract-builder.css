@@ -650,3 +650,58 @@
 }
 .cb-src-hit:hover { border-color: var(--green); background: var(--bg1); }
 .cb-src-hit .p { color: var(--gray); margin-left: 5px; }
+
+/* ── The empty state, which is a creator's screen and not an editor's ──
+   Every new agent starts with no contract, and this editor's own hint used
+   to point at a palette on a view the author had not visited. The moves are
+   here now: a worked example to take apart, an empty part for someone who
+   already knows the shape, and the four kinds of part rendered inline by
+   `cbRenderPalette` into `#cb-start-palette`. */
+.cb-start { margin: 4px 0 2px; }
+.cb-start-h {
+  font-size: 0.72rem;
+  color: var(--fg3);
+  line-height: 1.6;
+  max-width: 62ch;
+  margin-bottom: 10px;
+}
+.cb-start-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+  gap: 8px;
+}
+/* A card, not a button that looks like a link. Each one is a whole opening
+   move, and the sentence under the title is what it costs you. */
+.cb-start-card {
+  display: block;
+  text-align: left;
+  background: var(--bg1);
+  border: 1px solid var(--bg2);
+  border-left: 3px solid var(--yellow);
+  color: var(--fg2);
+  font-family: inherit;
+  cursor: pointer;
+  padding: 9px 11px;
+}
+.cb-start-card:hover { border-color: var(--yellow); background: var(--bg0); }
+.cb-start-card b { display: block; font-size: 0.74rem; font-weight: normal; }
+.cb-start-card span {
+  display: block;
+  font-size: 0.66rem;
+  color: var(--fg3);
+  line-height: 1.55;
+  margin-top: 4px;
+}
+.cb-start-card code { color: var(--aqua); }
+/* A control that reads as prose because it belongs inside a sentence. */
+.cb-linkish {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--aqua);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.cb-linkish:hover { color: var(--yellow); }

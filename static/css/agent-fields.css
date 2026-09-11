@@ -17,6 +17,8 @@
 .af-row input:focus, .af-row textarea:focus { outline: none; border-color: var(--aqua); }
 .af-row textarea { line-height: 1.5; resize: vertical; }
 .af-help { font-size: 0.63rem; color: var(--fg4); line-height: 1.45; margin-top: 3px; }
+/* Help lines name platform symbols. Rendered, not printed as backticks. */
+.af-help code { color: var(--aqua); font-family: inherit; }
 
 /* Save is disabled until something differs, and says how much differs. A save
    button that is always live invites a PUT that changes nothing and makes the
@@ -31,6 +33,70 @@
 .af-out { font-size: 0.64rem; color: var(--fg4); overflow-wrap: anywhere; }
 .af-out.ok { color: var(--green); }
 .af-out.bad { color: var(--red, #fb4934); }
+
+/* ── The prompt: write · read · history ──────────────────────────────────────
+   A system prompt is Markdown that nothing ever rendered. `read` renders it,
+   `history` is the `agent_versions` trail, and `write` is the box that was
+   always here — same textarea, same `data-field`, same diff on save. */
+.af-prompt { margin-top: 2px; }
+.af-tabs { display: flex; gap: 2px; align-items: baseline; margin-bottom: 4px; }
+.af-tab { font-family: inherit; font-size: 0.62rem; background: none; cursor: pointer;
+          border: 1px solid transparent; border-bottom: 1px solid var(--bg3);
+          color: var(--fg4); padding: 2px 9px; text-transform: uppercase;
+          letter-spacing: 0.06em; }
+.af-tab:hover { color: var(--fg2); }
+.af-tab.on { color: var(--yellow); border-color: var(--bg3);
+             border-bottom-color: transparent; background: var(--bg0-hard); }
+.af-tab-meta { margin-left: auto; font-size: 0.6rem; color: var(--fg4);
+               font-variant-numeric: tabular-nums; }
+.af-prompt textarea { min-height: 220px; }
+
+/* The rendered prompt. Reading width, not panel width — a prompt read at the
+   full span of a shelf is a prompt nobody finishes. */
+.af-md { font-size: 0.71rem; color: var(--fg2); line-height: 1.6; max-width: 78ch;
+         background: var(--bg0-hard); border: 1px solid var(--bg3);
+         padding: 10px 12px; overflow-wrap: anywhere; }
+.af-md > :first-child { margin-top: 0; }
+.af-md > :last-child { margin-bottom: 0; }
+.af-md p { margin: 0 0 0.7em; }
+.af-md h3, .af-md h4, .af-md h5, .af-md h6 {
+  font-size: 0.7rem; color: var(--yellow); margin: 1.1em 0 0.35em;
+  text-transform: uppercase; letter-spacing: 0.06em; font-weight: normal; }
+.af-md h5, .af-md h6 { color: var(--aqua); }
+.af-md ul, .af-md ol { margin: 0 0 0.7em; padding-left: 1.25em; }
+.af-md li { margin: 0.15em 0; }
+.af-md code { color: var(--aqua); font-family: inherit; }
+.af-md a { color: var(--aqua); text-decoration: underline; }
+.af-md strong { color: var(--fg0, var(--fg2)); font-weight: 600; }
+.af-md em { color: var(--fg3); font-style: italic; }
+.af-md hr { border: none; border-top: 1px solid var(--bg3); margin: 0.9em 0; }
+.af-md blockquote { margin: 0 0 0.7em; padding-left: 9px; color: var(--fg3);
+                    border-left: 2px solid var(--bg3); }
+.af-md-pre { margin: 0 0 0.7em; padding: 8px 10px; background: var(--bg1, #282828);
+             border: 1px solid var(--bg2); overflow-x: auto; }
+.af-md-pre code { color: var(--fg3); font-family: inherit; font-size: 0.68rem;
+                  white-space: pre; }
+
+/* The version trail. One row per save — `agent_versions` has carried this
+   since mig-024 and no surface rendered it, which is the wrong state for the
+   one field that decides whether an agent gets tools. */
+.af-vers { font-size: 0.66rem; }
+.af-ver { display: grid; grid-template-columns: 3.2em 9.5em 1fr auto auto; gap: 8px;
+          align-items: baseline; padding: 4px 0; border-top: 1px solid var(--bg2); }
+.af-ver-n { color: var(--yellow); font-variant-numeric: tabular-nums; }
+.af-ver-when { color: var(--fg4); font-variant-numeric: tabular-nums; }
+.af-ver-who { color: var(--fg3); overflow-wrap: anywhere; }
+.af-ver-what { color: var(--fg4); overflow-wrap: anywhere; }
+.af-mini { font-family: inherit; font-size: 0.6rem; background: none; cursor: pointer;
+           border: 1px solid var(--bg3); color: var(--fg4); padding: 1px 7px; }
+.af-mini:hover:not(:disabled) { border-color: var(--aqua); color: var(--aqua); }
+.af-mini:disabled { opacity: 0.4; cursor: default; }
+/* Reading an old version must never be mistakable for reading the live one. */
+.af-vers-banner { font-size: 0.63rem; color: var(--orange); line-height: 1.5;
+                  border: 1px dashed var(--orange); padding: 5px 8px;
+                  margin-bottom: 9px; display: flex; flex-wrap: wrap; gap: 6px;
+                  align-items: center; }
+.af-vers-banner b { color: var(--yellow); font-weight: normal; }
 
 /* Lifecycle is not a field, and must not look like one. Its own block, its own
    colour, and the sentence saying why the PUT refuses it. */

@@ -39,6 +39,139 @@ window.AgentFields = (function () {
     String(s ?? "").replace(/[&<>"']/g, (c) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
+  // ── Markdown, because that is what a system prompt already is ──────────
+  //
+  // Authors write headings, underlines, fenced JSON blocks and bullet lists
+  // into the prompt box, and every surface rendered it back as one wall of
+  // monospace. Nothing was wrong with the text; the reader had to be the
+  // parser. `football_analyst`'s prompt has a `STRUCTURED OUTPUT — REQUIRED`
+  // heading over an `====` rule, a fenced type name and eight bullets of
+  // provenance vocabulary, and none of it looked like structure.
+  //
+  // Escape first, format second. Every rule below runs over text that is
+  // already HTML-escaped, so there is no path from prompt text to markup —
+  // which matters more here than in a chat bubble, because a prompt is
+  // attacker-adjacent content on an owner's configuration surface.
+  //
+  // Deliberately small: the subset prompts actually use. Not a CommonMark
+  // implementation, and it does not need to be one.
+  const NUL = "\u0000";
+
+  // Inline spans. Code is lifted out first so `**` inside a code span is left
+  // alone — the JSON in a prompt is full of characters that look like markup.
+  function mdInline(t) {
+    const codes = [];
+    let s = String(t).replace(/`([^`\n]+)`/g, (_, c) => {
+      codes.push(c);
+      return `${NUL}C${codes.length - 1}${NUL}`;
+    });
+    s = s
+      // Only http(s). A scheme allowlist rather than a denylist, because the
+      // text is already escaped and the href is the one place that is not.
+      .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g,
+        '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+      .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/(^|[^*\w])\*([^*\n]+)\*(?![*\w])/g, "$1<em>$2</em>");
+    return s.replace(new RegExp(NUL + "C(\\d+)" + NUL, "g"),
+      (_, i) => `<code>${codes[i]}</code>`);
+  }
+
+  function md(src) {
+    const text = String(src ?? "");
+    if (!text.trim()) return "";
+
+    // Fenced blocks come out whole, before anything else can touch them.
+    const blocks = [];
+    let body = text.replace(/```([A-Za-z0-9_+-]*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+      blocks.push(`<pre class="af-md-pre"${lang ? ` data-lang="${esc(lang)}"` : ""
+        }><code>${esc(code.replace(/\n$/, ""))}</code></pre>`);
+      return `${NUL}B${blocks.length - 1}${NUL}`;
+    });
+    body = esc(body);
+
+    const out = [];
+    let para = [];
+    let list = null;
+    let quote = [];
+    const flushPara = () => {
+      if (!para.length) return;
+      out.push(`<p>${mdInline(para.join("<br>"))}</p>`);
+      para = [];
+    };
+    const flushQuote = () => {
+      if (!quote.length) return;
+      out.push(`<blockquote>${mdInline(quote.join("<br>"))}</blockquote>`);
+      quote = [];
+    };
+    const closeList = () => { if (list) { out.push(`</${list}>`); list = null; } };
+    const openList = (kind) => {
+      if (list === kind) return;
+      closeList();
+      out.push(`<${kind}>`);
+      list = kind;
+    };
+    const flushAll = () => { flushPara(); flushQuote(); closeList(); };
+
+    body.split("\n").forEach((raw) => {
+      const line = raw.replace(/\s+$/, "");
+      const blockRef = new RegExp("^" + NUL + "B(\\d+)" + NUL + "$").exec(line.trim());
+      if (blockRef) { flushAll(); out.push(blocks[blockRef[1]]); return; }
+      if (!line.trim()) { flushAll(); return; }
+
+      // `TITLE` over `=====` is how prompts on this platform write a heading,
+      // and it predates anyone thinking of them as Markdown. Honoured.
+      if (/^={2,}$/.test(line.trim()) && para.length) {
+        const head = para.pop();
+        flushPara();
+        out.push(`<h4>${mdInline(head)}</h4>`);
+        return;
+      }
+      if (/^-{3,}$/.test(line.trim())) {
+        if (para.length) {
+          const head = para.pop();
+          flushPara();
+          out.push(`<h5>${mdInline(head)}</h5>`);
+        } else { flushAll(); out.push("<hr>"); }
+        return;
+      }
+
+      let m;
+      if ((m = /^(#{1,6})\s+(.*)$/.exec(line))) {
+        flushAll();
+        const n = Math.min(6, m[1].length + 2); // h1 in a panel is a shout
+        out.push(`<h${n}>${mdInline(m[2])}</h${n}>`);
+        return;
+      }
+      if ((m = /^\s*(?:[-*+])\s+(.*)$/.exec(line))) {
+        flushPara(); flushQuote(); openList("ul");
+        out.push(`<li>${mdInline(m[1])}</li>`);
+        return;
+      }
+      if ((m = /^\s*\d+[.)]\s+(.*)$/.exec(line))) {
+        flushPara(); flushQuote(); openList("ol");
+        out.push(`<li>${mdInline(m[1])}</li>`);
+        return;
+      }
+      if ((m = /^&gt;\s?(.*)$/.exec(line))) {
+        flushPara(); closeList();
+        quote.push(m[1]);
+        return;
+      }
+      flushQuote(); closeList();
+      para.push(line);
+    });
+    flushAll();
+    return out.join("\n");
+  }
+
+  // Timestamps, short and sortable. A version list is read down a column.
+  const when = (iso) => {
+    const d = new Date(iso);
+    return isNaN(d.getTime())
+      ? String(iso ?? "\u2014")
+      : d.toISOString().slice(0, 16).replace("T", " ");
+  };
+
   // `path` is how a value is read out of the served profile, which is nested;
   // `key` is what the endpoint takes, which is flat.
   const FIELDS = [
@@ -78,10 +211,10 @@ window.AgentFields = (function () {
     // it decides whether the agent gets a tool loop at all, so it is the first
     // thing an author needs and it was three panels down inside `Brain`.
     { group: "prompt", key: "system_prompt", path: "system_prompt",
-      label: "system prompt", kind: "textarea", rows: 14,
-      help: "Versioned \u2014 the persona version on every pulse records which text " +
-            "produced it, so a trace read next month still resolves to the prompt " +
-            "that ran." },
+      label: "system prompt", kind: "prompt", rows: 16,
+      help: "Markdown. `read` renders it the way it is written; `history` is the " +
+            "`agent_versions` trail, one row per save, so a pulse read next month " +
+            "still resolves to the exact text that produced it." },
     // ── manage ────────────────────────────────────────────────────────
     { group: "manage", key: "display_alias", path: "label",
       label: "display name", kind: "text",
@@ -230,6 +363,32 @@ window.AgentFields = (function () {
     }
     if (f.kind === "textarea") {
       return `<textarea ${common} rows="${f.rows || 7}">${esc(v)}</textarea>`;
+    }
+    if (f.kind === "prompt") {
+      // One text, three views of it.
+      //
+      // `write` is the box that was always here. `read` renders the Markdown
+      // the author already writes, so a prompt with headings and a fenced
+      // schema reads as a document rather than as a wall to parse by eye.
+      // `history` is `agent_versions` — a table that has recorded every prompt
+      // edit since mig-024 and had no surface at all, which is the wrong state
+      // for the one field that decides whether the agent gets tools.
+      //
+      // The textarea keeps its `data-field`, so the diff, the save and every
+      // check downstream are untouched. This is an interface over the same
+      // control, not a second way to write the prompt.
+      return `<div class="af-prompt" data-prompt>
+        <div class="af-tabs">
+          <button type="button" class="af-tab on" data-ptab="write">write</button>
+          <button type="button" class="af-tab" data-ptab="read">read</button>
+          <button type="button" class="af-tab" data-ptab="history">history</button>
+          <span class="af-tab-meta" data-prompt-meta></span>
+        </div>
+        <div data-ppane="write"><textarea ${common} rows="${f.rows || 14}"
+          spellcheck="false">${esc(v)}</textarea></div>
+        <div class="af-md" data-ppane="read" hidden></div>
+        <div class="af-vers" data-ppane="history" hidden></div>
+      </div>`;
     }
     if (f.kind === "slider") {
       // A number you drag, with the value beside it. `temperature` is the case:
@@ -451,11 +610,16 @@ window.AgentFields = (function () {
       return any ? out : null;
     };
 
+    // The help line is escaped first and inline-formatted second. Every entry
+    // in the FIELDS table names platform symbols in backticks —
+    // `apply_tier_resolution`, `AgentUpdate`, `resolve_sampling_params` — and
+    // printing them as literal backticks made the one sentence explaining a
+    // field cost more to read than the field.
     el.innerHTML = `
       ${fields.map((f) => `<div class="af-row">
         <label class="af-label" for="af-${esc(f.key)}">${esc(f.label)}</label>
         ${control(f, initial[f.key])}
-        <div class="af-help">${esc(f.help)}</div>
+        <div class="af-help">${mdInline(esc(f.help))}</div>
       </div>`).join("")}
       ${group === "intelligence" ? ladderBlock(profile) : ""}
       ${group === "manage" ? lifecycle(profile) : ""}
@@ -594,6 +758,158 @@ window.AgentFields = (function () {
       }
     }
 
+    // ── The prompt: write, read, history ─────────────────────────────
+    //
+    // `read` renders whatever is in the editor right now, not what was served,
+    // so the preview follows an unsaved edit. A preview that silently showed
+    // the stored text while the author looked at their own change would be the
+    // drift this widget exists to prevent, one layer down.
+    const promptBox = el.querySelector("[data-prompt]");
+    if (promptBox) {
+      const ta = inputs.find((i) => i.dataset.field === "system_prompt");
+      const panes = {};
+      promptBox.querySelectorAll("[data-ppane]").forEach((p) => {
+        panes[p.dataset.ppane] = p;
+      });
+      const tabs = [...promptBox.querySelectorAll("[data-ptab]")];
+      const metaEl = promptBox.querySelector("[data-prompt-meta]");
+      // Non-null only while an OLD version is on screen. The banner exists so
+      // "this is not your prompt" is never something the reader has to infer.
+      let viewing = null;
+      let versions = null;
+
+      const stats = () => {
+        if (!metaEl) return;
+        const t = ta ? String(ta.value || "") : "";
+        const pv = at(profile, "substrate.persona_version");
+        metaEl.textContent = [
+          pv != null ? `persona v${pv}` : null,
+          `${t.length.toLocaleString()} characters`,
+          `${t ? t.split("\n").length : 0} lines`,
+        ].filter(Boolean).join(" \u00b7 ");
+      };
+
+      const renderRead = () => {
+        const body = viewing ? (viewing.system_prompt || "") : (ta ? ta.value : "");
+        const banner = viewing
+          ? `<div class="af-vers-banner">Showing <b>v${esc(viewing.version_number)}</b>
+               as it was saved on ${esc(when(viewing.created_at))} \u2014 not the text in
+               the editor.
+               <button type="button" class="af-mini" data-vload>load into editor</button>
+               <button type="button" class="af-mini" data-vnow>back to current</button>
+             </div>`
+          : "";
+        panes.read.innerHTML = banner + (String(body).trim()
+          ? md(body)
+          : `<div class="af-note">No prompt. An agent with no prompt is
+               unconfigured rather than broken \u2014 it answers as the bare model
+               does, with no persona and nothing said about its contract.</div>`);
+      };
+
+      const renderHistory = () => {
+        if (!versions.length) {
+          panes.history.innerHTML = `<div class="af-note">No versions recorded yet. A
+            row is written on every save, so the first edit made here starts the
+            trail.</div>`;
+          return;
+        }
+        panes.history.innerHTML = `<div class="af-note">One row per save. The version
+          a pulse was produced under is the text that produced it, which is what makes
+          this an audit trail rather than a curiosity.</div>`
+          + versions.map((v) => `<div class="af-ver">
+              <span class="af-ver-n">v${esc(v.version_number)}</span>
+              <span class="af-ver-when">${esc(when(v.created_at))}</span>
+              <span class="af-ver-who">${esc(v.changed_by || "unknown")}</span>
+              <span class="af-ver-what">${esc(v.model || "\u2014")}</span>
+              <button type="button" class="af-mini"
+                      data-vshow="${esc(v.version_number)}">read</button>
+            </div>`).join("");
+      };
+
+      const loadHistory = async () => {
+        if (versions) { renderHistory(); return; }
+        if (!opts.agentId) {
+          panes.history.innerHTML = `<div class="af-note">Nothing is saved yet, so
+            there is no history to read.</div>`;
+          return;
+        }
+        panes.history.innerHTML = `<div class="af-note">reading the version
+          trail\u2026</div>`;
+        try {
+          const r = await fetch(
+            `/api/agents/${encodeURIComponent(opts.agentId)}/versions`);
+          if (!r.ok) throw new Error(await r.text());
+          versions = ((await r.json()) || {}).versions || [];
+        } catch (err) {
+          // Unknown, not empty. "No versions" is a claim about the agent;
+          // a failed read is a claim about this page, and they look identical
+          // if the catch renders the empty state.
+          panes.history.innerHTML = `<div class="af-out bad">Could not read the
+            version trail, so whether this agent has one is unknown:
+            ${esc(err.message)}</div>`;
+          return;
+        }
+        renderHistory();
+      };
+
+      const show = (name) => {
+        tabs.forEach((t) => {
+          if (t.classList) t.classList.toggle("on", t.dataset.ptab === name);
+        });
+        Object.keys(panes).forEach((k) => { panes[k].hidden = k !== name; });
+        if (name === "read") renderRead();
+        if (name === "history") loadHistory();
+      };
+
+      // Delegated, because the read and history panes rewrite their own
+      // contents and re-binding after every render is how a button quietly
+      // stops working.
+      promptBox.addEventListener("click", async (ev) => {
+        const t = ev.target;
+        if (!t || !t.dataset) return;
+        if (t.dataset.ptab) { show(t.dataset.ptab); return; }
+        if (t.dataset.vshow) {
+          t.disabled = true;
+          try {
+            const r = await fetch(`/api/agents/${encodeURIComponent(opts.agentId)}`
+              + `/versions/${encodeURIComponent(t.dataset.vshow)}`);
+            if (!r.ok) throw new Error(await r.text());
+            viewing = await r.json();
+            show("read");
+          } catch (err) {
+            panes.read.innerHTML = `<div class="af-out bad">Could not read
+              v${esc(t.dataset.vshow)}: ${esc(err.message)}</div>`;
+            show("read");
+          }
+          t.disabled = false;
+          return;
+        }
+        if ("vload" in t.dataset) {
+          // Into the editor, not onto the agent. `POST .../restore` exists and
+          // would write immediately; putting the old text in the box makes the
+          // rollback an edit the author reviews and saves like any other, and
+          // it travels through the same diff.
+          if (ta && viewing) {
+            ta.value = viewing.system_prompt || "";
+            stats();
+            refresh();
+          }
+          viewing = null;
+          show("write");
+          return;
+        }
+        if ("vnow" in t.dataset) { viewing = null; renderRead(); return; }
+      });
+
+      if (ta) {
+        ta.addEventListener("input", () => {
+          viewing = null;
+          stats();
+        });
+      }
+      stats();
+    }
+
     const saveBtn = el.querySelector("[data-af-save]");
     const out = el.querySelector("[data-af-out]");
 
@@ -700,5 +1016,14 @@ window.AgentFields = (function () {
     return { changed };
   }
 
-  return { mount, FIELDS, groups: () => [...new Set(FIELDS.map((f) => f.group))] };
+  // `renderMarkdown` is exported for the render check in
+  // `scripts/check_agent_fields.js`. A preview that escapes nothing is an
+  // injection on an owner's configuration surface, and that property has to be
+  // assertable without a browser.
+  return {
+    mount,
+    FIELDS,
+    renderMarkdown: md,
+    groups: () => [...new Set(FIELDS.map((f) => f.group))],
+  };
 })();

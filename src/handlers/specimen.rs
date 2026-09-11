@@ -1028,9 +1028,8 @@ pub async fn specimen_handler(
     let mut counts = std::collections::BTreeMap::<&'static str, usize>::new();
     let contract_fields: Vec<Value> = fermi::grounding_trust::contracts_for(&agent_name)
         .map(|c| {
-            let declared = fermi::field_state::Declared::of(&c.grounding, |t| {
-                dispatchable.contains(t)
-            });
+            let declared =
+                fermi::field_state::Declared::of(&c.grounding, |t| dispatchable.contains(t));
             let tool = match c.grounding {
                 fermi::grounding_trust::Grounding::Sourced { tool, .. } => Some(tool),
                 _ => None,
@@ -1192,9 +1191,19 @@ pub async fn specimen_handler(
                 "contradicts_contract": trigger.is_some() && sourced_fields > 0,
                 "produces_schema": produces_schema,
                 "names_its_type": names_its_type,
-                "why": "`prompt_demands_structured_output` substring-matches the \
-                        system prompt, and a match makes `ToolAwareExecutor` skip \
-                        the tool loop entirely. The prompt is not documentation.",
+                // The whole set, not just the one that matched.
+                //
+                // Naming the matched phrase says what went wrong this time;
+                // printing the set says what to avoid next time. Served from
+                // the one Rust definition so the shelf cannot state a rule the
+                // executor does not follow.
+                "patterns": fermi::agent_backend::tool_executor::STRUCTURED_OUTPUT_PATTERNS,
+                "why": "Before an agent runs, the platform scans its system prompt \
+                        for phrases that demand a JSON-only answer. If it finds one, \
+                        `ToolAwareExecutor` hands the request straight to the model \
+                        and the agent gets no tools for that run. The prompt is not \
+                        documentation: this one substring decides whether the agent \
+                        can call anything.",
             },
         },
         "record": {

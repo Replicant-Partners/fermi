@@ -66,7 +66,9 @@ globalThis.fetch = () => Promise.reject(new Error("no net"));
 const mod = { exports: {} };
 new Function("module", blocks[0] +
   "\n;module.exports = { drawer, declarationPanel, setShelfWidth, wireGrip," +
-  " agentVerdict, promptCheck," +
+  " agentVerdict, promptCheck, closeDrawer, PRODUCERS, CONSUMERS," +
+  " set REG(v) { REG = v; }, get REG() { return REG; }," +
+  " set DIRTY(v) { CONTRACT_DIRTY = v; }, get DIRTY() { return CONTRACT_DIRTY; }," +
   " set D(v) { D = v; }, get D() { return D; } };")(mod);
 const S = mod.exports;
 
@@ -342,6 +344,43 @@ h2 = CHK({ gets_tools: true, trigger: null, sourced_fields: 0,
            contradicts_contract: false, produces_schema: null, names_its_type: null });
 ok(!/c-error/.test(h2) && !/names its type/.test(h2),
   "an agent with no contract is being judged against one");
+// A served check with no phrase list must not render a dangling sentence.
+ok(!/phrases are \./.test(h2),
+  "the row promises a list of phrases the platform did not serve");
+
+// ── 4b-ii. the sentence an author actually reads ────────────────────────
+//
+// The healthy row read: "Nothing in the prompt trips
+// `prompt_demands_structured_output`, so the tool loop runs." Two faults in one
+// line. It named a Rust function nobody outside this repo can look up, and
+// "trips" reads as the PROMPT doing something — an author reported it as
+// "sounds like the prompt can invoke the tools". The direction is the reverse:
+// the platform reads the prompt and decides from it whether the agent gets
+// tools at all. A row about the mechanism that silently removes an agent's
+// tools is the last one that may be read backwards.
+h2 = CHK({ gets_tools: true, trigger: null, sourced_fields: 6,
+           contradicts_contract: false, produces_schema: null, names_its_type: null,
+           patterns: ["ONLY", "raw JSON", "Return JSON:"] });
+ok(!/prompt_demands_structured_output/.test(h2),
+  "the row still names a Rust symbol as though the reader could look it up");
+ok(!/\btrips\b/.test(h2),
+  "`trips` is still the verb, and it reads as the prompt invoking something " +
+  "rather than the platform reading it");
+ok(/platform scans/.test(h2),
+  "the row does not say who reads the prompt, so the direction is left to be " +
+  "inferred and it was inferred backwards");
+// The phrases come from the served list, which comes from the one Rust
+// definition. A copy in the template would state a rule the executor does not
+// follow, and the author would trust it.
+ok(/<code>Return JSON:<\/code>/.test(h2),
+  "the phrases that switch tools off are not named, so the author is told a " +
+  "rule exists and not what it is");
+
+// The two off states say what the phrase DID, not that it matched a predicate.
+h2 = CHK({ gets_tools: false, trigger: "Return JSON:", sourced_fields: 0,
+           contradicts_contract: false, produces_schema: null, names_its_type: null });
+ok(/switche[sd] (?:this agent's )?tools off|switched off/.test(h2),
+  "the off state does not say that the agent's tools are gone");
 
 // And no check served at all must render nothing rather than guessing.
 S.D = { profile: PROFILE, declaration: { rungs: RUNGS, declared: 2, total: 4 },
@@ -398,15 +437,29 @@ ok(/contract-builder\.js/.test(HTML),
 // which implied the other two needed a separate editor that does not exist.
 ok((shelf.match(/data-open-contract/g) || []).length === 1,
   "more than one rung carries the contract editor");
-// Said ONCE for the group, not once per rung. Three identical sentences down
-// three consecutive rows is the wall this project keeps rebuilding.
-const saidOnce = (shelf.match(/these three are\s+one save/g) || []).length;
-ok(saidOnce === 1,
-  `"these three are one save" appears ${saidOnce} times; the reason belongs to the ` +
-  `group and the rows are bracketed to show it`);
-ok((shelf.match(/class="rung [^"]*grouped/g) || []).length === 3,
-  "the three contract rungs are not bracketed together, so nothing shows which " +
-  "ones the single sentence is about");
+// Said ONCE for the group, not once per rung — and now SHOWN as one thing
+// rather than asserted over three rows that happen to be adjacent.
+//
+// This used to require three `.rung.grouped` rows plus the sentence "these
+// three are one save" exactly once. The three rows were the defect the
+// sentence existed to apologise for: three headings, three paragraphs of
+// `unlocks`/`without_it`, and a single button on the last of them, which reads
+// as three pieces of work no matter what the prose says. They are one rung now
+// — one mark, one heading, one button — with the three parts as segments of
+// one card, so the claim is structural instead of prose.
+const oneSave = (shelf.match(/one save/g) || []).length;
+ok(oneSave === 1,
+  `"one save" appears ${oneSave} times; the reason belongs to the group and is ` +
+  `said once, or it is per-row documentation again`);
+ok((shelf.match(/class="rung [^"]*grouped/g) || []).length === 1,
+  "the contract is not one rung, so the three parts that close together are " +
+  "still presented as separate work");
+ok((shelf.match(/class="cseg/g) || []).length === 3,
+  "the contract card does not show its three parts, so `2 of 3 written` is a " +
+  "number with nothing behind it");
+ok(/class="cseg on/.test(shelf) && /class="cseg"/.test(shelf),
+  "a written part and an unwritten one render identically, which is the " +
+  "distinction the whole card exists to draw");
 // `ports` is the one rung the contract editor does NOT close — and only half of
 // it, because the compiler derives `produces` from `produces_schema`.
 const portsRow = shelf.slice(shelf.indexOf("ports"), shelf.indexOf("output_type"));
@@ -415,6 +468,108 @@ ok(!/closed by the/.test(portsRow),
 // The ports rung now has an editor for `accepts`.
 ok(shelf.includes('id="af-ports"'),
   "the ports rung has no mount point for the accepts editor");
+
+// ── 4c-ii. ports, drawn as the connectors they are ─────────────────────
+//
+// A port is a stud: another agent's `produces` clicks into this agent's
+// `accepts` wherever the label matches, and that join is the entire basis of
+// composition here. It was rendered as two rows of a definition list plus
+// three lines of prose — the same information and none of the idea, and with
+// the one fact that makes a port worth declaring missing entirely: WHO is on
+// the other side.
+const PORTED = { ...PROFILE,
+  accepts: ["fermi/forecast-question/1", "team"],
+  produces: ["fermi/football_evidence"] };
+const withPorts = () => {
+  S.D = { profile: PORTED,
+          declaration: { rungs: RUNGS, declared: 2, total: 4, next: "output_schema" } };
+  return S.declarationPanel();
+};
+
+S.PRODUCERS.set("fermi/forecast-question/1",
+  [{ name: "fermi", label: "fermi" }, { name: "macro_forecaster", label: "macro_forecaster" }]);
+S.CONSUMERS.set("fermi/football_evidence", [{ name: "fermi", label: "fermi" }]);
+S.REG = true;
+let ports2 = withPorts();
+
+ok(/class="seam-side" data-dir="in"/.test(ports2)
+   && /class="seam-side" data-dir="out"/.test(ports2),
+  "the two faces are not drawn as two faces, so which labels are inputs and " +
+  "which are outputs is left to be read off a definition list");
+ok(/class="stud joined"/.test(ports2) && /class="stud orphan"/.test(ports2),
+  "a port with somebody on the other side renders the same as one facing a " +
+  "wall — which is not a smaller version of connected, it is a different fact");
+// The count, and then the names. "2 agents" you cannot open is a statistic.
+ok(/<b>2<\/b> produce this/.test(ports2),
+  "a port does not say how many agents can plug into it");
+ok(/href="\/specimen\/macro_forecaster"/.test(ports2),
+  "the counterparts are counted and not named, so the seam is a number rather " +
+  "than a composition somebody can go and build");
+ok(/<b>1<\/b> accept this/.test(ports2),
+  "the produces face does not say who accepts what this agent emits");
+ok(/nothing on the other side/.test(ports2),
+  "a label that matches nothing anywhere is not reported as such, and that is " +
+  "the one port state an author can act on immediately");
+// A schema id is a checkable type; a bare noun is an author's word for one,
+// and `team` is not something a validator can resolve on both sides.
+ok(/class="stud-k schema">schema</.test(ports2)
+   && /class="stud-k">label</.test(ports2),
+  "schema ids and bare author labels render identically, so `team` reads as " +
+  "the same kind of promise as `fermi/forecast-question/1`");
+
+// Unknown is not zero. Third time this rule appears on this page: if the
+// register did not load, every port would read "nothing on the other side" —
+// a false claim about the whole fleet, written by an empty Map.
+S.REG = false;
+const noReg = withPorts();
+ok(!/nothing on the other side/.test(noReg),
+  "a register that failed to load renders every port as unconnectable, which " +
+  "is a claim about the fleet made by an empty map. Absent must look " +
+  "different from bad");
+ok(/counterparts unknown/.test(noReg),
+  "the shelf does not say that the counterpart read failed, so the reader " +
+  "cannot tell a quiet port from a quiet page");
+ok(!/class="stud orphan"/.test(noReg),
+  "ports are marked as facing a wall on the strength of a fetch that failed");
+S.REG = true;
+
+// ── 4d. the editor can be saved from the surface that mounts it ──────────
+//
+// `ContractBuilder` writes no save button of its own — its HOST provides one.
+// /contracts has `Save to agent`; the create wizard saves at the end of its
+// flow; the shelf mounted the editor and provided nothing. So every contract
+// edited from the surface an owner actually configures agents from was
+// discarded on close, silently, while the editor's own status chip read
+// `Draft is ready to save`. A mounted editor with no save is worse than no
+// editor, because it invites the work it then throws away.
+const SRC = blocks[0];
+ok(/data-cb-save/.test(SRC),
+  "the shelf mounts the contract editor and offers no way to save it, so every " +
+  "edit made here is discarded on close");
+ok(/ContractBuilder\.saveTo\(/.test(SRC),
+  "the save control does not call the editor's own save path, so it is either " +
+  "a second implementation of the PUT or a button that does nothing");
+ok(/mountContractBar\(/.test(SRC) &&
+   SRC.indexOf("ContractBuilder.mount(") < SRC.indexOf("mountContractBar(host"),
+  "the save bar is not attached when the editor is mounted");
+
+// Closing the shelf destroys the editor. With unsaved work that is the loss of
+// an afternoon, and the scrim is one stray click wide.
+let asked = 0;
+globalThis.confirm = () => { asked += 1; return false; };
+S.DIRTY = true;
+el("drawer").classList.remove = () => { FAIL.push("the shelf closed over unsaved contract work"); };
+S.closeDrawer();
+ok(asked === 1,
+  "closing the shelf with unsaved contract work does not ask, so the only " +
+  "unrecoverable action on this surface is also the easiest one to trigger");
+el("drawer").classList.remove = () => {};
+S.DIRTY = false;
+asked = 0;
+S.closeDrawer();
+ok(asked === 0,
+  "closing a shelf with nothing to lose still interrupts, which is how a " +
+  "warning stops being read");
 // The competition block shows where creators declare their participation.
 ok(shelf.includes('id="af-competition"'),
   "the shelf has no competition mount point — creators cannot declare domains, price, or support tier");

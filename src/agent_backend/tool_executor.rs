@@ -47,18 +47,30 @@ const MAX_ITERATIONS: u32 = 5;
 /// implementation of a decision that changes how the agent executes, and the two
 /// would drift — which is the failure this repo keeps finding in a new place.
 pub fn structured_output_trigger(prompt: &str) -> Option<&'static str> {
-    const PATTERNS: &[&str] = &[
-        "ONLY",
-        "raw JSON",
-        "Return a valid JSON",
-        "return a valid JSON",
-        "no prose outside",
-        "JSON object — no prose",
-        "output valid JSON only",
-        "Return JSON:",
-    ];
-    PATTERNS.iter().copied().find(|p| prompt.contains(p))
+    STRUCTURED_OUTPUT_PATTERNS
+        .iter()
+        .copied()
+        .find(|p| prompt.contains(p))
 }
+
+/// The phrases that switch the tool loop off, as a list a surface can print.
+///
+/// Naming the matched phrase tells an author what went wrong *this time*;
+/// printing the whole set tells them what to avoid next time, which is the
+/// difference between a diagnosis and a rule they can hold. Public for that
+/// reason and read by `specimen_handler` — a copy of these strings in a
+/// template would be a second implementation of a decision that changes how
+/// the agent executes.
+pub const STRUCTURED_OUTPUT_PATTERNS: &[&str] = &[
+    "ONLY",
+    "raw JSON",
+    "Return a valid JSON",
+    "return a valid JSON",
+    "no prose outside",
+    "JSON object — no prose",
+    "output valid JSON only",
+    "Return JSON:",
+];
 
 pub(crate) fn prompt_demands_structured_output(prompt: &str) -> bool {
     prompt.contains("ONLY")
@@ -1120,6 +1132,24 @@ mod tests {
     fn does_not_match_prompts_that_merely_mention_json() {
         let prompt = "You may receive JSON input from the user. Reply in markdown.";
         assert!(!prompt_demands_structured_output(prompt));
+    }
+
+    /// The predicate and the printable list are two spellings of one rule.
+    ///
+    /// `STRUCTURED_OUTPUT_PATTERNS` is served to the configuration shelf so an
+    /// author can read the phrases that switch their tool loop off. A phrase
+    /// added to the predicate and not to the list would make the shelf state a
+    /// rule the executor does not follow — which is worse than saying nothing,
+    /// because the author would then trust it.
+    #[test]
+    fn the_printed_patterns_are_the_patterns_the_executor_matches() {
+        for p in super::STRUCTURED_OUTPUT_PATTERNS {
+            assert!(
+                prompt_demands_structured_output(p),
+                "`{p}` is printed to authors as a phrase that removes the tool \
+                 loop, and the predicate does not match it"
+            );
+        }
     }
 
     /// Catches a small typo / casing slip in the heuristic that would silently

@@ -383,6 +383,26 @@ const ContractBuilder = (() => {
     };
   }
 
+  // A name nothing else is using.
+  //
+  // `cbAddJudgement` always made `assessment` and `cbAddProse` always made
+  // `summary`, so pressing either twice produced two blocks with one name.
+  // They compile to one property — the later silently replacing the earlier —
+  // and `cbOpen` is keyed by name, so expanding one expanded both. Adding a
+  // second part of the same kind is not an error case; it is roughly the
+  // second thing anybody does in here.
+  function cbFreeName(base) {
+    const stem = (base || "part").trim() || "part";
+    const taken = new Set(
+      cbBlocks.map((b) => (b.name || "").trim()).filter(Boolean),
+    );
+    if (!taken.has(stem)) return stem;
+    for (let i = 2; i < 100; i += 1) {
+      if (!taken.has(`${stem}_${i}`)) return `${stem}_${i}`;
+    }
+    return stem;
+  }
+
   function cbAddBlock() {
     cbBlocks.push(cbNewBlock());
     cbRenderAll();
@@ -448,11 +468,43 @@ const ContractBuilder = (() => {
   function cbRenderShape() {
     const wrap = document.getElementById("cb-shape");
     if (!wrap) return;
+    // ── empty is the state this editor handles worst, and the one every
+    //    new agent starts in ────────────────────────────────────────────
+    //
+    // This was a `hint` reading "add one here, or start from a tool in view 2
+    // — which is often faster". The editor knew the better route, named it,
+    // and did not offer it: the palette of ready-made parts and the tools
+    // input that feeds it both live on a view the author has not visited, and
+    // the only control on THIS view appends an unnamed block with a status
+    // nobody chose. An editor asked to be a creator.
+    //
+    // So the empty state is a set of moves rather than a blank form. The
+    // palette is rendered here too (see `cbRenderPalette`), which is the whole
+    // of "add a part from a tool" without a view switch.
     if (!cbBlocks.length) {
-      wrap.innerHTML = `<div class="hint">
-        No parts yet. A part is one coherent piece of the document. Add one
-        here, or start from a tool in view 2 &mdash; which is often faster,
-        because a tool you already have implies the part.</div>`;
+      wrap.innerHTML = `<div class="cb-start">
+        <div class="cb-start-h">Nothing declared yet &mdash; which is where every
+          new agent starts, so this is a starting point rather than a blank
+          form.</div>
+        <div class="cb-start-cards">
+          <button class="cb-start-card" onclick="cbLoadExample()">
+            <b>Open the worked example</b>
+            <span>A complete contract that compiles, to read and take apart. It
+              loads into this editor only &mdash; nothing reaches the agent until
+              you save.</span>
+          </button>
+          <button class="cb-start-card" onclick="cbAddBlock()">
+            <b>Start from an empty part</b>
+            <span>For when you already know the shape. It arrives as
+              <code>reasoned</code>, which is a claim: the compiler will hold it
+              until you say where the value comes from and why.</span>
+          </button>
+        </div>
+        <div class="cb-sub" style="margin-top:14px">Or add a part by what it is
+          <span class="cb-hintlet">four kinds, and the kind decides what the
+            platform is allowed to claim about the value</span></div>
+        <div class="cb-palette" id="cb-start-palette"></div>
+      </div>`;
       return;
     }
     wrap.innerHTML = cbBlocks
@@ -575,9 +627,14 @@ const ContractBuilder = (() => {
     cbRenderPalette();
   }
 
-  function cbRenderPalette() {
-    const wrap = document.getElementById("cb-palette");
-    if (!wrap) return;
+  // The four kinds of part there are, as chips.
+  //
+  // `where` is which container is asking, and it changes exactly one thing:
+  // what to say when no tools are declared. In view 2 the tools input is
+  // directly above, so "add some above" is a direction. In view 1's empty
+  // state it is on another view, and pointing at something the reader cannot
+  // see is how a hint becomes noise.
+  function cbPaletteChips(where) {
     const used = new Set(cbBlocks.map((b) => (b.tool || "").trim()));
     const chips = [];
 
@@ -593,12 +650,21 @@ const ContractBuilder = (() => {
     });
 
     if (!cbProposals.length) {
-      chips.push(`
-        <div class="hint" style="max-width:420px">
-          No tools declared yet. Add some above and they appear here as
-          retrieved parts &mdash; the only kind whose values a tool can
-          actually vouch for.
-        </div>`);
+      chips.push(
+        where === "start"
+          ? `<div class="hint" style="max-width:420px">
+               No tools declared yet. Naming them under
+               <button class="cb-linkish" onclick="cbSetView(2)">where values
+               come from</button> turns each one into a ready-made retrieved
+               part &mdash; the fastest honest route, because a tool you
+               already have implies the part.
+             </div>`
+          : `<div class="hint" style="max-width:420px">
+               No tools declared yet. Add some above and they appear here as
+               retrieved parts &mdash; the only kind whose values a tool can
+               actually vouch for.
+             </div>`,
+      );
     }
 
     chips.push(`
@@ -617,12 +683,22 @@ const ContractBuilder = (() => {
         declare a gap
       </button>`);
 
-    wrap.innerHTML = chips.join("");
+    return chips.join("");
+  }
+
+  // Two homes, one palette. View 2 has always had it; the empty state of view
+  // 1 needs it more, and a second copy of the chip vocabulary is the drift
+  // this repo keeps finding.
+  function cbRenderPalette() {
+    const wrap = document.getElementById("cb-palette");
+    if (wrap) wrap.innerHTML = cbPaletteChips("view2");
+    const start = document.getElementById("cb-start-palette");
+    if (start) start.innerHTML = cbPaletteChips("start");
   }
 
   function cbAddFromProposal(i) {
     const p = cbProposals[i];
-    const b = cbNewBlock(p.name);
+    const b = cbNewBlock(cbFreeName(p.name));
     b.status = "sourced";
     b.tool = p.source.tool;
     b.response_field = p.source.response_field;
@@ -639,7 +715,7 @@ const ContractBuilder = (() => {
   }
 
   function cbAddJudgement() {
-    const b = cbNewBlock("assessment");
+    const b = cbNewBlock(cbFreeName("assessment"));
     b.status = "inferred";
     b.from = cbBlocks
       .filter((x) => x.status === "sourced" && x.name)
@@ -656,7 +732,7 @@ const ContractBuilder = (() => {
   }
 
   function cbAddProse() {
-    const b = cbNewBlock("summary");
+    const b = cbNewBlock(cbFreeName("summary"));
     b.status = "narrative";
     b.shape = "value";
     b.value = "string";
@@ -667,10 +743,19 @@ const ContractBuilder = (() => {
     cbTouch();
   }
 
+  // A gap is a part like any other, and it used to arrive nameless.
+  //
+  // `cbNewBlock("")` produces a block the document preview filters out (it
+  // renders only `name.trim()` blocks) and the view nav does not count, and it
+  // was pushed collapsed. So pressing `declare a gap` — the whole point of
+  // which is to record an ambition the platform cannot yet meet — appeared to
+  // do nothing at all, three times out of three, and the author's response is
+  // to press it again.
   function cbAddGap() {
-    const b = cbNewBlock("");
+    const b = cbNewBlock(cbFreeName("gap"));
     b.status = "unavailable";
     cbBlocks.push(b);
+    cbOpen.add(b.name);
     cbRenderAll();
     cbTouch();
   }

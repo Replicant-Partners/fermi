@@ -213,6 +213,109 @@
   .rung.grouped{border-left:2px solid var(--bg3);padding-left:7px;}
   .rung.grouped.next{border-left-color:var(--yellow);}
 
+  /* ── Ports, drawn as the connectors they are ─────────────────────────
+     A port is a stud. Another agent's `produces` clicks into this agent's
+     `accepts` where the label matches, and that join is the whole basis of
+     composition on this platform — 289 distinct produce labels, 236 accept
+     labels, 13 that appear on both.
+
+     It was rendered as two rows of a definition list and three lines of prose,
+     which is the same information and none of the idea. Studs, on a rail, with
+     the count of what can click into each one. A stud that matches nothing
+     anywhere is drawn hollow and dashed, because that is not a smaller version
+     of connected — it is a connector facing a wall. */
+  .seams{margin:2px 0 4px;}
+  .seam-side{position:relative;padding-left:15px;margin-bottom:3px;}
+  /* The rail. One line the studs sit on, so a column of labels reads as one
+     connector strip rather than as a list that happens to be indented. */
+  .seam-side:before{content:"";position:absolute;left:4px;top:9px;bottom:7px;
+                    width:1px;background:var(--bg3);}
+  .seam-h{display:flex;align-items:baseline;gap:7px;font-size:0.62rem;
+          text-transform:uppercase;letter-spacing:0.07em;color:var(--fg4);
+          margin-bottom:1px;}
+  .seam-h b{color:var(--fg2);font-weight:normal;}
+  .seam-dir{color:var(--aqua);}
+  .seam-side[data-dir="out"] .seam-dir{color:var(--yellow);}
+  .seam-sub{font-size:0.58rem;text-transform:none;letter-spacing:0;color:var(--bg4,#7c6f64);}
+  .stud{position:relative;display:grid;grid-template-columns:1fr auto;gap:6px;
+        align-items:baseline;padding:2px 0 2px 13px;font-size:0.67rem;}
+  /* The nub itself, on the rail. Filled where the label can actually join. */
+  .stud:before{content:"";position:absolute;left:-4px;top:6px;width:9px;height:9px;
+               border-radius:50%;border:1px solid var(--aqua);
+               background:var(--bg0-hard);box-sizing:border-box;}
+  .seam-side[data-dir="out"] .stud:before{border-color:var(--yellow);}
+  .stud.joined:before{background:var(--aqua);box-shadow:0 0 0 2px rgba(69,133,136,0.22);}
+  .seam-side[data-dir="out"] .stud.joined:before{background:var(--yellow);
+               box-shadow:0 0 0 2px rgba(250,189,47,0.2);}
+  /* Facing a wall. Dashed and dim — not a lesser join, a different fact. */
+  .stud.orphan:before{border-style:dashed;border-color:var(--bg4,#7c6f64);}
+  .stud-l{color:var(--fg2);overflow-wrap:anywhere;}
+  .stud.orphan .stud-l{color:var(--fg4);}
+  /* A schema id is a checkable type; a bare noun is an author's word for one. */
+  .stud-k{font-size:0.55rem;text-transform:uppercase;letter-spacing:0.06em;
+          border:1px solid var(--bg3);color:var(--fg4);padding:0 4px;margin-left:5px;
+          white-space:nowrap;}
+  .stud-k.schema{border-color:var(--aqua);color:var(--aqua);}
+  .stud-c{font-size:0.61rem;color:var(--fg4);white-space:nowrap;}
+  .stud.joined .stud-c{color:var(--fg3);}
+  .stud-c b{color:var(--aqua);font-weight:normal;}
+  .seam-side[data-dir="out"] .stud-c b{color:var(--yellow);}
+  /* Who clicks in. Names, linked, because "4 agents" you cannot open is a
+     statistic and four names are a composition you can go and build. */
+  .stud-who{grid-column:1/-1;font-size:0.61rem;color:var(--fg4);line-height:1.6;
+            padding:1px 0 3px;}
+  .stud-who a{color:var(--aqua);}
+  .stud-who a:hover{color:var(--yellow);}
+  .seam-none{font-size:0.63rem;color:var(--fg4);font-style:italic;padding:2px 0 2px 13px;}
+  /* The body between the two faces. The agent, so the direction of the two
+     strips is never something the reader has to work out. */
+  .seam-body{display:flex;align-items:center;gap:8px;margin:5px 0;padding:3px 9px;
+             border:1px solid var(--bg3);background:var(--bg1);font-size:0.66rem;
+             color:var(--fg3);}
+  .seam-body b{color:var(--yellow);font-weight:normal;}
+  .seam-body .dim{margin-left:auto;font-size:0.6rem;}
+
+  /* ── The contract, as one card with three parts ────────────────────────
+     `output_type`, `output_schema` and `field_contract` are ONE save through
+     ONE editor. Three rungs each carrying its own paragraph implied three
+     separate pieces of work and buried the single button that does all of
+     them. */
+  .ccard{border:1px solid var(--bg3);padding:8px 10px;margin:6px 0 2px;}
+  .ccard.next{border-color:var(--yellow);}
+  .ccard-h{display:flex;align-items:baseline;gap:8px;font-size:0.7rem;color:var(--fg2);}
+  .ccard-h .dim{margin-left:auto;font-size:0.62rem;}
+  .ccard-segs{display:flex;gap:3px;margin:7px 0 5px;}
+  /* One segment per part, sized by weight rather than by name length: the
+     progress bar IS the three rungs, so there is no second thing to read. */
+  .cseg{flex:1;padding:3px 6px;font-size:0.6rem;text-transform:uppercase;
+        letter-spacing:0.06em;text-align:center;border:1px solid var(--bg3);
+        color:var(--fg4);background:var(--bg0-hard);}
+  .cseg.on{border-color:var(--green);color:var(--green);background:rgba(152,151,26,0.1);}
+  .cseg.next{border-color:var(--yellow);color:var(--yellow);}
+  .ccard-w{font-size:0.63rem;color:var(--fg4);line-height:1.5;margin-bottom:6px;}
+
+  /* Why a rung matters, on request. `unlocks` and `without_it` are two to four
+     lines each and four rungs of them at the top of the shelf is the wall of
+     text the panel notes were cut to remove, rebuilt by the same hand. */
+  .why{margin-top:4px;}
+  .why>summary{font-size:0.61rem;color:var(--fg4);cursor:pointer;list-style:none;
+               text-transform:uppercase;letter-spacing:0.06em;}
+  .why>summary::-webkit-details-marker{display:none;}
+  .why>summary:before{content:"\25b8 ";color:var(--bg4,#7c6f64);}
+  .why[open]>summary:before{content:"\25be ";}
+  .why>summary:hover{color:var(--aqua);}
+
+  /* The editor's own action bar, in the shelf.
+     The builder writes no save button of its own — its host provides one, and
+     /contracts does. The shelf mounted it and did not, so every edit made here
+     was discarded on close with no warning and no way to keep it. */
+  .cbbar{position:sticky;bottom:0;display:flex;gap:9px;align-items:center;
+         flex-wrap:wrap;margin-top:10px;padding:9px 0;background:var(--bg0-hard);
+         border-top:1px solid var(--bg3);}
+  .cbbar-msg{font-size:0.63rem;color:var(--fg4);overflow-wrap:anywhere;flex:1;}
+  .cbbar-msg.ok{color:var(--green);}
+  .cbbar-msg.bad{color:var(--red,#fb4934);}
+
   /* The bank account. Four measurements, none of them a setting. */
   .bank{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--bg2);
         border:1px solid var(--bg2);}
@@ -289,6 +392,26 @@
     ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const NAME = decodeURIComponent(location.pathname.split("/").filter(Boolean).pop() || "");
   let D = null, TAB = "profile", SEAM = new Set();
+  // Who is on the other side of each label.
+  //
+  // `SEAM` answers "could this label ever join" and the shelf needs the next
+  // question: join to WHOM. Same one fetch — `/api/bestiary` already returns
+  // every specimen's `accepts` and `produces`, and boot() was throwing the
+  // per-agent detail away to keep a set of bare labels. "4 agents" you cannot
+  // open is a statistic; four names are a composition somebody can go and build.
+  const PRODUCERS = new Map();   // label -> [{ name, label }] that PRODUCE it
+  const CONSUMERS = new Map();   // label -> [{ name, label }] that ACCEPT it
+  const counterparts = (m, l) => m.get(l) || [];
+  // Did the register load at all. Without it every port would read "nothing on
+  // the other side", which is a claim about the fleet made by an empty map.
+  let REG = false;
+  // Whether the mounted contract editor holds work that is not on the card.
+  // Closing the shelf destroys the editor, so this is what stands between an
+  // afternoon's contract and a stray click on the scrim.
+  let CONTRACT_DIRTY = false;
+  // Carried across the one redraw that follows a save, so the confirmation
+  // survives the rebuild that shows the result.
+  let CONTRACT_FLASH = null;
   // Schema ID pattern: namespace/name/version (e.g. scro/bom-query/1).
   // These chips render distinctly from bare author labels.
   const SCHEMA_ID_RE = /^[a-z][a-z0-9-]*\/[a-z][a-z0-9-]*\/[0-9]+$/;
@@ -664,6 +787,128 @@
     </div>`;
   }
 
+  // Why a rung matters, on request.
+  //
+  // `unlocks` and `without_it` are two to four lines each. Four rungs of them,
+  // at the top of the shelf, is per-row documentation \u2014 the wall of text the
+  // panel notes were cut to remove, rebuilt by the same hand that removed them.
+  // The sentences are good and they are not what an author is here to read, so
+  // they are one keystroke away instead of always open.
+  //
+  // Which sentence shows still depends on the state, because that is the whole
+  // distinction: a declared rung says what it BOUGHT, an absent one says what
+  // reads `unknown` without it. Swap them and the panel is a checklist.
+  function whyDetails(r) {
+    return `<details class="why"><summary>${esc(r.rung)} \u00b7 ${
+      r.present ? "what it unlocks" : "what is unknown without it"}</summary>
+      <div class="rung-d">${esc(r.declares)}</div>
+      <div class="rung-x">${r.present
+        ? `<b>Unlocks:</b> ${esc(r.unlocks)}`
+        : `<b>Without it:</b> ${esc(r.without_it)}`}</div>
+      ${r.present ? "" : `<div class="rung-own">declared in ${esc(r.owner)}</div>`}
+    </details>`;
+  }
+
+  const nextTag = (on) => on ? `<span class="next-tag">do this next</span>` : "";
+
+  // One port, drawn as the connector it is.
+  //
+  // `dir` is which face it is on: `in` is `accepts` and its counterparts are
+  // agents that PRODUCE the label; `out` is `produces` and its counterparts
+  // ACCEPT it. Naming the counterparts is the point \u2014 a port is only worth
+  // declaring because something on the other side can click into it, and the
+  // shelf knew the labels and never said who was holding them.
+  function stud(label, dir) {
+    const isSchema = SCHEMA_ID_RE.test(label);
+    const others = counterparts(dir === "in" ? PRODUCERS : CONSUMERS, label);
+    const n = others.length;
+    // Unknown is not zero. If the register did not load, every stud would read
+    // "nothing on the platform" \u2014 a false claim about the fleet, written by the
+    // arithmetic, on the surface an owner opens. Absent must look different
+    // from bad, and this is the third place on this page that rule applies.
+    const cls = !REG ? "" : n ? "joined" : "orphan";
+    const shown = others.slice(0, 4);
+    return `<div class="${cls ? "stud " + cls : "stud"}">
+      <span class="stud-l">${esc(label)}<span class="${
+        isSchema ? "stud-k schema" : "stud-k"}">${isSchema ? "schema" : "label"}</span></span>
+      <span class="stud-c">${!REG
+        ? "counterparts unknown"
+        : n ? `<b>${n}</b> ${dir === "in" ? "produce" : "accept"} this`
+            : "nothing on the other side"}</span>
+      ${n ? `<span class="stud-who">${shown.map(o =>
+          `<a href="/specimen/${encodeURIComponent(o.name)}">${esc(o.label)}</a>`
+        ).join(" \u00b7 ")}${n > shown.length
+          ? ` <span class="dim">+${n - shown.length} more</span>` : ""}</span>` : ""}
+    </div>`;
+  }
+
+  // The two faces, and the agent between them.
+  //
+  // Ports were two rows of a definition list and three lines of prose, which is
+  // the same information and none of the idea. They are studs: another agent's
+  // `produces` clicks into this agent's `accepts` wherever the label matches,
+  // and that join is the entire basis of composition here. Drawn as two
+  // connector strips so the direction is seen rather than parsed.
+  function seams(p) {
+    // The two strips read top to bottom — what goes in, the agent, what comes
+    // out — so both chevrons point down the flow rather than at each other.
+    // The colour carries the face, and the rail carries the grouping.
+    const side = (list, dir, head, sub) => `<div class="seam-side" data-dir="${dir}">
+      <div class="seam-h"><span class="seam-dir">\u25be</span>
+        <b>${head}</b><span class="seam-sub">${sub}</span></div>
+      ${list.length ? list.map(l => stud(l, dir)).join("")
+        : `<div class="seam-none">none declared \u2014 nothing can be bound to this face</div>`}
+    </div>`;
+    const joined = (l, dir) => REG
+      && counterparts(dir === "in" ? PRODUCERS : CONSUMERS, l).length > 0;
+    const live = (p.accepts || []).filter(l => joined(l, "in")).length
+      + (p.produces || []).filter(l => joined(l, "out")).length;
+    const total = (p.accepts || []).length + (p.produces || []).length;
+    return `<div class="seams">
+      ${side(p.accepts || [], "in", "accepts", "what can be plugged into it")}
+      <div class="seam-body">\u25a3 <b>${esc(p.label)}</b>
+        <span class="dim">${REG
+          ? `${live} of ${total} port(s) have somebody on the other side`
+          : "the register did not load, so counterparts are unknown"}</span></div>
+      ${side(p.produces || [], "out", "produces", "what clicks into another agent")}
+    </div>`;
+  }
+
+  // Three rungs, one document, one save.
+  //
+  // `output_type`, `output_schema` and `field_contract` are written by the same
+  // editor in the same PUT. Rendering them as three rows, each with its own
+  // paragraph and only the last carrying a button, implied three separate
+  // pieces of work and hid the single control that does all three.
+  function contractRung(d, rungs) {
+    const three = CONTRACT_RUNGS.map(k => rungs.find(r => r.rung === k)).filter(Boolean);
+    if (!three.length) return "";
+    const done = three.filter(r => r.present).length;
+    const isNext = CONTRACT_RUNGS.includes(d.next);
+    const SEG = { output_type: "type", output_schema: "schema", field_contract: "fields" };
+    return `<div class="rung ${done === three.length ? "on" : "off"} grouped${
+      isNext ? " next" : ""}">
+      <div class="rung-mark">${done === three.length ? "\u25c9" : "\u25cb"}</div>
+      <div>
+        <div class="rung-n">the contract${nextTag(isNext)}</div>
+        <div class="${isNext ? "ccard next" : "ccard"}">
+          <div class="ccard-h">what it returns, and where each value came from
+            <span class="dim">${done} of ${three.length} written</span></div>
+          <div class="ccard-segs">${three.map(r =>
+            `<span class="${["cseg", r.present ? "on" : "", r.rung === d.next ? "next" : ""]
+              .filter(Boolean).join(" ")}">${SEG[r.rung]}</span>`).join("")}</div>
+          <div class="ccard-w">One document and one save \u2014 the editor below writes
+            all three. ${done === three.length
+              ? "Editing it rewrites the schema, the type name and the grounding map together."
+              : "They cannot be closed separately, so the cheapest next step is the same button as the last one."}</div>
+          <button class="rung-act" data-open-contract="1">${
+            done ? "edit the contract" : "build it"} \u2192</button>
+        </div>
+        ${three.map(whyDetails).join("")}
+      </div>
+    </div>`;
+  }
+
   function declarationPanel() {
     const d = D.declaration || {};
     const rungs = d.rungs || [];
@@ -673,31 +918,31 @@
         this agent has declared \u2014 which is different from it having declared
         nothing.</div></div>`;
     }
-    return `<div class="block"><h3><span class="g-mark">\u25c8</span>What it can be trusted about</h3>
+    const p = D.profile || {};
+    const portsRung = rungs.find(r => r.rung === "ports");
+    const flash = CONTRACT_FLASH;
+    CONTRACT_FLASH = null;
+    return `<div class="block" id="shelf-declaration"><h3><span class="g-mark">\u25c8</span>What it can be trusted about</h3>
       <div class="shelf-count"><b>${d.declared} of ${d.total}</b> rungs declared${
         d.next ? ` \u00b7 cheapest next: <b>${esc(d.next)}</b>` : " \u00b7 nothing left to declare"}</div>
+      ${flash ? `<div class="cbbar-msg ok">${esc(flash)}</div>` : ""}
 
       ${compileBlock(d)}
-      ${rungs.map(r => `<div class="rung ${r.present ? "on" : "off"}${
-        CONTRACT_RUNGS.includes(r.rung) ? " grouped" : ""}${
-        r.rung === d.next ? " next" : ""}">
-        <div class="rung-mark">${r.present ? "\u25c9" : "\u25cb"}</div>
+
+      ${portsRung ? `<div class="rung ${portsRung.present ? "on" : "off"}${
+        d.next === "ports" ? " next" : ""}">
+        <div class="rung-mark">${portsRung.present ? "\u25c9" : "\u25cb"}</div>
         <div>
-          <div class="rung-n">${esc(r.rung)}${
-            r.rung === d.next ? `<span class="next-tag">do this next</span>` : ""}</div>
-          <div class="rung-d">${esc(r.declares)}</div>
-          <div class="rung-x">${r.present
-            ? `<b>Unlocks:</b> ${esc(r.unlocks)}`
-            : `<b>Without it:</b> ${esc(r.without_it)}`}</div>
-          ${r.present ? "" : `<div class="rung-own">declared in ${esc(r.owner)}</div>`}
-          ${r.rung === CONTRACT_RUNGS[0] ? `<span class="rung-own2">these three are
-            one save \u2014 the contract editor writes all of them</span>` : ""}
-          ${r.rung === CONTRACT_RUNGS[CONTRACT_RUNGS.length - 1] ? `<button class="rung-act"
-            data-open-contract="1">${r.present ? "edit the contract" : "build it"} \u2192</button>` : ""}
-          ${r.rung === "ports" ? `<div id="af-ports"></div>
-          <span class="rung-own2">Produces is set by the contract compiler.</span>` : ""}
+          <div class="rung-n">ports${nextTag(d.next === "ports")}</div>
+          ${seams(p)}
+          <div id="af-ports"></div>
+          <span class="rung-own2">Produces is set by the contract compiler, not
+            here \u2014 it follows the type the contract declares.</span>
+          ${whyDetails(portsRung)}
         </div>
-      </div>`).join("")}
+      </div>` : ""}
+
+      ${contractRung(d, rungs)}
       <div id="shelf-contract" class="shelf-mount"></div></div>`;
   }
 
@@ -739,9 +984,17 @@
   // What the prompt does to execution, and whether that agrees with the contract.
   //
   // The first thing an author needs, and until now no surface said any of it.
-  // `prompt_demands_structured_output` substring-matches the system prompt and a
-  // match makes `ToolAwareExecutor` skip the tool loop entirely \u2014 so the prompt
-  // is not documentation, it is an input to how the agent runs.
+  // Before an agent runs, the platform scans its system prompt for phrases that
+  // demand a JSON-only answer; finding one makes `ToolAwareExecutor` hand the
+  // request straight to the model, so the agent gets **no tools** for that run.
+  // The prompt is not documentation, it is an input to how the agent runs.
+  //
+  // Said in those words on purpose. This read "nothing in the prompt trips
+  // `prompt_demands_structured_output`", which named a Rust function nobody
+  // outside the repo can look up and used a verb \u2014 "trips" \u2014 that an author
+  // reasonably read as the prompt INVOKING something. Both halves of the
+  // sentence were wrong for its reader: the direction is the platform reading
+  // the prompt, and what it decides is whether tools are switched on.
   //
   // Three facts, in the compile's own vocabulary. `error` is reserved for the one
   // that is a contradiction the platform authored: a contract naming tools for N
@@ -749,22 +1002,33 @@
   function promptRows(c) {
     if (!c) return [];
     const rows = [];
+    // The phrases come from the one Rust definition
+    // (`STRUCTURED_OUTPUT_PATTERNS`), never from a copy here \u2014 a second list
+    // would state a rule the executor does not follow.
+    const phrases = Array.isArray(c.patterns) && c.patterns.length
+      ? c.patterns.map(p => `<code>${esc(p)}</code>`).join(", ")
+      : null;
 
     if (c.contradicts_contract) {
-      rows.push(["error", "no tools, but the contract needs them",
-        `The prompt contains <code>${esc(c.trigger)}</code>, which makes the executor
-         skip the tool loop \u2014 and ${c.sourced_fields} contracted field(s) name a tool
-         to source them from. Those fields can never be filled. Remove the phrase, or
-         regrade the fields.`]);
+      rows.push(["error", "tools switched off, and the contract needs them",
+        `The prompt contains the phrase <code>${esc(c.trigger)}</code>. The platform
+         reads that as \u201canswer in JSON and nothing else\u201d and switches this agent's
+         tools off for every run \u2014 while ${c.sourced_fields} contracted field(s) name a
+         tool to source them from. Those fields can never be filled. Remove the
+         phrase, or regrade the fields.`]);
     } else if (!c.gets_tools) {
-      rows.push(["pending", "no tool loop",
-        `The prompt contains <code>${esc(c.trigger)}</code>, so the executor returns the
-         model's answer directly instead of running tools. Correct for an agent that
-         reasons over what it is given; a problem the moment a field needs sourcing.`]);
+      rows.push(["pending", "tools switched off",
+        `The prompt contains the phrase <code>${esc(c.trigger)}</code>. The platform
+         reads that as \u201canswer in JSON and nothing else\u201d and returns the model's
+         answer directly instead of letting the agent call tools. Correct for an
+         agent that reasons over what it is given; a problem the moment a field
+         needs sourcing.`]);
     } else {
-      rows.push(["resolved", "tools available",
-        `Nothing in the prompt trips <code>prompt_demands_structured_output</code>, so
-         the tool loop runs.`]);
+      rows.push(["resolved", "tools stay switched on",
+        `The platform scans every prompt for phrases that demand a JSON-only answer
+         and switches tools off when it finds one. None of them appear here, so this
+         agent can call its tools while it answers.${
+           phrases ? ` The phrases are ${phrases}.` : ""}`]);
     }
 
     if (c.names_its_type === false) {
@@ -851,8 +1115,9 @@
       ${agentVerdict()}
 
       <div class="block"><h3><span class="g-mark">\u25a4</span>What it says</h3>
-        <div class="af-meta">the prompt is an input to how the agent runs, not a note
-          about it</div>
+        <div class="af-meta">the platform reads this before every run and decides
+          from it \u2014 the prompt is an input to how the agent runs, not a note about
+          it</div>
         ${promptCheck((D.profile || {}).prompt_check)}
         <div id="af-prompt"></div></div>
       ${declarationPanel()}
@@ -958,7 +1223,7 @@
 
     // Mounted on the press, not on render. The widget fetches tool names and
     // type definitions on mount, and paying for that every time the shelf opens
-    // — including to read the Manage panel — is a cost nobody asked for.
+    // \u2014 including to read the Manage panel \u2014 is a cost nobody asked for.
     //
     // Once mounted it stays: it holds unsaved edits, and remounting would throw
     // them away silently, which is the worst way for an editor to behave.
@@ -976,14 +1241,79 @@
         host.dataset.mounted = "1";
         openBtn.disabled = true;
         // A wider shelf, because a contract editor in 520px is a form in a
-        // corridor. Only widens — a reader who has already dragged it wider
+        // corridor. Only widens \u2014 a reader who has already dragged it wider
         // keeps their width.
         const cur = parseInt(getComputedStyle(document.documentElement)
           .getPropertyValue("--shelf-w"), 10) || 520;
         if (cur < 860) setShelfWidth(860);
         ContractBuilder.mount({ container: host, agentId: D.profile.agent_name });
+        mountContractBar(host, D.profile.agent_name);
       };
     }
+  }
+
+  // ── The editor's save, which the shelf never had ─────────────────────
+  //
+  // `ContractBuilder` writes no save button of its own. Its host provides one:
+  // /contracts has `Save to agent`, the create wizard saves at the end of the
+  // flow, and the shelf \u2014 the surface an owner actually configures an agent
+  // from \u2014 mounted the editor and provided nothing. Every edit made here was
+  // discarded on close, with no warning and no way to keep it. The editor's own
+  // status chip said `Draft is ready to save` next to no way to save it.
+  //
+  // `saveTo` refuses a draft that does not compile, which is the right refusal
+  // and is the editor's to make: a partial contract saved onto a card is a
+  // publish refusal deferred to publish time.
+  function mountContractBar(host, agentName) {
+    const bar = document.createElement("div");
+    bar.className = "cbbar";
+    bar.innerHTML = `
+      <button class="rung-act" data-cb-save>save the contract to ${esc(agentName)}</button>
+      <span class="cbbar-msg" data-cb-msg>Nothing saved yet. The editor keeps this
+        draft only while the shelf stays open.</span>`;
+    host.appendChild(bar);
+
+    const msg = bar.querySelector("[data-cb-msg]");
+    const btn = bar.querySelector("[data-cb-save]");
+    const say = (t, cls) => { msg.className = "cbbar-msg " + (cls || ""); msg.textContent = t; };
+
+    // Dirty is tracked here rather than asked of the builder, because the
+    // builder has no such concept to expose and inventing one inside a
+    // 1,800-line editor to serve one host is the wrong place for it. Any input
+    // inside the mount means there is work to lose.
+    host.addEventListener("input", () => { CONTRACT_DIRTY = true; }, true);
+    host.addEventListener("change", () => { CONTRACT_DIRTY = true; }, true);
+
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      say("saving\u2026");
+      let okSave = false;
+      try {
+        okSave = await ContractBuilder.saveTo(agentName);
+      } catch (err) {
+        say("Could not reach the platform: " + err.message, "bad");
+        btn.disabled = false;
+        return;
+      }
+      if (!okSave) {
+        // The builder puts the reason in its own status chip, which is right
+        // there and says more than a second copy of it would.
+        say("Not saved \u2014 the editor's status above says why. A draft that does "
+          + "not compile is refused here rather than at publish.", "bad");
+        btn.disabled = false;
+        return;
+      }
+      CONTRACT_DIRTY = false;
+      // Re-read and redraw. The work is on the card now, so discarding the
+      // editor loses nothing \u2014 and the rungs turning green is better
+      // confirmation than any sentence this bar could carry.
+      CONTRACT_FLASH = `Saved to ${agentName}. The ladder below is re-read from `
+        + `the card, not from the editor.`;
+      await boot();
+      drawer();
+      const blk = document.getElementById("shelf-declaration");
+      if (blk) blk.scrollIntoView({ block: "nearest" });
+    });
   }
 
   // ── The drag handle ──────────────────────────────────────────────────
@@ -1034,7 +1364,15 @@
   const openDrawer = () => { drawer();
     document.getElementById("drawer").classList.add("open");
     document.getElementById("scrim").classList.add("open"); };
+  // Closing rebuilds the shelf on the next open, which destroys the mounted
+  // contract editor. That is fine for a saved draft and is the loss of an
+  // afternoon for an unsaved one, and the scrim is one stray click wide \u2014 so
+  // the only unrecoverable action on this surface asks first.
   const closeDrawer = () => {
+    if (CONTRACT_DIRTY && !confirm(
+        "The contract editor has changes that are not on the agent yet. "
+        + "Closing the shelf discards them. Close anyway?")) return;
+    CONTRACT_DIRTY = false;
     document.getElementById("drawer").classList.remove("open");
     document.getElementById("scrim").classList.remove("open"); };
 
@@ -1079,12 +1417,27 @@
       // cannot connect is drawn differently from one that merely is not typed.
       if (reg && reg.ok) {
         const r = await reg.json();
+        // Cleared, not appended to. `boot()` runs again after a contract save,
+        // and a Map that is only ever pushed into would report every port as
+        // having twice the counterparts it has — a number that grows each time
+        // the author saves, which is the most convincing kind of wrong.
+        PRODUCERS.clear();
+        CONSUMERS.clear();
         const acc = new Set(), prod = new Set();
+        const push = (m, l, s) => {
+          // Self is not a counterpart. An agent whose own `produces` matched
+          // its own `accepts` would otherwise read as a joinable port with one
+          // partner, and the partner is itself.
+          if (s.agent_name === NAME) return;
+          if (!m.has(l)) m.set(l, []);
+          m.get(l).push({ name: s.agent_name, label: s.label || s.agent_name });
+        };
         (r.specimens || []).forEach(s => {
-          (s.accepts || []).forEach(l => acc.add(l));
-          (s.produces || []).forEach(l => prod.add(l));
+          (s.accepts || []).forEach(l => { acc.add(l); push(CONSUMERS, l, s); });
+          (s.produces || []).forEach(l => { prod.add(l); push(PRODUCERS, l, s); });
         });
         acc.forEach(l => { if (prod.has(l)) SEAM.add(l); });
+        REG = true;
       }
     } catch (e) {
       document.getElementById("content").innerHTML =

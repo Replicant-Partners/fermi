@@ -272,6 +272,56 @@ for (const f of AF.FIELDS) {
     `an emptied field travelled as ${JSON.stringify(LAST_FETCH.body.system_prompt)}; ` +
     `an empty string is a value the agent would carry`);
 
+  // ── 5b. the prompt is Markdown, and it has a history ─────────────────────
+  //
+  // The one field that decides whether the agent gets a tool loop was a 14-row
+  // box rendering Markdown as a wall, and `agent_versions` had recorded every
+  // edit to it since mig-024 with no surface anywhere. Three views of one text:
+  // the box, the rendering, and the trail.
+  ok(/data-ptab="write"/.test(hostP.html) && /data-ptab="read"/.test(hostP.html)
+     && /data-ptab="history"/.test(hostP.html),
+    "the prompt has no read or history view; a system prompt is Markdown that " +
+    "nothing renders and a versioned field with no version list");
+  // The textarea keeps its identity, so the diff and the save path are the
+  // ones already guarded above. A second way to write the prompt would be a
+  // second save path.
+  ok(/<textarea[^>]*data-field="system_prompt"/.test(hostP.html),
+    "the prompt view replaced the control rather than wrapping it, so the diff " +
+    "and the save path are no longer the ones checked above");
+
+  const MD = AF.renderMarkdown;
+  ok(typeof MD === "function", "the widget renders no Markdown");
+  // Escaping is the property that matters. A preview is HTML built from text an
+  // author (or a fork of their agent) supplied, on the surface that edits a
+  // live agent — so the check is that nothing survives as markup.
+  const injected = MD('<img src=x onerror="alert(1)">');
+  ok(!/<img/.test(injected) && /&lt;img/.test(injected),
+    "the Markdown preview passed raw HTML through — this is an injection on the " +
+    "owner's configuration surface");
+  ok(!/<a\b/.test(MD("[click](javascript:alert(1))")),
+    "the preview linkified a `javascript:` URL; the scheme allowlist is not held");
+  ok(/<a href="https:\/\/example\.com"/.test(MD("[docs](https://example.com)")),
+    "an http(s) link is not linkified, so the allowlist refuses everything");
+  ok(/<h4>[^<]*STRUCTURED OUTPUT/.test(MD("STRUCTURED OUTPUT\n=================")),
+    "`TITLE` over `=====` is how prompts on this platform write a heading and it " +
+    "renders as a paragraph of equals signs");
+  ok(/<h3>/.test(MD("# Heading")), "ATX headings are not rendered");
+  ok(/<ul>[\s\S]*<li>tool_verified/.test(MD("- tool_verified\n- tool_no_match")),
+    "bullet lists are not rendered, which is most of what a contract prompt is");
+  // A fenced block is full of characters that look like markup. It must come
+  // out whole, and it must come out escaped.
+  const fenced = MD('```json\n{"a": "**b**", "c": "<d>"}\n```');
+  ok(/<pre class="af-md-pre"/.test(fenced), "fenced code blocks are not rendered");
+  ok(/\*\*b\*\*/.test(fenced) && !/<strong>/.test(fenced),
+    "inline rules ran inside a fenced block, so JSON in a prompt is rewritten " +
+    "as prose formatting");
+  ok(/&lt;d&gt;/.test(fenced), "a fenced block is not escaped");
+  ok(/<code>fermi\/football_evidence<\/code>/.test(MD("see `fermi/football_evidence`")),
+    "inline code is not rendered, so the type name a contract turns on reads as " +
+    "backticks");
+  ok(MD("") === "" && MD(null) === "",
+    "an empty prompt renders as something; absent must look different from bad");
+
   // ── 6. manage carries lifecycle as actions, not fields ───────────────────
   const host3 = makeEl("div");
   AF.mount({ container: host3, agentId: "football_analyst", group: "manage",

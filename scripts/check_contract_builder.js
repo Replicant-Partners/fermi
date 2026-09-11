@@ -180,6 +180,82 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 async function main() {
   CB.mount({ container: "host" });
 
+  // ── 0. the empty state, which every new agent starts in ────────────────
+  //
+  // The review's finding: "the builder is an editor asked to be a creator.
+  // Empty is the state it handles worst and the state every new agent starts
+  // in." It rendered a hint reading "add one here, or start from a tool in
+  // view 2 — which is often faster" — naming the better route and not
+  // offering it, because the palette of ready-made parts and the tools input
+  // that feeds it are both on a view the author has not visited.
+  const startHtml = () => byId("cb-shape").innerHTML;
+  dump("cb-shape when empty", startHtml());
+  ok(
+    /cb-start-card/.test(startHtml()),
+    "the empty builder offers no opening move, so the first thing a creator " +
+      "meets is a blank form with one button on it",
+  );
+  ok(
+    !/view 2/.test(startHtml()),
+    "the empty state still refers the author to a numbered view instead of " +
+      "offering what is on it — the editor knows the faster route and makes " +
+      "the reader go and find it",
+  );
+  // The four kinds of part, reachable without a view switch. Rendered into
+  // the start panel by the SAME function that fills view 2's palette; a
+  // second copy of the chip vocabulary is the drift this repo keeps finding.
+  const startPalette = byId("cb-start-palette").innerHTML;
+  dump("cb-start-palette", startPalette);
+  for (const kind of ["cb-chip judgement", "cb-chip prose", "cb-chip gap"]) {
+    ok(
+      startPalette.includes(kind),
+      `the empty state cannot add a \`${kind.split(" ")[1]}\` part, so the only ` +
+        `kinds an author can reach from here are the ones on another view`,
+    );
+  }
+  ok(
+    /cb-linkish/.test(startPalette) && !/Add some above/.test(startPalette),
+    "with no tools declared the start panel says `add some above` about an " +
+      "input that is not above it. Pointing at something the reader cannot see " +
+      "is how a hint becomes noise",
+  );
+
+  // ── 0b. `declare a gap` produces something you can see ─────────────────
+  //
+  // It pushed `cbNewBlock("")`. The document preview renders only blocks with
+  // a name and the view nav counts only those, and it arrived collapsed — so
+  // the one control whose entire purpose is to record an ambition the platform
+  // cannot yet meet appeared to do nothing, and the response to that is to
+  // press it again.
+  globalThis.cbAddGap();
+  ok(
+    (CB.blocks[0].name || "").trim().length > 0,
+    "`declare a gap` still adds a nameless block, which renders nowhere and " +
+      "counts for nothing",
+  );
+  ok(
+    byId("cb-doc").innerHTML.includes(CB.blocks[0].name),
+    "a declared gap does not appear in the document preview, so the author " +
+      "cannot tell the button worked",
+  );
+
+  // ── 0c. adding the same kind twice gives two parts, not one ────────────
+  //
+  // `assessment` and `summary` were hard-coded names. Two presses made two
+  // blocks with one name: they compile to a single property, the later one
+  // silently replacing the earlier, and `cbOpen` is keyed by name so
+  // expanding one expanded both.
+  globalThis.cbAddJudgement();
+  globalThis.cbAddJudgement();
+  const names = CB.blocks.map((b) => b.name);
+  ok(
+    new Set(names).size === names.length,
+    `two parts share a name (${names.join(", ")}). One silently replaces the ` +
+      `other at compile, and the editor cannot tell them apart either`,
+  );
+  globalThis.cbClear();
+  ok(CB.blocks.length === 0, "cbClear did not return the editor to empty");
+
   // One block, sourced from a tool whose shape is declared. Rendered before
   // the tools fetch resolves.
   globalThis.cbAddBlock();
