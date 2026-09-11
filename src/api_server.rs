@@ -1393,6 +1393,20 @@ async fn run_migrations(db: &PgPool) {
         // regulatory corpus and spends credits, so its log row is the audit
         // anchor tying a stored regulatory verdict to who asked for it.
         "migrations/234_evaluate_claims_action_type.sql",
+        // 235 — `rule_retrievals`, one row per (semantic rule, prompt it was
+        // injected into). Loop 1 now counts that a rule was USED
+        // (`application_count`); nothing records that it was CORRECT.
+        // `verification_status` has four readers and no production writer, and
+        // all 264 real rules on this deployment sit at `pending`.
+        //
+        // The reason is specific: `kg_context::record_rule_retrievals`
+        // incremented a counter and discarded WHICH run the rule went into, so
+        // no rule could be set against the outcome of a run that used it. This
+        // is that evidence, and it adjudicates nothing on its own — it has to
+        // start accruing before a verifier can be honest. Three cheaper
+        // proxies were measured first and none held: 0 duplicate pairs, 6 of
+        // 265 corroborated, 0 human corrections.
+        "migrations/235_rule_retrievals.sql",
     ];
 
     // Bootstrap the ledger before anything is recorded into it.

@@ -176,9 +176,16 @@ pub async fn enrich_with_kg_context(
                 if !kg_block.is_empty() {
                     let base = card.system_prompt.unwrap_or_default();
                     card.system_prompt = Some(format!("{}{}", base, kg_block));
+                    // The scored path knows the similarity that admitted each
+                    // rule, so it is recorded. The ANN path below does not.
                     record_rule_retrievals(
                         memory_store,
-                        scored_rules.iter().map(|(_, r)| r.rule_id).collect(),
+                        agent_uuid,
+                        query,
+                        scored_rules
+                            .iter()
+                            .map(|(s, r)| (r.rule_id, Some(*s)))
+                            .collect(),
                     );
                 }
                 tracing::info!(
@@ -210,7 +217,12 @@ pub async fn enrich_with_kg_context(
     let injected = !kg_block.is_empty();
     if injected {
         card.system_prompt = Some(append_kg_block(card.system_prompt.take(), &kg_block));
-        record_rule_retrievals(memory_store, top_rules.iter().map(|r| r.rule_id).collect());
+        record_rule_retrievals(
+            memory_store,
+            agent_uuid,
+            query,
+            top_rules.iter().map(|r| (r.rule_id, None)).collect(),
+        );
     }
 
     // Record what actually reached the prompt, not merely that we tried.
@@ -256,17 +268,50 @@ pub async fn enrich_with_kg_context(
 /// written, never read. The schema anticipated this signal and nothing ever
 /// populated it. This is the missing write.
 ///
+/// ## What the counter cannot answer, and the row that will
+///
+/// `application_count` says a rule was **used**. Nothing says it was
+/// **correct**: `verification_status` has four readers and no production
+/// writer, and all 264 real rules on this deployment sit at `pending`.
+///
+/// Adjudication needs a rule set against the outcome of a run that used it,
+/// and this function was discarding exactly that — it incremented a counter and
+/// threw away which run. So it now also writes `rule_retrievals` (migration
+/// 235), one row per rule per prompt. That table adjudicates nothing by itself;
+/// it is the evidence a verifier would need, and it has to start accruing
+/// before any verifier can be honest.
+///
+/// `query_sha` rather than an episode id because of ordering: this runs BEFORE
+/// the model does, and the episode is written after it returns. Threading an id
+/// through would widen the enrich signature across ~10 execution call sites;
+/// the query text is already on both sides. See the migration header for the
+/// join and for why the correlation is not a key.
+///
 /// ## Off the hot path, deliberately
 ///
 /// `enrich_with_kg_context` runs on every execution and its latency is already
 /// dominated by an embedding call. Bookkeeping must not add to that, and must
 /// never fail a run: the update is spawned and its result logged, not awaited
 /// and not propagated. A lost increment slightly understates a rule's utility;
-/// a blocked execution is a user-visible outage.
-fn record_rule_retrievals(memory_store: &Arc<MemoryStore>, rule_ids: Vec<Uuid>) {
-    if rule_ids.is_empty() {
+/// a blocked execution is a user-visible outage. The new insert rides in the
+/// same spawned task, for the same reason.
+fn record_rule_retrievals(
+    memory_store: &Arc<MemoryStore>,
+    agent_id: Uuid,
+    query: &str,
+    // `(rule_id, similarity)`. `None` on the ANN path, which returns rows the
+    // database has already filtered and surfaces no per-row score — recorded as
+    // NULL, which means "not reported" and never "zero".
+    rules: Vec<(Uuid, Option<f32>)>,
+) {
+    if rules.is_empty() {
         return;
     }
+    let rule_ids: Vec<Uuid> = rules.iter().map(|(id, _)| *id).collect();
+    let sims: Vec<Option<f32>> = rules.iter().map(|(_, s)| *s).collect();
+    // One hasher, shared with every other digest on the platform, so the SQL in
+    // the migration header reproduces exactly what is stored here.
+    let query_sha = crate::artifact_hash::of_text(query);
     let store = memory_store.clone();
     tokio::spawn(async move {
         // `last_validated_at` doubles as "first seen useful": a rule never
@@ -299,6 +344,35 @@ fn record_rule_retrievals(memory_store: &Arc<MemoryStore>, rule_ids: Vec<Uuid>) 
                     "kg_retrieval_credit_partial"
                 );
             }
+        }
+
+        // The pairing. Separate statement, deliberately: the counter is the
+        // signal Loop 1 already reports on, and losing the evidence row must
+        // not cost the increment that several surfaces read.
+        //
+        // Not routed through `write_accounting`. That registry tracks the
+        // sinks the liveness contracts assert over, and adding a `Sink` variant
+        // here would enrol an evidence table in a set of claims about agent
+        // behaviour before anything reads it. It gets a log line instead, and
+        // earns a contract when a verifier consumes it.
+        let ins = sqlx::query(
+            "INSERT INTO rule_retrievals (rule_id, agent_id, query_sha, similarity)
+             SELECT r, $2, $3, s
+               FROM UNNEST($1::uuid[], $4::real[]) AS t(r, s)",
+        )
+        .bind(&rule_ids)
+        .bind(agent_id)
+        .bind(&query_sha)
+        .bind(&sims)
+        .execute(store.pool())
+        .await;
+
+        if let Err(e) = ins {
+            tracing::warn!(
+                error = %e,
+                rules = rule_ids.len(),
+                "rule_retrieval_evidence_not_recorded"
+            );
         }
     });
 }
