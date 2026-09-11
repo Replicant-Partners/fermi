@@ -149,6 +149,10 @@ body{background:var(--bg);color:var(--t1);font-family:'Inter',system-ui,sans-ser
 .act-detail{font-size:10px;color:var(--t2);margin-top:4px;line-height:1.6;white-space:pre-wrap}
 .act-count{font-size:9px;color:var(--t3);border:1px solid var(--b1);border-radius:8px;padding:0 5px}
 .act-empty{font-size:11px;color:var(--t3);line-height:1.6}
+.pulse-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:4px}
+.pulse-cell{background:var(--s2);border:1px solid var(--b1);border-radius:4px;padding:6px 8px}
+.pulse-cell b{display:block;font-size:15px;color:var(--t1);font-weight:700;line-height:1.2}
+.pulse-cell span{font-size:9px;color:var(--t3);text-transform:uppercase;letter-spacing:.03em}
 .bom-row{display:flex;justify-content:space-between;align-items:flex-start;padding:6px 9px;background:var(--s3);border-radius:4px;margin-bottom:4px;gap:8px}
 .bom-name{font-size:11px;color:var(--t2);flex:1}
 .bom-right{text-align:right}
@@ -501,6 +505,8 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
       <span class="act-filter" id="actf-problems" onclick="activitySetFilter('problems')">Problems</span>
       <span class="act-refresh" onclick="activityLoad()">\u21bb refresh</span>
     </div>
+    <div id="activity-pulse"></div>
+    <div class="sb-h" style="margin-top:14px">RUNS &amp; ACTIONS</div>
     <div id="activity-list"></div>
   </div>
 
@@ -679,8 +685,25 @@ async function checkAuth() {
       fetchWorkspaces();
     } else {
       currentUser = null;
-      statusEl.innerHTML = `<a class="btn" href="/auth/google" style="padding:5px 12px;font-size:11px">🔑 Sign in to use live workspaces</a>
-        <span style="color:var(--t3);font-size:11px">(or <a href="/auth/github" style="color:var(--t3)">GitHub</a>)</span>`;
+      // Come back HERE, not to the ABW dashboard.
+      //
+      // `/auth/google` and `/auth/github` take `?redirect=` and fold it into
+      // the OAuth `state` as `:redirect=<urlencoded>`, which `auth_callback`
+      // decodes and honours (handlers/auth.rs:170-178). Linking the bare path
+      // means no redirect is carried, so the callback falls through to the
+      // platform default and a tenant app drops its user on a dashboard that
+      // knows nothing about the product they were editing.
+      //
+      // Same shape every other tenant surface uses \u2014 `templates/invite_landing.html`
+      // and `auth_cli_start` both build the URL this way.
+      //
+      // `?app=` is stamped on the `users` row for NEW signups only, so
+      // first-time sign-ins are attributed to the DPP Studio rather than
+      // appearing to have arrived from nowhere.
+      const back = encodeURIComponent(location.pathname + location.search);
+      const appSlug = 'adaptogen_lab_regulatory';
+      statusEl.innerHTML = `<a class="btn" href="/auth/google?redirect=${back}&app=${appSlug}" style="padding:5px 12px;font-size:11px">🔑 Sign in to use live workspaces</a>
+        <span style="color:var(--t3);font-size:11px">(or <a href="/auth/github?redirect=${back}&app=${appSlug}" style="color:var(--t3)">GitHub</a>)</span>`;
     }
   } catch(e) {
     statusEl.innerHTML = `<span style="color:var(--t3);font-size:11px">Auth check failed — ${esc(e.message)}</span>`;
@@ -706,7 +729,7 @@ function showTab(name) {
   });
   if (name === 'claims' && wsId()) loadClaimsCards();
   if (name === 'ingredients' && wsId()) loadBomYaml();
-  if (name === 'activity') activityLoad();
+  if (name === 'activity') { activityLoad(); activityLoadPulse(); }
 }
 
 // ── jurisdiction filter ─────────────────────────────────────────────────────
@@ -2102,6 +2125,65 @@ function activityRender() {
 // Seed from the persisted action log. `GET /actions` is the known pattern —
 // the same feed the CLI and MCP surfaces read — so the panel shows what the
 // platform recorded rather than only what this browser tab happened to see.
+
+// The agent's pulse data, from the platform's own analytics endpoint.
+//
+// `GET /api/agents/:id/metrics` aggregates `episodes` — executions, failures,
+// tokens, avg execution time, and per-tool average durations. It is
+// unauthenticated and already exists, so this reads what the platform records
+// rather than starting a second accounting of it.
+//
+// `tool_usage` is the part that answers the latency question. A claim takes
+// minutes because it makes up to six `web_search` calls inside a five-
+// iteration tool loop; this shows the per-call cost directly instead of
+// leaving it to be inferred from the total.
+//
+// Per-agent rather than per-workspace, and that is a limitation worth naming:
+// `episodes` has no `workspace_id` column (`session_id` is the constant
+// "live:workspace"), so the platform cannot answer "how slow was this agent
+// for THIS product". The per-run rows below can, because the action log is
+// workspace-scoped.
+async function activityLoadPulse() {
+  const el = document.getElementById('activity-pulse');
+  if (!el) return;
+  try {
+    const res = await fetch(`${base()}/api/agents/${EVALUATOR}/metrics`);
+    if (!res.ok) { el.innerHTML = ''; return; }
+    const m = await res.json();
+    const days = m.daily ?? [];
+    const runs   = days.reduce((a, d) => a + (d.executions || 0), 0);
+    const fails  = days.reduce((a, d) => a + (d.failures  || 0), 0);
+    const tokens = days.reduce((a, d) => a + (d.tokens    || 0), 0);
+    const timed  = days.filter(d => d.avg_time_ms != null);
+    const avgMs  = timed.length
+      ? timed.reduce((a, d) => a + d.avg_time_ms, 0) / timed.length : null;
+    if (!runs) {
+      el.innerHTML = `<div class="act-empty">No pulse data for ${esc(EVALUATOR)} yet — it accumulates as runs land in the episode log.</div>`;
+      return;
+    }
+    // Credits from tokens via the documented gas formula, and labelled
+    // `derived` rather than read. The authoritative per-run figure is the
+    // ledger; this is the shape of the cost across all runs.
+    const base1k = Math.max(1, Math.round(tokens / 1000));
+    const credits = base1k + Math.max(1, Math.round(base1k * 0.10));
+    const tools = (m.tool_usage ?? []).slice(0, 5);
+    el.innerHTML = `
+      <div class="pulse-grid">
+        <div class="pulse-cell"><b>${runs}</b><span>runs · 30d</span></div>
+        <div class="pulse-cell"><b>${avgMs != null ? (avgMs/1000).toFixed(0)+'s' : '—'}</b><span>avg run</span></div>
+        <div class="pulse-cell"><b>${fails}</b><span>failures</span></div>
+        <div class="pulse-cell"><b>~${credits}</b><span>credits · derived</span></div>
+      </div>
+      ${tools.length ? `<div class="act-ctx" style="margin-top:8px">
+        <div style="color:var(--t3);margin-bottom:3px">where the time goes — avg per tool call</div>
+        ${tools.map(t => `<div>${esc(t.tool_name)} · ${t.count}× · ${
+          t.avg_duration_ms != null ? (t.avg_duration_ms/1000).toFixed(1)+'s' : 'n/a'}</div>`).join('')}
+      </div>` : ''}
+      ${m.avg_loop_iterations ? `<div class="act-ctx" style="margin-top:6px"><b>avg tool-loop iterations</b> ${
+        Number(m.avg_loop_iterations).toFixed(1)} of 5 max</div>` : ''}`;
+  } catch { el.innerHTML = ''; }
+}
+
 async function activityLoad() {
   const id = wsId();
   if (!id) { activityReset(); return; }
@@ -2113,19 +2195,42 @@ async function activityLoad() {
     const live = activityEvents.filter(e => e.source !== 'action-log');
     const persisted = (data.actions ?? []).map(a => {
       const p = a.payload ?? {};
+      // `apply_result` carries the run's own outcome, written back after the
+      // batch finished. It is the only workspace-scoped record of latency
+      // there is — `episodes` has the timings but no workspace column — so
+      // without it a reload loses how long anything took.
+      const r = a.apply_result ?? null;
       const ctx = [];
-      if (p.markets) ctx.push(['markets', (p.markets || []).join(' ')]);
+      if (r?.duration_ms != null) ctx.push(['duration', `${(r.duration_ms/1000).toFixed(1)}s`]);
+      if (r?.evaluated != null) ctx.push(['evaluated', r.evaluated]);
+      if (r?.failed) ctx.push(['failed', r.failed]);
+      if (r?.skipped) ctx.push(['skipped', r.skipped]);
+      if (r?.violations) ctx.push(['gate', `${r.violations} violation(s)`]);
+      const mk = r?.markets ?? p.markets;
+      if (mk) ctx.push(['markets', (mk || []).join(' ')]);
       if (p.claim_ids) ctx.push(['claims', (p.claim_ids || []).length]);
       if (p.evaluator) ctx.push(['agent', p.evaluator]);
       if (p.force) ctx.push(['force', 'true']);
       ctx.push(['by', `${a.emitted_by_type}:${a.emitted_by_id}`]);
+      // Slowest claim in the run — the number that answers "why did that take
+      // three minutes", since claims vary by more than an order of magnitude
+      // depending on how much the corpus returns for them.
+      const slowest = (r?.per_claim ?? [])
+        .filter(c => c.duration_ms != null)
+        .sort((x, y) => y.duration_ms - x.duration_ms)[0];
+      if (slowest) ctx.push(['slowest claim', `${slowest.claim_id} ${(slowest.duration_ms/1000).toFixed(1)}s`]);
+
+      const sev = r?.failed ? 'error' : (r?.violations ? 'warn'
+                : (a.action_type === 'evaluate_claims' ? 'success' : 'info'));
       return {
         seq: 0,
         at: a.created_at, last_at: a.created_at,
-        severity: a.action_type === 'evaluate_claims' ? 'success' : 'info',
+        severity: sev,
         source: 'action-log',
         node: a.action_type,
-        summary: `${a.action_type} recorded`,
+        summary: r?.evaluated != null
+          ? `${a.action_type} \u00b7 ${r.evaluated} evaluated${r.failed ? `, ${r.failed} failed` : ''}`
+          : `${a.action_type} recorded`,
         detail: null, context: ctx, count: 1,
       };
     });

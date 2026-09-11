@@ -940,6 +940,52 @@ pub async fn evaluate_claims_handler(
         }
     }
 
+    // Persist what the run cost in time, onto the action row that is already
+    // the audit anchor for it.
+    //
+    // The row is inserted BEFORE the batch runs, because the stored
+    // evaluations reference its `action_id` — so the outcome cannot be in the
+    // original payload and has to be written back.
+    //
+    // This is the only workspace-scoped home for latency that exists.
+    // `episodes` carries `execution_time_ms` and is what
+    // `/api/agents/:id/metrics` aggregates, but it has no `workspace_id`
+    // column — `session_id` is the constant string "live:workspace" — so no
+    // per-workspace query over it is possible. Until that changes, an
+    // operator asking "how long did THIS product's evaluation take" can only
+    // be answered from here, and a client that merely watched the run lose
+    // the answer on reload.
+    //
+    // Soft-fail, like the insert: the evaluations are the product.
+    let per_claim: Vec<Value> = evaluated
+        .iter()
+        .map(|e| {
+            json!({
+                "claim_id": e.get("claim_id"),
+                "duration_ms": e.get("duration_ms"),
+            })
+        })
+        .collect();
+    let outcome = json!({
+        "duration_ms": request_started.elapsed().as_millis() as u64,
+        "evaluated": evaluated.len(),
+        "failed": failed.len(),
+        "skipped": skipped.len(),
+        "markets": markets,
+        "violations": any_violations,
+        "per_claim": per_claim,
+        "written_paths": written.len(),
+    });
+    let _ = sqlx::query(
+        "UPDATE workspace_action_log
+            SET apply_result = $1, applied = TRUE, applied_at = NOW()
+          WHERE action_id = $2",
+    )
+    .bind(&outcome)
+    .bind(action_id)
+    .execute(&state.db)
+    .await;
+
     Ok(Json(json!({
         "action_id": action_id,
         "action_type": "evaluate_claims",
