@@ -19,6 +19,7 @@ pub mod error;
 pub mod llm;
 pub mod locking;
 pub mod provenance;
+pub mod rule_verification;
 pub mod seed;
 pub mod store;
 pub mod types;

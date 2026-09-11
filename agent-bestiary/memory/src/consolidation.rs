@@ -1196,6 +1196,54 @@ impl ConsolidationWorker {
         // the consolidation continues normally.
         self.consolidate_selection_performance(agent_id).await;
 
+        // Step 8d: adjudicate this agent's existing rules against outcomes.
+        //
+        // `rules_verified` and `rules_rejected` were hardcoded 0 at the top of
+        // this function since the field existed, and four surfaces read the
+        // zero as a measurement — "0 verified of 265" invites the conclusion
+        // that the ontologist produces junk, when nothing had ever adjudicated
+        // a rule either way.
+        //
+        // Here rather than in the handler because this is the cycle that owns a
+        // rule's life: it extracts them, and now it also revisits the ones it
+        // extracted before. A rule is judged on the runs that USED it, which
+        // accrue between cycles, so the cadence is right for free.
+        //
+        // Never fails the cycle. A rule left `pending` is the status quo and
+        // costs nothing; losing a completed consolidation over an adjudication
+        // query is a real loss. Logged rather than swallowed — `.ok()` here is
+        // how `rules_verified: 0` survived this long.
+        //
+        // Expect zeroes at first, and that is correct: `rule_retrievals` ships
+        // empty and every rule reports `TooFewRuns` until it fills. The
+        // difference from before is that the rows will now say so, with the
+        // method and the evidence on them, instead of being indistinguishable
+        // from never having been looked at.
+        match crate::rule_verification::adjudicate_agent(
+            self.store.pool(),
+            agent_id,
+            RULE_ADJUDICATION_WINDOW_DAYS,
+        )
+        .await
+        {
+            Ok(applied) => {
+                result.rules_verified = applied.verified;
+                result.rules_rejected = applied.rejected;
+                tracing::info!(
+                    agent_id = %agent_id,
+                    verified = applied.verified,
+                    rejected = applied.rejected,
+                    still_pending = applied.still_pending,
+                    "rule_adjudication"
+                );
+            }
+            Err(e) => tracing::warn!(
+                agent_id = %agent_id,
+                error = %e,
+                "rule_adjudication_failed: rules keep their previous status"
+            ),
+        }
+
         // Step 9: Complete job
         self.store
             .complete_consolidation_job(job_id, "completed", None)
@@ -2087,6 +2135,19 @@ pub struct ConsolidationResult {
     pub entities_created: usize,
     pub facts_created: usize,
 }
+
+/// How far back a rule adjudication looks for runs that used a rule.
+///
+/// Thirty days, matching the window over which the agent's own base rate is
+/// computed — comparing a rule's recent record against a lifetime baseline
+/// would judge it against a version of the agent that no longer exists. Long
+/// enough for a moderately-used rule to reach [`crate::rule_verification::
+/// MIN_RUNS`]; short enough that a verdict describes the agent as it is now.
+///
+/// A rule whose evidence has aged out returns to `TooFewRuns` rather than
+/// keeping a stale verdict, which is correct: the reason it was verified has
+/// expired.
+const RULE_ADJUDICATION_WINDOW_DAYS: i64 = 30;
 
 /// Calculates confidence score based on cluster characteristics
 fn calculate_confidence(episodes: &[Episode]) -> f64 {
