@@ -689,7 +689,13 @@ mod tests {
         // It also demonstrates the ratchet working on work that was not its
         // author's: `video_analyst` arrived from a parallel session and this went
         // red on the next full run, which is the two-way half earning its keep.
-        const CONTRACTED_AGENTS: usize = 10;
+        //
+        // 10 → 11 for `regulatory_lens_translator` (a392c6b9, "Adaptogen Lab:
+        // regulatory lens translator — full build"), which added the contract
+        // and not the constant. The second time the two-way half has caught a
+        // parallel session, and an improvement both times: coverage grew, so
+        // the floor rises to meet it. Raised, not relaxed.
+        const CONTRACTED_AGENTS: usize = 11;
         let mut names: Vec<&str> = grounding_trust::FIELD_CONTRACTS
             .iter()
             .map(|c| c.agent_id)

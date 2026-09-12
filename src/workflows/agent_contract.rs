@@ -472,12 +472,35 @@ mod tests {
         // 78 → 77: `simops_companion` migrated. Coordinator agent: one narrative
         // block reflecting that the action block contract lives in the kask-simops/2
         // app schema (enforced at the kask client layer). First met-agent typed.
-        const BASELINE: usize = 77;
+        //
+        // 77 → 78: `forage_identify`, and the only entry in this log that moves
+        // the wrong way. It is **not** a grandfathering, and the distinction is
+        // the reason this number is reviewed rather than bumped:
+        //
+        //   * it has three `FIELD_CONTRACTS` entries and its grounding IS
+        //     enforced at runtime — `handlers::wild` calls
+        //     `grounding_trust::enforce("forage_identify", ..)` on every
+        //     identification document;
+        //   * it has no curated card on disk, because it is the embedded
+        //     Wild/Rabble identification agent rather than a separately
+        //     publishable one, so there is nothing for a card-level contract to
+        //     live on and no sketch that could be written for it;
+        //   * `grounding_trust::tests::agents_with_field_contracts_must_have_output_contract_sketches`
+        //     skips exempt agents, so the exemption is what keeps that check
+        //     honest about an agent it cannot look up a card for.
+        //
+        // It was omitted from this list when the tier launched. Adding it
+        // corrects that omission; the rule it is exempt from is a rule about
+        // publishable cards, which this agent does not have. The burn-down
+        // direction is unchanged and the next movement should be downward.
+        const BASELINE: usize = 78;
         assert!(
             TYPED_TIER_EXEMPT.len() <= BASELINE,
             "the typed-tier exemption list grew from {BASELINE} to {}. A new agent \
              must satisfy the full contract; if this is a deliberate grandfathering, \
-             lower BASELINE in the same commit so the loosening is reviewable.",
+             RAISE BASELINE in the same commit and say why, so the loosening is \
+             reviewable — and check first whether the agent needs a contract \
+             rather than an excuse.",
             TYPED_TIER_EXEMPT.len()
         );
         if TYPED_TIER_EXEMPT.len() < BASELINE {
