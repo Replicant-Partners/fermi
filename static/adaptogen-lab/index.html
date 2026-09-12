@@ -1094,6 +1094,41 @@ async function saveClaimsFromCards(andRun) {
 let bomYamlText = ''; // full YAML in memory
 let bomIngredients = []; // extracted ingredient rows
 
+// ── YAML scalars: one unquote, one quote, used on both sides ───────────────
+//
+// These exist because the round trip corrupted the document and took the
+// product down with it. `parseIngredients` stripped surrounding quotes from
+// display_name, quantity and origin but NOT from part_number or category,
+// and `serializeIngredients` then re-quoted whatever it was handed. So
+// `part_number: "TEA-BLK-SL"` was read as the six characters `"TEA-BLK-SL"`
+// — quotes included — and written back as
+//
+//     part_number: ""TEA-BLK-SL""
+//
+// which is not YAML. `dpp/composition.yaml` became unparseable, every
+// compare_lenses returned 422, and the workspace was bricked by a successful
+// save. A field-by-field convention that has to be remembered at two call
+// sites is how that happens; a shared pair that cannot disagree is the fix.
+//
+// Strips at most one balanced pair, so a value that is genuinely quoted stays
+// intact and one that is not is untouched.
+function yamlUnquote(raw) {
+  let v = String(raw ?? '').trim();
+  // Drop a trailing comment only when the value is not quoted — a `#` inside
+  // quotes is content.
+  if (!/^["']/.test(v)) v = v.replace(/\s+#.*$/, '').trim();
+  const m = v.match(/^"([\s\S]*)"$/) || v.match(/^'([\s\S]*)'$/);
+  if (m) v = m[1].replace(/\\"/g, '"');
+  return v.trim();
+}
+
+// Emit a scalar that is always valid YAML. Always double-quoted rather than
+// quoting conditionally: deciding per value is the judgement that was got
+// wrong above, and a quoted scalar is correct for every string YAML accepts.
+function yamlQuote(v) {
+  return '"' + String(v ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r?\n/g, ' ') + '"';
+}
+
 function parseIngredients(yaml) {
   // Reads 'consists_of:' (JSON-LD aligned schema) or 'ingredients:' (legacy).
   // Top-level only — sub-components shown as child count, not expanded.
@@ -1112,15 +1147,15 @@ function parseIngredients(yaml) {
     if (/^    - /.test(line)) { if (cur) cur.sub_count++; continue; } // count sub-components
     if (cur) {
       const m = (k) => line.match(new RegExp('\\b' + k + ':\\s*(.+)'));
-      if (m('item_id'))         cur.id = m('item_id')[1].trim().replace(/^"|"$/g,'');
-      if (m('id'))              cur.id = cur.id || m('id')[1].trim().replace(/^"|"$/g,'');
-      if (m('display_name'))    cur.display_name = m('display_name')[1].trim().replace(/^"|"$/g,'');
-      if (m('quantity'))        cur.quantity = m('quantity')[1].trim().replace(/^"|"$/g,'');
+      if (m('item_id'))         cur.id = yamlUnquote(m('item_id')[1]);
+      if (m('id'))              cur.id = cur.id || yamlUnquote(m('id')[1]);
+      if (m('display_name'))    cur.display_name = yamlUnquote(m('display_name')[1]);
+      if (m('quantity'))        cur.quantity = yamlUnquote(m('quantity')[1]);
       if (m('composition_pct')) cur.quantity = cur.quantity || m('composition_pct')[1].trim(); // legacy
-      if (m('category'))        cur.category = m('category')[1].trim();
-      if (m('role'))            cur.role = m('role')[1].trim().replace(/^"|"$/g,'');
-      if (m('origin'))          cur.origin = m('origin')[1].trim().replace(/^"|"$/g,'').replace(/^null$/,'');
-      if (m('part_number'))     cur.part_number = m('part_number')[1].trim().replace(/^null$/,'');
+      if (m('category'))        cur.category = yamlUnquote(m('category')[1]);
+      if (m('role'))            cur.role = yamlUnquote(m('role')[1]);
+      if (m('origin'))          cur.origin = yamlUnquote(m('origin')[1]).replace(/^null$/,'');
+      if (m('part_number'))     cur.part_number = yamlUnquote(m('part_number')[1]).replace(/^null$/,'');
     }
   }
   if (cur) ings.push(cur);
@@ -1230,13 +1265,13 @@ function serializeIngredients() {
   for (const ing of bomIngredients) {
     const name = ing.display_name || '';
     const id = ing.item_id || ing.id || name.toLowerCase().replace(/[^a-z0-9]+/g,'_');
-    ingLines.push(`  - item_id: ${id}`);
-    if (name) ingLines.push(`    display_name: "${name.replace(/"/g,'\\"')}"`);
-    if (ing.role) ingLines.push(`    role: ${ing.role}`);
-    if (ing.quantity) ingLines.push(`    quantity: "${ing.quantity}"`);
-    if (ing.category) ingLines.push(`    category: ${ing.category}`);
-    if (ing.part_number) ingLines.push(`    part_number: "${ing.part_number}"`);
-    if (ing.origin) ingLines.push(`    origin: "${ing.origin}"`);
+    ingLines.push(`  - item_id: ${yamlQuote(id)}`);
+    if (name) ingLines.push(`    display_name: ${yamlQuote(name)}`);
+    if (ing.role) ingLines.push(`    role: ${yamlQuote(ing.role)}`);
+    if (ing.quantity) ingLines.push(`    quantity: ${yamlQuote(ing.quantity)}`);
+    if (ing.category) ingLines.push(`    category: ${yamlQuote(ing.category)}`);
+    if (ing.part_number) ingLines.push(`    part_number: ${yamlQuote(ing.part_number)}`);
+    if (ing.origin) ingLines.push(`    origin: ${yamlQuote(ing.origin)}`);
   }
 
   if (start < 0) {
@@ -2699,6 +2734,20 @@ async function runLive() {
                           include_synthetic_seed: includeSyntheticSeed() }));
     if (!res.ok) {
       const err = await res.text();
+      // A malformed document is recoverable, but only if the surface says
+      // where the raw text is. A 422 here means one of the two workspace
+      // YAMLs will not parse, and every panel that depends on it goes blank —
+      // which reads as the app being broken rather than one file being
+      // editable. The BOM tab loads composition.yaml as raw text regardless
+      // of whether it parses, so it is the way out.
+      if (res.status === 422 && /parse error/i.test(err)) {
+        showEmptyWithMessage(
+          `${err}\n\nThis is a malformed workspace document, not a failed run. `
+          + `Open the BOM tab to edit dpp/composition.yaml as raw text — it loads `
+          + `even when the YAML is invalid — fix the flagged line and save. `
+          + `Claims live in dpp/claims.yaml on the Claims tab.`);
+        return;
+      }
       showEmptyWithMessage(`API error (${res.status}): ${err}`);
       return;
     }
@@ -2738,7 +2787,9 @@ function showEmptyWithMessage(msg) {
     }
     el.style.display = '';
     // Always set full innerHTML — avoids querySelector('p') null race
-    el.innerHTML = `<div class="big">⟷</div><p><span style="color:var(--red)">${esc(String(msg))}</span><br><br>Select a workspace from the Products tab.</p>`;
+    // `white-space: pre-wrap` so the multi-line recovery instructions above
+    // survive; they were being collapsed onto one line.
+    el.innerHTML = `<div class="big">⟷</div><p style="white-space:pre-wrap;text-align:left;max-width:620px;margin:0 auto"><span style="color:var(--red)">${esc(String(msg))}</span>\n\nSelect a workspace from the Products tab.</p>`;
   } catch(e) { console.warn('showEmptyWithMessage:', e); }
 }
 
