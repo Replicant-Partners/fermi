@@ -1524,6 +1524,8 @@ async function hireOracle() {
       }
     }
     oracleHired = true;
+    activityPush({ severity: 'success', source: 'system', node: 'supply_chain_oracle',
+                   summary: 'supply_chain_oracle added to this workspace' });
     document.getElementById('sco-badge').textContent = '✓ hired';
     document.getElementById('sco-badge').className = 'sco-badge sb-hired';
     btn.style.display = 'none';
@@ -1652,6 +1654,17 @@ async function runBOM() {
     // purpose — the handler falls back to `req.content` for the query
     // (`.unwrap_or(&req.content)`), so the BOM JSON is carried once rather
     // than duplicated into the message row.
+    const bomStarted = Date.now();
+    // The Activity panel was only fed by the claims evaluator, so a
+    // supply-chain run left no trace anywhere — the one surface whose job is
+    // "what did the agents do" did not know it had happened.
+    activityPush({
+      severity: 'info', source: 'agent:supply_chain_oracle', node: 'resolve_bom',
+      summary: `Pricing ${items.length} BOM line${items.length === 1 ? '' : 's'}`,
+      context: [['basis', basisMl ? `${basisMl} ml serving` : 'unstated'],
+                ['unresolved qty', unresolved.length],
+                ['currency', 'EUR']],
+    });
     const postRes = await fetch(`${base()}/api/workspaces/${wsId()}/messages`,
       fetchOpts('POST', {
         content: JSON.stringify(bomQuery),
@@ -1668,7 +1681,14 @@ async function runBOM() {
 
     let response = null;
     let hardFailure = null;
-    for (let i = 0; i < 20 && !response && !hardFailure; i++) {
+    // 20 x 2s = 40s, against an agent that makes a web_search per BOM line.
+    // The BOM is six lines now that water is no longer omitted, and the
+    // evaluator's own budget for comparable work is 210s per claim. A poll
+    // budget shorter than the work it waits for reports a timeout that is
+    // really impatience, which is what "the supply chain launch failed to
+    // bring anything back" was.
+    const BOM_POLLS = 120; // 4 minutes
+    for (let i = 0; i < BOM_POLLS && !response && !hardFailure; i++) {
       await new Promise(r => setTimeout(r, 2000));
       // Delta query rather than re-fetching the last 10 messages.
       const poll = await fetch(`${base()}/api/workspaces/${wsId()}/messages/poll?since=${encodeURIComponent(since)}`,
@@ -1703,11 +1723,43 @@ async function runBOM() {
         }
       }
     }
-    if (response) renderBOMResult(response);
-    else if (hardFailure) resultEl.innerHTML = `<div style="font-size:11px;color:var(--red);line-height:1.5;white-space:pre-wrap">${esc(hardFailure)}</div>`;
-    else resultEl.innerHTML = '<div style="font-size:11px;color:var(--amb)">No reply within 40s. The agent may still be running — check the workspace messages.</div>';
+    const secs = ((Date.now() - bomStarted) / 1000).toFixed(0);
+    if (response) {
+      renderBOMResult(response);
+      const priced = (response.items ?? []).length;
+      activityPush({
+        severity: priced ? 'success' : 'warn',
+        source: 'agent:supply_chain_oracle', node: 'resolve_bom',
+        summary: priced
+          ? `Priced ${priced} of ${items.length} BOM line${items.length === 1 ? '' : 's'}`
+          : 'Replied with no priced items',
+        context: [['duration', `${secs}s`], ['risks', (response.risks ?? []).length]],
+      });
+    } else if (hardFailure) {
+      resultEl.innerHTML = `<div style="font-size:11px;color:var(--red);line-height:1.5;white-space:pre-wrap">${esc(hardFailure)}</div>`;
+      activityPush({
+        severity: 'error', source: 'agent:supply_chain_oracle', node: 'resolve_bom',
+        summary: 'BOM pricing failed',
+        detail: hardFailure,
+        context: [['duration', `${secs}s`]],
+      });
+    } else {
+      resultEl.innerHTML = `<div style="font-size:11px;color:var(--amb)">No reply within ${secs}s. `
+        + `The agent may still be running — open the Activity tab, or the workspace messages.</div>`;
+      activityPush({
+        severity: 'warn', source: 'agent:supply_chain_oracle', node: 'resolve_bom',
+        summary: `No reply within ${secs}s`,
+        detail: 'The invocation was accepted and the agent may still be running. '
+              + 'This is the client giving up waiting, not the agent failing.',
+        context: [['duration', `${secs}s`], ['lines', items.length]],
+      });
+    }
   } catch(e) {
     resultEl.innerHTML = `<div style="font-size:11px;color:var(--red)">Error: ${esc(e.message)}</div>`;
+    activityPush({
+      severity: 'error', source: 'agent:supply_chain_oracle', node: 'resolve_bom',
+      summary: 'BOM pricing errored', detail: e.message,
+    });
   } finally {
     btn.disabled = false; btn.textContent = 'Run BOM pricing';
   }
@@ -2181,42 +2233,83 @@ function activityRender() {
 async function activityLoadPulse() {
   const el = document.getElementById('activity-pulse');
   if (!el) return;
+
+  // ── Scope 1: THIS workspace. Authoritative. ──────────────────────────────
+  //
+  // The ledger is the only thing that knows what you were actually charged,
+  // and it is workspace-scoped because gas is charged to the workspace wallet.
+  let spend = '';
+  try {
+    const id = wsId();
+    if (id) {
+      const r = await fetch(`${base()}/api/workspaces/${id}/budget`,
+        { credentials: 'include', headers: authHeaders() });
+      if (r.ok) {
+        const b = await r.json();
+        const ef = b.execution_fees ?? {};
+        const per = ef.count ? (ef.credits_spent / ef.count) : null;
+        spend = `
+          <div class="pulse-grid">
+            <div class="pulse-cell"><b>${b.balance ?? '—'}</b><span>credits left</span></div>
+            <div class="pulse-cell"><b>${ef.credits_spent ?? 0}</b><span>spent here</span></div>
+            <div class="pulse-cell"><b>${ef.count ?? 0}</b><span>agent runs</span></div>
+            <div class="pulse-cell"><b>${per != null ? per.toFixed(0) : '—'}</b><span>credits / run</span></div>
+          </div>
+          ${ef.most_recent ? `<div class="act-ctx" style="margin-top:6px"><b>last charge</b> ${
+            esc(String(ef.most_recent.description ?? ''))}</div>` : ''}
+          <div class="cost-note" style="margin-top:5px">${
+            esc(b.gas_model?.formula ?? '')} — a search-heavy run burns tokens because the
+            tool loop resends the whole conversation each iteration, so credits track
+            context size rather than wall-clock.</div>`;
+      }
+    }
+  } catch { /* a panel must not break the page */ }
+
+  // ── Scope 2: this AGENT, platform-wide. Not your bill. ───────────────────
+  //
+  // `/api/agents/:id/metrics` filters on `agent_id` alone — no workspace and
+  // no user — so every number it returns is every run of this agent by
+  // anybody. A previous version of this panel summed those tokens, derived
+  // credits from them, and put the result in a cell beside this workspace's
+  // stats. That is where "the credit cost is strange and super high" came
+  // from: it was the platform's 30-day total for the agent, presented as
+  // though it were yours.
+  //
+  // It is kept because it is genuinely the best answer to "why is this slow"
+  // — `tool_usage` gives the per-call cost of `web_search` directly — but it
+  // is now labelled for what it is and carries no money.
+  let pulse = '';
   try {
     const res = await fetch(`${base()}/api/agents/${EVALUATOR}/metrics`);
-    if (!res.ok) { el.innerHTML = ''; return; }
-    const m = await res.json();
-    const days = m.daily ?? [];
-    const runs   = days.reduce((a, d) => a + (d.executions || 0), 0);
-    const fails  = days.reduce((a, d) => a + (d.failures  || 0), 0);
-    const tokens = days.reduce((a, d) => a + (d.tokens    || 0), 0);
-    const timed  = days.filter(d => d.avg_time_ms != null);
-    const avgMs  = timed.length
-      ? timed.reduce((a, d) => a + d.avg_time_ms, 0) / timed.length : null;
-    if (!runs) {
-      el.innerHTML = `<div class="act-empty">No pulse data for ${esc(EVALUATOR)} yet — it accumulates as runs land in the episode log.</div>`;
-      return;
+    if (res.ok) {
+      const m = await res.json();
+      const days = m.daily ?? [];
+      const runs  = days.reduce((a, d) => a + (d.executions || 0), 0);
+      const fails = days.reduce((a, d) => a + (d.failures   || 0), 0);
+      const timed = days.filter(d => d.avg_time_ms != null);
+      const avgMs = timed.length
+        ? timed.reduce((a, d) => a + d.avg_time_ms, 0) / timed.length : null;
+      const tools = (m.tool_usage ?? []).slice(0, 5);
+      pulse = runs ? `
+        <div class="sb-h" style="margin-top:14px">${esc(EVALUATOR)} — PLATFORM-WIDE, 30d</div>
+        <div class="sb-sub">Every run of this agent by anyone. Useful for latency, not for cost.</div>
+        <div class="pulse-grid">
+          <div class="pulse-cell"><b>${runs}</b><span>runs</span></div>
+          <div class="pulse-cell"><b>${avgMs != null ? (avgMs/1000).toFixed(0)+'s' : '—'}</b><span>avg run</span></div>
+        </div>
+        ${tools.length ? `<div class="act-ctx" style="margin-top:8px">
+          <div style="color:var(--t3);margin-bottom:3px">where the time goes — avg per tool call</div>
+          ${tools.map(t => `<div>${esc(t.tool_name)} · ${t.count}× · ${
+            t.avg_duration_ms != null ? (t.avg_duration_ms/1000).toFixed(1)+'s' : 'n/a'}</div>`).join('')}
+        </div>` : ''}
+        ${m.avg_loop_iterations ? `<div class="act-ctx" style="margin-top:6px"><b>avg tool-loop iterations</b> ${
+          Number(m.avg_loop_iterations).toFixed(1)} of 5 max</div>` : ''}
+        ${fails ? `<div class="act-ctx" style="margin-top:6px;color:var(--amb)"><b>failures</b> ${fails}</div>` : ''}` : '';
     }
-    // Credits from tokens via the documented gas formula, and labelled
-    // `derived` rather than read. The authoritative per-run figure is the
-    // ledger; this is the shape of the cost across all runs.
-    const base1k = Math.max(1, Math.round(tokens / 1000));
-    const credits = base1k + Math.max(1, Math.round(base1k * 0.10));
-    const tools = (m.tool_usage ?? []).slice(0, 5);
-    el.innerHTML = `
-      <div class="pulse-grid">
-        <div class="pulse-cell"><b>${runs}</b><span>runs · 30d</span></div>
-        <div class="pulse-cell"><b>${avgMs != null ? (avgMs/1000).toFixed(0)+'s' : '—'}</b><span>avg run</span></div>
-        <div class="pulse-cell"><b>${fails}</b><span>failures</span></div>
-        <div class="pulse-cell"><b>~${credits}</b><span>credits · derived</span></div>
-      </div>
-      ${tools.length ? `<div class="act-ctx" style="margin-top:8px">
-        <div style="color:var(--t3);margin-bottom:3px">where the time goes — avg per tool call</div>
-        ${tools.map(t => `<div>${esc(t.tool_name)} · ${t.count}× · ${
-          t.avg_duration_ms != null ? (t.avg_duration_ms/1000).toFixed(1)+'s' : 'n/a'}</div>`).join('')}
-      </div>` : ''}
-      ${m.avg_loop_iterations ? `<div class="act-ctx" style="margin-top:6px"><b>avg tool-loop iterations</b> ${
-        Number(m.avg_loop_iterations).toFixed(1)} of 5 max</div>` : ''}`;
-  } catch { el.innerHTML = ''; }
+  } catch { /* ditto */ }
+
+  el.innerHTML = (spend || '') + (pulse || '')
+    || '<div class="act-empty">No spend or pulse data for this workspace yet.</div>';
 }
 
 async function activityLoad() {
