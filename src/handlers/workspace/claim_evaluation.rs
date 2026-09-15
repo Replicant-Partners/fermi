@@ -99,7 +99,7 @@ fn market_key(token: &str) -> Option<&'static str> {
 /// Read a workspace file, falling back to the platform copy shipped in
 /// `apps/adaptogen-lab/`. Same fallback chain as `lens_actions`, so a
 /// workspace that has never been seeded still works.
-async fn read_doc(
+pub(super) async fn read_doc(
     state: &AppState,
     slug: &str,
     ws_path: &'static str,
@@ -341,13 +341,13 @@ fn build_query(claim: &Value, composition: &Value, markets: &[&str]) -> String {
 /// curated and system tiers by design). Fixing it means giving tools a way to
 /// reach the store, which is a change to shared credential plumbing and not
 /// something a claims endpoint should make on its own.
-async fn resolve_search_credential(
+pub(super) async fn resolve_search_credential(
     state: &AppState,
     agent: &agent_bestiary_memory::types::Agent,
 ) -> Option<&'static str> {
     if let Some(encryptor) = state.secret_encryptor.as_ref() {
-        let principal = crate::funding_principal_for(agent)
-            .unwrap_or_else(|| "abw-system".to_string());
+        let principal =
+            crate::funding_principal_for(agent).unwrap_or_else(|| "abw-system".to_string());
         if let Ok(Some(key)) = fermi_auth::resolve_agent_credential(
             &state.db,
             encryptor,

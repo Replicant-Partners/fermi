@@ -1614,150 +1614,78 @@ function buildBomItems(basisMl) {
 async function runBOM() {
   if (!isLiveMode()) { alert('Connect a workspace first.'); return; }
   const btn = document.getElementById('sco-run-btn');
-  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Pricing BOM…';
-  const basisMl = bomBasisMl();
-  const { items, unresolved } = buildBomItems(basisMl);
-  const resultEl0 = document.getElementById('sco-result');
-  if (!items.length) {
-    // Refuse rather than price nothing. An empty BOM priced silently is how
-    // the hardcoded fixture went unnoticed for as long as it did.
-    if (resultEl0) resultEl0.innerHTML =
-      '<div style="font-size:11px;color:var(--amb)">\u26a0 No bill of materials to price. '
-      + 'Add ingredients on the BOM tab and save to <code>dpp/composition.yaml</code> first.</div>';
-    btn.disabled = false; btn.textContent = 'Run BOM pricing';
-    return;
-  }
-  const notes = [];
-  if (!basisMl) notes.push('No serving.volume_ml in the composition, so percentage quantities could not be converted to mass.');
-  if (unresolved.length) notes.push('Quantities not resolvable to a number: ' + unresolved.join('; ') + '.');
-  const bomQuery = {
-    task: 'resolve_bom',
-    process_context: {
-      process_name: bomProductName(),
-      production_scale: 'small_batch',
-      basis: basisMl ? `one ${basisMl} ml serving; percentages read as w/v, 1 ml treated as 1 g` : 'unstated \u2014 no serving volume in the composition',
-      source_document: COMPOSITION_PATH,
-      notes: notes.length ? notes.join(' ') : undefined,
-    },
-    bom_items: items,
-    currency: 'EUR'
-  };
   const resultEl = document.getElementById('sco-result');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Pricing BOM…';
+
+  // One request, and the server owns the rest.
+  //
+  // This used to post an `agent_invocation` workspace message and poll for a
+  // reply. Four things came with that shape, and all four read as the feature
+  // being second-class: it needed the agent hired (so a mis-scoped hire looked
+  // like a run that silently did nothing), nothing structured came back, no
+  // action-log row was written — so the run vanished on reload and the credits
+  // it spent had nothing to attribute them to — and the grounding verdict went
+  // to the episode rather than the caller, so the prices rendered carried no
+  // provenance at all.
+  //
+  // `POST /actions/price_bom` is the claim evaluator's pattern applied here:
+  // `dispatch_rabble_action` needs no hire, the gate runs, the enforced result
+  // is persisted to `dpp/pricing/bom_pricing.yaml`, and the action is logged.
+  //
+  // The percentage-to-mass conversion moved server-side with it. The browser
+  // was the only place that knew the serving basis, which made it the only
+  // implementation — and a second one would have had to agree with it forever.
+  const started = Date.now();
+  activityPush({
+    severity: 'info', source: 'agent:supply_chain_oracle', node: 'price_bom',
+    summary: 'Pricing the bill of materials',
+    context: [['source', COMPOSITION_PATH], ['currency', 'EUR']],
+  });
+  resultEl.innerHTML = '<div style="font-size:11px;color:var(--t3)"><span class="spinner"></span> '
+    + 'supply_chain_oracle running — a web_search per BOM line. Not timed out client-side.</div>';
+
   try {
-    // PostMessageRequest { content, message_type, metadata } — there is no
-    // `agent` field and no deny_unknown_fields, so the old body's
-    // `agent: 'supply_chain_oracle'` was discarded silently and no agent ran.
-    //
-    // The invocation is declared the way the handler actually reads it:
-    // message_type == "agent_invocation" makes `metadata.target_agent`
-    // authoritative (messages.rs:296-314). `metadata.query` is omitted on
-    // purpose — the handler falls back to `req.content` for the query
-    // (`.unwrap_or(&req.content)`), so the BOM JSON is carried once rather
-    // than duplicated into the message row.
-    const bomStarted = Date.now();
-    // The Activity panel was only fed by the claims evaluator, so a
-    // supply-chain run left no trace anywhere — the one surface whose job is
-    // "what did the agents do" did not know it had happened.
+    // No client timeout. The server caps the run at 300s, and a shorter budget
+    // here would report impatience as failure — which is exactly what the old
+    // 40-second poll loop did.
+    const res = await fetch(`${base()}/api/workspaces/${wsId()}/actions/price_bom`,
+      fetchOpts('POST', { currency: 'EUR', production_scale: 'small_batch' }));
+    const secs = ((Date.now() - started) / 1000).toFixed(0);
+
+    if (!res.ok) {
+      const err = await res.text();
+      resultEl.innerHTML = `<div style="font-size:11px;color:var(--red);line-height:1.5;white-space:pre-wrap">${esc(err)}</div>`;
+      activityPush({
+        severity: 'error', source: 'agent:supply_chain_oracle', node: 'price_bom',
+        summary: `BOM pricing refused (${res.status})`,
+        detail: err, context: [['duration', `${secs}s`]],
+      });
+      return;
+    }
+
+    const data = await res.json();
+    renderBOMResult(data.output ?? {}, data);
+    const v = data.grounding_summary?.violation_count ?? 0;
     activityPush({
-      severity: 'info', source: 'agent:supply_chain_oracle', node: 'resolve_bom',
-      summary: `Pricing ${items.length} BOM line${items.length === 1 ? '' : 's'}`,
-      context: [['basis', basisMl ? `${basisMl} ml serving` : 'unstated'],
-                ['unresolved qty', unresolved.length],
-                ['currency', 'EUR']],
+      severity: v ? 'warn' : (data.priced ? 'success' : 'warn'),
+      source: 'agent:supply_chain_oracle', node: 'price_bom',
+      summary: `Priced ${data.priced ?? 0} of ${data.lines_sent ?? 0} BOM line${(data.lines_sent ?? 0) === 1 ? '' : 's'}`,
+      detail: v ? 'Fields the oracle could not ground were nulled before storage.' : null,
+      context: [
+        ['duration', `${((data.duration_ms ?? 0)/1000).toFixed(1)}s`],
+        ['basis', data.basis_ml ? `${data.basis_ml} ml serving` : 'unstated'],
+        ['unresolved qty', (data.unresolved_quantities ?? []).length],
+        ['gate', data.grounding_summary?.is_clean ? 'clean' : `${v} violation(s)`],
+        ['written', data.written_path ?? 'not persisted'],
+      ],
     });
-    const postRes = await fetch(`${base()}/api/workspaces/${wsId()}/messages`,
-      fetchOpts('POST', {
-        content: JSON.stringify(bomQuery),
-        message_type: 'agent_invocation',
-        metadata: { target_agent: 'supply_chain_oracle' }
-      }));
-    if (!postRes.ok) throw new Error(`invocation rejected (${postRes.status}): ${await postRes.text()}`);
-    const posted = await postRes.json();
-    // Anchor the delta query on the server's own timestamp for our message, so
-    // clock skew cannot make us miss or replay the reply.
-    let since = posted.created_at ?? new Date().toISOString();
-
-    resultEl.innerHTML = '<div style="font-size:11px;color:var(--t3)"><span class="spinner"></span> supply_chain_oracle running — web_search per BOM line…</div>';
-
-    let response = null;
-    let hardFailure = null;
-    // 20 x 2s = 40s, against an agent that makes a web_search per BOM line.
-    // The BOM is six lines now that water is no longer omitted, and the
-    // evaluator's own budget for comparable work is 210s per claim. A poll
-    // budget shorter than the work it waits for reports a timeout that is
-    // really impatience, which is what "the supply chain launch failed to
-    // bring anything back" was.
-    const BOM_POLLS = 120; // 4 minutes
-    for (let i = 0; i < BOM_POLLS && !response && !hardFailure; i++) {
-      await new Promise(r => setTimeout(r, 2000));
-      // Delta query rather than re-fetching the last 10 messages.
-      const poll = await fetch(`${base()}/api/workspaces/${wsId()}/messages/poll?since=${encodeURIComponent(since)}`,
-        { credentials:'include', headers: authHeaders() });
-      if (!poll.ok) continue;
-      const fresh = (await poll.json()).messages ?? [];
-      if (!fresh.length) continue;
-      // Advance the cursor so each message is considered once.
-      const newest = fresh[fresh.length - 1]?.created_at;
-      if (newest) since = newest;
-      for (const m of fresh) {
-        // Match on sender_id (the agent_name the result message is written
-        // under) — NOT sender_name, which is the display_alias and may differ.
-        if (m.sender_type === 'agent' && m.sender_id === 'supply_chain_oracle'
-            && m.message_type === 'execution_result') {
-          if (m.metadata?.error) { hardFailure = m.content || 'the agent run failed'; break; }
-          // raw_response is the verbatim LLM output; `content` may carry an
-          // appended **Evidence:** block (format_execution_result_content).
-          const text = m.metadata?.raw_response || m.content || '';
-          try {
-            response = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? text);
-          } catch {
-            hardFailure = `the agent replied but the reply was not JSON:\n${text.slice(0, 400)}`;
-          }
-          break;
-        }
-        // The two ways this silently stalled before: the agent is not in the
-        // workspace, or it is missing a required secret. Both arrive as system
-        // messages and both used to be invisible behind a 40s timeout.
-        if (m.sender_type === 'system' && /not in this workspace|needs credentials/i.test(m.content ?? '')) {
-          hardFailure = m.content; break;
-        }
-      }
-    }
-    const secs = ((Date.now() - bomStarted) / 1000).toFixed(0);
-    if (response) {
-      renderBOMResult(response);
-      const priced = (response.items ?? []).length;
-      activityPush({
-        severity: priced ? 'success' : 'warn',
-        source: 'agent:supply_chain_oracle', node: 'resolve_bom',
-        summary: priced
-          ? `Priced ${priced} of ${items.length} BOM line${items.length === 1 ? '' : 's'}`
-          : 'Replied with no priced items',
-        context: [['duration', `${secs}s`], ['risks', (response.risks ?? []).length]],
-      });
-    } else if (hardFailure) {
-      resultEl.innerHTML = `<div style="font-size:11px;color:var(--red);line-height:1.5;white-space:pre-wrap">${esc(hardFailure)}</div>`;
-      activityPush({
-        severity: 'error', source: 'agent:supply_chain_oracle', node: 'resolve_bom',
-        summary: 'BOM pricing failed',
-        detail: hardFailure,
-        context: [['duration', `${secs}s`]],
-      });
-    } else {
-      resultEl.innerHTML = `<div style="font-size:11px;color:var(--amb)">No reply within ${secs}s. `
-        + `The agent may still be running — open the Activity tab, or the workspace messages.</div>`;
-      activityPush({
-        severity: 'warn', source: 'agent:supply_chain_oracle', node: 'resolve_bom',
-        summary: `No reply within ${secs}s`,
-        detail: 'The invocation was accepted and the agent may still be running. '
-              + 'This is the client giving up waiting, not the agent failing.',
-        context: [['duration', `${secs}s`], ['lines', items.length]],
-      });
-    }
+    // The ledger settles after the response, same as the evaluator, so refresh
+    // the spend panel rather than asserting a cost this response cannot know.
+    activityLoadPulse();
   } catch(e) {
     resultEl.innerHTML = `<div style="font-size:11px;color:var(--red)">Error: ${esc(e.message)}</div>`;
     activityPush({
-      severity: 'error', source: 'agent:supply_chain_oracle', node: 'resolve_bom',
+      severity: 'error', source: 'agent:supply_chain_oracle', node: 'price_bom',
       summary: 'BOM pricing errored', detail: e.message,
     });
   } finally {
@@ -1765,7 +1693,12 @@ async function runBOM() {
   }
 }
 
-function renderBOMResult(data) {
+// `meta` is the action response around the oracle's document: duration, the
+// basis the quantities were derived against, unresolved lines, the grounding
+// verdict and where it was persisted. Rendered beside the prices because a
+// price whose provenance is `tool_no_match` is a gap, not a number — and the
+// old message path could not supply any of it.
+function renderBOMResult(data, meta) {
   const items = data.items ?? [];
   const risks = data.risks ?? [];
   const summary = data.summary ?? {};
@@ -1792,11 +1725,30 @@ function renderBOMResult(data) {
     ? `<div class="bom-total"><span>Total per 330ml unit</span><span style="color:var(--grn)">€${(summary.total_bom_cost/1000).toFixed(4)}</span></div>`
     : `<div class="bom-total"><span>Total</span><span style="color:var(--amb)">null — some prices unknown</span></div>`;
 
+  const m = meta ?? {};
+  const itemsProv = data.items_provenance ?? null;
+  const provChipHtml = itemsProv
+    ? `<span class="pchip ${itemsProv === 'tool_verified' ? 'tv' : 'pen'}">items: ${esc(itemsProv)}</span>`
+    : '';
+  const metaStrip = `
+    <div class="act-ctx" style="margin-top:8px">
+      ${provChipHtml}
+      ${m.duration_ms != null ? `<div><b>duration</b> ${(m.duration_ms/1000).toFixed(1)}s</div>` : ''}
+      ${m.basis_ml ? `<div><b>basis</b> ${m.basis_ml} ml serving · percentages read as w/v</div>` : ''}
+      ${(m.unresolved_quantities ?? []).length
+          ? `<div style="color:var(--amb)"><b>no numeric quantity</b> ${esc((m.unresolved_quantities || []).join('; '))}</div>`
+          : ''}
+      ${m.grounding_summary
+          ? `<div><b>gate</b> ${m.grounding_summary.is_clean ? 'clean' : `${m.grounding_summary.violation_count} violation(s) nulled`}</div>`
+          : ''}
+      ${m.written_path ? `<div><b>written</b> ${esc(m.written_path)}</div>` : ''}
+    </div>`;
   document.getElementById('sco-result').innerHTML = `
     ${rowsHtml}${totalHtml}
     <div class="bom-prov ${provClass}" style="margin-top:6px">${provLabel}</div>
     ${summary.oracle_note ? `<div class="oracle-note">🔍 ${esc(summary.oracle_note)}</div>` : ''}
-    <div style="font-size:9px;color:var(--t3);margin-top:6px">risks: model_inference · summary: model_inference</div>`;
+    <div style="font-size:9px;color:var(--t3);margin-top:6px">risks: model_inference · summary: model_inference</div>
+    ${metaStrip}`;
 }
 
 // ── claim evaluation · regulatory_lens_translator ───────────────────────────

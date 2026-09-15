@@ -1393,6 +1393,16 @@ async fn run_migrations(db: &PgPool) {
         // regulatory corpus and spends credits, so its log row is the audit
         // anchor tying a stored regulatory verdict to who asked for it.
         "migrations/234_evaluate_claims_action_type.sql",
+        // 237 — admits `price_bom`. BOM pricing moved off the workspace
+        // message path, which wrote no action row at all, onto an action
+        // endpoint that does.
+        //
+        // ORDERING MATTERS and the file says so: every migration in this
+        // family DROPs and re-ADDs the whole constraint, so the last one to
+        // run defines it. Its list is the union of every action type for that
+        // reason. A later migration that restates only its own action silently
+        // un-admits the others.
+        "migrations/237_price_bom_action_type.sql",
         // 235 — `rule_retrievals`, one row per (semantic rule, prompt it was
         // injected into). Loop 1 now counts that a rule was USED
         // (`application_count`); nothing records that it was CORRECT.
@@ -4052,6 +4062,12 @@ async fn main() {
         .route(
             "/api/workspaces/:workspace_id/actions/evaluate_claims",
             post(handlers::workspace::claim_evaluation::evaluate_claims_handler),
+        )
+        // The supply-chain half, on the same pattern: no hire needed, the
+        // grounding gate runs, and the run is logged so it survives a reload.
+        .route(
+            "/api/workspaces/:workspace_id/actions/price_bom",
+            post(handlers::workspace::bom_pricing::price_bom_handler),
         )
         .route(
             "/api/workspaces/:workspace_id/actions/flag_divergence",

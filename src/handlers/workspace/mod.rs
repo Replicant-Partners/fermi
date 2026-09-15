@@ -9,9 +9,11 @@
 //! - actions.rs   Generalised App action protocol (mutate_document, fork_state, etc.)
 //! - lens_actions.rs      DPP Studio: render/compare/flag from stored evaluations
 //! - claim_evaluation.rs  DPP Studio: run the evaluator agent against the corpus
+//! - bom_pricing.rs       DPP Studio: run the supply-chain oracle over the BOM
 
 pub mod actions;
 pub mod agent_params_hook;
+pub mod bom_pricing;
 pub mod claim_evaluation;
 mod coherence;
 mod core;

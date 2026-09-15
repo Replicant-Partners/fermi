@@ -99,6 +99,35 @@
         }
       },
       {
+        "type": "price_bom",
+        "description": "Run supply_chain_oracle over the bill of materials in dpp/composition.yaml and return current mid-market prices per line with risk flags. Quantities are derived server-side from the composition's percentages against its serving basis, so the agent prices what the label describes rather than a fixture. Costs credits; refuses with 503 if no search credential is reachable, because prices from model memory would be stamped tool_no_match and read as a search that found nothing. Persists the grounding-enforced result to dpp/pricing/bom_pricing.yaml.",
+        "api_endpoint": "POST /api/workspaces/:id/actions/price_bom",
+        "fields": {
+          "currency": {
+            "type": "string",
+            "required": false,
+            "default": "EUR",
+            "description": "ISO 4217 code"
+          },
+          "production_scale": {
+            "type": "string",
+            "required": false,
+            "default": "small_batch",
+            "description": "small_batch | pilot | industrial"
+          }
+        },
+        "response": {
+          "action_id": "UUID",
+          "priced": "How many lines came back with a price",
+          "lines_sent": "How many BOM lines were sent",
+          "unresolved_quantities": "Lines whose declared quantity is not a number (e.g. \"trace\") — sent with qty null rather than a guess",
+          "output": "The oracle's enforced document: items[], risks[], summary, with items_provenance carrying tool_verified or tool_no_match",
+          "written_path": "dpp/pricing/bom_pricing.yaml, or null if the commit failed",
+          "duration_ms": "Measured wall clock",
+          "grounding_summary": "{is_clean, violation_count, provenance[]}"
+        }
+      },
+      {
         "type": "compare_lenses",
         "description": "Read the stored per-market evaluations and produce a side-by-side comparison, optionally focused on a specific claim. This action READS — it is free, instant and involves no agent. A claim reports `not_evaluated` until evaluate_claims has evaluated it.",
         "api_endpoint": "POST /api/workspaces/:id/actions/compare_lenses",
@@ -187,7 +216,8 @@
     "initial_budget": 400,
     "default_name_pattern": "DPP Studio — {date}",
     "auto_hire": [
-      "regulatory_lens_translator"
+      "regulatory_lens_translator",
+      "supply_chain_oracle"
     ],
     "git_init": true,
     "initial_files": [
