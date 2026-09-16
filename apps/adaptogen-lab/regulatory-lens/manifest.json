@@ -210,12 +210,33 @@
           "reinstatement": "What it would take to make this claim valid in the market where it's currently not allowed"
         }
       }
-    ]
+    ],
+    "parsing": {
+      "description": "How to extract action blocks from a dpp_companion response",
+      "delimiter_open": "__ACTION__",
+      "delimiter_close": "__END_ACTION__",
+      "algorithm": "Split on __ACTION__\\n...\\n__END_ACTION__ — each block contains a single JSON object whose `type` names one of the action_types above. Everything outside the delimiters is prose for the operator.",
+      "javascript": "const ACTION_RE = /__ACTION__\\n([\\s\\S]*?)\\n__END_ACTION__/g;\nconst actions = [...content.matchAll(ACTION_RE)].map(m => JSON.parse(m[1]));\nconst prose = content.replace(ACTION_RE, '').trim();",
+      "cost_classes": {
+        "free_read": [
+          "compare_lenses",
+          "render_lens",
+          "flag_divergence"
+        ],
+        "spends_credits": [
+          "evaluate_claims",
+          "price_bom",
+          "calculate_carbon"
+        ],
+        "note": "A client should confirm before executing a `spends_credits` action the operator did not explicitly ask for. The read actions cannot produce a verdict that does not already exist, so offering one as the remedy for an unevaluated claim is always wrong."
+      }
+    }
   },
   "workspace_template": {
     "initial_budget": 400,
     "default_name_pattern": "DPP Studio — {date}",
     "auto_hire": [
+      "dpp_companion",
       "regulatory_lens_translator",
       "supply_chain_oracle"
     ],

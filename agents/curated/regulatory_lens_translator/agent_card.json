@@ -452,7 +452,8 @@
       "us",
       "china",
       "dpp",
-      "ontology"
+      "ontology",
+      "dpp-orchestra"
     ],
     "sample_queries": [
       "Evaluate whether 'proven to improve erectile dysfunction' is permitted for a kombucha beverage in EU, US, and China",

@@ -279,7 +279,7 @@
         "properties": {
           "task": {
             "type": "string",
-            "description": "Discriminator \u2014 always 'resolve_bom'. Any other value is not a valid BomQuery."
+            "description": "Discriminator — always 'resolve_bom'. Any other value is not a valid BomQuery."
           },
           "bom_items": {
             "type": "array",
@@ -297,6 +297,14 @@
         },
         "additionalProperties": true
       }
+    },
+    "simops_contract": {
+      "role": "extension",
+      "extension_task": "pricing",
+      "task": "Resolves bill of materials costs and ingredient sourcing for process stage inputs.",
+      "accepts_schema": "scro/bom-query/1",
+      "produces_schema": "scro/bom_response",
+      "calibration_signal": null
     }
   },
   "performance": {
@@ -336,7 +344,9 @@
       "ontology",
       "botanicals",
       "industrial-chemicals",
-      "process-materials"
+      "process-materials",
+      "simops-orchestra",
+      "dpp-orchestra"
     ],
     "sample_queries": [
       "{\"task\":\"resolve_bom\",\"process_context\":{\"process_name\":\"Ashwagandha Extraction\",\"production_scale\":\"small_batch\"},\"bom_items\":[{\"name\":\"Withania somnifera\",\"qty\":0.05,\"unit\":\"kg\",\"role\":\"substrate\",\"stage_id\":\"extraction\"},{\"name\":\"Ethanol 96%\",\"qty\":0.5,\"unit\":\"L\",\"role\":\"solvent\",\"stage_id\":\"extraction\"}],\"currency\":\"EUR\"}",

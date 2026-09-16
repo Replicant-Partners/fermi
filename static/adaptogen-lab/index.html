@@ -337,6 +337,38 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
 .modal-actions{display:flex;gap:7px;justify-content:flex-end}
 .btn-end{background:var(--pur);color:#fff;border:none;border-radius:5px;padding:6px 15px;font-size:12px;font-weight:700;cursor:pointer}
 .btn-end:hover{opacity:.85}.btn-end:disabled{opacity:.4;cursor:not-allowed}
+/* ── companion shelf ── */
+.shelf{position:fixed;top:0;right:0;bottom:0;width:380px;background:var(--s1);border-left:1px solid var(--b1);
+  display:flex;flex-direction:column;transform:translateX(100%);transition:transform .18s ease;z-index:60}
+.shelf.open{transform:translateX(0)}
+.shelf-head{display:flex;align-items:center;border-bottom:1px solid var(--b1);flex-shrink:0}
+.shelf-tabs{display:flex;flex:1}
+.shelf-tab{flex:1;padding:9px 4px;text-align:center;font-size:9px;font-weight:700;letter-spacing:.04em;
+  text-transform:uppercase;color:var(--t3);cursor:pointer;border-bottom:2px solid transparent}
+.shelf-tab.active{color:var(--tea);border-bottom-color:var(--tea)}
+.shelf-close{padding:0 11px;color:var(--t3);cursor:pointer;font-size:16px;line-height:1}
+.shelf-close:hover{color:var(--t1)}
+.shelf-pane{flex:1;overflow-y:auto;padding:11px 13px}
+.shelf-pane.hidden{display:none}
+.shelf-handle{position:fixed;top:50%;right:0;transform:translateY(-50%);z-index:59;
+  background:var(--s2);color:var(--tea);border:1px solid var(--b1);border-right:none;
+  border-radius:5px 0 0 5px;padding:13px 5px;cursor:pointer;font-size:11px}
+.shelf-handle:hover{background:var(--s3)}
+body.shelf-open .shelf-handle{right:380px}
+#companion-log{max-height:44vh;overflow-y:auto;margin-bottom:9px}
+.cmp-turn{margin-bottom:9px;font-size:11px;line-height:1.6}
+.cmp-user{background:var(--s2);border-radius:4px;padding:6px 8px;color:var(--t2)}
+.cmp-agent{border-left:2px solid var(--tea);padding-left:8px}
+.cmp-prose{white-space:pre-wrap;color:var(--t1)}
+.cmp-err{color:var(--red);white-space:pre-wrap;margin-top:4px}
+.cmp-action{border:1px solid var(--b1);border-radius:4px;padding:6px 8px;margin-top:6px;background:var(--s2)}
+.cmp-action.spends{border-color:rgba(245,158,11,.4)}
+.cmp-action-h{font-size:10px;font-weight:700;color:var(--t1);font-family:var(--mono);display:flex;gap:6px;align-items:center}
+.cmp-cost{margin-left:auto;font-size:9px;font-weight:400;color:var(--t3);text-transform:uppercase;letter-spacing:.03em}
+.cmp-json{font-size:9px;font-family:var(--mono);color:var(--t2);margin:4px 0;white-space:pre-wrap}
+.cmp-done{font-size:9px;color:var(--grn);font-family:var(--mono);margin-top:3px}
+.companion-ask textarea{width:100%;background:var(--s2);border:1px solid var(--b1);border-radius:4px;
+  color:var(--t1);font-size:11px;font-family:inherit;padding:6px 8px;resize:vertical;margin-bottom:6px}
 </style>
 </head>
 <body>
@@ -377,7 +409,6 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
     <div class="sb-tab" onclick="showTab('claims')">Claims</div>
     <div class="sb-tab" onclick="showTab('ingredients')">BOM</div>
     <div class="sb-tab" onclick="showTab('carbon')">Supply Chain</div>
-    <div class="sb-tab" onclick="showTab('activity')">Activity</div>
     <div class="sb-tab" onclick="showTab('build')">Build</div>
   </div>
 
@@ -495,21 +526,6 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
   </div>
 
   <!-- Build -->
-  <div class="sb-panel hidden" id="tab-activity">
-    <div class="sb-h">WORKSPACE ACTIVITY</div>
-    <div class="sb-sub">Every agent run and action in this workspace, newest first. Persisted
-      entries come from the workspace action log, so they survive a reload; live entries are
-      added as a run proceeds.</div>
-    <div class="act-filters">
-      <span class="act-filter active" id="actf-all" onclick="activitySetFilter('all')">All</span>
-      <span class="act-filter" id="actf-problems" onclick="activitySetFilter('problems')">Problems</span>
-      <span class="act-refresh" onclick="activityLoad()">\u21bb refresh</span>
-    </div>
-    <div id="activity-pulse"></div>
-    <div class="sb-h" style="margin-top:14px">RUNS &amp; ACTIONS</div>
-    <div id="activity-list"></div>
-  </div>
-
   <div class="sb-panel hidden" id="tab-build">
     <div class="sh"><span class="sh-label">Knowledge Build</span><span class="sh-rule"></span></div>
     <div style="font-size:10px;color:var(--t3);margin-bottom:12px;line-height:1.5">
@@ -720,16 +736,15 @@ function confirmLogout() {
 
 // ── sidebar tabs ────────────────────────────────────────────────────────────
 function showTab(name) {
-  ['products','claims','ingredients','carbon','activity','build'].forEach(t => {
+  ['products','claims','ingredients','carbon','build'].forEach(t => {
     const el = document.getElementById('tab-' + t);
     if (el) el.classList.toggle('hidden', t !== name);
   });
   document.querySelectorAll('.sb-tab').forEach((el, i) => {
-    el.classList.toggle('active', ['products','claims','ingredients','carbon','activity','build'][i] === name);
+    el.classList.toggle('active', ['products','claims','ingredients','carbon','build'][i] === name);
   });
   if (name === 'claims' && wsId()) loadClaimsCards();
   if (name === 'ingredients' && wsId()) loadBomYaml();
-  if (name === 'activity') { activityLoad(); activityLoadPulse(); }
 }
 
 // ── jurisdiction filter ─────────────────────────────────────────────────────
@@ -2068,6 +2083,240 @@ async function drainEvaluation({ claimIds, force, total, label, markets: marketO
 }
 
 
+// ── The companion shelf ─────────────────────────────────────────────────────
+//
+// `dpp_companion` is the domain strategist for this App, on the pattern
+// `simops_companion` and `fermi` already use: it does not produce facts, it
+// decomposes a question, routes it to whichever specialist can ground it, and
+// explains what came back.
+//
+// Two things make it a companion rather than a chat box:
+//
+//   * **It discovers its fleet.** `list_workspace_agents` returns what is
+//     actually hired, and the `dpp-orchestra` tag marks which of those are
+//     dispatch targets. Role comes from each specialist's own domain tags, so
+//     a workspace that substitutes an agent is followed rather than missed.
+//     See docs/architecture/SIMOPS_COMPANION_AWARENESS.md — a hardcoded
+//     roster is the defect that document exists to remove.
+//   * **It emits an action grammar, and this client executes it.** Prose for
+//     the operator plus `__ACTION__ { … } __END_ACTION__` blocks, parsed with
+//     the regex the app manifest itself declares under `schema_json.parsing`
+//     so the two cannot drift.
+//
+// The shelf is a third column rather than a sidebar tab because both things on
+// it are about a run in progress, and a run is exactly when you cannot afford
+// to navigate away from the table you are reading.
+
+const COMPANION = 'dpp_companion';
+const ACTION_RE = /__ACTION__\n([\s\S]*?)\n__END_ACTION__/g;
+
+// Which actions spend money. Mirrors `schema_json.parsing.cost_classes` in the
+// manifest; a block in the second set is never executed without a confirm,
+// because the companion proposing something is not the operator asking for it.
+const SPENDS_CREDITS = ['evaluate_claims', 'price_bom', 'calculate_carbon'];
+const FREE_READ = ['compare_lenses', 'render_lens', 'flag_divergence'];
+
+let shelfTab = 'companion';
+let companionTurns = [];
+let companionBusy = false;
+
+function shelfShow(which) {
+  shelfTab = which;
+  for (const t of ['companion', 'activity']) {
+    const b = document.getElementById('shelf-tab-' + t);
+    if (b) b.classList.toggle('active', t === which);
+    const p = document.getElementById('shelf-pane-' + t);
+    if (p) p.classList.toggle('hidden', t !== which);
+  }
+  if (which === 'activity') { activityLoad(); activityLoadPulse(); }
+}
+
+function shelfToggle() {
+  const el = document.getElementById('shelf');
+  if (!el) return;
+  const open = el.classList.toggle('open');
+  document.body.classList.toggle('shelf-open', open);
+  if (open && shelfTab === 'activity') { activityLoad(); activityLoadPulse(); }
+}
+
+// ── the conversation ────────────────────────────────────────────────────────
+
+function renderCompanion() {
+  const el = document.getElementById('companion-log');
+  if (!el) return;
+  if (!companionTurns.length) {
+    el.innerHTML = `<div class="act-empty">Ask about this product's passport.
+      The companion reads <code>dpp/claims.yaml</code> and
+      <code>dpp/composition.yaml</code>, routes to whichever specialist can
+      ground the answer, and says what a run will cost before proposing it.
+      <div style="margin-top:8px;color:var(--t3)">Free to read what is already
+      stored. Only <code>evaluate_claims</code>, <code>price_bom</code> and
+      <code>calculate_carbon</code> spend credits, and those always ask
+      first.</div></div>`;
+    return;
+  }
+  el.innerHTML = companionTurns.map((t, i) => {
+    if (t.role === 'user') {
+      return `<div class="cmp-turn cmp-user">${esc(t.text)}</div>`;
+    }
+    const blocks = (t.actions ?? []).map((a, j) => {
+      const type = a.type ?? '(no type)';
+      const spends = SPENDS_CREDITS.includes(type);
+      const known = spends || FREE_READ.includes(type);
+      const done = t.executed?.[j];
+      return `<div class="cmp-action ${spends ? 'spends' : ''}">
+        <div class="cmp-action-h">${spends ? '⚡' : '○'} ${esc(type)}
+          <span class="cmp-cost">${spends ? 'spends credits' : known ? 'free read' : 'unknown action'}</span></div>
+        <pre class="cmp-json">${esc(JSON.stringify(a, null, 1))}</pre>
+        ${done
+          ? `<div class="cmp-done">${done === true ? '✓ executed' : esc(String(done))}</div>`
+          : known
+            ? `<button class="btn-agent btn-sm" onclick="runCompanionAction(${i},${j})">Run this →</button>`
+            : `<div class="cmp-done" style="color:var(--amb)">⚠ not an action this Studio knows — nothing to run</div>`}
+      </div>`;
+    }).join('');
+    return `<div class="cmp-turn cmp-agent">
+      ${t.text ? `<div class="cmp-prose">${esc(t.text)}</div>` : ''}
+      ${blocks}
+      ${t.error ? `<div class="cmp-err">${esc(t.error)}</div>` : ''}
+    </div>`;
+  }).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+async function askCompanion() {
+  const input = document.getElementById('companion-input');
+  const q = (input?.value ?? '').trim();
+  if (!q) return;
+  if (!isLiveMode()) { alert('Select a product workspace first — the companion reads its documents.'); return; }
+  if (companionBusy) return;
+
+  companionBusy = true;
+  input.value = '';
+  companionTurns.push({ role: 'user', text: q });
+  companionTurns.push({ role: 'agent', text: '…thinking', actions: [], executed: {} });
+  renderCompanion();
+  const turn = companionTurns[companionTurns.length - 1];
+
+  activityPush({
+    severity: 'trace', source: `agent:${COMPANION}`, node: 'ask',
+    summary: 'Companion asked', detail: q,
+  });
+
+  try {
+    // `@mention` is how the workspace message path selects an agent
+    // (`parse_at_mention`, core.rs:701). The `agent` field does not exist on
+    // `PostMessageRequest` and is discarded silently — the bug that made this
+    // App's first two agent integrations look wired when they were not.
+    const postRes = await fetch(`${base()}/api/workspaces/${wsId()}/messages`,
+      fetchOpts('POST', { content: `@${COMPANION} ${q}` }));
+    if (!postRes.ok) throw new Error(`invocation rejected (${postRes.status}): ${await postRes.text()}`);
+    const posted = await postRes.json();
+    let since = posted.created_at ?? new Date().toISOString();
+
+    // Poll the delta query. Generous, because the companion may call
+    // `list_workspace_agents` and read several documents before answering,
+    // and a budget shorter than the work reports impatience as failure.
+    let reply = null, sysErr = null;
+    for (let i = 0; i < 90 && !reply && !sysErr; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      const poll = await fetch(`${base()}/api/workspaces/${wsId()}/messages/poll?since=${encodeURIComponent(since)}`,
+        { credentials: 'include', headers: authHeaders() });
+      if (!poll.ok) continue;
+      const msgs = (await poll.json()).messages ?? [];
+      for (const m of msgs) {
+        if (m.created_at) since = m.created_at;
+        // Match on sender_id and message_type. `sender_name` is the
+        // display_alias and may differ from the agent name.
+        if (m.sender_type === 'agent' && m.sender_id === COMPANION
+            && m.message_type === 'execution_result') {
+          reply = m.metadata?.raw_response ?? m.content ?? '';
+          if (m.metadata?.error) sysErr = reply;
+        } else if (m.sender_type === 'system' && /not in this workspace/i.test(m.content ?? '')) {
+          sysErr = m.content;
+        }
+      }
+    }
+
+    if (sysErr) { turn.text = ''; turn.error = sysErr; }
+    else if (!reply) {
+      turn.text = '';
+      turn.error = 'No reply within 3 minutes. The companion may still be running — '
+                 + 'this is the client giving up waiting, not the agent failing.';
+    } else {
+      // Parse with the manifest's own regex, so client and contract agree.
+      const actions = [];
+      for (const m of reply.matchAll(ACTION_RE)) {
+        try { actions.push(JSON.parse(m[1])); }
+        catch (e) { actions.push({ type: '(unparseable block)', raw: m[1].slice(0, 300) }); }
+      }
+      turn.text = reply.replace(ACTION_RE, '').trim();
+      turn.actions = actions;
+      activityPush({
+        severity: 'info', source: `agent:${COMPANION}`, node: 'reply',
+        summary: actions.length
+          ? `Companion proposed ${actions.length} action${actions.length === 1 ? '' : 's'}`
+          : 'Companion answered',
+        context: [['actions', actions.map(a => a.type ?? '?').join(' ') || 'none']],
+      });
+    }
+  } catch (e) {
+    turn.text = '';
+    turn.error = e.message;
+    activityPush({ severity: 'error', source: `agent:${COMPANION}`, node: 'ask',
+                   summary: 'Companion call failed', detail: e.message });
+  } finally {
+    companionBusy = false;
+    renderCompanion();
+  }
+}
+
+// Execute one proposed block. Never automatically: a companion proposing a
+// paid run is a suggestion, and the operator is the one spending.
+async function runCompanionAction(turnIdx, actionIdx) {
+  const turn = companionTurns[turnIdx];
+  const a = turn?.actions?.[actionIdx];
+  if (!a) return;
+  const type = a.type;
+
+  if (SPENDS_CREDITS.includes(type)) {
+    const shape = type === 'evaluate_claims'
+      ? `${(a.claim_ids ?? ['all pending']).length} claim(s) × ${(a.markets ?? ['EU','US','CN']).length} market(s)`
+      : 'one agent run over live sources';
+    if (!confirm(`Run ${type}?\n\n${shape}\n\nThis spends credits from the workspace wallet and can take minutes.`)) return;
+  }
+
+  turn.executed[actionIdx] = 'running…';
+  renderCompanion();
+  try {
+    if (type === 'evaluate_claims') {
+      await drainEvaluation({
+        claimIds: a.claim_ids ?? null, force: !!a.force,
+        total: (a.claim_ids ?? []).length,
+        label: (a.claim_ids ?? []).join(', ') || 'unevaluated claims',
+        markets: a.markets ?? null,
+      });
+    } else if (type === 'price_bom') {
+      await runBOM();
+    } else if (type === 'compare_lenses' || type === 'render_lens' || type === 'flag_divergence') {
+      await runLive();
+    } else {
+      // `calculate_carbon` and anything else the manifest declares but this
+      // client has no renderer for. Posted through the generic action path so
+      // it still happens and still logs, rather than being silently dropped.
+      const res = await fetch(`${base()}/api/workspaces/${wsId()}/actions/${encodeURIComponent(type)}`,
+        fetchOpts('POST', Object.fromEntries(Object.entries(a).filter(([k]) => k !== 'type'))));
+      if (!res.ok) throw new Error(`${res.status}: ${(await res.text()).slice(0, 300)}`);
+    }
+    turn.executed[actionIdx] = true;
+  } catch (e) {
+    turn.executed[actionIdx] = `failed: ${e.message}`;
+  } finally {
+    renderCompanion();
+    activityLoadPulse();
+  }
+}
+
 // ── Activity log ────────────────────────────────────────────────────────────
 //
 // Mirrors the event model the Fermi console already uses
@@ -2868,8 +3117,50 @@ function showEmptyWithMessage(msg) {
 
 window.addEventListener('DOMContentLoaded', () => {
   renderKB();
+  renderCompanion();
   checkAuth(); // reads abw_session cookie, populates auth-status, fetches workspaces if logged in
 });
 </script>
+<!-- The companion shelf. A third column rather than a sidebar tab: both
+     things on it are about a run in progress, and a run is exactly when you
+     cannot afford to navigate away from the table you are reading. -->
+<button class="shelf-handle" id="shelf-handle" onclick="shelfToggle()" title="Companion and activity">&#9666;</button>
+<aside class="shelf" id="shelf">
+  <div class="shelf-head">
+    <div class="shelf-tabs">
+      <div class="shelf-tab active" id="shelf-tab-companion" onclick="shelfShow('companion')">Companion</div>
+      <div class="shelf-tab" id="shelf-tab-activity" onclick="shelfShow('activity')">Activity</div>
+    </div>
+    <span class="shelf-close" onclick="shelfToggle()" title="Close">&times;</span>
+  </div>
+
+  <div class="shelf-pane" id="shelf-pane-companion">
+    <div class="sb-h">DPP_COMPANION</div>
+    <div class="sb-sub">Domain strategist. Routes to the specialists tagged
+      <code>dpp-orchestra</code>, discovered from the workspace rather than
+      hardcoded. Proposes actions; you decide what runs.</div>
+    <div id="companion-log" class="companion-log"></div>
+    <div class="companion-ask">
+      <textarea id="companion-input" rows="2" placeholder="Can I say &quot;low in sugar&quot; in the EU?"
+        onkeydown="if(event.key==='Enter'&&(event.metaKey||event.ctrlKey)){event.preventDefault();askCompanion();}"></textarea>
+      <button class="btn-agent btn-sm" onclick="askCompanion()" style="width:100%;justify-content:center">Ask &rarr;</button>
+      <div class="cost-note">Asking is one agent turn. The actions it proposes are separate, and the paid ones confirm first.</div>
+    </div>
+  </div>
+
+  <div class="shelf-pane hidden" id="shelf-pane-activity">
+    <div class="sb-h">WORKSPACE ACTIVITY</div>
+    <div class="sb-sub">Every agent run and action here, newest first. Persisted
+      entries come from the action log and survive a reload.</div>
+    <div class="act-filters">
+      <span class="act-filter active" id="actf-all" onclick="activitySetFilter('all')">All</span>
+      <span class="act-filter" id="actf-problems" onclick="activitySetFilter('problems')">Problems</span>
+      <span class="act-refresh" onclick="activityLoad();activityLoadPulse()">&#8635; refresh</span>
+    </div>
+    <div id="activity-pulse"></div>
+    <div class="sb-h" style="margin-top:14px">RUNS &amp; ACTIONS</div>
+    <div id="activity-list"></div>
+  </div>
+</aside>
 </body>
 </html>
