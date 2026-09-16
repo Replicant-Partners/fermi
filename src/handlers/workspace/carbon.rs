@@ -279,6 +279,10 @@ fn output_shape(lines: &[BomLine]) -> String {
         "source_url": "a URL that came back in one of your searches",
         "source_title": "the result title",
         "source_quote": "the retrieved text carrying the factor",
+        "corroborating_value_kg_co2e_per_kg": 0.0,
+        "corroborating_dataset": "a DIFFERENT publisher's name, or null if only one carries it",
+        "corroborating_source_url": "a URL from one of your searches",
+        "corroboration": null,
         "kg_co2e": null,
         "arithmetic": null
       }}
@@ -452,6 +456,27 @@ fn build_query(
            whatever you put there. If you fill them the disagreement is counted \
            and reported, so guessing shows up as a number rather than as a \
            wrong footprint.\n\
+         - Seek a SECOND reading of each factor from a different publisher, \
+           and record it in the `corroborating_*` fields. Different publisher \
+           is the whole requirement: ecoinvent against Agribalyse, or against \
+           a DEFRA factor, or against a supplier EPD. The same dataset quoted \
+           twice is not a second reading, it is the first one fetched again, \
+           and the platform counts those as a corroboration that decorrelated \
+           nothing.\n\
+           Why this is asked for: the platform compares factors across runs to \
+           catch a wrong one, and two of your runs are not independent — same \
+           corpus, same ranking, same prior — so you could agree with yourself \
+           while both readings were wrong. Two publishers in one run cannot \
+           agree by that mechanism. Leave `corroboration` null: the platform \
+           decides whether the two match, on a 30% band, because two \
+           publishers legitimately differ and because deciding whether your \
+           own two numbers agree is not a retrieval.\n\
+         - If only one inventory carries the material, say so by leaving the \
+           `corroborating_*` fields null. That is a real and common answer, \
+           and it is recorded as `single_source` rather than as a failure. Do \
+           not invent a second citation to satisfy the rule — a fabricated \
+           corroboration is worse than an honest one, because it converts a \
+           known weakness into a false assurance.\n\
          - Every `source_url` must be a result you actually received on this \
            run. A plausible ecoinvent process URL is indistinguishable from a \
            real one to anyone without a licence, which is most readers.\n\
@@ -467,8 +492,12 @@ fn build_query(
          - `geography` is the factor's geography, not the BOM line's origin. \
            They are often different and that is fine; conflating them is not.\n\
          - Set `needs_expert: true` whenever coverage is incomplete, the \
-           geographies or years do not match the BOM, or the bases are mixed. \
-           Under-flagging is the expensive direction here.\n\
+           geographies or years do not match the BOM, the bases are mixed, or \
+           any line comes back `diverging` — two publishers more than 30% \
+           apart on the same material means at least one of them does not \
+           describe what you think it does, and that is a question for a \
+           person rather than a number to average. Under-flagging is the \
+           expensive direction here.\n\
          - `verification_status` is `unverified`. You are not an accredited \
            verifier. Do not state or imply that the product is carbon neutral, \
            climate neutral or offset.\n\

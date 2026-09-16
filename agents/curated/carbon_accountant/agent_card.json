@@ -79,7 +79,7 @@
                 "items": {
                   "type": "object"
                 },
-                "description": "One entry per bill-of-materials line: {item_id, material, origin, activity_qty_kg, factor_kg_co2e_per_kg, factor_unit, lca_basis, geography, reference_year, dataset, source_url, source_title, source_quote, kg_co2e, arithmetic}. The factor fields are retrieved and must be traceable to a URL received this run; `activity_qty_kg`, `kg_co2e` and `arithmetic` are written by the platform from the BOM quantity and the retrieved factor, overwriting whatever the reply carried. A line whose factor could not be retrieved carries factor_kg_co2e_per_kg: null and kg_co2e: null - never a substituted proxy."
+                "description": "One entry per bill-of-materials line: {item_id, material, origin, activity_qty_kg, factor_kg_co2e_per_kg, factor_unit, lca_basis, geography, reference_year, dataset, source_url, source_title, source_quote, corroborating_value_kg_co2e_per_kg, corroborating_dataset, corroborating_source_url, corroboration, kg_co2e, arithmetic}. The factor fields are retrieved and must be traceable to a URL received this run; `activity_qty_kg`, `kg_co2e`, `arithmetic` and `corroboration` are written by the platform, overwriting whatever the reply carried. A line whose factor could not be retrieved carries factor_kg_co2e_per_kg: null and kg_co2e: null - never a substituted proxy. The `corroborating_*` fields are a second reading of the same material from a DIFFERENT publisher, which is the only part of this document that attacks correlation rather than error: two runs share a corpus, a ranking and a prior, so they can agree while both being wrong, whereas two publishers consulted in one run are decorrelated by construction. `corroboration` is the platform's verdict over the two - agreeing | diverging | single_source | absent - never the agent's, because deciding whether your own two numbers match is not a retrieval."
               },
               "queries_run": {
                 "type": "array",
@@ -288,6 +288,7 @@
       "csrd",
       "cbam",
       "dpp",
+      "dpp-orchestra",
       "compliance"
     ],
     "sample_queries": [

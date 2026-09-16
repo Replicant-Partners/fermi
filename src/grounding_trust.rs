@@ -508,6 +508,27 @@ pub const CROSS_CHECK_EXEMPTIONS: &[(&str, &str, &str)] = &[
     // not, and this is what discharging one looks like.
     (
         "carbon_accountant",
+        "inventory.items[].corroborating_value_kg_co2e_per_kg",
+        "Same absent corpus as the primary factor, and it closes the same way: \
+         the ledger already keys on dataset, so once corroborating readings \
+         are recorded under their own publisher's key a second run resolving \
+         either side becomes comparable. Worth doing and not done here, \
+         because a corroborating row needs its own geography and reference \
+         year to be placed correctly, and inventing those from the primary's \
+         would fabricate the very metadata the key depends on.",
+    ),
+    (
+        "carbon_accountant",
+        "inventory.items[].corroborating_source_url",
+        "Nothing here can say whether the second URL was retrieved or recalled \
+         — the same gap as the primary URL, closed by the same tool-result \
+         join, and blocked on the same missing storage. Note what IS checked \
+         without it: `corroborating_dataset` carries a live cross-check that \
+         the two publishers actually differ, so the property the mechanism \
+         depends on is adjudicated even while the citation itself is not.",
+    ),
+    (
+        "carbon_accountant",
         "inventory.items[].source_url",
         "Nothing here can say whether the URL was retrieved or recalled. URL \
          replay would settle existence and the tool-result join would settle \
@@ -3734,6 +3755,96 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
     },
     FieldContract {
         agent_id: CA,
+        path: "inventory.items[].corroborating_value_kg_co2e_per_kg",
+        grounding: Grounding::Sourced {
+            tool: "web_search",
+            response_field: "results[].description",
+        },
+        why: "A second reading of the same material from a DIFFERENT publisher, \
+              and the only part of this contract that attacks correlation \
+              rather than error. The ledger check compares two runs, and two \
+              runs are not independent: they share the corpus, the ranking and \
+              the query shape, so they can both land on the same page that \
+              misquotes a dataset, and they are the same model with the same \
+              prior, so their mistakes are correlated through the weights. Two \
+              publishers consulted in ONE run are decorrelated by \
+              construction. Null is honest and common — plenty of materials \
+              appear in exactly one inventory.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: CA,
+        path: "inventory.items[].corroborating_source_url",
+        grounding: Grounding::Sourced {
+            tool: "web_search",
+            response_field: "results[].url",
+        },
+        why: "Where the second reading was read from. Required for the same \
+              reason the primary URL is: a corroboration nobody can follow is \
+              an assertion that a corroboration happened, which is precisely \
+              the claim this field exists to make checkable rather than \
+              trusted.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: CA,
+        path: "inventory.items[].corroborating_dataset",
+        grounding: Grounding::Sourced {
+            tool: "web_search",
+            response_field: "results[].title, results[].description",
+        },
+        why: "Which publisher the second reading came from — and the field the \
+              whole corroboration mechanism rests on, because a second reading \
+              from the SAME dataset is not a second reading at all. It is the \
+              primary figure fetched twice, which is the correlated case this \
+              was built to escape. Named rather than assumed, so the \
+              independence property is a value in the document that a query \
+              can adjudicate rather than an intention in a prompt.",
+        // The independence property, checked rather than hoped for.
+        //
+        // This is the one cross-check on this agent that reads the AGENT's
+        // behaviour rather than the world, and it is the one that can degrade
+        // silently. Everything else about corroboration is enforced by the
+        // platform: `carbon_corroboration` computes the verdict, so the agent
+        // cannot claim agreement it did not find. But nothing stops it
+        // satisfying the two-source rule by quoting ecoinvent twice, and if it
+        // did, `corroboration: agreeing` would be produced honestly by the
+        // platform, mean nothing, and look identical to the real thing.
+        //
+        // So: count lines where the two datasets normalise to the same string.
+        // Non-zero is not a fabrication, it is a corroboration that decorrelates
+        // nothing, and the distinction is worth having a number for.
+        //
+        // Episode-based, so it carries the cohort placeholder and is read both
+        // scoped to the current prompt and across history — which matters more
+        // here than elsewhere, because "the agent stopped seeking a second
+        // publisher" is exactly the kind of drift a prompt edit causes.
+        //
+        // Reads the RAW reply, so it sees what the model actually returned
+        // before enforcement. It matches only replies that are a bare JSON
+        // object, as `football_analyst`'s does; a fenced block drops out. That
+        // limit is real and is the reason this check is a discipline signal
+        // rather than a guarantee.
+        cross_check_sql: Some(
+            "SELECT count(*)::bigint AS mismatches \
+               FROM episodes e \
+               JOIN agents a ON a.agent_id = e.agent_id, \
+               LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
+                                    THEN e.response_text::jsonb END AS doc) j, \
+               LATERAL jsonb_array_elements( \
+                         CASE WHEN jsonb_typeof(j.doc #> '{inventory,items}') = 'array' \
+                              THEN j.doc #> '{inventory,items}' \
+                              ELSE '[]'::jsonb END) AS li \
+              WHERE a.agent_name = 'carbon_accountant' \
+                {{COHORT}} \
+                AND li.value ->> 'dataset' IS NOT NULL \
+                AND li.value ->> 'corroborating_dataset' IS NOT NULL \
+                AND lower(btrim(li.value ->> 'dataset')) \
+                    = lower(btrim(li.value ->> 'corroborating_dataset'))",
+        ),
+    },
+    FieldContract {
+        agent_id: CA,
         path: "inventory.items",
         grounding: Grounding::Derived {
             from: "inventory.items[].activity_qty_kg, echoed onto each line by \
@@ -3742,8 +3853,13 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
             how: "per line, kg_co2e = activity_qty_kg * factor_kg_co2e_per_kg, \
                   with `arithmetic` written out as the multiplication a reader \
                   can check by hand; both null when either input is absent. \
-                  Every retrieved field on the line is preserved verbatim — \
-                  the transform writes three keys and copies the rest",
+                  `corroboration` is decided in the same pass by comparing the \
+                  primary factor against the second publisher's reading — \
+                  agreeing | diverging | single_source | absent, on a 30% band \
+                  (CORROBORATION_BAND), because two publishers legitimately \
+                  differ where two readings of one dataset row must not. Every \
+                  retrieved field on the line is preserved verbatim: the \
+                  transform writes four keys and copies the rest",
         },
         why: "The arithmetic, which is the platform's and not the agent's. \
               `activity_qty_kg` is echoed from the BOM rather than taken from \
@@ -4627,10 +4743,77 @@ fn derive_carbon_line_items(doc: &Value) -> Option<Value> {
                     obj.insert("arithmetic".into(), Value::Null);
                 }
             }
+            obj.insert(
+                "corroboration".into(),
+                Value::String(carbon_corroboration(item).into()),
+            );
             Value::Object(obj)
         })
         .collect();
     Some(Value::Array(out))
+}
+
+/// Did a second, differently-published source agree with the primary factor?
+///
+/// ## Why the platform decides this and not the agent
+///
+/// The comparison is arithmetic, so it belongs on the same side of the line as
+/// the multiplication: a model asked whether its own two numbers agree has an
+/// obvious incentive and no need to be consulted. The agent's job is to
+/// RETRIEVE a second reading; saying whether the two match is not a retrieval.
+///
+/// ## Why the band is 30% and not the 2% used in the ledger
+///
+/// They answer different questions. Two readings of the SAME dataset row must
+/// be the same number, so the ledger's band covers transcription only. Two
+/// readings from DIFFERENT publishers legitimately differ — different system
+/// models, different allocation rules, different reference flows — and 20-30%
+/// apart is ordinary rather than suspicious. A tight band here would fire on
+/// correct behaviour, which gets a check switched off.
+///
+/// So `agreeing` is a deliberately weak claim: *the second source is in the
+/// same ballpark, so the primary is probably the right material and the right
+/// order of magnitude.* It does not say the primary is accurate. What it
+/// catches is the failure that matters — a factor for a different material, a
+/// unit error, or a number from nowhere — all of which miss by far more than
+/// 30%.
+///
+/// `single_source` is not a failure. Plenty of materials appear in exactly one
+/// published inventory, and pretending otherwise would push an agent toward
+/// inventing a second citation, which is strictly worse than admitting there
+/// is one.
+pub const CORROBORATION_BAND: f64 = 0.30;
+
+fn carbon_corroboration(item: &Value) -> &'static str {
+    let primary = item
+        .get("factor_kg_co2e_per_kg")
+        .and_then(|v| v.as_f64())
+        .filter(|v| v.is_finite() && *v >= 0.0);
+    let second = item
+        .get("corroborating_value_kg_co2e_per_kg")
+        .and_then(|v| v.as_f64())
+        .filter(|v| v.is_finite() && *v >= 0.0);
+
+    match (primary, second) {
+        (None, _) => "absent",
+        (Some(_), None) => "single_source",
+        (Some(p), Some(s)) => {
+            // Relative to the larger of the two, so the verdict does not
+            // depend on which was called primary.
+            let scale = p.abs().max(s.abs());
+            if scale == 0.0 {
+                // Both zero. Not a disagreement, and not a footprint claim
+                // either — a zero factor is a gap wearing a number, which the
+                // `needs_expert` judgement is the right place to catch.
+                return "agreeing";
+            }
+            if (p - s).abs() / scale <= CORROBORATION_BAND {
+                "agreeing"
+            } else {
+                "diverging"
+            }
+        }
+    }
 }
 
 fn derive_carbon_total(doc: &Value) -> Option<Value> {
@@ -8038,6 +8221,73 @@ mod tests {
             Some(PROV_NO_MATCH),
             "the datasets were asked and had nothing. That is a gap needing a \
              supplier-specific factor, and never a clearance."
+        );
+    }
+
+    /// **The corroboration verdict is the platform's, on a band wide enough
+    /// for two publishers.**
+    ///
+    /// This is the only part of the contract that attacks *correlation* rather
+    /// than error, and the reason it exists is in the ledger check's own doc
+    /// comment: two runs share a corpus, a ranking and a prior, so they can
+    /// agree while both being wrong. Two publishers consulted in one run
+    /// cannot agree by that mechanism.
+    ///
+    /// The band is 30% and not the ledger's 2% because the two checks ask
+    /// different questions. Asserted here so that tightening it — which looks
+    /// like rigour — fails instead, since a 2% band across publishers would
+    /// fire on ordinary methodological difference and get the check switched
+    /// off.
+    #[test]
+    fn corroboration_is_decided_by_the_platform_not_claimed_by_the_agent() {
+        let line = |primary: Value, second: Value, claimed: &str| {
+            let mut doc = carbon_reply();
+            doc["inventory"]["items"][0]["factor_kg_co2e_per_kg"] = primary;
+            doc["inventory"]["items"][0]["corroborating_value_kg_co2e_per_kg"] = second;
+            // The model asserts a verdict it has no business asserting.
+            doc["inventory"]["items"][0]["corroboration"] = json!(claimed);
+            enforce("carbon_accountant", &mut doc);
+            doc.pointer("/inventory/items/0/corroboration")
+                .and_then(|v| v.as_str())
+                .unwrap_or("<missing>")
+                .to_string()
+        };
+
+        // Two publishers 10% apart: ordinary methodological difference, and
+        // the primary is corroborated as being the right material and
+        // magnitude. Not a claim that it is accurate.
+        assert_eq!(line(json!(2.1), json!(2.31), "diverging"), "agreeing");
+
+        // Nearly a factor of three apart. At least one of the two does not
+        // describe what the other does — a question for a person, never a
+        // number to average.
+        assert_eq!(line(json!(2.1), json!(6.0), "agreeing"), "diverging");
+
+        // Exactly at the band, from both directions, because an inequality
+        // written the other way round is the classic off-by-one here.
+        assert_eq!(line(json!(1.0), json!(1.30), "diverging"), "agreeing");
+        assert_eq!(line(json!(1.0), json!(1.50), "agreeing"), "diverging");
+
+        // One publisher carries it. A real and common answer, and recorded as
+        // such rather than as a failure — pretending otherwise would push the
+        // agent toward inventing a second citation.
+        assert_eq!(line(json!(2.1), Value::Null, "agreeing"), "single_source");
+
+        // No primary factor at all: there is nothing to corroborate, which is
+        // different from having looked and found one source.
+        assert_eq!(line(Value::Null, Value::Null, "agreeing"), "absent");
+
+        // And a corroborating value with no primary does not promote itself
+        // into the primary's place.
+        assert_eq!(line(Value::Null, json!(2.1), "agreeing"), "absent");
+
+        // The band is the declared constant, not a number retyped here.
+        assert!(
+            (CORROBORATION_BAND - 0.30).abs() < 1e-9,
+            "the band moved. If that was deliberate, this test is the place \
+             the reasoning has to change too: it is wide because two \
+             publishers legitimately differ, and narrowing it makes the check \
+             fire on correct behaviour."
         );
     }
 

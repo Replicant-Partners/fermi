@@ -2382,6 +2382,23 @@ function carbonLineHTML(item, attribution) {
   const src = item.source_url
     ? `<a href="${esc(item.source_url)}" target="_blank" style="color:var(--blu)">${esc(item.dataset ?? 'source')}</a>`
     : `<span style="color:var(--amb)">${esc(item.dataset ?? 'dataset not named')}</span>`;
+  const CORROB = {
+    agreeing:      ['var(--grn)', 'corroborated',
+      'A second publisher is within 30% of this factor. That says the material and the order of magnitude are probably right \u2014 it does NOT say the number is accurate. Two publishers legitimately differ by 20-30%.'],
+    diverging:     ['var(--amb)', 'sources diverge',
+      'Two publishers are more than 30% apart on this material. At least one of them does not describe what the other does. A question for a person, not a number to average.'],
+    single_source: ['var(--t3)', 'single source',
+      'Only one published inventory carries this material. An honest and common answer, and not a failure \u2014 the alternative would be inventing a second citation.'],
+    absent:        ['var(--t3)', '', ''],
+  };
+  const [cc, clabel, ctip] = CORROB[item.corroboration] ?? CORROB.absent;
+  const corrob = clabel
+    ? `<div style="font-size:9px;margin-top:2px;color:${cc}" title="${esc(ctip)}">
+         ${esc(clabel)}${item.corroborating_dataset ? ` \u00b7 ${esc(item.corroborating_dataset)}` : ''}${
+           item.corroborating_value_kg_co2e_per_kg != null
+             ? ` says ${esc(item.corroborating_value_kg_co2e_per_kg)}` : ''}
+       </div>`
+    : '';
   const scope = att?.scope
     ? `<span title="${esc(att.rationale ?? '')}" style="color:var(--pur)">${esc(att.scope)}${
         att.ghg_protocol_category != null ? ` cat ${esc(att.ghg_protocol_category)}` : ''}</span>`
@@ -2404,6 +2421,7 @@ function carbonLineHTML(item, attribution) {
       factor geography <span style="color:var(--t2)">${esc(item.geography ?? 'unstated')}</span>
       \u00b7 BOM origin <span style="color:var(--t2)">${esc(item.bom_origin)}</span>
     </div>` : ''}
+    ${corrob}
   </div>`;
 }
 
