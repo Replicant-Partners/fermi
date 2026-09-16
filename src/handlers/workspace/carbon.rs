@@ -1266,6 +1266,47 @@ pub async fn calculate_carbon_handler(
     // stamps every block, and scans the prose for a dataset nothing came back
     // from.
     let report = grounding_trust::enforce(ACCOUNTANT, &mut doc);
+
+    // ── the gate has to have actually run ─────────────────────────────────
+    //
+    // `enforce` is a no-op for an agent with no `FIELD_CONTRACTS` entries, and
+    // the no-op returns `Report::default()` — which `is_clean()` reports as
+    // CLEAN. A clean report is a claim, and it is the strongest claim this
+    // handler makes: it is what `grounding_summary.is_clean` in the response
+    // says, and the statement is persisted as an enforced document on the
+    // strength of it.
+    //
+    // So the silent failure is real and is one edit away. Rename `ACCOUNTANT`,
+    // move a block from `FIELD_CONTRACTS` onto the card's grounding map (where
+    // this call would have to become `enforce_from_output_contract`, per that
+    // function's documented precedence), or mistype the agent id in either
+    // place, and this endpoint keeps returning 200 with a clean summary over a
+    // document nothing gated — the arithmetic not derived, the prose not
+    // scanned, the ungrounded fields not nulled.
+    //
+    // `enforce` stamps `<block>_provenance` for every block a contract
+    // mentions, so a non-empty provenance list is proof the table was found.
+    // Refusing is right even though the run has already cost real searches:
+    // an ungrounded statement persisted as an enforced one cannot be told
+    // apart from a real one afterwards, which is the whole failure this agent
+    // exists to prevent. Unreachable without a code change, which is why it is
+    // a 500 and not a 422.
+    if report.provenance.is_empty() {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!(
+                "Refusing to persist a carbon statement: the grounding gate \
+                 found no field contracts for `{ACCOUNTANT}` and therefore did \
+                 nothing. `grounding_trust::enforce` is a no-op for an \
+                 uncontracted agent and returns a CLEAN report, so continuing \
+                 would store an ungated document and report it as enforced. \
+                 Check that the agent id matches `FIELD_CONTRACTS` in \
+                 src/grounding_trust.rs; if its blocks moved onto the card's \
+                 grounding map, this call must become \
+                 `enforce_from_output_contract`."
+            ),
+        ));
+    }
     if !report.is_clean() {
         grounding_anomaly::spawn_raise(
             Arc::clone(&state.memory_store),
@@ -1434,6 +1475,75 @@ carbon_intensity:
 allergens:
   present: []
 "#;
+
+    /// **The agent id in this handler must match the contract table.**
+    ///
+    /// `grounding_trust::enforce` is a no-op for an agent it has no contracts
+    /// for, and the no-op returns `Report::default()` — which `is_clean()`
+    /// reports as clean. So a one-character drift between `ACCOUNTANT` here and
+    /// the `agent_id` in `FIELD_CONTRACTS` turns the strongest claim this
+    /// handler makes into a claim about nothing, with no error anywhere: the
+    /// arithmetic is not derived, the prose is not scanned, the ungrounded
+    /// fields are not nulled, and the response still says `is_clean: true`.
+    ///
+    /// The coordination doc between the two DPP sessions names this asymmetry
+    /// as the thing most likely to get broken later, and it is right that it
+    /// cannot be caught by reading either file alone — the two constants live
+    /// in different crates' worth of code and agree only by convention. So it
+    /// is asserted, in both directions: a real id stamps blocks, and a wrong
+    /// one stamps nothing, which is what the handler now refuses on.
+    #[test]
+    fn the_handlers_agent_id_matches_the_grounding_contract() {
+        let mut doc = json!({
+            "inventory": { "items": [], "total_kg_co2e": null, "coverage": null,
+                           "unpriced_items": null },
+            "attribution": { "items": [] },
+            "boundary": { "declared": "cradle_to_gate" },
+            "assurance": { "needs_expert": true },
+            "explanation": "x"
+        });
+        let report = grounding_trust::enforce(ACCOUNTANT, &mut doc);
+        assert!(
+            !report.provenance.is_empty(),
+            "`enforce({ACCOUNTANT})` stamped no block, which means \
+             FIELD_CONTRACTS has no entry for that id. The gate is a no-op and \
+             its report reads clean. Either the constant drifted from the \
+             table, or the contracts moved onto the card's grounding map — in \
+             which case this handler must call \
+             `enforce_from_output_contract` instead."
+        );
+        // Every declared block, so a block quietly dropped from the contract is
+        // caught here too rather than by its stamp going missing in a document
+        // somebody is reading.
+        for block in ["inventory", "attribution", "boundary", "assurance"] {
+            assert!(
+                report.provenance.iter().any(|(b, _)| b == block),
+                "`{block}` was not stamped. A consumer reads the stamp to know \
+                 how a block was arrived at; an absent one is indistinguishable \
+                 from an agent nobody has contracted."
+            );
+        }
+        // And prose is deliberately unstamped: a retrieval verdict about a
+        // sentence is a category error.
+        assert!(
+            !report.provenance.iter().any(|(b, _)| b == "explanation"),
+            "prose acquired a provenance stamp"
+        );
+
+        // The other direction — the condition the handler refuses on is
+        // reachable, so the guard is not decorative.
+        let mut same = doc.clone();
+        let wrong = grounding_trust::enforce("carbon_accountantt", &mut same);
+        assert!(
+            wrong.provenance.is_empty() && wrong.is_clean(),
+            "a typo'd agent id produced a non-empty report, so the detection \
+             the handler relies on does not hold. It refuses when the \
+             provenance list is empty, and this is the proof that an \
+             uncontracted id is what produces that — AND that such a report \
+             calls itself clean, which is why it has to be refused rather than \
+             reported."
+        );
+    }
 
     /// The conversion the browser already does, done again server-side against
     /// the committed document — and it has to land on the same numbers, or the

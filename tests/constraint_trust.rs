@@ -115,6 +115,138 @@ fn no_new_migration_declares_a_constraint_it_cannot_apply() {
     );
 }
 
+/// **The last migration to redefine a whole-constraint family must be a
+/// superset of every one before it.**
+///
+/// # The hazard
+///
+/// Every migration in the `workspace_action_log_action_type_check` family
+/// DROPs and re-ADDs the **whole** constraint, so the last one `run_migrations`
+/// executes defines it entirely. Registration order, not filename order,
+/// decides which that is — `235_rule_retrievals` is registered after `237` and
+/// the array is what governs.
+///
+/// Today that is correct only by the diligence of whoever wrote the most
+/// recent one: mig-237 restates `calculate_carbon` (mig-236's action) as well
+/// as its own `price_bom`. A future migration that names only its own action
+/// would silently un-admit every action added before it.
+///
+/// # Why it has to be a test and not a comment
+///
+/// The comment exists — it is at the top of `237_price_bom_action_type.sql` —
+/// and comments do not run. The failure it warns about is close to invisible:
+/// the action still executes, because the handlers that write these rows
+/// soft-fail the INSERT on purpose so a missing migration cannot lose work
+/// that has already cost real searches and tokens. So the symptom is not an
+/// error. It is runs quietly ceasing to appear in the Activity panel, and an
+/// `action_id` in the response that exists in no table — an audit anchor
+/// pointing at nothing, which looks discharged.
+///
+/// Two sessions working in this family independently is exactly the condition
+/// that produces it, and that has already happened once on this app.
+#[test]
+fn the_last_migration_in_a_constraint_family_admits_everything_the_earlier_ones_did() {
+    /// Constraint families where each migration restates the entire IN list.
+    /// A family qualifies when its migrations DROP and re-ADD the same named
+    /// constraint, which is what makes the last writer authoritative.
+    const FAMILIES: &[&str] = &["workspace_action_log_action_type_check"];
+
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+    // Registration order, read from the source rather than from the filenames,
+    // because the array is what governs. Same scan `tests/migration_ledger.rs`
+    // uses, for the same reason.
+    let api = std::fs::read_to_string(root.join("src/api_server.rs")).expect("api_server.rs");
+    let order: Vec<String> = api
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("\"migrations/"))
+        .filter_map(|r| r.split('"').next())
+        .map(str::to_string)
+        .collect();
+    assert!(
+        order.len() > 50,
+        "only {} migrations parsed out of the registration array — the scan has \
+         stopped matching and this guard is going vacuous",
+        order.len()
+    );
+
+    for family in FAMILIES {
+        // (migration, the action types it admits), in registration order.
+        let mut declarations: Vec<(String, Vec<String>)> = Vec::new();
+        for name in &order {
+            let Ok(sql) = std::fs::read_to_string(root.join("migrations").join(name)) else {
+                continue;
+            };
+            if !sql.contains(family) {
+                continue;
+            }
+            // The IN list of the ADD, taken as every single-quoted token after
+            // the `CHECK (... IN (`. Crude on purpose: a parser that needed to
+            // understand SQL would be the thing going wrong here.
+            let Some(at) = sql.find(" IN (") else {
+                continue;
+            };
+            let body = &sql[at..];
+            let Some(end) = body.find("))") else { continue };
+            let admitted: Vec<String> = body[..end]
+                .split('\'')
+                .skip(1)
+                .step_by(2)
+                .map(str::to_string)
+                .collect();
+            if !admitted.is_empty() {
+                declarations.push((name.clone(), admitted));
+            }
+        }
+
+        assert!(
+            declarations.len() >= 2,
+            "found {} migration(s) redefining `{family}`. With fewer than two \
+             there is no ordering to get wrong, and this guard is asserting \
+             nothing — if the family was collapsed, remove it from FAMILIES.",
+            declarations.len()
+        );
+
+        let (last_name, last_admitted) = declarations.last().expect("non-empty").clone();
+        let last_set: std::collections::BTreeSet<&str> =
+            last_admitted.iter().map(String::as_str).collect();
+
+        // Deduplicated by ACTION, attributed to the earliest migration that
+        // admitted it. Every migration in the family restates the whole list,
+        // so an un-admitted action appears in all of its predecessors, and
+        // reporting it once per predecessor turned a 13-action regression into
+        // a 50-line message nobody would read to the end.
+        let mut lost: Vec<String> = Vec::new();
+        let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+        for (name, admitted) in &declarations[..declarations.len() - 1] {
+            for action in admitted {
+                if !last_set.contains(action.as_str()) && seen.insert(action.as_str()) {
+                    lost.push(format!("`{action}` (since {name})"));
+                }
+            }
+        }
+        lost.sort();
+
+        assert!(
+            lost.is_empty(),
+            "`{last_name}` is the last migration registered that redefines \
+             `{family}`, so the constraint it writes is the one the database \
+             ends up holding. Its list drops {} action type(s): {}.\n\n\
+             Every migration in this family re-ADDs the WHOLE constraint. A \
+             later one that names only its own action un-admits the others, and \
+             the failure is silent: the handlers soft-fail the action-log INSERT \
+             so no error surfaces — runs simply stop appearing in the Activity \
+             panel, and the `action_id` they return exists in no table.\n\n\
+             Fix by making `{last_name}`'s IN list the union of every action \
+             type in the family, not by reordering the registration array: \
+             order is already load-bearing for a different reason and two \
+             things depending on it is worse than one.",
+            lost.len(),
+            lost.join(", ")
+        );
+    }
+}
+
 /// The linter must see the shape the ratchet counts.
 ///
 /// The detector here is not Rust — it is `scripts/lint-migrations.sh`, and the

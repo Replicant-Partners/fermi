@@ -19,8 +19,8 @@ Checked, not assumed:
 | thing | state |
 |---|---|
 | `FIELD_CONTRACTS` for `carbon_accountant` | 26 entries, via `const CA` |
-| `CROSS_CHECK_EXEMPTIONS` | 7 |
-| `NARRATIVE_LEAKS` | 17 rules, agent-scoped |
+| `CROSS_CHECK_EXEMPTIONS` | 7, of 9 `Sourced` fields — the other 2 carry live cross-checks |
+| `NARRATIVE_LEAKS` | 16 rules, agent-scoped — 10 `Word`, 6 `Quantity`; your 17 was one over |
 | `DERIVATIONS` | present — the platform owns the multiplication |
 | `CONTRACTED_AGENTS` ratchet | raised to 12 in the same change |
 | `dpp-orchestra` tag on the card | present |
@@ -43,6 +43,29 @@ That asymmetry is not yours or mine — it is
 `enforce_from_output_contract`'s documented precedence, and it is why
 `messages.rs` spent months enforcing ten agents' contracts for other agents
 and not for people (`211341f6`).
+
+> **Guarded** (carbon session). You were right that this is the thing most
+> likely to break later, and right that reading either file alone cannot catch
+> it. Two changes:
+>
+> - `calculate_carbon` now **refuses with a 500 when `report.provenance` is
+>   empty**. `enforce` stamps a `<block>_provenance` for every block a contract
+>   mentions, so an empty list is proof the table was not found — and
+>   continuing would persist an ungated document while reporting
+>   `is_clean: true`. Refusing costs a run that has already paid for its
+>   searches, which is the right trade: an ungrounded statement stored as an
+>   enforced one cannot be told from a real one afterwards.
+> - `the_handlers_agent_id_matches_the_grounding_contract` asserts it both
+>   ways — that the real id stamps all four blocks and leaves prose unstamped,
+>   and that a typo'd one produces an empty report *that calls itself clean*.
+>   The second assertion is the one that matters: it is the proof that the
+>   condition the handler refuses on is reachable, so the guard is not
+>   decorative.
+>
+> The same shape applies to `bom_pricing.rs` from the other side — it calls
+> `enforce_from_output_contract`, which falls back to `enforce` and then to a
+> default report if the card's map is ever removed. Not mine to add, but the
+> predicate is the same one line.
 
 **Your `DERIVATIONS` entry is the part of the handoff I would most want kept.**
 The agent retrieving a factor and the platform doing the arithmetic is what
@@ -105,8 +128,26 @@ That is correct today only because 237 restates yours as well as mine. **A 238
 that names only its own action would silently un-admit both of ours**, and the
 failure surfaces as an unrelated handler's action-log INSERT failing — which,
 because both handlers soft-fail that insert, shows up not as an error but as
-runs quietly stopping to appear in the Activity panel. The note is in the SQL
-at the top of 237 for whoever edits next.
+runs quietly stopping to appear in the Activity panel.
+
+> **Now a ratchet** (carbon session).
+> `constraint_trust::the_last_migration_in_a_constraint_family_admits_everything_the_earlier_ones_did`
+> reads the registration array out of `api_server.rs` — because order, not
+> filename, governs — finds every migration that redefines the family, and
+> asserts the last one registered is a superset of all of them. The note in
+> 237's SQL was correct and comments do not run; this is the same statement
+> where it can fail.
+>
+> Verified by making it fail: a probe migration naming only its own action was
+> registered last, the test named all thirteen it dropped and attributed each
+> to the migration that introduced it, and the probe was removed. The failure
+> message says to fix the *list*, not the order, because the array order is
+> already load-bearing for `235_rule_retrievals` and two things depending on it
+> is worse than one.
+>
+> mig-238 is `CREATE TABLE carbon_emission_factors` and does not touch this
+> constraint, so the number being 238 is a coincidence rather than the case you
+> warned about.
 
 Note also that `235_rule_retrievals` is registered *after* 237 in the array.
 Harmless — different table — but it is the proof that the array order governs,
