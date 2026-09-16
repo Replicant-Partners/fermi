@@ -90,7 +90,13 @@ struct BomLine {
 /// The third returns `None`. A `trace` line still goes to the agent, because
 /// the material is identifiable and sourceable; what it must not acquire is a
 /// quantity nobody wrote.
-fn parse_quantity(raw: &str, basis_ml: Option<f64>) -> Option<(f64, &'static str, Option<String>)> {
+///
+/// `pub(super)` so `super::carbon` converts the same way rather than parsing
+/// percentages a second time. Two readings of one BOM that disagree would put a
+/// different mass behind the PRICE and the FOOTPRINT of the same product, and
+/// each document would be internally consistent — the hardest kind of
+/// disagreement to notice.
+pub(super) fn parse_quantity(raw: &str, basis_ml: Option<f64>) -> Option<(f64, &'static str, Option<String>)> {
     let t = raw.trim();
     if let Some(pct) = t.strip_suffix('%') {
         let v: f64 = pct.trim().parse().ok()?;
@@ -206,7 +212,7 @@ fn build_lines(composition: &Value, basis_ml: Option<f64>) -> Vec<BomLine> {
         .collect()
 }
 
-fn serving_basis_ml(composition: &Value) -> Option<f64> {
+pub(super) fn serving_basis_ml(composition: &Value) -> Option<f64> {
     composition
         .get("serving")
         .and_then(|s| s.get("volume_ml"))

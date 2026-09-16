@@ -10,9 +10,11 @@
 //! - lens_actions.rs      DPP Studio: render/compare/flag from stored evaluations
 //! - claim_evaluation.rs  DPP Studio: run the evaluator agent against the corpus
 //! - bom_pricing.rs       DPP Studio: run the supply-chain oracle over the BOM
+//! - carbon.rs            DPP Studio: retrieve emission factors, multiply in Rust
 
 pub mod actions;
 pub mod agent_params_hook;
+pub mod carbon;
 pub mod bom_pricing;
 pub mod claim_evaluation;
 mod coherence;

@@ -38,8 +38,8 @@
 //! bare SELECT and the offline tier asserts that at the unit level.
 
 use fermi::grounding_trust::{
-    cohort_scoped, cohort_size_sql, cohort_unscoped, cross_check_exempt, cross_checks,
-    COHORT_PLACEHOLDER, FIELD_CONTRACTS,
+    cohort_scoped, cohort_size_sql, cohort_unscoped, coverage_sql_for, cross_check_exempt,
+    cross_checks, COHORT_PLACEHOLDER, FIELD_CONTRACTS,
 };
 use sqlx::Row;
 
@@ -146,6 +146,177 @@ fn the_migration_documents_null_as_unknown_rather_than_clean() {
     );
 }
 
+/// The numerator and the denominator must count the same population.
+///
+/// If the check joins on four key columns and the coverage query joins on
+/// three, the denominator describes a different set from the numerator and
+/// "clean over N comparisons" becomes a sentence about two unrelated numbers.
+/// That failure is silent and permanent, so it is worth a string check: both
+/// queries are hand-written, they live in two different constants, and nothing
+/// else makes them agree.
+#[test]
+fn the_factor_check_and_its_denominator_count_the_same_pairs() {
+    const AGENT: &str = "carbon_accountant";
+    const PATH: &str = "inventory.items[].factor_kg_co2e_per_kg";
+
+    let check = FIELD_CONTRACTS
+        .iter()
+        .find(|c| c.agent_id == AGENT && c.path == PATH)
+        .and_then(|c| c.cross_check_sql)
+        .expect("the factor value must carry a cross-check; its exemption was discharged");
+    let coverage = coverage_sql_for(AGENT, PATH)
+        .expect("and a denominator, or an empty ledger reads as verified");
+
+    for (label, sql) in [("check", check), ("coverage", coverage)] {
+        for fragment in [
+            "carbon_emission_factors",
+            "b.material_key   = a.material_key",
+            "b.geography      = a.geography",
+            "b.reference_year = a.reference_year",
+            "b.dataset_key    = a.dataset_key",
+            "b.id > a.id",
+            "a.retrieval = 'search' AND b.retrieval = 'search'",
+        ] {
+            assert!(
+                sql.contains(fragment),
+                "the {label} query is missing `{fragment}`. The numerator and \
+                 the denominator must select the same pairs, or 'clean over N \
+                 comparisons' relates two different populations."
+            );
+        }
+    }
+
+    // The one thing that must differ: only the check adjudicates.
+    assert!(
+        check.contains("abs(a.value_kg_co2e_per_kg - b.value_kg_co2e_per_kg)"),
+        "the check must compare the values"
+    );
+    assert!(
+        !coverage.contains("abs(a.value_kg_co2e_per_kg"),
+        "the denominator must count comparable pairs, not agreeing ones. \
+         Counting only the agreements would make coverage rise exactly when \
+         mismatches fall, and the ratio would be 1.0 for ever."
+    );
+}
+
+/// **The agreement probe: the factor cross-check can go red.**
+///
+/// A check nobody has seen fail is a check nobody has seen work. This one is
+/// especially worth probing because it is the check that discharged an
+/// exemption: `inventory.items[].factor_kg_co2e_per_kg` was declared
+/// unverifiable, mig-238 built the evidence base, and the claim now being made
+/// is that two runs disagreeing about the same published figure will be
+/// caught. That claim is worth exactly as much as a demonstration of it.
+///
+/// Runs inside a transaction that is always rolled back, so the ledger this
+/// reads in production is not polluted by the act of testing it.
+#[tokio::test]
+#[ignore = "needs DATABASE_URL; run via scripts/grounding_contract_live.sh"]
+async fn the_factor_cross_check_can_go_red() {
+    const AGENT: &str = "carbon_accountant";
+    const PATH: &str = "inventory.items[].factor_kg_co2e_per_kg";
+
+    let url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&url)
+        .await
+        .expect("connect");
+
+    let check = FIELD_CONTRACTS
+        .iter()
+        .find(|c| c.agent_id == AGENT && c.path == PATH)
+        .and_then(|c| c.cross_check_sql)
+        .expect("cross_check_sql");
+    let coverage = coverage_sql_for(AGENT, PATH).expect("coverage");
+
+    let mut tx = pool.begin().await.expect("begin");
+
+    // A key nothing else can collide with, so the deltas below are ours.
+    let material = format!("probe material {}", uuid::Uuid::new_v4());
+    let insert = |m: String, v: f64| {
+        sqlx::query(
+            "INSERT INTO carbon_emission_factors
+                 (material_key, geography, reference_year, dataset_key,
+                  value_kg_co2e_per_kg, material, dataset, retrieval, agent_name)
+             VALUES ($1, 'EG', 2021, 'probe dataset', $2, $1, 'probe dataset',
+                     'search', 'carbon_accountant')",
+        )
+        .bind(m)
+        .bind(v)
+    };
+
+    let base_mis: i64 = sqlx::query_scalar(check)
+        .fetch_one(&mut *tx)
+        .await
+        .expect("baseline mismatches");
+    let base_cov: i64 = sqlx::query_scalar(coverage)
+        .fetch_one(&mut *tx)
+        .await
+        .expect("baseline coverage");
+
+    // One row is not evidence: nothing to compare it against.
+    insert(material.clone(), 2.1)
+        .execute(&mut *tx)
+        .await
+        .expect("insert 1");
+    let cov1: i64 = sqlx::query_scalar(coverage)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    assert_eq!(
+        cov1, base_cov,
+        "a single resolution formed a comparable pair with itself"
+    );
+
+    // A second reading that agrees, within the transcription band.
+    insert(material.clone(), 2.104)
+        .execute(&mut *tx)
+        .await
+        .expect("insert 2");
+    let cov2: i64 = sqlx::query_scalar(coverage)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    let mis2: i64 = sqlx::query_scalar(check).fetch_one(&mut *tx).await.unwrap();
+    assert_eq!(cov2, base_cov + 1, "two readings are one comparable pair");
+    assert_eq!(
+        mis2, base_mis,
+        "2.1 and 2.104 are the same published figure transcribed twice; \
+         flagging them would make the check fire on correct behaviour, and a \
+         check that does that gets switched off"
+    );
+
+    // A third that does not agree. This is the failure the whole ledger exists
+    // to surface: the same material, geography, year and dataset, a materially
+    // different number.
+    insert(material.clone(), 4.9)
+        .execute(&mut *tx)
+        .await
+        .expect("insert 3");
+    let mis3: i64 = sqlx::query_scalar(check).fetch_one(&mut *tx).await.unwrap();
+    assert!(
+        mis3 > mis2,
+        "the check did not go red on a factor that disagrees by more than \
+         double. It is declared as this agent's only cross-check and it cannot \
+         fail, which is worse than the exemption it replaced."
+    );
+
+    tx.rollback()
+        .await
+        .expect("rollback — the probe must not become evidence");
+
+    // And the rollback worked, or the next run inherits this run's fixture.
+    let after: i64 = sqlx::query_scalar(coverage)
+        .fetch_one(&pool)
+        .await
+        .expect("post-rollback coverage");
+    assert_eq!(
+        after, base_cov,
+        "the probe's rows survived the rollback and are now in the evidence base"
+    );
+}
+
 // ─── live tier ─────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -197,9 +368,44 @@ async fn agent_output_agrees_with_independently_held_truth() {
                      independently-held source of truth. The field is declared \
                      Sourced, so every value should have come from its tool."
                 ));
-            } else {
-                ok += 1;
-                println!("  ok         {agent}.{path}");
+                continue;
+            }
+
+            // Zero mismatches is only a pass if something was compared.
+            //
+            // An episode-based check gets its denominator from the cohort
+            // predicate; a table-based one has none, so until this existed
+            // `0 mismatches` rendered as `ok` whether the query had examined
+            // ten thousand rows or an empty table. That is fine for a check
+            // reading a table that was already full, and actively misleading
+            // for one reading evidence the platform accumulates a run at a
+            // time — `carbon_emission_factors` is empty on every deployment
+            // until two runs resolve the same factor, and reporting a verified
+            // claim about emission factors on the strength of an empty table is
+            // the `fermi_leaderboard` shape this tier exists to refuse.
+            match coverage_sql_for(agent, path) {
+                Some(cov) => match sqlx::query_scalar::<_, i64>(cov).fetch_one(&pool).await {
+                    Ok(0) => {
+                        inert += 1;
+                        println!(
+                            "  INERT      {agent}.{path} — 0 comparable pair(s). Zero \
+                             mismatches here means nothing was compared."
+                        );
+                    }
+                    Ok(n) => {
+                        ok += 1;
+                        println!("  ok         {agent}.{path} — clean over {n} comparison(s)");
+                    }
+                    Err(e) => failures.push(format!(
+                        "{agent}.{path}: the coverage query could not run ({e}). \
+                         Without it a clean result cannot be told from an empty \
+                         table, so this is a failure rather than a missing nicety."
+                    )),
+                },
+                None => {
+                    ok += 1;
+                    println!("  ok         {agent}.{path}");
+                }
             }
             continue;
         }

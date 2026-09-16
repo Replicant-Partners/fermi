@@ -1,5 +1,52 @@
 # Handoff — author `carbon_accountant`, a contract-first agent for product carbon
 
+**Status: landed.** The design below is kept as written, because the reasoning
+is the useful part. Three things came out differently once the machinery was
+read, and each was forced rather than preferred:
+
+1. **`line_items[].kg_co2e` does not exist. `inventory.items` is the `Derived`
+   path instead.** §1 asks for a `Derived` field inside an array. `DERIVATIONS`
+   writes through `set_path`, which splits on `.` and cannot traverse `[]`, and
+   a `Derivation` returns one value for one path — so a per-element registration
+   would have failed silently, which is `phylogeny.superorder` again. The
+   transform is registered at `inventory.items`, returns the rebuilt array, and
+   writes exactly three keys per line (`kg_co2e`, `activity_qty_kg`,
+   `arithmetic`) while copying every retrieved field verbatim.
+2. **There is no separate `computation` block; the arithmetic lives inside the
+   `Sourced` block.** `enforce` stamps a block from the strongest thing in it,
+   so a block whose fields are all `Derived` is stamped `platform_derived` — and
+   `card_contract::GROUNDING_STATUSES` has no `derived` authoring token, by the
+   deliberate decision recorded in `PLATFORM_ASSIGNED_ONLY`. A `computation`
+   block would therefore have had to declare a stamp the runtime never writes
+   for it, which is the defect
+   `schema_validate::the_pilot_agents_declared_schema_validates_its_own_output`
+   exists to name. `football_analyst.advanced_metrics.xgd` is the precedent for
+   the shape actually used.
+3. **The cross-check in §4 is written, and it is not the one described.**
+   Making the platform compute the product means an equality check on the stored
+   document is true by construction and can never go red. So the check reads
+   `episodes.response_text` — the raw reply, before enforcement — and counts
+   lines where the *model's own* arithmetic disagreed with `qty x factor`. That
+   can go red, it measures the discipline the design depends on, and the handler
+   reports the same figure per run as `model_arithmetic_disagreements`.
+
+Also worth knowing: `requires_secrets` must be omitted, not set to
+`["brave_search"]`. It deserializes as `Vec<SecretRequirement>`, and a curated
+agent has no tool-secret path at all, so declaring it would prompt a user for a
+key the platform never reads. §3's warning about a card that fails to
+deserialize being *skipped* is exactly what happened on the first test run.
+
+What shipped: `agents/curated/carbon_accountant/` (card + sketch),
+`FIELD_CONTRACTS` / `DERIVATIONS` / `NARRATIVE_LEAKS` /
+`CROSS_CHECK_EXEMPTIONS` entries in `src/grounding_trust.rs`,
+`src/handlers/workspace/carbon.rs`, `migrations/236_calculate_carbon_action_type.sql`,
+the route, and the manifest entries. The UI (§7's Supply Chain tab) is not
+wired; `static/adaptogen-lab/index.html` still renders a placeholder, and
+`parseIngredients` still whitelists seven YAML keys, so a per-ingredient factor
+added to the composition would not reach the browser.
+
+---
+
 **Status:** design, not started. Self-contained; can be executed by a parallel
 session without reading the DPP work.
 

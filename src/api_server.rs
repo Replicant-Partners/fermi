@@ -1393,6 +1393,18 @@ async fn run_migrations(db: &PgPool) {
         // regulatory corpus and spends credits, so its log row is the audit
         // anchor tying a stored regulatory verdict to who asked for it.
         "migrations/234_evaluate_claims_action_type.sql",
+        // 236 — admits `calculate_carbon` to the workspace_action_log
+        // constraint. Registered in the same commit as the handler, because
+        // `log_action` soft-fails: without this the endpoint would return 200
+        // with an `action_id` that exists in no table, and that id is embedded
+        // in the committed statement YAML. An audit anchor pointing at nothing
+        // is worse than a missing one, since it looks discharged.
+        //
+        // BEFORE 237, and the ordering note below is why: 236's list stops at
+        // `calculate_carbon` and does not carry `price_bom`. Registered after
+        // 237 it would run last, redefine the constraint from its own shorter
+        // list, and un-admit an action somebody else had just added.
+        "migrations/236_calculate_carbon_action_type.sql",
         // 237 — admits `price_bom`. BOM pricing moved off the workspace
         // message path, which wrote no action row at all, onto an action
         // endpoint that does.
@@ -1417,6 +1429,17 @@ async fn run_migrations(db: &PgPool) {
         // proxies were measured first and none held: 0 duplicate pairs, 6 of
         // 265 corroborated, 0 human corrections.
         "migrations/235_rule_retrievals.sql",
+        // 238 — `carbon_emission_factors`, the append-only ledger of every
+        // emission factor `carbon_accountant` retrieves. It exists to build a
+        // second copy of a fact the platform cannot otherwise hold: ecoinvent,
+        // Agribalyse and the DEFRA factors are licensed or absent, so there was
+        // no independently-held value to compare a retrieved factor against and
+        // all six of that agent's Sourced fields were exempt. Two runs
+        // resolving the same (material, geography, year, dataset) are two
+        // readings of one published figure, and they must agree — which is a
+        // real cross-check needing no external corpus. Deliberately has no
+        // unique key: the duplicates ARE the evidence.
+        "migrations/238_carbon_emission_factors.sql",
     ];
 
     // Bootstrap the ledger before anything is recorded into it.
@@ -4072,6 +4095,16 @@ async fn main() {
         .route(
             "/api/workspaces/:workspace_id/actions/flag_divergence",
             post(handlers::workspace::lens_actions::flag_divergence_handler),
+        )
+        // Retires `carbon_intensity.mode: synthetic` in dpp/composition.yaml,
+        // where a person typed 0.41. Like `evaluate_claims` this costs credits
+        // and takes minutes, because it is a real agent run against the factor
+        // databases — and unlike it, the arithmetic is the platform's: the
+        // handler multiplies the BOM quantity by the retrieved factor in Rust
+        // and overwrites whatever the model put there.
+        .route(
+            "/api/workspaces/:workspace_id/actions/calculate_carbon",
+            post(handlers::workspace::carbon::calculate_carbon_handler),
         )
         // Wild's identification capability, reachable without a creature.
         //

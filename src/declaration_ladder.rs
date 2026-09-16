@@ -695,7 +695,16 @@ mod tests {
         // and not the constant. The second time the two-way half has caught a
         // parallel session, and an improvement both times: coverage grew, so
         // the floor rises to meet it. Raised, not relaxed.
-        const CONTRACTED_AGENTS: usize = 11;
+        //
+        // 11 → 12 for `carbon_accountant`, and this one moves the ladder
+        // sideways as well as up: it is the first contract whose `Derived`
+        // fields the platform genuinely computes at runtime through
+        // `grounding_trust::DERIVATIONS`, rather than asserting and leaving to
+        // a handler. `phylogeny.superorder` was the only registered derivation
+        // before it, and for the life of that variant it was also the only one
+        // — a tier with a single member is a tier nobody has tested. Raised on
+        // purpose, in the same commit as the contract.
+        const CONTRACTED_AGENTS: usize = 12;
         let mut names: Vec<&str> = grounding_trust::FIELD_CONTRACTS
             .iter()
             .map(|c| c.agent_id)

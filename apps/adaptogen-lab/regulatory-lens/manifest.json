@@ -99,6 +99,44 @@
         }
       },
       {
+        "type": "calculate_carbon",
+        "description": "Run the carbon_accountant agent against the published life-cycle inventory corpus to produce a product carbon statement for the bill of materials in dpp/composition.yaml. The agent retrieves one emission factor per BOM line with its dataset, geography, reference year and source URL, and classifies each line against the GHG Protocol scopes. The agent does NOT do the arithmetic: the handler multiplies the BOM quantity by the retrieved factor in Rust and writes the product over whatever the model replied, because a confidently wrong product of two plausible numbers looks exactly like a right one. A line with no retrievable factor yields null, the total is marked partial and names what is missing, and a total is never zero. Persists the grounding-enforced statement to dpp/carbon/statement.yaml and retires carbon_intensity.mode: synthetic in the composition. Costs credits and takes minutes; refuses with 503 if no brave_search credential is reachable rather than reporting factors from model memory.",
+        "api_endpoint": "POST /api/workspaces/:id/actions/calculate_carbon",
+        "fields": {
+          "boundary": {
+            "type": "string",
+            "required": false,
+            "default": "cradle_to_gate",
+            "enum": [
+              "cradle_to_gate",
+              "cradle_to_grave",
+              "gate_to_gate"
+            ],
+            "description": "System boundary to attempt. cradle_to_gate is the only boundary a BOM can support on its own — nothing in composition.yaml describes distribution, use or disposal. The agent reports the boundary it can actually defend, which may be `indeterminate` if the retrieved factors do not share one basis."
+          },
+          "region": {
+            "type": "string",
+            "required": false,
+            "default": "EU",
+            "description": "Reporting region, used to bias factor geography."
+          },
+          "force": {
+            "type": "boolean",
+            "required": false,
+            "default": false,
+            "description": "Recalculate even though a statement exists. Off by default because emission factors are expensive to retrieve and do not change between runs, so this endpoint is a cache read once it has been run."
+          }
+        },
+        "response": {
+          "action_id": "UUID",
+          "statement": "The grounding-enforced carbon statement: {inventory, attribution, boundary, assurance, explanation} plus one <block>_provenance stamp each. inventory_provenance is tool_verified / tool_no_match / unavailable_no_tool_source and reports on the RETRIEVAL; the scope allocation and the boundary are model_inference, so a judgement never inherits a factor's strength. inventory.total_kg_co2e, .coverage, .unpriced_items and every items[].kg_co2e are platform_derived.",
+          "statement_path": "dpp/carbon/statement.yaml",
+          "composition_updated": "Whether carbon_intensity in dpp/composition.yaml was rewritten from mode: synthetic to mode: agent_calculated with a statement_ref.",
+          "model_arithmetic": "{lines_the_model_priced, disagreements, worst_relative_error} — how often the model did the multiplication anyway and was wrong. Reported rather than hidden, because the platform's derivation makes every stored row correct by construction and would otherwise conceal the behaviour.",
+          "grounding_summary": "{is_clean, violation_count, provenance[]}"
+        }
+      },
+      {
         "type": "price_bom",
         "description": "Run supply_chain_oracle over the bill of materials in dpp/composition.yaml and return current mid-market prices per line with risk flags. Quantities are derived server-side from the composition's percentages against its serving basis, so the agent prices what the label describes rather than a fixture. Costs credits; refuses with 503 if no search credential is reachable, because prices from model memory would be stamped tool_no_match and read as a search that found nothing. Persists the grounding-enforced result to dpp/pricing/bom_pricing.yaml.",
         "api_endpoint": "POST /api/workspaces/:id/actions/price_bom",
@@ -238,6 +276,7 @@
     "auto_hire": [
       "dpp_companion",
       "regulatory_lens_translator",
+      "carbon_accountant",
       "supply_chain_oracle"
     ],
     "git_init": true,
@@ -248,7 +287,7 @@
       },
       {
         "path": "dpp/composition.yaml",
-        "content": "# ─────────────────────────────────────────────────────────────────────────────\n# DPP Composition — Bill of Materials\n# Schema: bom:Item / bom:consistsOf (JSON-LD aligned)\n#\n# This is the canonical DPP document for product composition.\n# Sources:  hand-authored | derived from SimOps cascade | imported from ERP\n# Consumers: supply_chain_oracle (pricing), compare_lenses (regulatory),\n#            label_generator (output), regulatory_scanner (compliance)\n#\n# role vocabulary matches SimOps InputRole exactly:\n#   principal   — primary flow; declared as ingredient on label\n#   consumable  — additive; included in final product; declared on label\n#   catalyst    — process aid (e.g. SCOBY); not declared as ingredient\n#\n# DATA: [SYNTHETIC] — structurally representative only.\n# ─────────────────────────────────────────────────────────────────────────────\n\nitem_type: bom:Item\nproduct_id: precision_kombucha_hibiscus_f2\ndisplay_name: \"Precision Kombucha — Hibiscus, Cold F2\"\npart_number: \"PKH-F2-330\"\nbom_version: \"1.1\"\nbom_source: \"hand_authored\"\n\nserving:\n  volume_ml: 330\n  servings_per_unit: 1\n\nconsists_of:\n\n  - item_id: water\n    display_name: \"Water (process grade)\"\n    role: principal\n    quantity: \"88.3%\"\n    category: base\n\n  - item_id: black_tea\n    display_name: \"Black tea (Camellia sinensis)\"\n    role: consumable\n    quantity: \"0.8%\"\n    category: base\n    part_number: \"TEA-BLK-SL\"\n    origin: \"Sri Lanka\"\n\n  - item_id: cane_sugar_residual\n    display_name: \"Cane sugar (residual post-F1)\"\n    role: consumable\n    quantity: \"2.1%\"\n    category: base\n    origin: \"Brazil / Australia\"\n\n  - item_id: starter_scoby\n    display_name: \"SCOBY starter culture\"\n    role: catalyst\n    quantity: \"trace\"\n    category: processing_culture\n    part_number: \"SCOBY-F2-CULTURE\"\n\n  - item_id: hibiscus_infusion\n    display_name: \"Hibiscus infusion\"\n    role: consumable\n    quantity: \"8.5%\"\n    category: botanical_infusion\n    part_number: \"HSB-CALYCES-DRIED\"\n    origin: \"Egypt / Sudan\"\n    botanical: \"Hibiscus sabdariffa L.\"\n\n  - item_id: citric_acid\n    display_name: \"Citric acid\"\n    role: consumable\n    quantity: \"0.3%\"\n    category: acidulant\n    part_number: \"E330\"\n\nnutrition_per_serving:\n  energy_kcal: 38\n  energy_kj: 159\n  fat_g: 0.0\n  carbohydrate_g: 9.2\n  of_which_sugars_g: 8.8\n  protein_g: 0.2\n  salt_g: 0.01\n  vitamin_c_mg: 14.2\n\nphysical:\n  ph_at_pack: 3.1\n  alcohol_abv_pct: 0.4\n  colour: deep_ruby_red\n  carbonation: mild_effervescent\n  shelf_life_days: 180\n  storage: refrigerated_2_8c\n\ncarbon_intensity:\n  mode: synthetic\n  value_kg_per_kg: 0.41\n  scope_3_dominant: hibiscus_infusion\n\nallergens:\n  present: []\n  may_contain: []\n  gluten_free: true\n  vegan: true\n"
+        "content": "# ─────────────────────────────────────────────────────────────────────────────\n# DPP Composition — Bill of Materials\n# Schema: bom:Item / bom:consistsOf (JSON-LD aligned)\n#\n# This is the canonical DPP document for product composition.\n# Sources:  hand-authored | derived from SimOps cascade | imported from ERP\n# Consumers: supply_chain_oracle (pricing), compare_lenses (regulatory),\n#            label_generator (output), regulatory_scanner (compliance)\n#\n# role vocabulary matches SimOps InputRole exactly:\n#   principal   — primary flow; declared as ingredient on label\n#   consumable  — additive; included in final product; declared on label\n#   catalyst    — process aid (e.g. SCOBY); not declared as ingredient\n#\n# DATA: [SYNTHETIC] — structurally representative only.\n# ─────────────────────────────────────────────────────────────────────────────\n\nitem_type: bom:Item\nproduct_id: precision_kombucha_hibiscus_f2\ndisplay_name: \"Precision Kombucha — Hibiscus, Cold F2\"\npart_number: \"PKH-F2-330\"\nbom_version: \"1.1\"\nbom_source: \"hand_authored\"\n\nserving:\n  volume_ml: 330\n  servings_per_unit: 1\n\nconsists_of:\n\n  - item_id: water\n    display_name: \"Water (process grade)\"\n    role: principal\n    quantity: \"88.3%\"\n    category: base\n\n  - item_id: black_tea\n    display_name: \"Black tea (Camellia sinensis)\"\n    role: consumable\n    quantity: \"0.8%\"\n    category: base\n    part_number: \"TEA-BLK-SL\"\n    origin: \"Sri Lanka\"\n\n  - item_id: cane_sugar_residual\n    display_name: \"Cane sugar (residual post-F1)\"\n    role: consumable\n    quantity: \"2.1%\"\n    category: base\n    origin: \"Brazil / Australia\"\n\n  - item_id: starter_scoby\n    display_name: \"SCOBY starter culture\"\n    role: catalyst\n    quantity: \"trace\"\n    category: processing_culture\n    part_number: \"SCOBY-F2-CULTURE\"\n\n  - item_id: hibiscus_infusion\n    display_name: \"Hibiscus infusion\"\n    role: consumable\n    quantity: \"8.5%\"\n    category: botanical_infusion\n    part_number: \"HSB-CALYCES-DRIED\"\n    origin: \"Egypt / Sudan\"\n    botanical: \"Hibiscus sabdariffa L.\"\n\n  - item_id: citric_acid\n    display_name: \"Citric acid\"\n    role: consumable\n    quantity: \"0.3%\"\n    category: acidulant\n    part_number: \"E330\"\n\nnutrition_per_serving:\n  energy_kcal: 38\n  energy_kj: 159\n  fat_g: 0.0\n  carbohydrate_g: 9.2\n  of_which_sugars_g: 8.8\n  protein_g: 0.2\n  salt_g: 0.01\n  vitamin_c_mg: 14.2\n\nphysical:\n  ph_at_pack: 3.1\n  alcohol_abv_pct: 0.4\n  colour: deep_ruby_red\n  carbonation: mild_effervescent\n  shelf_life_days: 180\n  storage: refrigerated_2_8c\n\ncarbon_intensity:\n  # mode vocabulary — an operator must be able to tell a retrieved number from\n  # a typed one, which is the whole argument of this App:\n  #   synthetic           a person typed it. Not evidence.\n  #   agent_calculated    retrieved emission factors x the quantities above,\n  #                       with the arithmetic performed by the platform in Rust.\n  #                       statement_ref carries the factors and their URLs.\n  #   supplier_declared   a supplier's own figure, ideally a published EPD.\n  #\n  # This block is still `synthetic`. 0.41 was typed by a person; no factor\n  # behind it was ever retrieved, and nothing here is reproducible.\n  # POST /api/workspaces/:id/actions/calculate_carbon replaces it with\n  # `agent_calculated`, where every kg CO2e is reproducible by hand from a\n  # cited factor and a BOM quantity, and `coverage` says whether the figure is\n  # the whole product or a subset of it.\n  mode: synthetic\n  value_kg_per_kg: 0.41\n  coverage: unknown\n  scope_3_dominant: hibiscus_infusion\n  statement_ref: null\n\nallergens:\n  present: []\n  may_contain: []\n  gluten_free: true\n  vegan: true\n"
       }
     ],
     "shared_memory_schema": {
@@ -273,7 +312,9 @@
   "roadmap": {
     "japan_lens": "FOSHU/functional-labeling system (MHLW/Consumer Affairs Agency) — distinct from CN, not 'Asian regulation'",
     "korea_lens": "MFDS health functional food system — distinct from both CN and JP",
-    "live_label_renderer": "Camera input → extract source facts → run against selected ruleset → render compliant mutation live (§8 of spec). Depends on static demo proving the mechanism first."
+    "live_label_renderer": "Camera input → extract source facts → run against selected ruleset → render compliant mutation live (§8 of spec). Depends on static demo proving the mechanism first.",
+    "carbon_factor_cache": "dpp/carbon/factors.yaml is the agent's to write and is keyed on (material, geography, reference_year) — which is a cross-check key. Once two runs have resolved the same key a SELECT can compare them, making the factor VALUE falsifiable with no external corpus. Deliberately not declared in CROSS_CHECK_EXEMPTIONS as a live check yet: no cache exists on any workspace, so the query would match nothing and report clean.",
+    "carbon_per_ingredient_factors": "parseIngredients() in static/adaptogen-lab/index.html whitelists seven YAML keys, so a per-ingredient factor written into composition.yaml would not reach the browser. The carbon panel does not need it — the handler reads the committed document server-side — but a BOM editor that could show a cached factor per line would."
   },
   "data_honesty": {
     "status": "two_sources_labelled_separately",

@@ -1,0 +1,128 @@
+{
+  "domain": "product-carbon",
+  "produces_schema": "adaptogen-lab/carbon_statement",
+  "title": "Carbon accountant — a product carbon statement whose arithmetic the platform owns",
+
+  "_architecture_note": "A product carbon figure is three different kinds of claim wearing one number, and this contract exists to keep them apart.\n\n  the EMISSION FACTOR   'dried hibiscus, Egypt: 2.1 kg CO2e/kg'   retrieved, with a citation      Sourced\n  the ARITHMETIC        0.02805 kg x 2.1 = 0.0589 kg CO2e        platform code, in Rust          Derived\n  the SCOPE ATTRIBUTION 'Scope 3, category 1 - purchased goods'  the agent's classification      Inferred\n  the BOUNDARY          what the figure does NOT cover           the agent's judgement           Inferred\n\nLetting the model multiply is the failure mode that makes the whole document worthless, and it is invisible: a confidently wrong product of two plausible numbers looks exactly like a right one, and nobody recomputes a figure that came back formatted. It is also the easy half - src/handlers/workspace/carbon.rs can do it exactly, for free. So `inventory.items`, `inventory.total_kg_co2e` and `inventory.coverage` are registered in grounding_trust::DERIVATIONS and the platform WRITES them during `enforce`, overwriting whatever the reply carried. A disagreement between the two is then a platform bug rather than the agent's, and the handler reports the count as `model_arithmetic_disagreements` so the disagreement rate is measured rather than assumed.\n\nWHY THE ARITHMETIC LIVES INSIDE THE `inventory` BLOCK RATHER THAN A BLOCK OF ITS OWN. Provenance is stamped per top-level key, and `grounding_trust::enforce` stamps a block from the strongest thing in it: a block whose fields are ALL `Derived` is stamped `platform_derived`, and `card_contract::GROUNDING_STATUSES` has no `derived` authoring token (see card_contract::PLATFORM_ASSIGNED_ONLY - the platform asserts that about its own work, an author cannot). A separate `computation` block would therefore have to declare a stamp the runtime never writes for it, which is exactly the defect schema_validate::the_pilot_agents_declared_schema_validates_its_own_output was written about: card and schema agreeing with each other and neither agreeing with the platform. Folding the derivation in beside the factors it is computed from avoids that - the block has Sourced fields, so `enforce` stamps it `tool_verified` / `tool_no_match` / `unavailable_no_tool_source`, which is precisely what `coverage: partial` declares here. The precedent is exact: `football_analyst.advanced_metrics.xgd` is a `Derived` field inside a block its sketch declares `sourced`.\n\nWHAT THE BLOCK-LEVEL STAMP MEANS HERE, AND WHAT IT DOES NOT. `inventory_provenance: tool_verified` says at least one emission factor in this statement came back from a real search. It does NOT say the total is complete - that is `inventory.coverage`, which the platform derives, and `unpriced_items`, which names what is missing. A total summed over only the lines that happened to resolve, presented without those two fields, is the `tool_no_match`-as-clearance failure in a different suit: a number that looks like a footprint and is really a subset.\n\nWHY `attribution` AND `boundary` ARE SEPARATE INFERRED BLOCKS. Which GHG Protocol scope and category a line falls in is a classification over retrieved facts, not a retrieved fact; no dataset row states it. Likewise the boundary: the most load-bearing prose in a carbon disclosure is what the figure excludes, and nothing can retrieve that. Both are the agent's judgement, both are the work it is commissioned for, and both are stamped `model_inference` so a reviewer can see that what needs endorsement is the reasoning and not the retrieval.\n\nWHAT IS DELIBERATELY ABSENT. There is no `confidence` field. A self-rated number on a disclosure that may be read against ESRS E1 or a CBAM report is a shading where a decision is needed; `assurance.needs_expert` and `assurance.verification_status` are decisions, and `verification_status` uses the vocabulary an auditor uses (unverified / internal_review / third_party_limited / third_party_reasonable) rather than a score nobody can act on. There is also no `carbon_neutral`-style conclusion: the EU Empowering Consumers Directive (2024/825) prohibits generic environmental claims based on offsetting, and a field shaped to hold one invites the claim.",
+
+  "synthesis": "pipeline",
+
+  "blocks": [
+    {
+      "name": "inventory",
+      "description": "The retrieved emission factors, and the arithmetic the platform performs over them.",
+      "source": {
+        "status": "sourced",
+        "tool": "web_search",
+        "response_field": "results[].url, results[].title, results[].description",
+        "coverage": "partial"
+      },
+      "why": "The half of a carbon statement that can be retrieved: one emission factor per bill-of-materials line, with the dataset it came from, the geography and reference year it applies to, and the URL it was read from. This is the only block a tool supplies, so it is the only one that may ever be stamped `tool_verified`. Coverage is `partial` rather than `complete` because the gap is structural and not incidental: process-grade water, a SCOBY starter culture and a residual acidulant have no published product-level factor at the grain this document needs, so `unavailable_no_tool_source` is a reachable and correct verdict for a real product rather than a fallback. An empty `items` array after a real search is the honest `tool_no_match` that `partial` keeps reachable - the datasets were asked and had nothing, which is a gap needing a supplier-specific factor, and never a licence to leave the line out of the total quietly. The block also carries the platform's arithmetic (`items[].kg_co2e`, `items[].activity_qty_kg`, `total_kg_co2e`, `coverage`, `unpriced_items`), which is registered in grounding_trust::DERIVATIONS and written by `enforce` rather than by the agent; see the architecture note for why a reproducible derivation lives beside the retrieval it is computed from instead of in a block of its own.",
+      "fields": {
+        "queries_run": {
+          "type": "string[]",
+          "description": "The web_search queries actually issued on this run, one or more per bill-of-materials line. Recorded so a reviewer can tell a line nobody searched for from a line no dataset covers."
+        },
+        "items": {
+          "type": "object[]",
+          "description": "One entry per bill-of-materials line: {item_id, material, origin, activity_qty_kg, factor_kg_co2e_per_kg, factor_unit, lca_basis, geography, reference_year, dataset, source_url, source_title, source_quote, kg_co2e, arithmetic}. The factor fields are retrieved and must be traceable to a URL received this run; `activity_qty_kg`, `kg_co2e` and `arithmetic` are written by the platform from the BOM quantity and the retrieved factor, overwriting whatever the reply carried. A line whose factor could not be retrieved carries factor_kg_co2e_per_kg: null and kg_co2e: null - never a substituted proxy."
+        },
+        "total_kg_co2e": {
+          "type": "number?",
+          "description": "Platform-summed over the lines that resolved. Null when no line resolved. Meaningless without `coverage` and `unpriced_items` beside it, which is why all three are derived together."
+        },
+        "coverage": {
+          "type": "enum:complete|partial|none",
+          "description": "Platform-derived from the ratio of priced lines to BOM lines. `partial` means the total is a subset and says so; a subset presented as a footprint is the failure this field exists to make impossible to miss."
+        },
+        "unpriced_items": {
+          "type": "string[]",
+          "description": "Platform-derived: the item_ids excluded from `total_kg_co2e` because no factor was retrievable or no quantity was resolvable. Named rather than counted, so the gap is actionable."
+        }
+      }
+    },
+    {
+      "name": "attribution",
+      "description": "Which GHG Protocol scope and category each line falls in, and why.",
+      "source": {
+        "status": "inferred",
+        "from": "the bill of materials, each line's role and origin, and the retrieved factor's lca_basis, read against the GHG Protocol Corporate Value Chain (Scope 3) Standard's fifteen categories"
+      },
+      "why": "Scope attribution is a classification over retrieved facts and not a retrieved fact. No Ecoinvent or Agribalyse row says 'Scope 3, category 1' - it states an emission factor for a material, and the decision that a purchased botanical infusion is upstream category 1 while the electricity for the same plant's F2 tank is Scope 2 is the agent's, made from the line's role in the BOM and the reporting entity's own boundary. It is also the classification that changes the answer most: the same physical kilogram of hibiscus is category 1 to the beverage producer, category 4 if the transport leg is reported separately, and Scope 1 to nobody. Stamped `model_inference` so a statement cannot present a scope allocation as though a dataset had asserted it, and so a reviewer endorsing this block knows they are endorsing the allocation rather than the factor.",
+      "fields": {
+        "items": {
+          "type": "object[]",
+          "description": "One entry per bill-of-materials line: {item_id, scope, ghg_protocol_category, rationale}. `scope` is one of scope_1 | scope_2 | scope_3 | out_of_scope; `ghg_protocol_category` is the numbered Scope 3 category (1-15) or null for scopes 1 and 2; `rationale` says what in the BOM line drove the allocation."
+        },
+        "scope_boundary_note": {
+          "type": "string?",
+          "description": "Where the reporting entity's organisational boundary was assumed to sit, when the allocation depended on it. Null when no line's allocation turned on the boundary."
+        }
+      }
+    },
+    {
+      "name": "boundary",
+      "description": "What the figure covers, what it does not, and under which standard.",
+      "source": {
+        "status": "inferred",
+        "from": "the boundary requested by the caller, the lca_basis of the factors that were actually retrieved, and the life-cycle stages the bill of materials can and cannot speak to"
+      },
+      "why": "The most load-bearing prose in a carbon disclosure is what the figure excludes, and nothing can retrieve it. A cradle-to-gate figure built from cradle-to-gate factors is a different claim from the same number presented as a product footprint, and the difference is invisible in the number: use-phase and end-of-life are simply absent, and a reader who is not told assumes they are zero rather than unmeasured. This block is where the agent states the seam - including the case where the factors it retrieved do not share one basis, which makes the total internally inconsistent and is a fact about the retrieval that only judgement can surface. Stamped `model_inference` because it is an assertion about the scope of the work rather than a value read from anywhere, and because a boundary is the field a reviewer is most likely to need to correct.",
+      "fields": {
+        "declared": {
+          "type": "enum:cradle_to_gate|cradle_to_grave|gate_to_gate|indeterminate",
+          "description": "`indeterminate` is a real answer and the correct one when the retrieved factors do not share a common basis, or when too few resolved to characterise the boundary at all."
+        },
+        "included": {
+          "type": "string[]",
+          "description": "The life-cycle stages this figure covers, in the vocabulary of the standard named in `standard_followed`."
+        },
+        "excluded": {
+          "type": "string[]",
+          "description": "The stages it does not cover. Never empty for a cradle-to-gate figure: at minimum distribution, use and end-of-life are outside it, and saying so is the point of the block."
+        },
+        "exclusion_rationale": {
+          "type": "string?",
+          "description": "Why each exclusion is defensible, or that it is not. 'No data' and 'out of scope by standard' are different exclusions and a reader has to be able to tell them apart."
+        },
+        "standard_followed": {
+          "type": "string?",
+          "description": "The methodology the agent read the factors against - e.g. GHG Protocol Product Standard, ISO 14067, the EU Product Environmental Footprint method. Null when the retrieved factors were too heterogeneous to claim one."
+        }
+      }
+    },
+    {
+      "name": "assurance",
+      "description": "Whether this statement is fit to be relied on, and for what.",
+      "source": {
+        "status": "inferred",
+        "from": "the coverage the platform derived, the heterogeneity of the retrieved factors' geographies and reference years, and the disclosure requirements of the regimes the caller named"
+      },
+      "why": "A product carbon figure is consumed by regimes with different evidentiary standards, and the same number can be adequate for one and inadmissible in another: an ESRS E1 disclosure under CSRD is reported and subject to assurance, a CBAM report on embedded emissions demands installation-level actual data with fallback default values, and an EU Battery DPP carbon footprint declaration requires a verified figure to a prescribed method. Which of those this statement can support is a judgement about the evidence just assembled - nothing retrieves it - and leaving it unstated is how a screening estimate ends up in a regulatory filing. `verification_status` uses the assurance vocabulary rather than a self-rated score because an auditor can act on 'unverified' and cannot act on 0.7; `needs_expert` is a decision for the same reason the evaluator's is, and under-flagging is the expensive direction here because the reader of a carbon statement is usually not the person who could tell that a 2019 European average factor was standing in for an Egyptian supplier.",
+      "fields": {
+        "needs_expert": {
+          "type": "boolean",
+          "description": "True whenever coverage is not complete, the factors' geographies or years are mismatched against the BOM origins, or the bases are mixed. A `partial` coverage with needs_expert false is a contradiction a surface should show."
+        },
+        "verification_status": {
+          "type": "enum:unverified|internal_review|third_party_limited|third_party_reasonable",
+          "description": "Always `unverified` for a statement as produced: this agent is not an accredited verifier and no run of it can be. The stronger values exist so a human endorsement can be recorded against the same field rather than in a comment."
+        },
+        "regulatory_fitness": {
+          "type": "object[]",
+          "description": "One entry per regime considered: {regime, fit, why}. `regime` names the instrument - e.g. CSRD/ESRS E1, CBAM, EU ETS, EU Battery DPP, Green Claims Directive, ISO 14067. `fit` is one of adequate | screening_only | inadmissible. An empty array means no regime was assessed, which is different from a regime being satisfied."
+        },
+        "blocking_gaps": {
+          "type": "string[]",
+          "description": "What specifically would have to be obtained for this statement to move up a fitness tier - a supplier-specific factor for a named line, a transport leg, a verified electricity mix. Written as work items, because a gap nobody can action is a disclaimer."
+        }
+      }
+    },
+    {
+      "name": "explanation",
+      "source": { "status": "narrative" },
+      "why": "The prose an operator actually reads: where this product's footprint concentrates, what the retrieval could and could not establish, and what a reader must not conclude from the number. It is the product of the whole exercise and it is also the channel a fabrication moves to once the structured fields are enforced - clearing an uncited factor out of `inventory.items` while leaving 'roughly 0.4 kg CO2e per litre, mostly the hibiscus (Ecoinvent)' in the summary just relocates it into the sentence a human reads, and `parse_evidence_text` lifts this string into the episode digest, so it travels further than the document does. Scanned by grounding_trust::NARRATIVE_LEAKS against the `inventory` block: when no factor was retrieved, naming a factor database (ecoinvent, agribalyse, defra, exiobase, ipcc) or stating any quantity in kg/g/t CO2e nulls the paragraph in full. Nulled rather than flagged, because a gate cannot rewrite a sentence into honesty and a fabricated footprint in prose is still a fabricated footprint. Narrative blocks carry no provenance stamp: a retrieval verdict about a sentence is a category error.",
+      "value": "string?"
+    }
+  ]
+}

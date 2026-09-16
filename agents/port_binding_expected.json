@@ -2,7 +2,7 @@
   "adaptogen_curator": {
     "binding": "declared",
     "labels": [
-      "species_query"
+      "abw/adaptogen-query/1"
     ]
   },
   "adc_pk_oracle": {
@@ -85,9 +85,16 @@
       "content"
     ]
   },
+  "carbon_accountant": {
+    "binding": "declared",
+    "labels": [
+      "adaptogen-lab/carbon-query/1"
+    ]
+  },
   "cohere_and_coordinate": {
     "binding": "no_text_input",
     "labels": [
+      "abw/coordination-request/1",
       "workspace-state",
       "coherence-scores",
       "intention-signal",
@@ -318,7 +325,7 @@
   "macro_data_agent": {
     "binding": "declared",
     "labels": [
-      "factor-x1-query"
+      "fermi/forecast-question/1"
     ]
   },
   "macro_forecaster": {
@@ -461,6 +468,16 @@
       "query"
     ]
   },
+  "regulatory_lens_translator": {
+    "binding": "no_text_input",
+    "labels": [
+      "adaptogen-lab/claim-evaluation-request/1",
+      "claim_text",
+      "claim_id",
+      "target_market",
+      "product_composition"
+    ]
+  },
   "regulatory_scanner": {
     "binding": "declared_by_convention",
     "labels": [
@@ -518,7 +535,7 @@
   "simops_companion": {
     "binding": "declared",
     "labels": [
-      "kask_simops/process_question"
+      "abw/simops-query/1"
     ]
   },
   "simops_dynamics_runner": {
@@ -575,12 +592,9 @@
     ]
   },
   "species_resolver": {
-    "binding": "no_text_input",
+    "binding": "declared",
     "labels": [
-      "species-name",
-      "common-name",
-      "taxonomic-group",
-      "gbif-key"
+      "abw/taxonomy-query/1"
     ]
   },
   "specimen_minter": {
@@ -680,7 +694,7 @@
   "weather_oracle": {
     "binding": "declared",
     "labels": [
-      "forecast-question"
+      "fermi/forecast-question/1"
     ]
   },
   "wild_companion": {

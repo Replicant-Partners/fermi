@@ -455,6 +455,113 @@ pub const CROSS_CHECK_EXEMPTIONS: &[(&str, &str, &str)] = &[
          fabrication. That makes the tool-result join the route that actually \
          settles this market, not the replay.",
     ),
+    // ── carbon_accountant ───────────────────────────────────────────
+    //
+    // Six entries, one cause, stated once. The platform holds no copy of
+    // ecoinvent, Agribalyse, the World Food LCA Database, the DEFRA/BEIS
+    // conversion factors or the IPCC GWP tables. Three of the five are
+    // licensed and cannot simply be mirrored; none of them is one JOIN away
+    // the way `genome_profiler.taxonomy` had a GBIF-verified row sitting on
+    // the creature.
+    //
+    // What makes this agent different from `regulatory_lens_translator`, and
+    // worth reading before adding a seventh entry: the thing most likely to
+    // be wrong here is NOT in this list. A fabricated factor VALUE is one
+    // failure; a correct factor multiplied wrongly is the other, and it is
+    // both more likely and more invisible. That half is not exempt — it is
+    // computed by the platform in `DERIVATIONS` and additionally measured by
+    // the `inventory.items` cross-check, which compares the model's own
+    // arithmetic against `activity_qty_kg * factor` and can go red. So the
+    // exemptions below cover retrieval, and retrieval alone.
+    //
+    // Three routes out, in increasing order of what they catch:
+    //
+    //   * FACTOR CACHE — `dpp/carbon/factors.yaml` is the agent's to write and
+    //     is keyed on (material, geography, reference_year), which is exactly
+    //     a cross-check key. Once two runs have resolved the same key, a
+    //     `SELECT` can compare them and a disagreement is a real finding with
+    //     no external corpus needed. This is the cheapest route and the one to
+    //     write first, and it is the reason the cache is keyed that way rather
+    //     than by ingredient name. It is deliberately not declared yet: no
+    //     cache exists on any workspace today, so the query would match
+    //     nothing, count zero mismatches and report clean — the
+    //     `fermi_leaderboard` shape this tier refuses.
+    //
+    //   * URL REPLAY — re-fetch each `source_url` and confirm the quoted
+    //     factor still appears at it. Catches a URL that never existed and a
+    //     number never on the page. Needs egress and a link-rot-tolerant
+    //     verdict, and LCA dataset pages are unusually replay-hostile: most
+    //     live behind a licence wall or inside a PDF.
+    //
+    //   * TOOL-RESULT JOIN — confirm every `source_url` appeared in a
+    //     `web_search` result within the same episode. Strictly stronger, and
+    //     blocked on the same storage gap as the evaluator's: tool call
+    //     results are not persisted per episode, so the query would join
+    //     against nothing.
+    // NOTE: `inventory.items[].factor_kg_co2e_per_kg` was exempt here and is
+    // no longer. Its exemption named the route out — "a second run resolving
+    // the same key makes this falsifiable with no external corpus" — and
+    // mig-238 built it. The factor value now has a real `cross_check_sql`
+    // against `carbon_emission_factors`, and a `CROSS_CHECK_COVERAGE`
+    // denominator so that an empty ledger reports INERT instead of clean.
+    // An exemption that names its own fix is worth more than one that does
+    // not, and this is what discharging one looks like.
+    (
+        "carbon_accountant",
+        "inventory.items[].source_url",
+        "Nothing here can say whether the URL was retrieved or recalled. URL \
+         replay would settle existence and the tool-result join would settle \
+         retrieval, and the second is the one that matters: a real ecoinvent \
+         process page the agent never opened passes the replay and fails the \
+         join. Blocked on web_search results not being persisted per episode, \
+         which is the same gap the evaluator records.",
+    ),
+    (
+        "carbon_accountant",
+        "inventory.items[].dataset",
+        "Which dataset a factor came from decides whether two factors in one \
+         statement may be summed at all, and the platform has no dataset \
+         registry to check the name against. A closed vocabulary of dataset \
+         names with their publishers and versions would turn this into a \
+         membership test — worth building, and small — but a vocabulary \
+         asserted without the datasets behind it would only check spelling.",
+    ),
+    (
+        "carbon_accountant",
+        "inventory.items[].reference_year",
+        "A reference year is the field that silently ages a disclosure: a 2014 \
+         grid factor in a 2026 statement is wrong by a large margin and looks \
+         identical to a current one. Not closed by mig-238, and the reason is \
+         worth being precise about: the reference year is part of that \
+         ledger's comparison KEY, so two rows with different years are two \
+         different keys that never meet rather than a disagreement. Checking \
+         it needs the dataset's own documentation — or a staleness bound, \
+         which is a policy question (how old is too old) and not a \
+         verification one.",
+    ),
+    (
+        "carbon_accountant",
+        "inventory.items[].geography",
+        "Geography is the substitution nobody notices: a European average \
+         standing in for an Egyptian supplier is defensible, common, and \
+         invisible once the number is formatted. The platform can compare it \
+         against the BOM line's own `origin`, which it does hold — that is a \
+         real check and it is a MISMATCH REPORT rather than a cross-check, \
+         because a proxy geography is legitimate when it is declared. It \
+         belongs beside `needs_expert`, not here, and lands with the surface \
+         that can show a declared proxy differently from an undeclared one.",
+    ),
+    (
+        "carbon_accountant",
+        "inventory.items[].lca_basis",
+        "Whether a factor is cradle-to-gate or cradle-to-grave decides what \
+         the total means, and mixing the two makes a sum that is internally \
+         inconsistent while looking perfectly ordinary. Unverifiable without \
+         the dataset's own documentation, so it closes with the factor cache. \
+         The consistency of the bases WITHIN one statement is checkable today \
+         and is the agent's job to report in `boundary.declared`, where \
+         `indeterminate` is the honest verdict for a mixed set.",
+    ),
 ];
 
 /// Is this `Sourced` field knowingly un-cross-checked?
@@ -462,6 +569,70 @@ pub fn cross_check_exempt(agent_id: &str, path: &str) -> bool {
     CROSS_CHECK_EXEMPTIONS
         .iter()
         .any(|(a, p, _)| *a == agent_id && *p == path)
+}
+
+/// Denominators for cross-checks that are not episode-based.
+///
+/// ## The hole this fills
+///
+/// `tests/grounding_contract.rs` already separates *clean* from *inert* — "0
+/// rows under the current prompt. Zero mismatches here means nothing was
+/// compared." — and prints `INERT is not a pass`. But it can only do that for
+/// **episode-based** checks, because the cohort predicate gives it a row count
+/// for free. A check that reads a table instead has no such denominator, so
+/// zero mismatches has always rendered as `ok`.
+///
+/// That was tolerable while the only table-based check was
+/// `genome_profiler.taxonomy`, which compares against creature rows that
+/// already existed in quantity. It stops being tolerable the moment a check
+/// reads a table the platform has only just started filling:
+/// `carbon_emission_factors` is empty on every deployment until a second run
+/// resolves a factor somebody already resolved, and an empty table yields zero
+/// mismatches, which would report as a verified claim about emission factors
+/// on the strength of having compared nothing. That is the `fermi_leaderboard`
+/// shape this whole tier exists to refuse, and the exemption this check
+/// replaces said so in as many words before it was replaced.
+///
+/// ## The rule
+///
+/// `(agent_id, path, comparable_sql)`. The query returns one row, one
+/// `bigint`, aliased `comparable`: **how many comparisons the cross-check was
+/// in a position to make.** Zero means the check proved nothing, and the
+/// harness reports INERT rather than ok.
+///
+/// A side table rather than a field on [`FieldContract`] because it applies to
+/// two of eleven checks, and adding an eleventh field to a struct with sixty
+/// literals would be sixty edits to express two facts. Same shape as
+/// [`DERIVATIONS`] and [`CROSS_CHECK_EXEMPTIONS`], which exist for the same
+/// reason.
+///
+/// Optional, and that is a deliberate weakness. Making it mandatory would
+/// have been the stronger claim and the wrong move today: it would demand a
+/// denominator for `genome_profiler.taxonomy`, whose author is not here, and a
+/// requirement that lands as a broken build on unrelated work is a requirement
+/// that gets deleted. `every_declared_coverage_query_is_shaped_for_the_harness`
+/// keeps the ones that exist honest; the ratchet toward all of them is a
+/// separate piece of work.
+pub const CROSS_CHECK_COVERAGE: &[(&str, &str, &str)] = &[(
+    "carbon_accountant",
+    "inventory.items[].factor_kg_co2e_per_kg",
+    "SELECT count(*)::bigint AS comparable \
+       FROM carbon_emission_factors a \
+       JOIN carbon_emission_factors b \
+         ON b.material_key   = a.material_key \
+        AND b.geography      = a.geography \
+        AND b.reference_year = a.reference_year \
+        AND b.dataset_key    = a.dataset_key \
+        AND b.id > a.id \
+      WHERE a.retrieval = 'search' AND b.retrieval = 'search'",
+)];
+
+/// The denominator for a cross-check, when one is declared.
+pub fn coverage_sql_for(agent_id: &str, path: &str) -> Option<&'static str> {
+    CROSS_CHECK_COVERAGE
+        .iter()
+        .find(|(a, p, _)| *a == agent_id && *p == path)
+        .map(|(_, _, sql)| *sql)
 }
 
 /// Every declared cross-check, for the live tier to run.
@@ -1135,10 +1306,55 @@ pub const NARRATIVE_LEAKS: &[(&str, &str, LeakRule)] = &[
     (RLT, "cn_evidence", LeakRule::Word("gb28050")),
     (RLT, "cn_evidence", LeakRule::Word("药食同源")),
     (RLT, "cn_evidence", LeakRule::Word("保健食品")),
+    // ── carbon_accountant: a footprint nobody retrieved a factor for ──────
+    //
+    // These fire on `explanation` when `inventory` came back with no factor
+    // at all. The failure they catch is the one a disclosure cannot tolerate:
+    // prose that names ecoinvent or states "about 0.4 kg CO2e per litre",
+    // reading exactly like a dataset lookup, when the search returned nothing
+    // and the number is the model's recollection of a plausible beverage.
+    //
+    // A quantity is the highest-value thing to fabricate here and the hardest
+    // to check, because a wrong factor and a right one are the same shape. So
+    // the needles are the two things a reader takes as proof of retrieval:
+    // the dataset names, and any quantity carrying a CO2e unit.
+    //
+    // Chosen for distinctiveness, and the omissions are deliberate. "ghg
+    // protocol", "iso 14067", "scope 1", "scope 2" and "cradle-to-gate" are
+    // NOT here: they name a methodology, the `attribution` and `boundary`
+    // blocks are `Inferred`, and an agent that retrieved nothing can still
+    // honestly say which standard it read the absent factors against and that
+    // use-phase is out of scope. A rule that fires on correct output gets
+    // switched off, and the switching-off looks like cleanup — see
+    // `LeakRule::Quantity`'s note about GBIF.
+    //
+    // "scope 3" IS here, and the line between it and "scope 2" is worth
+    // stating: allocating a line to a scope needs no factor, but the claims
+    // people actually write about Scope 3 — that it dominates, that it is the
+    // hotspot, that it is some share of the total — are all magnitude claims,
+    // and a magnitude with no retrieved factor behind it is the fabrication.
+    (CA, "inventory", LeakRule::Word("ecoinvent")),
+    (CA, "inventory", LeakRule::Word("agribalyse")),
+    (CA, "inventory", LeakRule::Word("defra")),
+    (CA, "inventory", LeakRule::Word("exiobase")),
+    (CA, "inventory", LeakRule::Word("world food lca")),
+    (CA, "inventory", LeakRule::Word("ipcc")),
+    (CA, "inventory", LeakRule::Word("emission factor")),
+    (CA, "inventory", LeakRule::Word("scope 3")),
+    (CA, "inventory", LeakRule::Word("carbon neutral")),
+    (CA, "inventory", LeakRule::Word("climate neutral")),
+    (CA, "inventory", LeakRule::Quantity("kg co2e")),
+    (CA, "inventory", LeakRule::Quantity("kgco2e")),
+    (CA, "inventory", LeakRule::Quantity("g co2e")),
+    (CA, "inventory", LeakRule::Quantity("tco2e")),
+    (CA, "inventory", LeakRule::Quantity("t co2e")),
+    (CA, "inventory", LeakRule::Quantity("kg co₂e")),
 ];
 
 /// Spelled once so the leak table stays readable at the width rustfmt wants.
 const RLT: &str = "regulatory_lens_translator";
+/// Likewise.
+const CA: &str = "carbon_accountant";
 
 impl LeakRule {
     /// Does this rule fire against an already-lowercased haystack?
@@ -3335,6 +3551,509 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               citations. See NARRATIVE_LEAKS.",
         cross_check_sql: None,
     },
+    // ── carbon_accountant ───────────────────────────────────────────
+    //
+    // The first agent on this platform with a genuine `Derived` tier that the
+    // platform actually computes at runtime, and the reason it needed one.
+    //
+    // A product carbon figure is three claims wearing one number:
+    //
+    //   the EMISSION FACTOR   2.1 kg CO2e/kg for dried hibiscus, Egypt   Sourced
+    //   the ARITHMETIC        0.02805 kg x 2.1 = 0.0589 kg CO2e          Derived
+    //   the SCOPE             Scope 3, category 1 — purchased goods      Inferred
+    //
+    // Letting the model do the middle one is the failure this contract is
+    // built around, and it is invisible: a confidently wrong product of two
+    // plausible numbers looks exactly like a right one, and nobody recomputes
+    // a figure that came back formatted. It is also the easy half — a handler
+    // can do it exactly, in Rust, for free. So it is registered in
+    // `DERIVATIONS` and `enforce` writes it, overwriting whatever the reply
+    // carried. After that a disagreement is a platform bug rather than the
+    // agent's, which is the whole point of the tier.
+    //
+    // Note what that does NOT make true. A derivation is only as good as its
+    // inputs, and one of the two inputs is retrieved by a language model from
+    // a licensed dataset the platform cannot see. Exact arithmetic says
+    // nothing about the factor being right, so the contract is split such
+    // that no surface can read one as the other: `inventory_provenance`
+    // reports on the retrieval, and `total_kg_co2e` carries `coverage` and
+    // `unpriced_items` beside it so a partial sum cannot pass as a footprint.
+    //
+    // Why all of it sits in one block rather than a `computation` block of
+    // its own: `enforce` stamps a block from the strongest thing in it, so a
+    // block whose fields are all `Derived` gets `platform_derived` — a value
+    // `card_contract::GROUNDING_STATUSES` has no authoring token for (see
+    // `card_contract::PLATFORM_ASSIGNED_ONLY`). The sketch would then have to
+    // declare a stamp the runtime never writes for it, which is precisely the
+    // defect `schema_validate::the_pilot_agents_declared_schema_validates_its_own_output`
+    // was written about: card and schema agreeing with each other while
+    // neither agrees with the platform. Folding the derivation in beside the
+    // factors it is computed from keeps the block `sourced` and the stamp
+    // true. `football_analyst.advanced_metrics.xgd` is the same shape.
+    FieldContract {
+        agent_id: CA,
+        path: "inventory.items[].factor_kg_co2e_per_kg",
+        grounding: Grounding::Sourced {
+            tool: "web_search",
+            response_field: "results[].url, results[].title, results[].description",
+        },
+        why: "The emission factor itself — the one number in this document a \
+              tool can supply, and therefore the only one that may ever be \
+              stamped `tool_verified`. Null is a real and frequent answer: \
+              process-grade water, a starter culture and a trace acidulant \
+              have no published factor at this grain, and a null here is what \
+              keeps that line out of the total and into `unpriced_items` \
+              rather than silently priced at a proxy.",
+        // The platform's second copy, built out of the agent's own work.
+        //
+        // This field was exempt, and its exemption named the route: "a second
+        // run resolving the same key makes this falsifiable with no external
+        // corpus". mig-238 built it. `carbon_emission_factors` appends every
+        // factor retrieved, keyed on (material, geography, reference_year,
+        // dataset), and two rows sharing that key are two readings of ONE
+        // published figure. They must agree.
+        //
+        // Why the dataset is in the key. ecoinvent and Agribalyse legitimately
+        // publish different factors for the same material and year — different
+        // system models, different allocation. Comparing across datasets would
+        // fire on correct behaviour, and a check that fires on correct output
+        // gets switched off with the switching-off looking like cleanup.
+        //
+        // Why `retrieval = 'search'` on both sides. A value this ledger itself
+        // supplied back into a statement is not independent confirmation of
+        // itself. Computing agreement from a number we copied is the `xgd`
+        // trap: three numbers we made consistent are evidence of nothing. The
+        // handler writes only `search` rows today; the predicate is here so a
+        // later cache-serving change cannot quietly invalidate the check.
+        //
+        // Tolerance 2%, and it is a transcription band rather than a
+        // measurement one. Two readings of the same dataset row should be the
+        // same number; the slack covers a model writing 2.1 where the page says
+        // 2.08. It is deliberately far tighter than the 5% one might pick for
+        // "do these factors broadly agree", because that is a different
+        // question and this check is not asking it.
+        //
+        // What it does NOT establish, stated because a cross-check whose reach
+        // is overstated is worse than none: agreement is weak evidence. Two
+        // runs could agree because both read the same wrong page. The check is
+        // sound in the direction it makes claims — it fires only on
+        // disagreement, and a disagreement is always something a human must
+        // settle. Ruling out a shared-source error needs the tool-result join,
+        // which is blocked on web_search results not being persisted per
+        // episode. `CROSS_CHECK_COVERAGE` carries the denominator, so an empty
+        // ledger reports INERT rather than clean.
+        cross_check_sql: Some(
+            "SELECT count(*)::bigint AS mismatches \
+               FROM carbon_emission_factors a \
+               JOIN carbon_emission_factors b \
+                 ON b.material_key   = a.material_key \
+                AND b.geography      = a.geography \
+                AND b.reference_year = a.reference_year \
+                AND b.dataset_key    = a.dataset_key \
+                AND b.id > a.id \
+              WHERE a.retrieval = 'search' AND b.retrieval = 'search' \
+                AND abs(a.value_kg_co2e_per_kg - b.value_kg_co2e_per_kg) \
+                    > greatest( 0.02 * greatest(abs(a.value_kg_co2e_per_kg), \
+                                                abs(b.value_kg_co2e_per_kg)), \
+                                1e-9 )",
+        ),
+    },
+    FieldContract {
+        agent_id: CA,
+        path: "inventory.items[].source_url",
+        grounding: Grounding::Sourced {
+            tool: "web_search",
+            response_field: "results[].url",
+        },
+        why: "Where the factor was read from, and the field that makes the \
+              statement auditable at all: a figure whose factors cannot be \
+              traced to a document is not a disclosure, it is an assertion. \
+              Must be a result received on this run — a plausible ecoinvent \
+              process URL is indistinguishable from a real one to anyone \
+              without a licence, which is most readers.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: CA,
+        path: "inventory.items[].dataset",
+        grounding: Grounding::Sourced {
+            tool: "web_search",
+            response_field: "results[].title, results[].description",
+        },
+        why: "Which inventory database the factor belongs to. Load-bearing \
+              rather than decorative: two factors from datasets with different \
+              system models or allocation rules may not be summed, so this is \
+              what lets a reviewer see that a total is internally coherent — \
+              or that `boundary.declared` should have said `indeterminate`.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: CA,
+        path: "inventory.items[].reference_year",
+        grounding: Grounding::Sourced {
+            tool: "web_search",
+            response_field: "results[].description",
+        },
+        why: "The year the factor describes. This is the field that ages a \
+              disclosure silently: a 2014 grid factor in a 2026 statement is \
+              wrong by a wide margin and renders identically to a current one. \
+              Retrieved rather than inferred, because a dataset states its own \
+              reference year and a model asked to supply one supplies a \
+              plausible one.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: CA,
+        path: "inventory.items[].geography",
+        grounding: Grounding::Sourced {
+            tool: "web_search",
+            response_field: "results[].description",
+        },
+        why: "The geography the factor applies to, which is not the same as \
+              the BOM line's origin and must not be conflated with it. A \
+              European average standing in for an Egyptian supplier is a \
+              legitimate, common and defensible choice — and it is only \
+              defensible when declared, which is why this is a retrieved field \
+              sitting beside `origin` rather than a silent match.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: CA,
+        path: "inventory.items[].lca_basis",
+        grounding: Grounding::Sourced {
+            tool: "web_search",
+            response_field: "results[].description",
+        },
+        why: "Cradle-to-gate, cradle-to-grave or gate-to-gate, as the dataset \
+              declares it. Decides what the total MEANS, and a set of factors \
+              with mixed bases produces a sum that is internally inconsistent \
+              while looking entirely ordinary. Retrieved, so that \
+              `boundary.declared` is a reading of the bases that came back \
+              rather than an assumption about them.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: CA,
+        path: "inventory.items",
+        grounding: Grounding::Derived {
+            from: "inventory.items[].activity_qty_kg, echoed onto each line by \
+                   the calculate_carbon handler from dpp/composition.yaml, and \
+                   inventory.items[].factor_kg_co2e_per_kg as retrieved",
+            how: "per line, kg_co2e = activity_qty_kg * factor_kg_co2e_per_kg, \
+                  with `arithmetic` written out as the multiplication a reader \
+                  can check by hand; both null when either input is absent. \
+                  Every retrieved field on the line is preserved verbatim — \
+                  the transform writes three keys and copies the rest",
+        },
+        why: "The arithmetic, which is the platform's and not the agent's. \
+              `activity_qty_kg` is echoed from the BOM rather than taken from \
+              the reply for the same reason the evaluator echoes its claim id: \
+              a quantity the model restated is a quantity nobody wrote, and \
+              here it would multiply straight into the total. The cross-check \
+              then measures how often the model did the multiplication anyway \
+              and got it wrong — a discipline signal the derivation would \
+              otherwise hide, by making every stored row correct by \
+              construction.",
+        // Compares the document against ITSELF, so it needs no external
+        // corpus and no dataset licence — which is why it is the one real
+        // cross-check this agent has while all six retrieval fields are
+        // exempt. Internal consistency is the check you can always afford;
+        // `football_analyst.advanced_metrics.xgd` established the pattern.
+        //
+        // What it can and cannot see, stated plainly because a cross-check
+        // whose reach is overstated is worse than none. `episodes.response_text`
+        // holds the RAW reply, before `enforce` ran, so this reads the model's
+        // own arithmetic rather than the platform's — which is the point, and
+        // is the only reason the check is not true by construction. It matches
+        // only replies that are a bare JSON object; a fenced ```json block
+        // fails `IS JSON OBJECT` and drops out, as it does for
+        // `football_analyst` today. A run that obeys the prompt and leaves
+        // `kg_co2e` null also drops out. So a clean result here means "no run
+        // multiplied badly", not "every factor is right" — the factors are
+        // covered, and admitted uncovered, in CROSS_CHECK_EXEMPTIONS.
+        //
+        // Tolerance is relative rather than absolute, and that is forced by
+        // the domain: line totals in this document span roughly 1e-4 kg CO2e
+        // for a trace acidulant to 1e0 for a principal ingredient, so any
+        // fixed epsilon is either blind at the top of that range or fires on
+        // rounding at the bottom. 0.5% clears three-significant-figure
+        // reporting; the 1e-9 floor keeps a zero-valued line from dividing the
+        // check by nothing. A check that fires on correct behaviour gets
+        // deleted, and the deletion looks like cleanup.
+        cross_check_sql: Some(
+            "SELECT count(*)::bigint AS mismatches \
+               FROM episodes e \
+               JOIN agents a ON a.agent_id = e.agent_id, \
+               LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
+                                    THEN e.response_text::jsonb END AS doc) j, \
+               LATERAL jsonb_array_elements( \
+                         CASE WHEN jsonb_typeof(j.doc #> '{inventory,items}') = 'array' \
+                              THEN j.doc #> '{inventory,items}' \
+                              ELSE '[]'::jsonb END) AS li \
+              WHERE a.agent_name = 'carbon_accountant' \
+                {{COHORT}} \
+                AND jsonb_typeof(li.value -> 'kg_co2e') = 'number' \
+                AND jsonb_typeof(li.value -> 'activity_qty_kg') = 'number' \
+                AND jsonb_typeof(li.value -> 'factor_kg_co2e_per_kg') = 'number' \
+                AND abs( (li.value ->> 'kg_co2e')::numeric \
+                         - (li.value ->> 'activity_qty_kg')::numeric \
+                           * (li.value ->> 'factor_kg_co2e_per_kg')::numeric ) \
+                    > greatest( 1e-9, \
+                                0.005 * abs((li.value ->> 'kg_co2e')::numeric) )",
+        ),
+    },
+    FieldContract {
+        agent_id: CA,
+        path: "inventory.total_kg_co2e",
+        grounding: Grounding::Derived {
+            from: "every inventory.items[] line whose activity_qty_kg and \
+                   factor_kg_co2e_per_kg both resolved",
+            how: "the sum of activity_qty_kg * factor_kg_co2e_per_kg over the \
+                  resolved lines, recomputed from the inputs rather than from \
+                  the per-line kg_co2e so the two derivations cannot disagree \
+                  through ordering; null when no line resolved",
+        },
+        why: "The headline number, and the one a reader will quote without the \
+              document around it. Summed by the platform so that it is exactly \
+              the sum of the lines shown — a total that does not add up is the \
+              error a reader will never find, because nobody adds up a column \
+              that has already been totalled. Deliberately null rather than \
+              zero when nothing resolved: zero is a footprint claim and the \
+              strongest one in the document, and it is the value an empty sum \
+              would produce by accident.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: CA,
+        path: "inventory.coverage",
+        grounding: Grounding::Derived {
+            from: "the count of inventory.items[] lines with a resolved factor \
+                   against the count of lines the handler echoed from the BOM",
+            how: "complete when every echoed line resolved, none when no line \
+                  did, partial otherwise",
+        },
+        why: "Whether `total_kg_co2e` is the product's footprint or a subset of \
+              it. Derived rather than inferred because it is a ratio of two \
+              counts the platform already holds, and because it is the field \
+              most worth having outside the model's control: a total silently \
+              omitting three ingredients is the `tool_no_match`-as-clearance \
+              failure in a different suit, and an agent that summed what it \
+              could find has every incentive to call the result complete.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: CA,
+        path: "inventory.unpriced_items",
+        grounding: Grounding::Derived {
+            from: "the inventory.items[] lines the handler echoed from the BOM \
+                   whose factor or quantity did not resolve",
+            how: "their item_ids, in BOM order",
+        },
+        why: "What the total leaves out, named rather than counted. `coverage: \
+              partial` tells a reader the figure is incomplete; this tells them \
+              which supplier to ask, which is the difference between a caveat \
+              and a work item. Platform-written so that the list cannot shrink \
+              to make a statement look better than it is.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: CA,
+        path: "attribution.items[].scope",
+        grounding: Grounding::Inferred {
+            from: "each BOM line's role and origin, the retrieved factor's \
+                   lca_basis, and where the reporting entity's organisational \
+                   boundary was assumed to sit",
+        },
+        why: "No dataset row states a scope. Ecoinvent gives a factor for a \
+              material; the decision that a purchased botanical infusion is \
+              upstream Scope 3 while the electricity for the same plant's F2 \
+              tank is Scope 2 is the agent's, and it is the work it is \
+              commissioned for. Stamped `model_inference` so a statement can \
+              never present an allocation as though a dataset had asserted it.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: CA,
+        path: "attribution.items[].ghg_protocol_category",
+        grounding: Grounding::Inferred {
+            from: "the GHG Protocol Scope 3 Standard's fifteen categories read \
+                   against the BOM line's role in the product",
+        },
+        why: "Which of the fifteen categories a line falls in, and the field \
+              that changes the answer most. The same physical kilogram of \
+              hibiscus is category 1 to the beverage producer and category 4 \
+              if its transport leg is reported separately — a choice about \
+              reporting structure, not a property of the hibiscus. Null for \
+              scopes 1 and 2, where the categories do not apply.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: CA,
+        path: "attribution.items[].rationale",
+        grounding: Grounding::Inferred {
+            from: "what in the BOM line drove the allocation — its role, its \
+                   origin, or the boundary assumption",
+        },
+        why: "The reason the allocation went the way it did, which is what a \
+              reviewer actually endorses. An unexplained scope is unreviewable: \
+              `scope_3` beside `category: 1` is a verdict nobody can agree or \
+              disagree with, and a reviewer who cannot disagree is not \
+              reviewing.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: CA,
+        path: "boundary.declared",
+        grounding: Grounding::Inferred {
+            from: "the boundary the caller requested, read against the \
+                   lca_basis of the factors that actually came back",
+        },
+        why: "What the figure covers. Inferred rather than echoed from the \
+              request, and that difference is the whole value of the field: a \
+              caller asks for cradle-to-gate, and whether the retrieved \
+              factors can support that is a reading of what came back. \
+              `indeterminate` is the honest verdict for a mixed set, and a \
+              mixed set is the normal case when factors come from three \
+              databases.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: CA,
+        path: "boundary.included",
+        grounding: Grounding::Inferred {
+            from: "the life-cycle stages the retrieved factors' bases cover",
+        },
+        why: "The stages inside the figure, stated in the vocabulary of the \
+              standard named beside them. Inferred because it is a reading of \
+              what the factors cover rather than a field any of them carries; \
+              a dataset says `cradle-to-gate` and leaves a human to work out \
+              which stages that is for a fermented beverage.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: CA,
+        path: "boundary.excluded",
+        grounding: Grounding::Inferred {
+            from: "the life-cycle stages no retrieved factor speaks to, and \
+                   those the declared boundary puts outside the figure",
+        },
+        why: "The most load-bearing prose in a carbon disclosure, and the \
+              reason this block is not optional. Distribution, use and \
+              end-of-life are simply absent from a cradle-to-gate figure, and \
+              a reader who is not told assumes they are zero rather than \
+              unmeasured — the one reading that makes the number actively \
+              misleading rather than merely partial.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: CA,
+        path: "boundary.exclusion_rationale",
+        grounding: Grounding::Inferred {
+            from: "why each excluded stage is outside the figure — by the \
+                   standard's own scope, or for want of data",
+        },
+        why: "Why the exclusions are defensible, or that they are not. \
+              'Outside the boundary by standard' and 'no data could be found' \
+              are different exclusions with different remedies, and a reader \
+              who cannot tell them apart cannot tell a methodologically sound \
+              figure from an incomplete one.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: CA,
+        path: "boundary.standard_followed",
+        grounding: Grounding::Inferred {
+            from: "the methodology the retrieved factors were read against — \
+                   GHG Protocol Product Standard, ISO 14067, the EU PEF method",
+        },
+        why: "Which method the figure claims to follow. An assertion about the \
+              work rather than a retrieved value, and honestly null when the \
+              factors were too heterogeneous to claim one — naming a standard \
+              a statement does not actually satisfy is worse than naming none, \
+              because the name is what a reader checks instead of the method.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: CA,
+        path: "assurance.needs_expert",
+        grounding: Grounding::Inferred {
+            from: "whether the retrieved evidence supports the figure being \
+                   reported — set when coverage is not complete, when factor \
+                   geographies or years do not match the BOM, or when the \
+                   bases are mixed",
+        },
+        why: "The agent's own decision that a human must look, and the signal a \
+              reviewer acts on. Kept as judgement rather than derived from \
+              coverage, because 'six factors that all fit' and 'six factors of \
+              which two are decade-old continental averages standing in for \
+              named suppliers' are the case a ratio cannot distinguish and the \
+              agent can. Under-flagging is the expensive direction: the reader \
+              of a carbon statement is usually not the person who could notice \
+              the substitution.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: CA,
+        path: "assurance.verification_status",
+        grounding: Grounding::Inferred {
+            from: "the assurance actually obtained for this statement, which \
+                   for anything this agent produces is none",
+        },
+        why: "Always `unverified` as produced: this agent is not an accredited \
+              verifier and no run of it can be. The field exists with the \
+              stronger values in its vocabulary so that a human endorsement \
+              lands on the same field a consumer already reads, rather than in \
+              a comment beside it — and so that the gap between an agent's \
+              figure and an assured one is expressible instead of implied.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: CA,
+        path: "assurance.regulatory_fitness",
+        grounding: Grounding::Inferred {
+            from: "the coverage, factor quality and boundary just established, \
+                   read against the evidentiary standard of each regime the \
+                   caller named",
+        },
+        why: "Whether this figure can be relied on, and for what. The same \
+              number is disclosable under ESRS E1 with its method stated, \
+              screening-only against a CBAM report that expects \
+              installation-level actual data, and inadmissible as an EU \
+              Battery DPP declaration that requires third-party verification. \
+              Nothing retrieves that mapping; leaving it unstated is how a \
+              screening estimate ends up in a regulatory filing.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: CA,
+        path: "assurance.blocking_gaps",
+        grounding: Grounding::Inferred {
+            from: "what is missing between the evidence assembled and the \
+                   evidence the named regimes require",
+        },
+        why: "What would have to be obtained to move up a fitness tier, written \
+              as work items: a supplier-specific factor for a named line, a \
+              transport leg, a verified electricity mix. Inferred because it is \
+              the difference between two things neither of which is a retrieved \
+              value. A gap nobody can action is a disclaimer, and a disclaimer \
+              is what this field exists instead of.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: CA,
+        path: "explanation",
+        grounding: Grounding::Narrative,
+        why: "The prose an operator reads: where the footprint concentrates, \
+              what the retrieval could not establish, and what the number must \
+              not be taken to mean. It is also the channel a fabrication moves \
+              to once the structured fields are enforced — clearing an uncited \
+              factor out of `inventory.items` while leaving 'roughly 0.4 kg \
+              CO2e per litre, mostly the hibiscus (ecoinvent)' in the summary \
+              only relocates it into the sentence a human reads. Scanned \
+              against the `inventory` block for dataset names and CO2e \
+              quantities; see NARRATIVE_LEAKS.",
+        cross_check_sql: None,
+    },
 ];
 
 // ─── enforcement ───────────────────────────────────────────────────────
@@ -3708,8 +4427,17 @@ fn values_agree(a: &Value, b: &Value) -> bool {
 pub type Derivation = fn(&Value) -> Option<Value>;
 
 /// `(agent_id, path, transform)` for derivations computable from the document.
-pub const DERIVATIONS: &[(&str, &str, Derivation)] =
-    &[("genome_profiler", "phylogeny.superorder", derive_superorder)];
+pub const DERIVATIONS: &[(&str, &str, Derivation)] = &[
+    ("genome_profiler", "phylogeny.superorder", derive_superorder),
+    // The four halves of a carbon total the platform owns. Each reads the
+    // document independently and recomputes from `activity_qty_kg` and
+    // `factor_kg_co2e_per_kg` rather than from another derivation's output,
+    // so the order they are registered in cannot change the answer.
+    (CA, "inventory.items", derive_carbon_line_items),
+    (CA, "inventory.total_kg_co2e", derive_carbon_total),
+    (CA, "inventory.coverage", derive_carbon_coverage),
+    (CA, "inventory.unpriced_items", derive_carbon_unpriced),
+];
 
 /// `Derived` fields the platform keeps its promise about **somewhere else**,
 /// and where.
@@ -3814,7 +4542,162 @@ fn derive_superorder(doc: &Value) -> Option<Value> {
     crate::agent_backend::ncbi_tools::superorder_of(order).map(|s| Value::String(s.to_string()))
 }
 
-/// Write `value` at a dotted path, returning whether the slot existed.
+// ── the carbon arithmetic ──────────────────────────────────────────────
+//
+// The reason `carbon_accountant` exists in this file at all. A product carbon
+// figure is a retrieved factor times a bill-of-materials quantity, and the
+// multiplication is the half a language model must not do: a confidently wrong
+// product of two plausible numbers is indistinguishable from a right one, and
+// nobody recomputes a figure that came back formatted.
+//
+// So these four run inside `enforce` and WRITE, overwriting whatever the reply
+// carried. Three properties are worth stating because each was a choice:
+//
+//   * Each reads the raw inputs. `total_kg_co2e` sums `qty * factor` again
+//     rather than summing the per-line `kg_co2e` this module just wrote, so
+//     the registry order in `DERIVATIONS` cannot change a total.
+//   * A missing input yields null, never zero. Zero is a footprint claim and
+//     the strongest one in the document; it is also what an empty sum produces
+//     by accident, which is why `total_kg_co2e` is null rather than 0.0 when
+//     nothing resolved and why `coverage` is derived beside it.
+//   * `activity_qty_kg` is read from the line but written there by the
+//     handler, echoed from `dpp/composition.yaml`. A quantity the model
+//     restated is a quantity nobody wrote, and it would multiply straight
+//     into the total.
+
+/// A line's activity quantity and factor, when both are usable numbers.
+///
+/// Non-finite and negative values are rejected rather than propagated: a
+/// negative emission factor is a removal, which is a different claim with its
+/// own accounting rules (and its own abuse), and `NaN` would poison a sum
+/// silently. Either makes the line unpriced, which is a state the document can
+/// already express.
+fn carbon_line_inputs(item: &Value) -> Option<(f64, f64)> {
+    let qty = item.get("activity_qty_kg")?.as_f64()?;
+    let factor = item.get("factor_kg_co2e_per_kg")?.as_f64()?;
+    if !qty.is_finite() || !factor.is_finite() || qty < 0.0 || factor < 0.0 {
+        return None;
+    }
+    Some((qty, factor))
+}
+
+fn carbon_items(doc: &Value) -> Option<&Vec<Value>> {
+    get_path(doc, "inventory.items")?.as_array()
+}
+
+/// Round to a sane number of decimals for a document a human reads.
+///
+/// Not for correctness — the sum is computed at full precision and only the
+/// reported figure is rounded. Six decimals because a trace acidulant lands
+/// around 1e-4 kg CO2e and truncating it to two would print `0.00` beside a
+/// real factor, which reads as "we checked and it is nothing".
+fn carbon_round(v: f64) -> Value {
+    let r = (v * 1_000_000.0).round() / 1_000_000.0;
+    serde_json::Number::from_f64(r)
+        .map(Value::Number)
+        .unwrap_or(Value::Null)
+}
+
+/// Rewrite each line's `kg_co2e`, `arithmetic` and nothing else.
+fn derive_carbon_line_items(doc: &Value) -> Option<Value> {
+    let items = carbon_items(doc)?;
+    let out: Vec<Value> = items
+        .iter()
+        .map(|item| {
+            let mut obj = match item.as_object() {
+                Some(o) => o.clone(),
+                // A non-object element is not something to repair. Left as it
+                // is so the schema check reports it rather than this function
+                // quietly normalising away a malformed reply.
+                None => return item.clone(),
+            };
+            match carbon_line_inputs(item) {
+                Some((qty, factor)) => {
+                    obj.insert("kg_co2e".into(), carbon_round(qty * factor));
+                    obj.insert(
+                        "arithmetic".into(),
+                        Value::String(format!(
+                            "{qty} kg x {factor} kg CO2e/kg = {} kg CO2e",
+                            (qty * factor * 1_000_000.0).round() / 1_000_000.0
+                        )),
+                    );
+                }
+                None => {
+                    obj.insert("kg_co2e".into(), Value::Null);
+                    obj.insert("arithmetic".into(), Value::Null);
+                }
+            }
+            Value::Object(obj)
+        })
+        .collect();
+    Some(Value::Array(out))
+}
+
+fn derive_carbon_total(doc: &Value) -> Option<Value> {
+    let items = carbon_items(doc)?;
+    let mut total = 0.0f64;
+    let mut any = false;
+    for item in items {
+        if let Some((qty, factor)) = carbon_line_inputs(item) {
+            total += qty * factor;
+            any = true;
+        }
+    }
+    // Null, not zero. See the block comment above.
+    Some(if any {
+        carbon_round(total)
+    } else {
+        Value::Null
+    })
+}
+
+fn derive_carbon_coverage(doc: &Value) -> Option<Value> {
+    let items = carbon_items(doc)?;
+    let priced = items
+        .iter()
+        .filter(|i| carbon_line_inputs(i).is_some())
+        .count();
+    let verdict = if items.is_empty() || priced == 0 {
+        "none"
+    } else if priced == items.len() {
+        "complete"
+    } else {
+        "partial"
+    };
+    Some(Value::String(verdict.into()))
+}
+
+fn derive_carbon_unpriced(doc: &Value) -> Option<Value> {
+    let items = carbon_items(doc)?;
+    let ids: Vec<Value> = items
+        .iter()
+        .filter(|i| carbon_line_inputs(i).is_none())
+        .map(|i| {
+            i.get("item_id")
+                .cloned()
+                // A line with no id still has to appear, or the count of
+                // named gaps stops matching `coverage` and the list starts
+                // understating what is missing.
+                .unwrap_or_else(|| Value::String("(unidentified line)".into()))
+        })
+        .collect();
+    Some(Value::Array(ids))
+}
+
+/// Write `value` at a dotted path, returning whether it was written.
+///
+/// The final segment is **inserted** when the parent is an object that does
+/// not carry it. Parent segments are not created, so this cannot fabricate
+/// structure — it can only finish a block that already exists.
+///
+/// That asymmetry is deliberate and it is the bug fix, not a convenience.
+/// While a missing key meant "do nothing", a derivation the platform had
+/// promised to perform was skipped whenever the model omitted the key it was
+/// told to leave null — and skipped *silently*, producing an absent field
+/// where the contract says `platform_derived`. That is `phylogeny.superorder`
+/// again in a new place: a promise the platform cannot keep, invisible from
+/// every direction. The three carbon totals are exactly the fields a
+/// well-behaved reply omits.
 fn set_path(doc: &mut Value, path: &str, value: Value) -> bool {
     let segs: Vec<&str> = path.split('.').collect();
     let Some((last, parents)) = segs.split_last() else {
@@ -3827,9 +4710,13 @@ fn set_path(doc: &mut Value, path: &str, value: Value) -> bool {
             None => return false,
         }
     }
-    match cur.get_mut(last) {
-        Some(slot) => {
-            *slot = value;
+    if let Some(slot) = cur.get_mut(last) {
+        *slot = value;
+        return true;
+    }
+    match cur.as_object_mut() {
+        Some(obj) => {
+            obj.insert((*last).to_string(), value);
             true
         }
         None => false,
@@ -5028,6 +5915,126 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A declared denominator must be runnable and must answer the question
+    /// the harness asks it.
+    ///
+    /// Same discipline as the cross-checks themselves: these run against
+    /// production, and a coverage query that cannot run is worse than an absent
+    /// one — the harness would report the check as inert forever, which reads
+    /// as "nobody has run the agent" rather than "the denominator is broken".
+    /// That is the permanent-INERT failure `the_prompt_hash_means_the_same_thing_in_rust_and_in_sql`
+    /// was written about, arriving through a different door.
+    #[test]
+    fn every_declared_coverage_query_is_shaped_for_the_harness() {
+        for (agent, path, sql) in CROSS_CHECK_COVERAGE {
+            let lower = sql.to_lowercase();
+            assert!(
+                lower.trim_start().starts_with("select"),
+                "{agent}.{path}: a coverage query must be a bare SELECT"
+            );
+            assert!(
+                lower.contains("as comparable"),
+                "{agent}.{path}: must alias its count as `comparable`, which is \
+                 what the harness reads. `mismatches` is the other query."
+            );
+            assert!(
+                !sql.contains(COHORT_PLACEHOLDER),
+                "{agent}.{path}: the cohort mechanism is for episode-based \
+                 checks, which already have a denominator. A table-based check \
+                 has no prompt to scope to."
+            );
+            for forbidden in [
+                "insert ",
+                "update ",
+                "delete ",
+                "drop ",
+                "alter ",
+                "truncate ",
+                "grant ",
+            ] {
+                assert!(
+                    !lower.contains(forbidden),
+                    "{agent}.{path}: must not contain `{forbidden}` — this runs \
+                     against a live database"
+                );
+            }
+
+            // A denominator for a check that does not exist protects nothing,
+            // and a denominator on an episode-based check would be a second,
+            // disagreeing answer to a question the cohort predicate already
+            // answers.
+            let contract = FIELD_CONTRACTS
+                .iter()
+                .find(|c| c.agent_id == *agent && c.path == *path);
+            let Some(contract) = contract else {
+                panic!("coverage declared for {agent}.{path}, which is not a declared field");
+            };
+            let Some(check) = contract.cross_check_sql else {
+                panic!(
+                    "{agent}.{path} declares a coverage query and no \
+                     cross_check_sql. A denominator with no numerator measures \
+                     nothing."
+                );
+            };
+            assert!(
+                !check.contains(COHORT_PLACEHOLDER),
+                "{agent}.{path} is episode-based, so the harness already knows \
+                 its cohort size. Two denominators is two answers."
+            );
+        }
+    }
+
+    /// **A table-based cross-check reading a table the platform has only just
+    /// begun filling must declare a denominator.**
+    ///
+    /// The rule is narrow on purpose and the narrowness is the point: it
+    /// applies to the checks whose evidence the PLATFORM accumulates, because
+    /// those start empty on every deployment and an empty table yields zero
+    /// mismatches. Zero mismatches over zero comparisons rendering as `ok` is
+    /// the `fermi_leaderboard` shape — a metric that reports healthy because it
+    /// matched nothing.
+    ///
+    /// `genome_profiler.taxonomy` is deliberately NOT required to have one. It
+    /// compares cached profiles against creature rows that already exist in
+    /// quantity, so its denominator is never zero in practice, and demanding
+    /// one would land as a broken build on work whose author is not here — a
+    /// requirement that arrives that way is a requirement that gets deleted.
+    #[test]
+    fn a_check_over_platform_accumulated_evidence_declares_its_denominator() {
+        // Tables this platform fills itself, one agent run at a time. A check
+        // reading one of these is measuring evidence that did not exist last
+        // week and may not exist yet.
+        const ACCUMULATING: &[&str] = &["carbon_emission_factors"];
+
+        let mut bare = Vec::new();
+        for c in FIELD_CONTRACTS {
+            let Some(sql) = c.cross_check_sql else {
+                continue;
+            };
+            let lower = sql.to_lowercase();
+            if !ACCUMULATING.iter().any(|t| lower.contains(t)) {
+                continue;
+            }
+            if coverage_sql_for(c.agent_id, c.path).is_none() {
+                bare.push(format!("{}.{}", c.agent_id, c.path));
+            }
+        }
+        assert!(
+            bare.is_empty(),
+            "{bare:?} cross-check a table the platform accumulates and declare \
+             no CROSS_CHECK_COVERAGE denominator. On a fresh deployment that \
+             table is empty, the check counts zero mismatches, and the harness \
+             reports `ok` — a verified claim on the strength of having compared \
+             nothing."
+        );
+
+        // And the guard must not go vacuous if the check is renamed away.
+        assert!(
+            !CROSS_CHECK_COVERAGE.is_empty(),
+            "no coverage queries declared — this guard now checks nothing"
+        );
     }
 
     #[test]
@@ -6804,6 +7811,297 @@ mod tests {
              Create: agents/curated/<agent_id>/output_contract.sketch.json\
              \nSee agents/curated/regulatory_lens_translator/output_contract.sketch.json \
              for a worked example."
+        );
+    }
+
+    // ── carbon_accountant ───────────────────────────────────────────────
+    //
+    // Four tests for the four things the design claims. They are written
+    // against `enforce` rather than against the handler on purpose: the
+    // handler can be rewritten, and these are properties of the contract.
+
+    /// A reply shaped the way a well-behaved run produces one: factors
+    /// retrieved with their provenance, quantities echoed by the handler, and
+    /// every arithmetic field left null for the platform to fill.
+    fn carbon_reply() -> Value {
+        json!({
+            "inventory": {
+                "queries_run": [
+                    "ecoinvent dried hibiscus calyces Egypt emission factor",
+                    "Agribalyse black tea kg CO2e per kg Sri Lanka",
+                    "SCOBY starter culture life cycle inventory"
+                ],
+                "items": [
+                    {
+                        "item_id": "hibiscus_infusion",
+                        "material": "Dried hibiscus calyces",
+                        "origin": "Egypt / Sudan",
+                        "activity_qty_kg": 0.02805,
+                        "factor_kg_co2e_per_kg": 2.1,
+                        "factor_unit": "kg CO2e/kg",
+                        "lca_basis": "cradle_to_gate",
+                        "geography": "EG",
+                        "reference_year": 2021,
+                        "dataset": "ecoinvent 3.9.1",
+                        "source_url": "https://ecoquery.ecoinvent.org/example",
+                        "source_title": "hibiscus, dried | market for",
+                        "source_quote": "2.1 kg CO2-eq per kg, cradle-to-gate",
+                        "kg_co2e": null,
+                        "arithmetic": null
+                    },
+                    {
+                        "item_id": "starter_scoby",
+                        "material": "SCOBY starter culture",
+                        "activity_qty_kg": null,
+                        "factor_kg_co2e_per_kg": null,
+                        "factor_unit": null,
+                        "lca_basis": null,
+                        "geography": null,
+                        "reference_year": null,
+                        "dataset": null,
+                        "source_url": null,
+                        "source_title": null,
+                        "source_quote": null,
+                        "kg_co2e": null,
+                        "arithmetic": null
+                    }
+                ],
+                "total_kg_co2e": null,
+                "coverage": null,
+                "unpriced_items": null
+            },
+            "attribution": {
+                "items": [
+                    { "item_id": "hibiscus_infusion", "scope": "scope_3",
+                      "ghg_protocol_category": 1,
+                      "rationale": "Purchased botanical input, upstream of the gate." }
+                ],
+                "scope_boundary_note": "Reporting entity assumed to be the beverage producer."
+            },
+            "boundary": {
+                "declared": "cradle_to_gate",
+                "included": ["agricultural production", "drying", "inbound processing"],
+                "excluded": ["distribution", "chilled retail", "use", "end-of-life"],
+                "exclusion_rationale": "Outside a cradle-to-gate boundary by the standard's own scope.",
+                "standard_followed": "GHG Protocol Product Standard"
+            },
+            "assurance": {
+                "needs_expert": true,
+                "verification_status": "unverified",
+                "regulatory_fitness": [
+                    { "regime": "CSRD/ESRS E1", "fit": "screening_only",
+                      "why": "Database averages, one line unpriced." }
+                ],
+                "blocking_gaps": ["Supplier-specific factor for the SCOBY starter culture"]
+            },
+            "explanation": "One of two lines resolved against a published dataset; the \
+                            starter culture has no factor at this grain and is named as \
+                            a gap rather than priced at a proxy."
+        })
+    }
+
+    /// **The platform does the multiplication, and the model's own answer does
+    /// not survive.**
+    ///
+    /// This is the whole argument for the `Derived` tier here. A wrong product
+    /// of two plausible numbers is invisible: it type-checks, it renders, and
+    /// nobody recomputes a figure that came back formatted. So the handler
+    /// echoes the quantity, the agent retrieves the factor, and this function
+    /// owns the `*`.
+    #[test]
+    fn the_platform_multiplies_and_the_models_arithmetic_is_overwritten() {
+        let mut doc = carbon_reply();
+        // The model did the sum anyway, and got it wrong by a factor of ten —
+        // the single most likely arithmetic error and the least visible.
+        doc["inventory"]["items"][0]["kg_co2e"] = json!(0.589);
+        doc["inventory"]["total_kg_co2e"] = json!(0.589);
+
+        enforce("carbon_accountant", &mut doc);
+
+        let line = doc.pointer("/inventory/items/0/kg_co2e").unwrap().as_f64();
+        assert_eq!(
+            line,
+            Some(0.058905),
+            "0.02805 kg x 2.1 = 0.058905. The model said 0.589 and the \
+             platform's value must win, because a derivation is authoritative \
+             by construction and a guess that happened to agree loses nothing."
+        );
+        assert_eq!(
+            doc.pointer("/inventory/total_kg_co2e").unwrap().as_f64(),
+            Some(0.058905),
+            "the total is the sum of the lines shown; a total that does not \
+             add up is the error a reader will never find"
+        );
+        // And the audit string is the multiplication, spelled out, so the
+        // acceptance criterion "reproducible by hand" is met by the document
+        // rather than by a reader knowing the formula.
+        assert_eq!(
+            doc.pointer("/inventory/items/0/arithmetic")
+                .and_then(|v| v.as_str()),
+            Some("0.02805 kg x 2.1 kg CO2e/kg = 0.058905 kg CO2e")
+        );
+        // Retrieval survives the rewrite untouched: the transform writes three
+        // keys and copies the rest. A derivation that replaced the composite
+        // it only partly owns is the characteristic bug of this codebase.
+        assert_eq!(
+            doc.pointer("/inventory/items/0/source_url")
+                .and_then(|v| v.as_str()),
+            Some("https://ecoquery.ecoinvent.org/example")
+        );
+        assert_eq!(
+            doc.pointer("/inventory/items/0/dataset")
+                .and_then(|v| v.as_str()),
+            Some("ecoinvent 3.9.1")
+        );
+        // The verdict and its evidence are stamped apart, which is the seam the
+        // whole contract is built on: a scope allocation must never inherit a
+        // retrieval verdict it has not earned.
+        assert_eq!(
+            doc.get("inventory_provenance").and_then(|v| v.as_str()),
+            Some(PROV_TOOL)
+        );
+        assert_eq!(
+            doc.get("attribution_provenance").and_then(|v| v.as_str()),
+            Some(PROV_INFERRED)
+        );
+        assert_eq!(
+            doc.get("boundary_provenance").and_then(|v| v.as_str()),
+            Some(PROV_INFERRED)
+        );
+        assert!(
+            doc.get("explanation_provenance").is_none(),
+            "a retrieval verdict about a paragraph is a category error"
+        );
+    }
+
+    /// **An unretrievable factor yields null, and the total says so.**
+    ///
+    /// A total that silently omits three ingredients is the
+    /// `tool_no_match`-as-clearance failure in a different suit: a subset that
+    /// reads as a footprint. `coverage` and `unpriced_items` are derived
+    /// alongside the sum precisely so that it cannot be read alone.
+    #[test]
+    fn a_line_with_no_factor_is_null_and_the_total_is_partial_and_names_it() {
+        let mut doc = carbon_reply();
+        enforce("carbon_accountant", &mut doc);
+
+        assert!(
+            doc.pointer("/inventory/items/1/kg_co2e").unwrap().is_null(),
+            "no factor means no line total. A proxy here is the substitution \
+             nobody notices."
+        );
+        assert_eq!(
+            doc.pointer("/inventory/coverage").and_then(|v| v.as_str()),
+            Some("partial")
+        );
+        assert_eq!(
+            doc.pointer("/inventory/unpriced_items"),
+            Some(&json!(["starter_scoby"])),
+            "named rather than counted: the difference between a caveat and a \
+             work item is the supplier you can go and ask"
+        );
+
+        // Nothing resolved at all: null, never zero. Zero is a footprint claim
+        // and the strongest one in the document — and it is exactly what an
+        // empty sum produces by accident.
+        //
+        // Every retrieved field goes, not just the value, and the difference
+        // between the two is worth stating. A row carrying a dataset name and
+        // a URL but no usable number is a real state — the process page was
+        // found and the figure was not on it — and `enforce` correctly stamps
+        // that block `tool_verified`, because a tool did return content. Only
+        // when nothing came back at all is the verdict `tool_no_match`.
+        let mut empty = carbon_reply();
+        for f in [
+            "factor_kg_co2e_per_kg",
+            "source_url",
+            "dataset",
+            "reference_year",
+            "geography",
+            "lca_basis",
+        ] {
+            empty["inventory"]["items"][0][f] = Value::Null;
+        }
+        enforce("carbon_accountant", &mut empty);
+        assert!(
+            empty.pointer("/inventory/total_kg_co2e").unwrap().is_null(),
+            "a zero total would assert that this product emits nothing"
+        );
+        assert_eq!(
+            empty
+                .pointer("/inventory/coverage")
+                .and_then(|v| v.as_str()),
+            Some("none")
+        );
+        assert_eq!(
+            empty.get("inventory_provenance").and_then(|v| v.as_str()),
+            Some(PROV_NO_MATCH),
+            "the datasets were asked and had nothing. That is a gap needing a \
+             supplier-specific factor, and never a clearance."
+        );
+    }
+
+    /// **Prose naming a factor database nothing was retrieved from is nulled.**
+    ///
+    /// Clearing an uncited factor out of `inventory.items` while leaving
+    /// "roughly 0.4 kg CO2e per litre, mostly the hibiscus (ecoinvent)" in the
+    /// summary only relocates the fabrication into the sentence a human reads
+    /// — and `parse_evidence_text` lifts that string into the episode digest,
+    /// so it travels further than the document does.
+    #[test]
+    fn prose_may_not_name_a_dataset_the_search_never_reached() {
+        let mut doc = carbon_reply();
+        // The search came back with nothing for either line.
+        doc["inventory"]["items"][0]["factor_kg_co2e_per_kg"] = Value::Null;
+        doc["inventory"]["items"][0]["source_url"] = Value::Null;
+        doc["inventory"]["items"][0]["dataset"] = Value::Null;
+        doc["inventory"]["items"][0]["reference_year"] = Value::Null;
+        doc["inventory"]["items"][0]["geography"] = Value::Null;
+        doc["inventory"]["items"][0]["lca_basis"] = Value::Null;
+        doc["explanation"] = json!(
+            "Roughly 0.41 kg CO2e per litre, dominated by the hibiscus \
+             infusion; the ecoinvent factor for dried calyces carries most of it."
+        );
+
+        let report = enforce("carbon_accountant", &mut doc);
+
+        assert!(
+            doc.get("explanation").unwrap().is_null(),
+            "nulled rather than flagged: a gate cannot rewrite a sentence into \
+             honesty, and a fabricated footprint in prose is still a \
+             fabricated footprint"
+        );
+        assert!(
+            report
+                .violations
+                .iter()
+                .any(|v| v.path == "explanation" && v.kind == ViolationKind::NarrativeLeak),
+            "the removal must be reported, and the text retained on the \
+             violation so the claim can be checked later rather than lost: {:?}",
+            report.violations
+        );
+    }
+
+    /// The same prose is left alone once a factor really was retrieved — and
+    /// that direction matters more than the one above. A check that fires on
+    /// correct output gets switched off, and the switching-off looks like
+    /// cleanup. See `LeakRule::Quantity`'s note about GBIF.
+    #[test]
+    fn prose_may_quantify_a_footprint_once_a_factor_was_retrieved() {
+        let mut doc = carbon_reply();
+        doc["explanation"] = json!(
+            "The hibiscus infusion carries 0.0589 kg CO2e of the serving \
+             total, from the ecoinvent factor for dried calyces; the starter \
+             culture is unpriced and named as a gap."
+        );
+        enforce("carbon_accountant", &mut doc);
+        assert!(
+            doc.get("explanation")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| s.contains("ecoinvent")),
+            "an honest quantification, backed by a retrieved factor, was \
+             stripped. The needles are keyed on the `inventory` block for \
+             exactly this reason."
         );
     }
 

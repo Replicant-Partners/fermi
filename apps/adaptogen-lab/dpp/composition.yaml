@@ -91,9 +91,25 @@ physical:
   storage: refrigerated_2_8c
 
 carbon_intensity:
+  # mode vocabulary — an operator must be able to tell a retrieved number from
+  # a typed one, which is the whole argument of this App:
+  #   synthetic           a person typed it. Not evidence.
+  #   agent_calculated    retrieved emission factors x the quantities above,
+  #                       with the arithmetic performed by the platform in Rust.
+  #                       statement_ref carries the factors and their URLs.
+  #   supplier_declared   a supplier's own figure, ideally a published EPD.
+  #
+  # This block is still `synthetic`. 0.41 was typed by a person; no factor
+  # behind it was ever retrieved, and nothing here is reproducible.
+  # POST /api/workspaces/:id/actions/calculate_carbon replaces it with
+  # `agent_calculated`, where every kg CO2e is reproducible by hand from a
+  # cited factor and a BOM quantity, and `coverage` says whether the figure is
+  # the whole product or a subset of it.
   mode: synthetic
   value_kg_per_kg: 0.41
+  coverage: unknown
   scope_3_dominant: hibiscus_infusion
+  statement_ref: null
 
 allergens:
   present: []

@@ -337,6 +337,7 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
 .modal-actions{display:flex;gap:7px;justify-content:flex-end}
 .btn-end{background:var(--pur);color:#fff;border:none;border-radius:5px;padding:6px 15px;font-size:12px;font-weight:700;cursor:pointer}
 .btn-end:hover{opacity:.85}.btn-end:disabled{opacity:.4;cursor:not-allowed}
+
 /* ── companion shelf ── */
 .shelf{position:fixed;top:0;right:0;bottom:0;width:380px;background:var(--s1);border-left:1px solid var(--b1);
   display:flex;flex-direction:column;transform:translateX(100%);transition:transform .18s ease;z-index:60}
@@ -515,13 +516,33 @@ body.shelf-open .shelf-handle{right:380px}
       <div class="sco-prov">items: sourced (web_search) · risks: model_inference · summary: model_inference</div>
       <div id="sco-result" class="sco-result"></div>
     </div>
-    <div class="sh"><span class="sh-label">Carbon</span><span class="sh-rule"></span></div>
-    <div class="not-conn">
-      <div class="nc-title">🌱 Carbon footprint</div>
-      <div class="nc-desc">No carbon data connected to this workspace.</div>
-      <div class="nc-what">
-        When the Supply Chain Oracle runs and a BOM is priced, Scope 3 can be estimated from ingredient origins and transport distances. Carbon disclosure is <a href="https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32023R1542" target="_blank" style="color:var(--blu)">mandatory in EU Battery DPP</a> and will be required for food. This field positions your DPP ahead of the mandate.
+    <div class="sh"><span class="sh-label">Carbon</span><span class="sh-rule"></span><span style="font-size:9px;color:var(--t3)">dpp/carbon/statement.yaml</span></div>
+    <!-- Same card pattern again. This one is the third fixture in the App and
+         the one with a deadline behind it: `carbon_intensity.mode: synthetic`
+         in the composition is a number a person typed. -->
+    <div class="sco-card" id="ca-card">
+      <div class="sco-header">
+        <span class="sco-icon">🌱</span>
+        <span class="sco-name">carbon_accountant</span>
+        <span class="sco-badge sb-cost" id="ca-badge">spends credits</span>
       </div>
+      <div class="sco-desc">
+        Retrieves one emission factor per BOM line from the published inventory corpus — <code style="color:var(--blu);font-size:10px">ecoinvent</code>, <code style="color:var(--blu);font-size:10px">Agribalyse</code>, <code style="color:var(--blu);font-size:10px">DEFRA</code> — with the dataset, geography, reference year and source URL attached, and classifies each line against the GHG Protocol scopes.
+        <strong>The agent does not multiply.</strong> The handler multiplies the BOM quantity by the retrieved factor in Rust and overwrites whatever the model replied, because a confidently wrong product of two plausible numbers looks exactly like a right one and nobody recomputes a figure that came back formatted.
+      </div>
+      <div id="ca-current"></div>
+      <div style="display:flex;gap:6px">
+        <button class="btn-agent btn-sm" id="ca-run-btn" onclick="runCarbon(false)" style="flex:1;justify-content:center">⚡ Calculate carbon →</button>
+        <button class="btn-g btn-sm" id="ca-force-btn" onclick="runCarbon(true)" title="Recalculate even though a statement exists. Factors are expensive to retrieve and do not change between runs, so the endpoint is a cache read by default.">↻</button>
+      </div>
+      <div class="cost-note" style="margin-top:5px">
+        real web searches · up to ~300s · charges the workspace wallet · reads the <strong>committed</strong> <code style="font-size:9px">dpp/composition.yaml</code>, so save BOM edits first
+      </div>
+      <div class="sco-prov">factors: tool_verified | tool_no_match | unavailable_no_tool_source · arithmetic: platform_derived · scope, boundary, fitness: model_inference</div>
+      <div id="ca-result" class="sco-result"></div>
+    </div>
+    <div style="font-size:10px;color:var(--t2);line-height:1.55;margin-bottom:10px">
+      Carbon disclosure is already <a href="https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32023R1542" target="_blank" style="color:var(--blu)">mandatory in the EU Battery DPP</a>, CBAM enters its definitive stage in 2026, and ESRS E1 under CSRD is the shape food is being pulled toward. Each of those regimes wants a different standard of evidence from the same number, which is why the statement says what it is <em>fit for</em> rather than reporting a confidence score.
     </div>
   </div>
 
@@ -745,6 +766,16 @@ function showTab(name) {
   });
   if (name === 'claims' && wsId()) loadClaimsCards();
   if (name === 'ingredients' && wsId()) loadBomYaml();
+  // The carbon card shows what the composition currently CLAIMS above the
+  // button that would replace it, so the tab needs the composition loaded even
+  // though its own controls do not read the BOM — the handler does that
+  // server-side from git. Without this the fixture line is blank until the user
+  // happens to visit the BOM tab first.
+  if (name === 'carbon' && wsId()) {
+    if (!bomYamlText) loadBomYaml().then(renderCarbonFixture);
+    else renderCarbonFixture();
+    renderCarbonPanel();
+  }
 }
 
 // ── jurisdiction filter ─────────────────────────────────────────────────────
@@ -807,8 +838,21 @@ function renderWorkspaceList(workspaces, live) {
 // Clear everything scoped to the workspace we are leaving.
 function resetWorkspaceState() {
   if (evalTicker) { clearInterval(evalTicker); evalTicker = null; }
+  if (carbonTicker) { clearInterval(carbonTicker); carbonTicker = null; }
   evalRun = null;
   evalDocs = {};
+  // A carbon statement belongs to one product. Carrying the last workspace's
+  // total into the next one would show a figure for a bill of materials it was
+  // never computed from — the same class of error as the supply-chain card
+  // reading "hired" in a workspace the agent had never joined.
+  carbonRun = null;
+  // The composition goes with it, and both halves together: the carbon card
+  // reads `bomYamlText`, and clearing the text alone leaves a window in which
+  // `saveBomYaml` would splice the old product's ingredients onto an empty
+  // document. `selectWorkspace` calls `loadBomYaml()` straight after, which
+  // refills both.
+  bomYamlText = '';
+  bomIngredients = [];
   oracleHired = false;
   const badge = document.getElementById('sco-badge');
   if (badge) { badge.textContent = 'not hired'; badge.className = 'sco-badge sb-not'; }
@@ -816,10 +860,14 @@ function resetWorkspaceState() {
   if (hireBtn) { hireBtn.style.display = ''; hireBtn.disabled = false; hireBtn.textContent = 'Hire agent \u2192'; }
   const runBtn = document.getElementById('sco-run-btn');
   if (runBtn) runBtn.style.display = 'none';
-  for (const id of ['sco-result', 'rlt-result', 'eval-panel']) {
+  for (const id of ['sco-result', 'rlt-result', 'eval-panel', 'ca-result', 'ca-current']) {
     const el = document.getElementById(id);
     if (el) { el.innerHTML = ''; el.classList?.remove('show'); }
   }
+  ['ca-run-btn', 'ca-force-btn'].forEach(i => {
+    const b = document.getElementById(i);
+    if (b) b.disabled = false;
+  });
   document.querySelectorAll('.eval-launch').forEach(b => { b.disabled = false; });
   activityReset();
 }
@@ -1316,12 +1364,14 @@ async function loadBomYaml() {
       const ta = document.getElementById('bom-ta');
       if (ta) ta.value = bomYamlText;
       renderIngCards();
+      renderCarbonFixture();
       const addBtn = document.getElementById('add-ing-btn');
       const footer = document.getElementById('bom-footer');
       if (addBtn) addBtn.style.display = '';
       if (footer) footer.style.display = '';
     } else {
       bomYamlText = ''; bomIngredients = [];
+      renderCarbonFixture();
       if (container) container.innerHTML = `<div style="font-size:10px;color:var(--amb);padding:2px 0">○ No BOM yet — add ingredients or import below</div>`;
       if (area) area.style.display = '';
       renderIngCards();
@@ -1818,33 +1868,39 @@ async function readSpend() {
   } catch { return null; }
 }
 
-async function settleSpend(before) {
-  if (!before || before.spent == null) return;
+// `run` and `rerender` are parameters rather than the closed-over `evalRun`
+// because a second agent now spends the wallet the same way. The alternative was
+// a second copy of the poll-the-ledger-and-admit-it-if-it-has-not-settled logic,
+// and two subtly different answers to "what did that cost" across one page is
+// the drift this repo keeps paying for. Defaults keep the evaluator's call site
+// unchanged.
+async function settleSpend(before, run = evalRun, rerender = renderEvalPanel) {
+  if (!before || before.spent == null || !run) return;
   for (let i = 0; i < 6; i++) {
     await new Promise(r => setTimeout(r, 1500));
     const now = await readSpend();
     if (now && now.spent != null && now.spent > before.spent) {
-      evalRun.creditsSpent = now.spent - before.spent;
-      evalRun.balanceAfter = now.balance;
+      run.creditsSpent = now.spent - before.spent;
+      run.balanceAfter = now.balance;
       activityPush({
         severity: 'info', source: 'ledger', node: null,
-        summary: `Run charged ${evalRun.creditsSpent} credits`,
-        context: [['balance', now.balance], ['claims', evalRun.done],
-                  ['elapsed', `${Math.round((Date.now() - evalRun.startedAt)/1000)}s`]],
+        summary: `Run charged ${run.creditsSpent} credits`,
+        context: [['balance', now.balance], [run.unit ?? 'claims', run.done],
+                  ['elapsed', `${Math.round((Date.now() - run.startedAt)/1000)}s`]],
       });
-      renderEvalPanel();
+      rerender();
       return;
     }
   }
-  evalRun.creditsSpent = null;
-  evalRun.costNote = 'charge had not settled in the ledger yet — re-open the Activity panel to refresh';
+  run.creditsSpent = null;
+  run.costNote = 'charge had not settled in the ledger yet — re-open the Activity panel to refresh';
   activityPush({
     severity: 'warn', source: 'ledger', node: null,
     summary: 'Cost not yet readable',
     detail: 'The execution fee is charged in a background task after the response. '
           + 'It had not appeared in the ledger within ~9s. Refresh to re-read.',
   });
-  renderEvalPanel();
+  rerender();
 }
 
 function evalPanelHTML() {
@@ -2082,6 +2138,380 @@ async function drainEvaluation({ claimIds, force, total, label, markets: marketO
   await settleSpend(spendBefore);
 }
 
+
+// ── Product carbon ──────────────────────────────────────────────────────────
+//
+// POST /api/workspaces/:id/actions/calculate_carbon
+//
+// Sibling of the claims evaluator, and the differences are the interesting
+// part rather than an inconsistency:
+//
+//   * ONE request, not a drain. There is one bill of materials per product, so
+//     there is nothing to page through and no `remaining`.
+//   * It reads the COMMITTED dpp/composition.yaml from workspace git, not the
+//     textarea. `runBOM()` posts the in-memory BOM because it prices whatever
+//     you are currently editing; this reads what was saved, because a carbon
+//     statement is persisted beside the document it describes and a statement
+//     about an uncommitted draft could never be reproduced. Hence the "save
+//     BOM edits first" note on the card — the one place the two diverge in a
+//     way a user can trip over.
+//   * The arithmetic is not the agent's. The response carries
+//     `model_arithmetic`, which is how often the model multiplied anyway and
+//     was wrong. That is surfaced rather than swallowed: the platform's
+//     derivation makes every stored row correct by construction, so without
+//     this number the one behaviour the design forbids would be invisible.
+
+const ACCOUNTANT = 'carbon_accountant';
+let carbonRun = null;        // { active, ok, statement, ... } for the panel
+let carbonTicker = null;
+
+// What the composition currently claims, read out of the YAML already in
+// memory. Rendered above the button so the thing being replaced is visible
+// next to the thing that replaces it — `mode: synthetic` is a person having
+// typed 0.41, and the whole argument of this App is that an operator can tell
+// that apart from a retrieved figure.
+// Line-based, not a regex, and mirroring `rewrite_carbon_intensity` in
+// src/handlers/workspace/carbon.rs: find the top-level key, take the indented
+// lines under it, stop at the next line in column zero. The first attempt was a
+// regex and had two defects worth recording — `\Z` is not a JavaScript anchor
+// (it matches a literal Z, so the block ran to end of file whatever followed),
+// and `\s*$` can consume newlines, so the header match could overshoot into the
+// body. A YAML block is a line structure; parsing it by lines is both correct
+// and the same shape as the Rust that rewrites it.
+function carbonIntensityFields(yaml) {
+  const lines = (yaml || '').split('\n');
+  const start = lines.findIndex(l => l.startsWith('carbon_intensity:'));
+  if (start < 0) return null;
+  const out = {};
+  for (let i = start + 1; i < lines.length; i++) {
+    const l = lines[i];
+    if (l.trim() === '') continue;
+    if (!/^[ \t]/.test(l)) break;          // next top-level key ends the block
+    if (/^\s*#/.test(l)) continue;         // the mode vocabulary comment
+    const m = l.match(/^\s+([A-Za-z0-9_]+):\s*(.*)$/);
+    if (m) out[m[1]] = m[2].split('#')[0].trim();
+  }
+  return out;
+}
+
+function carbonFixtureHTML() {
+  if (!bomYamlText) return '';
+  const fields = carbonIntensityFields(bomYamlText);
+  if (!fields) return '';
+  const field = (k) => (fields[k] === '' ? undefined : fields[k]);
+  const mode = field('mode');
+  if (!mode) return '';
+  const value = field('value_kg_per_kg');
+  const coverage = field('coverage');
+  const styles = {
+    synthetic:        ['var(--amb)', 'typed by a person \u2014 not evidence'],
+    agent_calculated: ['var(--grn)', 'retrieved factors \u00d7 BOM quantities, multiplied by the platform'],
+    supplier_declared:['var(--blu)', "a supplier's own figure"],
+  };
+  const [colour, gloss] = styles[mode] ?? ['var(--t3)', 'unrecognised mode'];
+  return `<div style="font-size:10px;font-family:var(--mono);color:var(--t2);background:var(--s1);
+                      border-left:2px solid ${colour};padding:6px 9px;margin-bottom:8px;border-radius:0 4px 4px 0">
+    <div>composition now says <span style="color:${colour};font-weight:700">mode: ${esc(mode)}</span></div>
+    <div style="color:var(--t3);margin-top:2px">value_kg_per_kg: ${esc(value ?? 'null')}${
+      coverage && coverage !== 'unknown' ? ` \u00b7 coverage: ${esc(coverage)}` : ''}</div>
+    <div style="color:var(--t3);margin-top:3px;font-family:var(--sans)">${gloss}</div>
+  </div>`;
+}
+
+function renderCarbonFixture() {
+  const el = document.getElementById('ca-current');
+  if (el) el.innerHTML = carbonFixtureHTML();
+}
+
+async function runCarbon(force) {
+  const id = wsId();
+  if (!isLiveMode()) { alert('Select a product workspace first \u2014 the statement is written into its git and charged to its wallet.'); return; }
+  if (carbonRun?.active) { alert('A carbon calculation is already in flight.'); return; }
+
+  carbonRun = { active: true, unit: 'BOM lines', done: 0, startedAt: Date.now(),
+                ok: false, error: null, statement: null, written: [], forced: !!force };
+  const buttons = ['ca-run-btn', 'ca-force-btn'].map(i => document.getElementById(i)).filter(Boolean);
+  buttons.forEach(b => { b.disabled = true; });
+  const runBtn = document.getElementById('ca-run-btn');
+  const runLabel = runBtn?.innerHTML;
+  if (runBtn) runBtn.innerHTML = '<span class="spinner"></span>Retrieving factors\u2026';
+  renderCarbonPanel();
+  if (carbonTicker) clearInterval(carbonTicker);
+  carbonTicker = setInterval(renderCarbonPanel, 1000);
+
+  const spendBefore = await readSpend();
+  activityPush({
+    severity: 'info', source: `agent:${ACCOUNTANT}`, node: 'calculate_carbon',
+    summary: `Calculating product carbon${force ? ' (forced)' : ''}`,
+    context: [['boundary', 'cradle_to_gate'], ['region', 'EU'],
+              ['reads', COMPOSITION_PATH + ' (committed)'],
+              ['balance before', spendBefore?.balance ?? 'unknown']],
+  });
+
+  try {
+    // No client-side timeout: RUN_TIMEOUT_SECS in carbon.rs is 300s, and the
+    // work is up to four rounds of web_search inside a five-iteration tool
+    // loop. A poll budget shorter than the work it waits for reports a
+    // timeout that is really impatience.
+    const res = await fetch(`${base()}/api/workspaces/${id}/actions/calculate_carbon`,
+      fetchOpts('POST', { boundary: 'cradle_to_gate', region: 'EU', force: !!force }));
+
+    if (!res.ok) {
+      // The handler's refusals are written to be read: a 503 names the
+      // credential and where it has to live, a 404 explains why a BOM-less
+      // workspace cannot be costed. Show the server's own text rather than a
+      // status code, because the text is the actionable part.
+      const body = (await res.text()).slice(0, 900);
+      carbonRun.error = `HTTP ${res.status}\n\n${body}`;
+      activityPush({
+        severity: res.status === 503 ? 'warn' : 'error',
+        source: `agent:${ACCOUNTANT}`, node: 'calculate_carbon',
+        summary: res.status === 503
+          ? 'Carbon accounting refused to run rather than degrade'
+          : `calculate_carbon failed (HTTP ${res.status})`,
+        detail: body,
+      });
+      return;
+    }
+
+    const data = await res.json();
+    carbonRun.ok = true;
+    carbonRun.statement = data.statement ?? null;
+    carbonRun.response = data;
+    carbonRun.written = data.written_paths ?? [];
+    const inv = data.statement?.inventory ?? {};
+    carbonRun.done = (inv.items ?? []).length;
+
+    if (data.skipped) {
+      // Already calculated and not forced. Not a failure, and the note says so.
+      activityPush({
+        severity: 'info', source: `agent:${ACCOUNTANT}`, node: 'calculate_carbon',
+        summary: 'A carbon statement already exists \u2014 nothing was spent',
+        detail: data.note,
+      });
+      return;
+    }
+
+    const unpriced = inv.unpriced_items ?? [];
+    const disagreements = data.model_arithmetic?.disagreements ?? 0;
+    const violations = data.grounding_summary?.violation_count ?? 0;
+    activityPush({
+      severity: (violations || disagreements) ? 'warn' : 'success',
+      source: `agent:${ACCOUNTANT}`, node: 'calculate_carbon',
+      summary: inv.total_kg_co2e != null
+        ? `Carbon statement written \u00b7 ${inv.total_kg_co2e} kg CO2e \u00b7 coverage ${inv.coverage ?? '?'}`
+        : 'Carbon statement written \u2014 no factor resolved, so the total is null rather than zero',
+      detail: violations
+        ? 'Fields the agent could not ground were nulled before storage.'
+        : (disagreements ? 'The model priced some lines itself and disagreed with the platform\u2019s arithmetic. The platform\u2019s values were stored.' : null),
+      context: [
+        ['factors', inv.inventory_provenance ?? data.statement?.inventory_provenance ?? 'n/a'],
+        ['coverage', inv.coverage ?? 'n/a'],
+        ['unpriced', unpriced.length ? unpriced.join(' ') : 'none'],
+        ['model arithmetic', `${disagreements} disagreement(s) of ${data.model_arithmetic?.lines_the_model_priced ?? 0} priced`],
+        ['gate', data.grounding_summary?.is_clean ? 'clean' : `${violations} violation(s)`],
+        ['duration', data.duration_ms != null ? `${(data.duration_ms/1000).toFixed(1)}s` : 'n/a'],
+      ],
+    });
+    if (!carbonRun.written.length) {
+      carbonRun.note = 'The statement was produced but not committed to the workspace, so it will not be found on reload.';
+    }
+  } catch (e) {
+    carbonRun.error = `network/transport: ${e.message}`;
+    activityPush({
+      severity: 'error', source: `agent:${ACCOUNTANT}`, node: 'calculate_carbon',
+      summary: 'calculate_carbon did not complete', detail: e.message,
+    });
+  } finally {
+    carbonRun.active = false;
+    if (carbonTicker) { clearInterval(carbonTicker); carbonTicker = null; }
+    buttons.forEach(b => { b.disabled = false; });
+    if (runBtn && runLabel) runBtn.innerHTML = runLabel;
+    renderCarbonPanel();
+  }
+
+  // Re-read the composition so the block above the button shows what the
+  // handler just rewrote. This is the demonstration, not a refresh: the same
+  // field that said `synthetic` now says `agent_calculated` and points at the
+  // statement.
+  if (carbonRun.ok) { await loadBomYaml(); renderCarbonFixture(); renderKB(); }
+  await settleSpend(spendBefore, carbonRun, renderCarbonPanel);
+}
+
+// ── the statement, rendered ──────────────────────────────────────────────────
+//
+// Laid out so the three kinds of claim cannot be read as one. Each line shows
+// the retrieved factor WITH its dataset, geography and year, then the
+// multiplication spelled out. A reader can check any row by hand, which is the
+// property the whole design exists to produce.
+
+// The two geographies are shown side by side and NOT adjudicated, which is a
+// decision rather than laziness. A European average standing in for an Egyptian
+// supplier is the substitution nobody notices, so surfacing both is the point —
+// but deciding whether they MATCH is a string comparison between an ISO code and
+// a prose origin, and the first version warned whenever the geography did not
+// contain the origin's first word. That fires on `geography: EG` against
+// `origin: Egypt / Sudan`, which is exactly right and would have been flagged as
+// a proxy. A check that fires on correct output gets switched off, and the
+// switching-off looks like cleanup (see LeakRule::Quantity's note about GBIF in
+// src/grounding_trust.rs). The adjudication belongs to
+// `assurance.needs_expert`, where the agent can see the dataset; the panel's job
+// is to put both values where a human can read them at once.
+function carbonLineHTML(item, attribution) {
+  const factor = item.factor_kg_co2e_per_kg;
+  const kg = item.kg_co2e;
+  const att = (attribution ?? []).find(a => a.item_id === item.item_id);
+  const name = item.bom_name ?? item.material ?? item.item_id;
+
+  if (factor == null || kg == null) {
+    // A gap, stated as one. Never a zero: zero is a footprint claim and the
+    // strongest one in the document.
+    return `<div style="padding:6px 0;border-bottom:1px solid var(--b1)">
+      <div style="display:flex;gap:6px;align-items:baseline">
+        <span style="flex:1;font-size:11px;color:var(--t2)">${esc(name)}</span>
+        <span style="font-size:10px;font-family:var(--mono);color:var(--amb)">no factor</span>
+      </div>
+      <div style="font-size:9px;color:var(--t3);font-family:var(--mono);margin-top:2px">
+        ${item.activity_qty_kg == null
+          ? 'no resolvable quantity \u00b7 excluded from the total'
+          : `${item.activity_qty_kg} kg \u00b7 no published factor retrieved \u00b7 excluded from the total`}
+      </div>
+    </div>`;
+  }
+
+  const src = item.source_url
+    ? `<a href="${esc(item.source_url)}" target="_blank" style="color:var(--blu)">${esc(item.dataset ?? 'source')}</a>`
+    : `<span style="color:var(--amb)">${esc(item.dataset ?? 'dataset not named')}</span>`;
+  const scope = att?.scope
+    ? `<span title="${esc(att.rationale ?? '')}" style="color:var(--pur)">${esc(att.scope)}${
+        att.ghg_protocol_category != null ? ` cat ${esc(att.ghg_protocol_category)}` : ''}</span>`
+    : '<span style="color:var(--t3)">unallocated</span>';
+
+  return `<div style="padding:6px 0;border-bottom:1px solid var(--b1)">
+    <div style="display:flex;gap:6px;align-items:baseline">
+      <span style="flex:1;font-size:11px">${esc(name)}</span>
+      <span style="font-size:11px;font-family:var(--mono);font-weight:700">${esc(kg)}</span>
+      <span style="font-size:9px;color:var(--t3)">kg CO2e</span>
+    </div>
+    <div style="font-size:9px;color:var(--t3);font-family:var(--mono);margin-top:2px">
+      ${esc(item.arithmetic ?? `${item.activity_qty_kg} \u00d7 ${factor}`)}
+    </div>
+    <div style="font-size:9px;color:var(--t3);margin-top:2px">
+      ${src} \u00b7 ${esc(item.geography ?? 'geography unstated')} \u00b7 ${esc(item.reference_year ?? 'year unstated')}
+      \u00b7 ${esc(item.lca_basis ?? 'basis unstated')} \u00b7 ${scope}
+    </div>
+    ${item.bom_origin ? `<div style="font-size:9px;color:var(--t3);margin-top:2px">
+      factor geography <span style="color:var(--t2)">${esc(item.geography ?? 'unstated')}</span>
+      \u00b7 BOM origin <span style="color:var(--t2)">${esc(item.bom_origin)}</span>
+    </div>` : ''}
+  </div>`;
+}
+
+function carbonPanelHTML() {
+  const r = carbonRun;
+  if (!r) return '';
+
+  if (r.active) {
+    return `<div style="font-size:11px;color:var(--t3)">
+      <span class="spinner"></span> ${esc(ACCOUNTANT)} running \u2014 one web_search per BOM line against the inventory corpus\u2026
+      <div style="font-size:10px;margin-top:4px">up to ~300s. The arithmetic happens in Rust after the reply comes back.</div>
+    </div>`;
+  }
+  if (r.error) {
+    return `<div style="font-size:11px;color:var(--red);white-space:pre-wrap;line-height:1.5">${esc(r.error)}</div>`;
+  }
+  if (r.response?.skipped) {
+    return `<div style="font-size:11px;color:var(--t2);line-height:1.55">
+      A statement already exists at <code style="font-size:10px">${esc(r.response.statement_path)}</code>, and nothing was spent.
+      <div style="font-size:10px;color:var(--t3);margin-top:4px">${esc(r.response.note ?? '')}</div>
+      <div style="font-size:10px;margin-top:5px">Use \u21bb to recalculate.</div>
+    </div>`;
+  }
+  if (!r.statement) return '';
+
+  const inv = r.statement.inventory ?? {};
+  const items = inv.items ?? [];
+  const att = r.statement.attribution?.items ?? [];
+  const b = r.statement.boundary ?? {};
+  const a = r.statement.assurance ?? {};
+  const ma = r.response?.model_arithmetic ?? {};
+  const fl = r.response?.factor_ledger ?? {};
+  const covColour = { complete: 'var(--grn)', partial: 'var(--amb)', none: 'var(--red)' }[inv.coverage] ?? 'var(--t3)';
+
+  const total = inv.total_kg_co2e != null
+    ? `<span style="font-size:17px;font-weight:700;font-family:var(--mono)">${esc(inv.total_kg_co2e)}</span>
+       <span style="font-size:10px;color:var(--t3)"> kg CO2e</span>`
+    : `<span style="font-size:13px;font-weight:700;color:var(--amb)">null</span>
+       <span style="font-size:10px;color:var(--t3)"> \u2014 no factor resolved. Not zero: zero would be a footprint claim.</span>`;
+
+  const fitness = (a.regulatory_fitness ?? []).map(f => {
+    const c = { adequate:'var(--grn)', screening_only:'var(--amb)', inadmissible:'var(--red)' }[f.fit] ?? 'var(--t3)';
+    return `<div style="font-size:10px;margin-top:3px" title="${esc(f.why ?? '')}">
+      <span style="color:${c};font-weight:700">${esc(f.fit ?? '?')}</span>
+      <span style="color:var(--t2)"> \u00b7 ${esc(f.regime ?? '?')}</span></div>`;
+  }).join('');
+
+  return `
+  <div style="border-top:1px solid var(--b1);margin-top:8px;padding-top:9px">
+    <div style="display:flex;align-items:baseline;gap:8px">
+      <div style="flex:1">${total}</div>
+      <span style="font-size:10px;font-family:var(--mono);color:${covColour};font-weight:700">
+        coverage: ${esc(inv.coverage ?? '?')}</span>
+    </div>
+    <div style="font-size:9px;color:var(--t3);font-family:var(--mono);margin-top:3px">
+      per serving \u00b7 ${esc(b.declared ?? 'boundary unstated')} \u00b7 factors:
+      ${esc(r.statement.inventory_provenance ?? '?')} \u00b7 arithmetic: platform_derived
+    </div>
+    ${(inv.unpriced_items ?? []).length ? `<div style="font-size:10px;color:var(--amb);margin-top:5px;line-height:1.5">
+      \u26a0 This total is a <strong>subset</strong> of the product's footprint. Excluded for want of a factor or a quantity:
+      <code style="font-size:9px">${(inv.unpriced_items ?? []).map(esc).join(', ')}</code>
+    </div>` : ''}
+
+    <div style="margin-top:9px">${items.map(i => carbonLineHTML(i, att)).join('')}</div>
+
+    <div style="font-size:10px;color:var(--t2);margin-top:9px;line-height:1.55">
+      <div style="font-size:9px;color:var(--t3);font-family:var(--mono);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">boundary \u00b7 model_inference</div>
+      ${b.excluded?.length ? `Excluded: ${b.excluded.map(esc).join(', ')}.` : 'No exclusions stated \u2014 which for a cradle-to-gate figure is itself worth questioning.'}
+      ${b.exclusion_rationale ? ` ${esc(b.exclusion_rationale)}` : ''}
+      ${b.standard_followed ? `<div style="color:var(--t3);margin-top:2px">Read against ${esc(b.standard_followed)}.</div>` : ''}
+    </div>
+
+    ${fitness ? `<div style="margin-top:9px">
+      <div style="font-size:9px;color:var(--t3);font-family:var(--mono);text-transform:uppercase;letter-spacing:.4px">fit for \u00b7 model_inference</div>
+      ${fitness}
+    </div>` : ''}
+
+    <div style="font-size:10px;margin-top:9px;color:${a.needs_expert ? 'var(--amb)' : 'var(--t3)'}">
+      ${a.needs_expert ? '\u26a0 needs expert review' : 'no expert review flagged'}
+      \u00b7 verification: <code style="font-size:9px">${esc(a.verification_status ?? 'unverified')}</code>
+    </div>
+    ${(a.blocking_gaps ?? []).length ? `<div style="font-size:10px;color:var(--t2);margin-top:4px;line-height:1.5">
+      To move up a tier: ${a.blocking_gaps.map(esc).join('; ')}.</div>` : ''}
+
+    ${r.statement.explanation ? `<div style="font-size:10px;color:var(--t2);margin-top:9px;line-height:1.6;
+        border-left:2px solid var(--b2);padding-left:8px">${esc(r.statement.explanation)}</div>`
+      : `<div style="font-size:10px;color:var(--amb);margin-top:9px;line-height:1.5">
+          The explanation was nulled by the grounding gate \u2014 prose naming a factor database, or stating a CO2e quantity, when no factor came back. A gate cannot rewrite a sentence into honesty.</div>`}
+
+    <div style="font-size:9px;color:var(--t3);font-family:var(--mono);margin-top:9px;padding-top:7px;border-top:1px solid var(--b1);line-height:1.6">
+      model arithmetic: ${esc(ma.disagreements ?? 0)} disagreement(s) of ${esc(ma.lines_the_model_priced ?? 0)} line(s) it priced itself${
+        (ma.disagreements ?? 0) ? ' \u2014 the platform\u2019s values were stored' : ''}<br>
+      factor ledger: ${esc(fl.recorded ?? 0)} recorded${
+        (fl.not_comparable ?? 0) ? `, ${esc(fl.not_comparable)} not comparable` : ''}${
+        (fl.hints_offered ?? 0) ? ` \u00b7 ${esc(fl.hints_offered)} line(s) had a prior identification` : ''}<br>
+      gate: ${r.response?.grounding_summary?.is_clean ? 'clean' : `${esc(r.response?.grounding_summary?.violation_count ?? 0)} violation(s)`}
+      \u00b7 ${esc(r.response?.duration_ms != null ? (r.response.duration_ms/1000).toFixed(1) + 's' : 'n/a')}
+      ${r.creditsSpent != null ? ` \u00b7 ${esc(r.creditsSpent)} credits` : (r.costNote ? ` \u00b7 ${esc(r.costNote)}` : '')}<br>
+      ${r.written.length ? `written: ${r.written.map(esc).join(', ')}` : `<span style="color:var(--amb)">not committed</span>`}
+    </div>
+    ${r.note ? `<div style="font-size:10px;color:var(--amb);margin-top:5px">${esc(r.note)}</div>` : ''}
+  </div>`;
+}
+
+function renderCarbonPanel() {
+  const el = document.getElementById('ca-result');
+  if (el) el.innerHTML = carbonPanelHTML();
+}
 
 // ── The companion shelf ─────────────────────────────────────────────────────
 //
@@ -2549,8 +2979,20 @@ async function activityLoad() {
         .sort((x, y) => y.duration_ms - x.duration_ms)[0];
       if (slowest) ctx.push(['slowest claim', `${slowest.claim_id} ${(slowest.duration_ms/1000).toFixed(1)}s`]);
 
-      const sev = r?.failed ? 'error' : (r?.violations ? 'warn'
-                : (a.action_type === 'evaluate_claims' ? 'success' : 'info'));
+      // `calculate_carbon` joins `evaluate_claims` as an action whose completion
+      // is a success rather than a bare record: both ran an agent and wrote
+      // something. Its `apply_result` also carries
+      // `model_arithmetic_disagreements`, a warning in its own right — the
+      // platform stored correct values, the model tried to supply its own and was
+      // wrong, and that is the behaviour the derivation would otherwise hide.
+      const AGENT_ACTIONS = ['evaluate_claims', 'calculate_carbon'];
+      const arithmeticOff = r?.model_arithmetic_disagreements ?? 0;
+      if (arithmeticOff) ctx.push(['model arithmetic', `${arithmeticOff} disagreement(s)`]);
+      if (r?.coverage) ctx.push(['coverage', r.coverage]);
+      if (r?.total_kg_co2e != null) ctx.push(['total kg CO2e', r.total_kg_co2e]);
+      if (r?.factors_recorded != null) ctx.push(['factors to ledger', r.factors_recorded]);
+      const sev = r?.failed ? 'error' : ((r?.violations || arithmeticOff) ? 'warn'
+                : (AGENT_ACTIONS.includes(a.action_type) ? 'success' : 'info'));
       return {
         seq: 0,
         at: a.created_at, last_at: a.created_at,
@@ -2577,6 +3019,7 @@ const KB = [
   { s:'ok',   t:'Grounding gate ran',          d:'gate_lens_output · 5 claims · 0 violations · tool_verified', a:'lens_rendering::gate_lens_output' },
   { s:'ok',   t:'Comparison committed',        d:'regulatory-lens/comparisons/three-lens.json', a:'workspace_git.commit_file' },
   { s:'pend', t:'Web search verification',     d:'EFSA register · 21 CFR updates · SAMR announcements', a:'regulatory_lens_translator · web_search · POST /actions/evaluate_claims', id:'web' },
+  { s:'pend', t:'Product carbon retrieved',    d:'one emission factor per BOM line · arithmetic performed by the platform, not the model', a:'carbon_accountant · web_search · POST /actions/calculate_carbon', id:'carbon' },
   { s:'wait', t:'Expert endorsement',          d:'Regulatory consultant review · human-in-the-loop sign-off', a:'pending_human_check → human_endorsed', id:'expert' },
 ];
 let endorsed = {};
@@ -2589,8 +3032,13 @@ function renderKB() {
   el.innerHTML = KB.map(item => {
     // The 'web' step is done once at least one row is served from a stored
     // agent evaluation — read from row_sources, not asserted.
+    // Each step's completion is READ rather than asserted. Carbon is done once a
+    // run in this session actually produced a statement; `partial` coverage still
+    // counts, because a partial figure that names its gaps is the honest outcome
+    // and not a failed step.
     const st = (item.id && endorsed[item.id]) ? 'endorsed'
       : (item.id === 'web' && (lastRowSources?.agent_evaluation ?? 0) > 0) ? 'ok'
+      : (item.id === 'carbon' && carbonRun?.statement?.inventory) ? 'ok'
       : item.s;
     const endBtn = item.id && !endorsed[item.id]
       ? `<button class="end-btn" onclick="openEndorse('${item.id}','${esc(item.t)}','${esc(item.d)}')">Endorse →</button>`
@@ -3121,6 +3569,7 @@ window.addEventListener('DOMContentLoaded', () => {
   checkAuth(); // reads abw_session cookie, populates auth-status, fetches workspaces if logged in
 });
 </script>
+
 <!-- The companion shelf. A third column rather than a sidebar tab: both
      things on it are about a run in progress, and a run is exactly when you
      cannot afford to navigate away from the table you are reading. -->
