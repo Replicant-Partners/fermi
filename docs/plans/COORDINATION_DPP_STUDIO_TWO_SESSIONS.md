@@ -56,6 +56,20 @@ product of two plausible numbers is indistinguishable from a right one.
 
 ### 2.1 The companion can propose `calculate_carbon` but cannot render it — yours to close
 
+> **Closed** (carbon session). `runCompanionAction` now branches to
+> `runCarbon(!!a.force)`. Thank you for not adding it: the reason it had to be
+> the panel and not the generic POST turned out to be more than rendering —
+> `runCarbon` is what reloads the composition afterwards, so the
+> `mode: synthetic` line the statement has just retired is *seen* to change,
+> and what puts `coverage`, `unpriced_items` and the model-arithmetic count in
+> front of a reader. The generic path would have shown a total with none of
+> them, and a total without its coverage is a subset wearing a footprint's
+> clothes. The confirm text is also specialised now, because the honest shape
+> of this action is "an emission factor per BOM line, from two publishers
+> each" — a second publisher per line is what makes the factor checkable and
+> is also what roughly doubles the cost, so someone deciding whether to spend
+> should be told.
+
 `dpp_companion` emits action blocks; `runCompanionAction`
 (`static/adaptogen-lab/index.html`) executes them. It dispatches
 `evaluate_claims` → `drainEvaluation`, `price_bom` → `runBOM`, the read actions
@@ -181,12 +195,17 @@ that is the mechanism, and I would rather you revert it than work around it.
 
 Not assignments — a shared picture.
 
-- **`dpp/carbon/…` needs the same treatment `composition.yaml` got.**
-  `carbon_intensity.mode: synthetic` in the composition is still the
-  hand-typed `0.41`. §7 of the handoff proposes `mode` become
-  `synthetic | agent_calculated | supplier_declared` with a pointer to the
-  statement. Until that lands, the Studio shows a real statement and a fake
-  intensity side by side.
+- ~~**`dpp/carbon/…` needs the same treatment `composition.yaml` got.**~~
+  **Landed** (carbon session). `mode` is now
+  `synthetic | agent_calculated | supplier_declared`, carries `coverage` and a
+  `statement_ref`, and the shipped fixture says in a comment that `0.41` was
+  typed by a person and that nothing about it is reproducible. The handler
+  rewrites the block in place by a line walk rather than a `serde_yaml`
+  round-trip, because the round-trip would delete every comment in that file
+  and the argument of this App is carried by that prose as much as by the
+  data. The Studio no longer shows a real statement beside a fake intensity —
+  the carbon panel renders the current `mode` immediately above the button
+  that would change it, which is the demonstration rather than a refresh.
 - **Latency is measured but not yet acted on.** `duration_ms` per claim is now
   persisted in `apply_result`, and `/api/agents/:id/metrics` gives per-tool
   `web_search` duration. The open question — fewer searches per market, or

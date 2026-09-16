@@ -2836,7 +2836,14 @@ async function runCompanionAction(turnIdx, actionIdx) {
   if (SPENDS_CREDITS.includes(type)) {
     const shape = type === 'evaluate_claims'
       ? `${(a.claim_ids ?? ['all pending']).length} claim(s) × ${(a.markets ?? ['EU','US','CN']).length} market(s)`
-      : 'one agent run over live sources';
+      : type === 'calculate_carbon'
+        // Named, because the honest shape of this one is "two searches per
+        // ingredient" and a reader deciding whether to spend should be told
+        // that rather than a generic sentence. A second publisher per line is
+        // what makes the factor checkable, and it is also what makes the run
+        // cost roughly double a single-source retrieval.
+        ? 'one agent run: an emission factor per BOM line, from two publishers each'
+        : 'one agent run over live sources';
     if (!confirm(`Run ${type}?\n\n${shape}\n\nThis spends credits from the workspace wallet and can take minutes.`)) return;
   }
 
@@ -2852,12 +2859,22 @@ async function runCompanionAction(turnIdx, actionIdx) {
       });
     } else if (type === 'price_bom') {
       await runBOM();
+    } else if (type === 'calculate_carbon') {
+      // Routed to the panel rather than through the generic path below, which
+      // would run the action and render nothing. The difference is not
+      // cosmetic: `runCarbon` is what reloads the composition afterwards so
+      // the `mode: synthetic` line the statement just retired is seen to
+      // change, and what puts `coverage`, `unpriced_items` and the
+      // model-arithmetic count in front of a reader. A carbon total with no
+      // coverage beside it is a subset wearing a footprint's clothes, and the
+      // generic path shows the total and nothing else.
+      await runCarbon(!!a.force);
     } else if (type === 'compare_lenses' || type === 'render_lens' || type === 'flag_divergence') {
       await runLive();
     } else {
-      // `calculate_carbon` and anything else the manifest declares but this
-      // client has no renderer for. Posted through the generic action path so
-      // it still happens and still logs, rather than being silently dropped.
+      // Anything the manifest declares that this client has no renderer for.
+      // Posted through the generic action path so it still happens and still
+      // logs, rather than being silently dropped.
       const res = await fetch(`${base()}/api/workspaces/${wsId()}/actions/${encodeURIComponent(type)}`,
         fetchOpts('POST', Object.fromEntries(Object.entries(a).filter(([k]) => k !== 'type'))));
       if (!res.ok) throw new Error(`${res.status}: ${(await res.text()).slice(0, 300)}`);
