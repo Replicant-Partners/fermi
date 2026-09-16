@@ -3,12 +3,20 @@
 --
 -- ## Why this table exists
 --
--- `carbon_accountant` has six `Sourced` fields and, until this migration, six
+-- `carbon_accountant` had six `Sourced` fields and, until this migration, six
 -- entries in `CROSS_CHECK_EXEMPTIONS`. The reason was honest and is worth
 -- restating: the platform holds no copy of ecoinvent, Agribalyse or the DEFRA
 -- factors, three of which are licensed rather than merely absent. There was no
 -- second copy of anything one JOIN away, the way `genome_profiler.taxonomy`
 -- had a GBIF-verified row sitting on the creature row.
+--
+-- (The counts moved after this migration was written, and the direction is the
+-- point: the second-publisher fields added three more `Sourced` paths, so the
+-- agent now declares nine. Two of the nine carry a live cross-check — this
+-- one, and the independence check on `corroborating_dataset` — and seven
+-- remain exempt, each naming its own route out. `src/grounding_trust.rs` is
+-- authoritative for the current tally; this header is authoritative only for
+-- why the table exists.)
 --
 -- This builds the second copy out of the agent's own work. Every factor the
 -- agent retrieves is appended here with the key that makes it comparable —

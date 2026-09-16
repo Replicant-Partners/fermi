@@ -1232,21 +1232,30 @@ pub async fn calculate_carbon_handler(
     // never one that says everything is fine — note that the fallback carries
     // no `inventory` items at all, so the total is null and coverage is `none`
     // rather than a zero that would read as a measured footprint.
+    // An unreadable reply becomes a document that says nothing, never one that
+    // says everything is fine — note the fallback carries no `inventory` items
+    // at all, so the total is null and coverage is `none` rather than a zero
+    // that would read as a measured footprint.
+    //
+    // The diagnostic is kept OUT of the document and returned beside it. The
+    // schema declares `additionalProperties: false`, so a `parse_failure` key
+    // inside the statement would make every parse failure also a schema
+    // violation — two unrelated faults reported as one, and the second of them
+    // caused by the error handling rather than by the agent. It is also the
+    // wrong place on its own terms: a client branching on "did this parse"
+    // should not have to read the document to find out.
+    let mut parse_failure: Option<String> = None;
     let mut doc = fermi::agent_backend::envelope::extract_json(&reply).unwrap_or_else(|| {
-        json!({
-            "explanation": Value::Null,
-            "parse_failure": format!(
-                "The accountant replied but the reply could not be read as a \
-                 document, so no factor was recorded. First 400 characters: {}",
-                reply.chars().take(400).collect::<String>()
-            ),
-        })
+        parse_failure = Some(format!(
+            "The accountant replied but the reply could not be read as a \
+             document, so no factor was recorded. First 400 characters: {}",
+            reply.chars().take(400).collect::<String>()
+        ));
+        json!({ "explanation": Value::Null })
     });
     if !doc.is_object() {
-        doc = json!({
-            "explanation": Value::Null,
-            "parse_failure": "The reply parsed to a non-object.",
-        });
+        parse_failure = Some("The reply parsed to a non-object.".to_string());
+        doc = json!({ "explanation": Value::Null });
     }
 
     // The platform's half: the BOM is authoritative, the arithmetic is ours,
@@ -1336,6 +1345,9 @@ pub async fn calculate_carbon_handler(
         "action_type": "calculate_carbon",
         "product_id": product_id,
         "statement": doc,
+        // Null on a normal run. Non-null means the reply was unreadable and the
+        // statement below is the empty one, not a footprint of zero.
+        "parse_failure": parse_failure,
         "statement_path": STATEMENT_PATH,
         "written_paths": written,
         "composition_updated": composition_updated,

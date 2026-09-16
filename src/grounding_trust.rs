@@ -457,9 +457,16 @@ pub const CROSS_CHECK_EXEMPTIONS: &[(&str, &str, &str)] = &[
     ),
     // ── carbon_accountant ───────────────────────────────────────────
     //
-    // Six entries, one cause, stated once. The platform holds no copy of
+    // Seven entries, one cause, stated once. The platform holds no copy of
     // ecoinvent, Agribalyse, the World Food LCA Database, the DEFRA/BEIS
-    // conversion factors or the IPCC GWP tables. Three of the five are
+    // conversion factors or the IPCC GWP tables.
+    //
+    // Nine `Sourced` fields on this agent, seven exempt and two checked:
+    // `factor_kg_co2e_per_kg` against the ledger, and `corroborating_dataset`
+    // against the independence property the corroboration depends on. Those
+    // two were the whole point of mig-238 and of asking for a second
+    // publisher, so the ratio is the honest summary of where this agent's
+    // verification actually stands. Three of the five are
     // licensed and cannot simply be mirrored; none of them is one JOIN away
     // the way `genome_profiler.taxonomy` had a GBIF-verified row sitting on
     // the creature.
@@ -3871,9 +3878,10 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               otherwise hide, by making every stored row correct by \
               construction.",
         // Compares the document against ITSELF, so it needs no external
-        // corpus and no dataset licence — which is why it is the one real
-        // cross-check this agent has while all six retrieval fields are
-        // exempt. Internal consistency is the check you can always afford;
+        // corpus and no dataset licence — which is why it was the first real
+        // cross-check this agent had, at a point when every other retrieval
+        // field was exempt. Internal consistency is the check you can always
+        // afford;
         // `football_analyst.advanced_metrics.xgd` established the pattern.
         //
         // What it can and cannot see, stated plainly because a cross-check
