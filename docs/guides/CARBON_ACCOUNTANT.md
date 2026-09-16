@@ -710,19 +710,36 @@ discovers in a filing.
   entirely ordinary. Within-statement consistency is checkable today and is the
   agent's job to report in `boundary.declared`; whether each individual basis
   label is correct is not checkable without the dataset's documentation.
-- **The ledger SQL has not been exercised against a live database in
-  development.** Migration 238 is a single replay-safe `DO` block with
-  `IF NOT EXISTS` throughout, and the cross-check queries are shape-checked by
-  the contract harness — but the live tier is `#[ignore]`, requires
-  `DATABASE_URL`, and runs only via `scripts/grounding_contract_live.sh`.
+- ~~**The ledger SQL has not been exercised against a live database.**~~
+  **Executed.** `bash scripts/carbon_sql_probe.sh` spins a throwaway Postgres
+  cluster, applies mig-238 and runs every cross-check this agent declares —
+  reading the SQL out of `src/grounding_trust.rs` rather than restating it, so
+  the probe cannot drift from the contract. Results: the migration applies
+  (2 CHECK constraints, both of which refuse a negative factor and an
+  unrecognised `retrieval` mode); an honest reply scores 0 on all four queries;
+  a reply carrying one bad product and one same-dataset "corroboration" scores
+  1 on the arithmetic check and 1 on the independence check, while leaving the
+  ledger untouched; and the ledger itself moves 0 → 0 → 2 mismatches over 0 → 1
+  → 3 comparable pairs as a third reading disagrees with the first two. So the
+  queries are sound and each fires on the rows it claims to.
+
+  What that does **not** establish is anything about production. Whether real
+  data disagrees with itself is a fact about the deployed database and nothing
+  else — `scripts/grounding_contract_live.sh` is the only thing that can say,
+  it needs `DATABASE_URL`, and `carbon_emission_factors` does not exist there
+  until mig-238 deploys. Until two real runs resolve the same key the ledger
+  check reports INERT, which is the honest reading and not a pass.
 - **A parse failure is stamped `tool_no_match`.** If the reply cannot be read as
   a document, the response carries `statement.parse_failure` with the first 400
   characters, `inventory.items` is rebuilt from the BOM with every line empty,
   `coverage` is `none` and `total_kg_co2e` is `null` — but
   `inventory_provenance` reads `tool_no_match`, which normally means "asked and
-  found nothing". Branch on `parse_failure` before reading the stamp. Note also
-  that `parse_failure` is an extra top-level key on a schema declaring
-  `additionalProperties: false`, so a strict validator will reject that document.
+  found nothing". Branch on `parse_failure` before reading the stamp.
+  `parse_failure` is returned **beside** the statement rather than inside it,
+  so the document still satisfies its own schema — an earlier version put it in
+  the document, where `additionalProperties: false` made every parse failure
+  also a schema violation, the second fault caused by the error handling rather
+  than by the agent.
 - **The agent's prompt is more conservative than the gate.** It warns against the
   words *divergence* and *vulnerable* on the grounds that the narrative scan is
   shared across agents. As of the current `enforce`, `NARRATIVE_LEAKS` rules are
