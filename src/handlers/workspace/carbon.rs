@@ -87,6 +87,18 @@ const ACCOUNTANT: &str = "carbon_accountant";
 /// it.
 const RUN_TIMEOUT_SECS: u64 = 420;
 
+/// The executor's tool-loop cap, mirrored so the query can state it.
+///
+/// `tool_executor::MAX_ITERATIONS` is private, so this is a copy, and a copy of
+/// a number is a thing that goes stale. It is mirrored anyway because the
+/// alternative is worse: the prose in `build_query` previously said "five" as a
+/// word, which is the same copy with nowhere to hang a check. Pinned against
+/// the executor's source by
+/// [`tests::the_query_states_the_cap_the_executor_actually_enforces`] — if the
+/// cap moves and this does not, the agent is told a false budget and plans
+/// against it.
+const EXECUTOR_ITERATION_CAP: u32 = 5;
+
 /// `message_type` passed to `dispatch_rabble_action`.
 ///
 /// Not `"calculate_carbon"`, and the reason is a constraint rather than taste.
@@ -468,16 +480,54 @@ fn build_query(
         );
     }
 
-    q.push_str(
+    // What this paragraph is for, and the run that rewrote it.
+    //
+    // The first version said the loop was "capped at five iterations, so you
+    // will not get an unlimited number of rounds: spend them on the lines that
+    // carry the mass". Both halves were unhelpful. It never said what an
+    // iteration IS, and it advised triage — sacrificing coverage — as the
+    // response to a budget that does not actually require it.
+    //
+    // An iteration is a TURN, not a search. Run 138632a9 issued 18 web
+    // searches inside 5 turns, so batching already happens; the model simply
+    // had no reason to know that the scarce resource was turns. Twelve searches
+    // for six lines and their second publishers fit inside one or two turns if
+    // they are issued together, which leaves the rest of the budget for the
+    // only turn that matters.
+    //
+    // And that turn is the one at risk. When the loop exits still in
+    // `tool_use`, the executor forces a no-tools flush to extract the document.
+    // That flush is the largest call in the run — the whole conversation with
+    // every tool result as input, the entire document at `max_tokens` as
+    // output — and it is the call that failed: 9dd78615 traced the 2026-09-16
+    // run's total loss of 18 successful searches to a 90s per-hop timeout on
+    // precisely this call, and raised it to 240s. A model that finishes
+    // searching and writes the document itself never reaches that path, because
+    // the loop breaks on a non-`tool_use` stop reason instead.
+    //
+    // So the advice is not "use fewer searches". It is "use fewer turns", which
+    // costs no coverage at all, and it comes with the reason: the run is lost at
+    // the write-up, never at the retrieval.
+    q.push_str(&format!(
         "\nHow to proceed\n\
          Search the corpus. One or more web_search calls per line, on the \
          material and its geography rather than on the product. Where a hint \
          above names the dataset row, go to that source and read the figure \
-         off it rather than searching for the material again. \
-         The tool loop is capped at five iterations, so you will not get an \
-         unlimited number of rounds: spend them on the lines that carry the \
-         mass. ",
-    );
+         off it rather than searching for the material again.\n\
+         The tool loop is capped at {EXECUTOR_ITERATION_CAP} ITERATIONS, and an \
+         iteration is one turn, not one search — you may issue as many \
+         web_search calls as you like within a single turn and they run \
+         together. So do not spend a turn per line. Issue the searches for \
+         every line at once, and the second-publisher searches with them, then \
+         read the results and write the document.\n\
+         Finish inside the budget and write the json yourself. If the cap is \
+         reached while you are still calling tools, the loop stops and you are \
+         asked for the document in one final turn with no tools available — the \
+         largest and least reliable call in the run, and the one that has \
+         already lost an entire 18-search run once. Retrieval is not the \
+         fragile part; the write-up is. A statement covering four lines that \
+         you actually wrote is worth more than six lines that were cut off. ",
+    ));
     q.push_str(&format!(
         "{priceable} of {} lines have a quantity and can affect the total; the \
          rest cannot move it whatever factor you find.\n\n",
@@ -2199,6 +2249,85 @@ allergens:
             body.contains("JSON.parse"),
             "carbonOpenRun reads the artefact with no parser, which cannot \
              work for a JSON document delivered as text under `content`"
+        );
+    }
+
+    /// **The query must state the cap the executor actually enforces.**
+    ///
+    /// `build_query` tells the agent how many turns it has, and the agent plans
+    /// against that number: batch every search into the first turn or two, then
+    /// write the document. A stated budget larger than the real one means the
+    /// model plans for turns it will not get and is cut off mid-retrieval —
+    /// which lands it in the forced flush, the largest and least reliable call
+    /// in the run, and the one that lost an entire 18-search run on
+    /// 2026-09-16. A stated budget smaller than the real one wastes retrieval
+    /// the run had already paid for.
+    ///
+    /// `tool_executor::MAX_ITERATIONS` is private, so `EXECUTOR_ITERATION_CAP`
+    /// is a mirror of it. This reads the executor's source and compares,
+    /// because a copied constant with no check is how the prose came to say
+    /// "five" as a word with nothing able to notice if it stopped being true.
+    /// `route_table.rs` pins `api_server.rs` the same way.
+    #[test]
+    fn the_query_states_the_cap_the_executor_actually_enforces() {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/agent_backend/tool_executor.rs");
+        let src =
+            std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()));
+
+        let needle = "const MAX_ITERATIONS: u32 = ";
+        let at = src.find(needle).unwrap_or_else(|| {
+            panic!(
+                "`{needle}` is gone from tool_executor.rs. The cap is still \
+                 enforced somewhere, and this mirror is now unanchored."
+            )
+        }) + needle.len();
+        let rest = &src[at..];
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        let enforced: u32 = digits
+            .parse()
+            .unwrap_or_else(|e| panic!("could not read the cap's value from `{digits}`: {e}"));
+
+        assert_eq!(
+            enforced, EXECUTOR_ITERATION_CAP,
+            "tool_executor enforces a cap of {enforced} tool-loop iterations \
+             and this handler tells the agent it has {EXECUTOR_ITERATION_CAP}. \
+             The agent plans its batching against the number in the query, so \
+             the two have to move together."
+        );
+
+        // And the number has to actually reach the agent. A const that nothing
+        // interpolates is a mirror of a mirror.
+        let lines = [BomLine {
+            item_id: "water".into(),
+            name: "Water".into(),
+            role: "solvent".into(),
+            origin: None,
+            quantity_declared: "300 ml".into(),
+            qty_kg: Some(0.3),
+            basis: Some("1 ml treated as 1 g".into()),
+        }];
+        let q = build_query(
+            &lines,
+            Some(330.0),
+            &json!({ "product_id": "x" }),
+            "cradle_to_gate",
+            "EU",
+            &std::collections::HashMap::new(),
+        );
+        assert!(
+            q.contains(&format!("capped at {EXECUTOR_ITERATION_CAP} ITERATIONS")),
+            "the query does not state the iteration cap, so the agent cannot \
+             plan against it and will spend a turn per line"
+        );
+        // The distinction that makes the cap survivable, and the one the first
+        // version of this paragraph omitted entirely.
+        assert!(
+            q.contains("an iteration is one turn, not one search"),
+            "the query states a cap without saying what it counts. Run \
+             138632a9 issued 18 searches inside 5 turns, so batching is \
+             available — the model just has to be told that turns are the \
+             scarce resource, or it triages lines it did not need to triage."
         );
     }
 

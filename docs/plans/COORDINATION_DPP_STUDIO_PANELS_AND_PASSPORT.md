@@ -429,33 +429,69 @@ Rules, learned the expensive way:
 3. **Public resolver authorisation.** A scannable passport implies an
    unauthenticated read surface. Which fields are public? A carbon total and a
    regulatory verdict are commercially sensitive in a way a claims list is not.
-4. **Iteration budget. No longer a prediction — measured, and it is the
-   blocker.** Five iterations is not enough for six BOM lines each wanting a
-   second publisher, so runs reach the flush degraded. Raising `MAX_ITERATIONS`
-   globally makes the flush's input larger and is the wrong lever; per-agent
-   budgets are the right shape.
+4. **Iteration budget. Addressed in the query, not the executor** — and the
+   first version of this item got the cause wrong, which is recorded here
+   because the wrong version is the one a reader would otherwise reuse.
 
-   The production evidence, read out of Neon on 2026-09-17. **One**
+   The production facts, read out of Neon on 2026-09-17. **One**
    `calculate_carbon` run exists, `138632a9`, 2026-09-16 15:50:
 
    | field | value |
    |---|---|
    | episode `execution_status` | `failure` |
    | `response_text` length | **0 characters** |
+   | `error_details` | `tool loop produced empty content (stop_reason=tool_use, iterations=5, hit_iteration_cap)` |
+   | `tool_calls` | **18** |
    | `tokens_used` | 151,790 (150,068 in / 1,722 out) |
    | `execution_time_ms` | 157,246 |
    | action `applied` | `true` |
    | `coverage` | `none`, all six lines unpriced |
    | `violations` | 0 |
-   | `factors_recorded` | 0 |
    | `inventory_provenance` | `tool_no_match` |
-   | `written_paths` | 2 |
 
-   So the agent has never produced usable output, and the shape of the failure
-   is exactly `MAX_ITERATIONS = 5` against twelve wanted searches: 150k input
-   tokens accumulated across five tool turns, then a flush that returned
-   nothing. `carbon_accountant` is **not** the `energy_advisor` problem — its
-   prompt matches none of `STRUCTURED_OUTPUT_PATTERNS`, checked field by field
+   **My first reading of this was that `MAX_ITERATIONS = 5` was the blocker.
+   That was wrong, and `9dd78615` had already established why ninety minutes
+   before I wrote it.** The cause is the flush: it is the largest call in a run
+   — the whole conversation as input, the entire document at `max_tokens` as
+   output — and it shared a 90s per-hop timeout with tool-use calls that return
+   in seconds. That commit's arithmetic settles it: 18 searches at 520ms is
+   9.4s, five tool-use calls at 11.6s is 57.9s, plus 90s is 157.3s against a
+   recorded 157.2s. The retrieval was never implicated. `FLUSH_TIMEOUT_SECS` is
+   now 240s inside `RUN_TIMEOUT_SECS` 420s, pinned by
+   `the_run_budget_outlasts_the_executors_flush`.
+
+   The lesson worth keeping is the one `tool_calls=18` teaches, which is
+   visible only in `error_details` and which neither of us used at first: **an
+   iteration is a turn, not a search.** The model issued 18 searches inside 5
+   turns, so it already batches. It ran out of turns because nothing told it
+   turns were the scarce resource — and `build_query` made it worse by advising
+   triage, "spend them on the lines that carry the mass", which trades away
+   coverage to solve a problem batching solves for free.
+
+   So the fix is in the query, and it costs nothing:
+
+   - the cap is stated as `{EXECUTOR_ITERATION_CAP} ITERATIONS` with "an
+     iteration is one turn, not one search — you may issue as many web_search
+     calls as you like within a single turn";
+   - issue every line's searches, and the second-publisher searches, together;
+   - and finish inside the budget so you write the json yourself, because a run
+     cut off mid-`tool_use` is handed to the forced flush, which is the call
+     that has already lost an entire 18-search run once. Retrieval is not the
+     fragile part; the write-up is.
+
+   `EXECUTOR_ITERATION_CAP` in `carbon.rs` mirrors the executor's private
+   `MAX_ITERATIONS`, and `the_query_states_the_cap_the_executor_actually_enforces`
+   reads `tool_executor.rs` and compares, the way `route_table.rs` pins
+   `api_server.rs`. A stated budget larger than the real one is worse than
+   silence: the model plans for turns it will not get.
+
+   **Per-agent budgets are therefore not yet needed, and raising the cap is
+   still the wrong lever** — more turns means more accumulated tool results in
+   the flush's input, enlarging the call that already failed. Revisit only if a
+   run batches properly and still runs out.
+
+   `carbon_accountant` is **not** the `energy_advisor` problem: its prompt
+   matches none of `STRUCTURED_OUTPUT_PATTERNS`, checked phrase by phrase
    against the DB copy, so it does receive tools. `energy_advisor` and
    `sidestream_miner` both still match and receive none.
 
@@ -464,6 +500,12 @@ Rules, learned the expensive way:
    INERT for want of a successful run rather than for want of a table), and the
    agent card is in sync with the DB — `agent_card_drift.py carbon_accountant`
    reports all 17 seeded fields matching, so **no reseed is needed**.
+
+   **What is now untested rather than broken.** Every known cause of the
+   2026-09-16 loss has a fix in the tree and none of them has seen a live run.
+   The next `calculate_carbon` is the measurement, and the thing to read first
+   is `episodes.error_details` — it carried `tool_calls=18` all along, which
+   would have pointed at the flush immediately.
 
 5. **`tool_no_match` is a proxy, and on an empty statement it is an unearned
    claim. OPEN — needs a signature change in someone else's file.**
@@ -504,6 +546,24 @@ Rules, learned the expensive way:
    where that count is zero.** `unavailable_no_tool_source` is not the
    substitute either — a tool existed. An empty inventory from zero searches is
    a failed run, which is a shape `c12349a8` already has a branch for.
+
+   **The count is cheaper to get than the above implies, and this was missed
+   the first time round.** It is already persisted, twice, on the episode row
+   the run creates:
+
+   - `episodes.error_details` carries `tool_calls=18` inline — that is where
+     the number that redirected this whole diagnosis was found;
+   - `episodes.context` carries a full `tool_invocations` array, each entry
+     holding the search query and its returned text.
+
+   So no signature has to widen to *obtain* the evidence, only to *correlate*
+   it. `workspace_action_log` has no `episode_id` column and `episodes` carries
+   `workspace_id` but nothing tying it to an action, so matching them means
+   guessing on `(workspace_id, agent_id, created_at)`, which races the next run.
+   Returning the `episode_id` from `dispatch_rabble_action` is a one-field
+   change and makes the link exact — still their file, but a much smaller ask
+   than threading an invocation count through the dispatch hop. Whoever takes
+   §7.5 should look at that first.
 6. **Restructure ordering. DECIDED: proceed.** The operator is content for the
    UX work to go ahead in parallel with the carbon agent work, on the grounds
    that it is UX and therefore separable. Note the practical constraint this
