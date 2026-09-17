@@ -2202,6 +2202,80 @@ allergens:
         );
     }
 
+    /// **A run that concluded nothing must not be rendered as a calculation.**
+    ///
+    /// `inventory_provenance` is stamped by `grounding_trust`, and for a
+    /// `sourced` block with no content that stamp is `tool_no_match` — which in
+    /// this platform's vocabulary asserts "the tool was asked and had nothing".
+    /// `enforce_from_grounding_map` describes it in as many words as a **proxy**
+    /// for having asked. It is applied whether or not a search ran.
+    ///
+    /// The gap that leaves is not hypothetical. The only carbon run on record
+    /// when this was written had `coverage: none`, `violations: 0`,
+    /// `factors_recorded: 0`, `inventory_provenance: tool_no_match` and
+    /// `written_paths: 2` — and its episode ended `failure` with a
+    /// zero-character reply after 151,790 tokens. The run never reported back,
+    /// and its row claimed the corpus had been asked about six materials.
+    ///
+    /// `c12349a8` stopped that recurring by recording `outcome: no_reply` on the
+    /// failure path, but forward-only: the existing row has no `outcome`, and a
+    /// future run that searched everything and genuinely found nothing would
+    /// record the same fields as this one. **No rule over `apply_result` can
+    /// separate them**, so the row is required to state what it knows — nothing
+    /// was concluded — and to decline to say why.
+    ///
+    /// # What this test is, and is not
+    ///
+    /// It is structural: it pins that the branch and its caveat exist, because
+    /// deleting either would silently restore a row that reads as a completed
+    /// calculation. It is **not** a check that the stamp is earned, and it
+    /// should not be mistaken for one. Earning it needs the tool-invocation
+    /// count at the point the statement is built, and
+    /// `dispatch_rabble_action` returns `Result<String, String>` — the reply
+    /// text and nothing else. Until that widens, the honest position is the one
+    /// asserted here: the proxy is displayed as a proxy.
+    #[test]
+    fn a_run_that_concluded_nothing_is_not_rendered_as_a_calculation() {
+        let src = studio_page();
+
+        let row = src
+            .split_once("function carbonRunRowHTML(")
+            .expect("carbonRunRowHTML is gone from static/adaptogen-lab/index.html")
+            .1;
+        let row = &row[..row.find("\n}\n").unwrap_or(row.len())];
+
+        assert!(
+            row.contains("r.coverage === 'none' && r.total_kg_co2e == null"),
+            "carbonRunRowHTML no longer separates a run that concluded nothing \
+             from one that measured something. Without that branch a statement \
+             carrying no footprint is drawn in the same shape as a measured \
+             run — figure, coverage badge, counts — and the `tool_no_match` \
+             stamp printed beside it makes a claim the row cannot support."
+        );
+        assert!(
+            row.contains("nothing concluded"),
+            "the branch exists but no longer says so on screen"
+        );
+
+        // The caveat is the substance. A branch that quietly renders the same
+        // stamp in a different colour has changed nothing about what a reader
+        // is invited to believe.
+        assert!(
+            row.contains("proxy"),
+            "the row must say that `tool_no_match` is a proxy for having asked \
+             rather than a record of it, because on a statement that priced no \
+             line that is the difference between evidence and an assumption"
+        );
+
+        // And on the panel itself, which is the surface a reader trusts most.
+        assert!(
+            src.contains("inv.coverage === 'none' ?"),
+            "carbonPanelHTML prints `inventory_provenance` with no caveat when \
+             the inventory is empty, which is the same overstatement in the \
+             larger typeface"
+        );
+    }
+
     /// **One renderer, and something has to call it.**
     ///
     /// A live run and a reopened historical run are drawn by the same function

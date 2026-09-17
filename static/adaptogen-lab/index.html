@@ -2540,6 +2540,13 @@ function carbonPanelHTML(run = carbonRun) {
       per serving \u00b7 ${esc(b.declared ?? 'boundary unstated')} \u00b7 factors:
       ${esc(r.statement.inventory_provenance ?? '?')} \u00b7 arithmetic: platform_derived
     </div>
+    ${inv.coverage === 'none' ? `<div style="font-size:10px;color:var(--amb);margin-top:5px;line-height:1.5">
+      The stamp above is a <strong>proxy</strong>, not a receipt.
+      <code style="font-size:10px">tool_no_match</code> reads as \u201cthe corpus was
+      asked and had nothing\u201d, but the gate applies it to any empty sourced block
+      whether or not a search ran \u2014 and nothing here counts the searches. On a
+      statement that priced no line it cannot be taken as evidence that the
+      corpus was consulted.</div>` : ''}
     ${(inv.unpriced_items ?? []).length ? `<div style="font-size:10px;color:var(--amb);margin-top:5px;line-height:1.5">
       \u26a0 This total is a <strong>subset</strong> of the product's footprint. Excluded for want of a factor or a quantity:
       <code style="font-size:10px">${(inv.unpriced_items ?? []).map(esc).join(', ')}</code>
@@ -2711,6 +2718,60 @@ function carbonRunRowHTML(a, isCurrent) {
     : `<div style="font-size:9px;color:var(--t3);margin-top:3px">This row carries no
          usable action_id, so its per-run artefact cannot be addressed. The figures
          above are still the ones the run recorded.</div>`;
+
+  // ── a run that concluded nothing is not a calculation ────────────────────
+  //
+  // `coverage: none` with a null total means the statement carries no
+  // footprint at all. Rendering that in the same shape as a measured run —
+  // figure, coverage badge, a row of counts — reads as a calculation that came
+  // back empty, and the stamp printed beside it makes a stronger claim than
+  // the row can support.
+  //
+  // That stamp is `tool_no_match`, which in this platform's vocabulary means
+  // "the tool was asked and had nothing". `grounding_trust` assigns it to any
+  // empty `sourced` block as a PROXY for having asked — its own doc comment
+  // says so. Nothing in `apply_result` records how many searches actually ran,
+  // so this row cannot tell a corpus that was asked and was empty from a run
+  // that never reported back.
+  //
+  // The distinction is not hypothetical. The only carbon run on record when
+  // this was written was the second kind: its episode ended `failure` with a
+  // zero-character reply after 151,790 tokens, and its row still carried
+  // `tool_no_match` over six unpriced lines and two written paths. It predates
+  // the handler recording `outcome: no_reply`, so the branch above cannot see
+  // it — and a post-fix run that searched everything and found nothing would
+  // record the same fields, so no rule over these fields can separate them.
+  //
+  // So the row states what it knows, which is that nothing was concluded, and
+  // declines to say why. That is not a heuristic verdict dressed as a fact: a
+  // run that genuinely searched and found nothing ALSO concluded nothing, so
+  // the sentence is true in both worlds and fires on neither incorrectly.
+  // Adjudicating between them needs the tool-invocation count, and
+  // `dispatch_rabble_action` returns only the reply text.
+  if (r.coverage === 'none' && r.total_kg_co2e == null) {
+    return `<div style="border-left:2px solid var(--amb);padding:5px 8px;margin-top:5px;background:var(--s1);border-radius:0 3px 3px 0">
+      <div style="font-size:10px;font-family:var(--mono)">
+        <span style="color:var(--amb);font-weight:700">nothing concluded</span>
+        <span style="color:var(--t3)"> · ${esc(relTime(a.created_at))}</span>
+        ${r.duration_ms != null ? `<span style="color:var(--t3)"> · ${esc((r.duration_ms/1000).toFixed(1))}s</span>` : ''}
+        ${isCurrent ? ' · <span style="color:var(--grn)">current</span>' : ''}
+      </div>
+      <div style="font-size:10px;color:var(--t2);margin-top:2px;line-height:1.5">
+        No factor resolved for any line, so the statement carries no footprint.
+        <strong>Not a finding of zero emissions</strong>, and not a measured
+        subset either.</div>
+      <div style="font-size:9px;color:var(--t3);margin-top:3px;line-height:1.5">
+        Its stamp reads <code style="font-size:9px">${esc(r.inventory_provenance ?? 'tool_no_match')}</code>,
+        which the platform assigns to any empty sourced block as a proxy for
+        having asked. This row does not record how many searches ran, so it
+        cannot separate a corpus that was asked and was empty from a run that
+        never reported back — and it does not pick one.</div>
+      ${(r.unpriced_items ?? []).length ? `<div style="font-size:9px;color:var(--t2);margin-top:3px;line-height:1.5">
+        excluded: <code style="font-size:9px">${(r.unpriced_items ?? []).map(esc).join(', ')}</code></div>` : ''}
+      ${bits.length ? `<div style="font-size:9px;color:var(--t2);margin-top:3px;line-height:1.5">${bits.join(' · ')}</div>` : ''}
+      ${footer}
+    </div>`;
+  }
 
   return `<div style="border-left:2px solid ${covColour};padding:5px 8px;margin-top:5px;background:var(--s1);border-radius:0 3px 3px 0">
     <div style="font-size:10px;font-family:var(--mono);display:flex;gap:6px;align-items:baseline">

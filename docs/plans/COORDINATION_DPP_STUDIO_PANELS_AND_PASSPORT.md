@@ -387,11 +387,34 @@ Rules, learned the expensive way:
       `rewrite_carbon_intensity` writes a `statement_ref` at it. The
       per-action JSON is additive, not a replacement.
 
-   The client is already waiting for it and needs one change when it lands:
-   `carbonRunRowHTML()` in `index.html` currently renders superseded rows with
-   a "superseded" note instead of an open button. Point that at
-   `dpp/carbon/statements/{action_id}.json`, `JSON.parse` it into the shape
-   `carbonPanelHTML()` already consumes, and every row becomes openable.
+   **LANDED, both halves, in `5d009dad`.** The handler builds the response
+   body and the artefact from one construction (`response_payload`) rather than
+   two `json!` blocks, and pushes `dpp/carbon/statements/{action_id}.json` onto
+   `files` before the commit. All three constraints above are honoured; the
+   enforced-document one is the reason `response_payload` takes `doc` and not
+   the reply. `carbonPanelHTML` now takes its run as an argument
+   (`carbonPanelHTML(run = carbonRun)`) so a reopened artefact goes through the
+   renderer that drew it live, and `carbonRunRowHTML`'s "superseded" note is a
+   button calling `carbonOpenRun(action_id, isCurrent)`, which falls back to
+   that note on 404 for runs predating the artefact.
+
+   Two things the implementation added that the section did not ask for, both
+   because this change fails silently and its own fallback is what hides the
+   failure:
+
+   - `the_client_opens_the_path_this_handler_writes` derives the client's path
+     from the page and compares it to `run_artefact_path()`. If they ever
+     disagree the fetch 404s and the panel reports "no per-run artefact" —
+     indistinguishable from the true case it exists to cover. Nothing would go
+     red and the message on screen would be a plausible one. The path is now a
+     const with a builder so a test can derive it.
+   - Nothing syntax-checked `static/adaptogen-lab/index.html`.
+     `inline_js_syntax.rs` walked `templates/` and `static/js/`, and neither
+     reaches a single-file app holding 171,000 characters of inline JavaScript
+     in one `<script>` — the largest concentration of template literals in the
+     repo, and so the likeliest home for the defect that suite exists for.
+     `every_inline_script_in_every_standalone_page_parses` closes it. Third
+     time a scan here has been only as good as the list it scanned.
 
 2. **Barcode standard. DECIDED: no GS1 prefix, so do not pretend to one.**
 
@@ -406,12 +429,82 @@ Rules, learned the expensive way:
 3. **Public resolver authorisation.** A scannable passport implies an
    unauthenticated read surface. Which fields are public? A carbon total and a
    regulatory verdict are commercially sensitive in a way a claims list is not.
-4. **Iteration budget.** Five iterations is not enough for six BOM lines each
-   wanting a second publisher, so runs reach the flush degraded and coverage is
-   partial by construction. Raising `MAX_ITERATIONS` globally makes the flush's
-   input larger and is the wrong lever. Per-agent budgets are the right shape.
-   Judge it after a successful run, with the factor ledger populated.
-5. **Restructure ordering. DECIDED: proceed.** The operator is content for the
+4. **Iteration budget. No longer a prediction — measured, and it is the
+   blocker.** Five iterations is not enough for six BOM lines each wanting a
+   second publisher, so runs reach the flush degraded. Raising `MAX_ITERATIONS`
+   globally makes the flush's input larger and is the wrong lever; per-agent
+   budgets are the right shape.
+
+   The production evidence, read out of Neon on 2026-09-17. **One**
+   `calculate_carbon` run exists, `138632a9`, 2026-09-16 15:50:
+
+   | field | value |
+   |---|---|
+   | episode `execution_status` | `failure` |
+   | `response_text` length | **0 characters** |
+   | `tokens_used` | 151,790 (150,068 in / 1,722 out) |
+   | `execution_time_ms` | 157,246 |
+   | action `applied` | `true` |
+   | `coverage` | `none`, all six lines unpriced |
+   | `violations` | 0 |
+   | `factors_recorded` | 0 |
+   | `inventory_provenance` | `tool_no_match` |
+   | `written_paths` | 2 |
+
+   So the agent has never produced usable output, and the shape of the failure
+   is exactly `MAX_ITERATIONS = 5` against twelve wanted searches: 150k input
+   tokens accumulated across five tool turns, then a flush that returned
+   nothing. `carbon_accountant` is **not** the `energy_advisor` problem — its
+   prompt matches none of `STRUCTURED_OUTPUT_PATTERNS`, checked field by field
+   against the DB copy, so it does receive tools. `energy_advisor` and
+   `sidestream_miner` both still match and receive none.
+
+   Two things that are NOT blockers, so nobody re-diagnoses them: mig-238 is
+   deployed (`carbon_emission_factors` exists, 0 rows, so the ledger check is
+   INERT for want of a successful run rather than for want of a table), and the
+   agent card is in sync with the DB — `agent_card_drift.py carbon_accountant`
+   reports all 17 seeded fields matching, so **no reseed is needed**.
+
+5. **`tool_no_match` is a proxy, and on an empty statement it is an unearned
+   claim. OPEN — needs a signature change in someone else's file.**
+
+   `enforce_from_grounding_map` stamps a `sourced` block with no content
+   `tool_no_match`, and says in its own doc comment that this is a *proxy for
+   "tool was asked"*. The vocabulary asserts more than that: `hud_contract.rs`
+   and `loops.rs` both define it as "the tool answered and had nothing", and
+   `grounding_trust::floor` goes out of its way never to substitute one verdict
+   for another because misattributing mechanism "is the specific error this
+   module exists to prevent".
+
+   Run `138632a9` is that error, shipped. It published `tool_no_match` over six
+   materials having never reported back at all. `c12349a8` stopped it recurring
+   by writing `outcome: no_reply` on the failure path, but forward-only: that
+   row has no `outcome`, and — the part that matters — **a future run which
+   searched everything and genuinely found nothing would record identical
+   fields.** No rule over `apply_result` can separate the two, so no client-side
+   heuristic should try. One was attempted and rejected for exactly the
+   "fires on correct behaviour" reason this session has hit three times.
+
+   What shipped instead (`index.html`, mine, in the follow-up commit): a row
+   with `coverage: none` and a null total renders as **"nothing concluded"**
+   rather than in the shape of a measured run, and both the row and
+   `carbonPanelHTML` say that the stamp is a proxy rather than a receipt. That
+   sentence is true whichever of the two worlds produced the row, which is why
+   it is not a verdict. Pinned by
+   `a_run_that_concluded_nothing_is_not_rendered_as_a_calculation`.
+
+   **The real fix is not client-side and is not in my write scope.** Earning the
+   stamp needs the tool-invocation count where the statement is built, and
+   `dispatch_rabble_action` (`src/handlers/rabble_workspace.rs:199`) returns
+   `Result<String, String>` — the reply text and nothing else. The executor
+   already collects `tool_invocations`; the count has to survive the dispatch
+   hop. `rabble_workspace.rs` is held uncommitted by another session, so this is
+   handed over rather than attempted: **widen the dispatch return to carry the
+   tool-invocation count, and refuse to publish `tool_no_match` on a statement
+   where that count is zero.** `unavailable_no_tool_source` is not the
+   substitute either — a tool existed. An empty inventory from zero searches is
+   a failed run, which is a shape `c12349a8` already has a branch for.
+6. **Restructure ordering. DECIDED: proceed.** The operator is content for the
    UX work to go ahead in parallel with the carbon agent work, on the grounds
    that it is UX and therefore separable. Note the practical constraint this
    creates: `static/adaptogen-lab/index.html` is the contended file and
