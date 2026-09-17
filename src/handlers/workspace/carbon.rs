@@ -281,7 +281,8 @@ fn output_shape(lines: &[BomLine]) -> String {
         "material": "what you searched for — the material, not the product",
         "origin": "the BOM line's stated origin, echoed, or null",
         "factor_kg_co2e_per_kg": 0.0,
-        "factor_unit": "kg CO2e/kg",
+        "factor_unit": "kg CO2e/kg — the factor's units VERBATIM. If the source says per gram, say per gram.",
+        "reference_flow": "what one unit of the denominator is, e.g. '1 kg dried hibiscus calyces'",
         "lca_basis": "cradle_to_gate | cradle_to_grave | gate_to_gate",
         "geography": "the geography the factor applies to — not the BOM origin",
         "reference_year": 2021,
@@ -493,6 +494,24 @@ fn build_query(
          - A factor with no dataset, geography and reference year beside it is \
            not usable in a disclosure. Nobody can then tell whether a 2014 \
            European average is standing in for a named Egyptian supplier.\n\
+         - Report `factor_unit` VERBATIM and say in `reference_flow` what one \
+           unit of the denominator is. If the source reports per gram, write \
+           per gram; if it reports per litre or per item, write that. Do not \
+           normalise it to kg for us and do not restate it as kg because that \
+           is what the field name suggests.\n\
+           Why this is asked for, and it is the most expensive mistake \
+           available here: the platform multiplies the BOM quantity in \
+           KILOGRAMS by the factor, so a factor per gram is out by a thousand \
+           and a factor for a concentrated extract is out by far more. A real \
+           paper reports 5 kg CO2e to obtain one GRAM of hibiscus colorant \
+           extract; used against a 0.028 kg hibiscus line that is 140 kg CO2e \
+           for a 330 ml bottle, and it would carry a real DOI, a real \
+           geography and a real year. A second publisher reporting the same \
+           per-gram basis would AGREE with it, so corroboration cannot catch \
+           this and only the stated basis can. The platform refuses to \
+           multiply anything that is not mass-per-mass and reports the line as \
+           unpriced, so an honest `per g of extract` costs you one line and a \
+           silent normalisation costs the whole statement.\n\
          - If nothing bears on a line, set `factor_kg_co2e_per_kg` to null and \
            say in the same entry what you searched for. Do not substitute a \
            proxy material without labelling it a proxy, and do not fall back on \
@@ -1868,6 +1887,12 @@ allergens:
                 "items": [{
                     "item_id": "hibiscus_infusion",
                     "factor_kg_co2e_per_kg": 2.1,
+                    // Required since the reference-flow guard: the platform
+                    // refuses to multiply a factor whose denominator is not a
+                    // mass, and an unstated basis is refused rather than
+                    // presumed to be per kg.
+                    "factor_unit": "kg CO2e/kg",
+                    "reference_flow": "1 kg dried hibiscus calyces",
                     "lca_basis": "cradle_to_gate",
                     "geography": "EG",
                     "reference_year": 2021,

@@ -581,6 +581,25 @@ pub const CROSS_CHECK_EXEMPTIONS: &[(&str, &str, &str)] = &[
     ),
     (
         "carbon_accountant",
+        "inventory.items[].reference_flow",
+        "What one unit of the factor's denominator is. Unverifiable against a \
+         second copy for the same reason `dataset` is — the platform holds no \
+         licensed inventory to read the reference flow back off — but the \
+         exemption is narrower than it looks, because this field is not \
+         load-bearing on trust. It is load-bearing on ADMISSIBILITY, and that \
+         is enforced rather than believed: `carbon_basis_refusal` refuses to \
+         multiply anything whose `factor_unit` is not mass-per-mass, so a \
+         wrong or absent basis costs the line rather than corrupting the \
+         total. A cross-check would tell us whether the stated flow is the \
+         published one; the refusal already ensures that an unstated or \
+         non-mass one cannot reach the sum. What remains uncovered is the \
+         narrow case of a factor correctly labelled `kg CO2e/kg` whose \
+         denominator is a different SUBSTANCE than the BOM line — extract \
+         versus calyces at the same unit — which needs the material match \
+         that `geography` needs too, and lands with it.",
+    ),
+    (
+        "carbon_accountant",
         "inventory.items[].lca_basis",
         "Whether a factor is cradle-to-gate or cradle-to-grave decides what \
          the total means, and mixing the two makes a sum that is internally \
@@ -3717,6 +3736,37 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
     },
     FieldContract {
         agent_id: CA,
+        path: "inventory.items[].reference_flow",
+        grounding: Grounding::Sourced {
+            tool: "web_search",
+            response_field: "results[].description",
+        },
+        why: "What one unit of the factor's denominator actually IS — \"1 kg \
+              dried hibiscus calyces\", not \"1 g of spray-dried colorant \
+              extract\". The platform multiplies `activity_qty_kg` by \
+              `factor_kg_co2e_per_kg`, and that product is only meaningful if \
+              the factor's denominator is the same substance and the same unit \
+              the BOM line measures.\n\n\
+              This field exists because the other four were not enough. A real \
+              paper (Energy Reports, 2022, doi:10.1016/j.egyr.2022.01.034) \
+              reports 5 kg CO2e to obtain 1 GRAM of hibiscus colorant extract. \
+              Against a 0.02805 kg hibiscus line that is 140 kg CO2e for a \
+              330 ml bottle, roughly 2,400x over — and it satisfies value, \
+              dataset, geography and reference_year completely. The citation \
+              is real, the DOI resolves, the paper says what it is quoted as \
+              saying. Nothing is fabricated: the number is an answer to a \
+              different question.\n\n\
+              Corroboration cannot catch it. A second publisher also reporting \
+              per-gram-of-extract AGREES, and the 30% band would report that \
+              agreement as confirmation — two correct answers to the wrong \
+              question corroborate each other perfectly. Only an explicit \
+              basis check catches a basis error, which is why this is Sourced \
+              from the same result the factor came from rather than inferred \
+              from the material name.",
+        cross_check_sql: None,
+    },
+    FieldContract {
+        agent_id: CA,
         path: "inventory.items[].reference_year",
         grounding: Grounding::Sourced {
             tool: "web_search",
@@ -4702,7 +4752,80 @@ fn carbon_line_inputs(item: &Value) -> Option<(f64, f64)> {
     if !qty.is_finite() || !factor.is_finite() || qty < 0.0 || factor < 0.0 {
         return None;
     }
+    // A factor whose denominator is not a mass, or is a mass in a different
+    // unit, cannot be multiplied by a quantity in kilograms. Refusing here
+    // makes the line unpriced, which is a state the document already
+    // expresses, rather than contributing a wrong product to a right-looking
+    // total.
+    if carbon_basis_refusal(item).is_some() {
+        return None;
+    }
     Some((qty, factor))
+}
+
+/// Units whose ratio is dimensionless mass-per-mass, and therefore numerically
+/// identical to kg CO2e per kg.
+///
+/// `t CO2e/t` and `g CO2e/g` are on this list because the ratio is the same
+/// number: 1 t/t is 1000 kg / 1000 kg. `kg CO2e/g` is NOT, and is the exact
+/// error this guards against — it is a thousandfold overstatement that reads
+/// as a well-formed unit string.
+const CARBON_MASS_RATIO_UNITS: &[&str] = &[
+    "kgco2e/kg",
+    "kgco2eq/kg",
+    "kgco2-eq/kg",
+    "kgco2/kg",
+    "tco2e/t",
+    "tco2eq/t",
+    "gco2e/g",
+    "gco2eq/g",
+];
+
+/// Why this line's factor may not be multiplied by a quantity in kilograms,
+/// or `None` if it may.
+///
+/// ## Why the platform decides this and not the agent
+///
+/// Same reason it does the multiplication and the corroboration: asking a
+/// model whether its own factor matches the BOM line's basis is asking it to
+/// mark its own work, and the answer is free. The agent's job is to RETRIEVE
+/// and report the basis verbatim; whether that basis is admissible is a
+/// comparison, and comparisons live on this side of the line.
+///
+/// ## Why a missing basis is a refusal rather than a default
+///
+/// Treating an absent `factor_unit` as "presumably per kg" is the assumption
+/// that produces the failure. The whole class of error here is a plausible
+/// number silently answering a different question, so the safe default is the
+/// one that declines to answer. A factor with no stated basis is not usable in
+/// a disclosure for the same reason one with no dataset, geography or
+/// reference year is not — nobody downstream can tell what it describes.
+fn carbon_basis_refusal(item: &Value) -> Option<String> {
+    let raw = item.get("factor_unit").and_then(|v| v.as_str());
+    let Some(raw) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Some(
+            "factor basis unstated: no `factor_unit`, so it is not known what \
+             one unit of this factor's denominator is"
+                .to_string(),
+        );
+    };
+    // Compare with separators and case removed, so "kg CO2e / kg",
+    // "kgCO2e/kg" and "KG CO2E per KG" are one unit rather than three.
+    let norm: String = raw
+        .to_ascii_lowercase()
+        .replace(" per ", "/")
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '_' && *c != '.')
+        .collect();
+    if CARBON_MASS_RATIO_UNITS.contains(&norm.as_str()) {
+        return None;
+    }
+    Some(format!(
+        "factor basis not mass-per-mass: `{raw}` cannot be multiplied by a \
+         quantity in kilograms. The BOM line is a mass; a factor per volume, \
+         per item, per serving, per joule, or per a different mass unit than \
+         its numerator is an answer to a different question"
+    ))
 }
 
 fn carbon_items(doc: &Value) -> Option<&Vec<Value>> {
@@ -4749,6 +4872,19 @@ fn derive_carbon_line_items(doc: &Value) -> Option<Value> {
                 None => {
                     obj.insert("kg_co2e".into(), Value::Null);
                     obj.insert("arithmetic".into(), Value::Null);
+                }
+            }
+            // Why a line with a factor on it was nonetheless not priced. A
+            // null `kg_co2e` beside a populated `factor_kg_co2e_per_kg` is
+            // otherwise indistinguishable from a missing factor, and the two
+            // need different responses: one is a gap in the corpus, the other
+            // is a factor that describes something else.
+            match carbon_basis_refusal(item) {
+                Some(reason) => {
+                    obj.insert("basis_refusal".into(), Value::String(reason));
+                }
+                None => {
+                    obj.remove("basis_refusal");
                 }
             }
             obj.insert(
@@ -8171,6 +8307,109 @@ mod tests {
     /// `tool_no_match`-as-clearance failure in a different suit: a subset that
     /// reads as a footprint. `coverage` and `unpriced_items` are derived
     /// alongside the sum precisely so that it cannot be read alone.
+    /// The failure this guards: a real citation answering a different question.
+    ///
+    /// Energy Reports 2022 (doi:10.1016/j.egyr.2022.01.034) reports 5 kg CO2e
+    /// to obtain one GRAM of hibiscus colorant extract. Against the 0.02805 kg
+    /// hibiscus line that is 140.25 kg CO2e for a 330 ml bottle — about 2,400x
+    /// over, and roughly an 825 km drive attributed to one drink.
+    ///
+    /// It passes every other guard. Value, dataset, geography and
+    /// reference_year are all present and genuine; the DOI resolves and the
+    /// paper says what it is quoted as saying. Corroboration cannot catch it
+    /// either, because a second publisher on the same per-gram basis AGREES
+    /// and the 30% band reports agreement as confirmation.
+    #[test]
+    fn a_factor_per_gram_of_a_different_substance_is_refused_not_multiplied() {
+        let mut doc = carbon_reply();
+        // Same line, same real paper, basis reported honestly.
+        *doc.pointer_mut("/inventory/items/0/factor_kg_co2e_per_kg")
+            .unwrap() = json!(5.0);
+        *doc.pointer_mut("/inventory/items/0/factor_unit").unwrap() = json!("kg CO2e/g");
+        doc.pointer_mut("/inventory/items/0")
+            .and_then(|v| v.as_object_mut())
+            .unwrap()
+            .insert(
+                "reference_flow".into(),
+                json!("1 g of spray-dried colorant extract"),
+            );
+
+        enforce("carbon_accountant", &mut doc);
+
+        assert!(
+            doc.pointer("/inventory/items/0/kg_co2e").unwrap().is_null(),
+            "0.02805 kg x 5000 kg CO2e/kg = 140.25 kg CO2e for a 330 ml \
+             bottle. The multiplication must not happen at all: a wrong \
+             product of two real numbers renders identically to a right one."
+        );
+        assert!(
+            doc.pointer("/inventory/items/0/basis_refusal")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| s.contains("mass-per-mass")),
+            "a null total beside a populated factor is indistinguishable from \
+             a missing factor, and the two need different responses"
+        );
+        assert_eq!(
+            doc.pointer("/inventory/coverage").and_then(|v| v.as_str()),
+            Some("none"),
+            "refusing the only priceable line leaves nothing priced"
+        );
+    }
+
+    /// An absent basis is refused rather than presumed to be per kg.
+    ///
+    /// Defaulting is the assumption that produces the failure: the entire
+    /// class of error here is a plausible number silently answering a
+    /// different question, so the safe default declines to answer.
+    #[test]
+    fn a_factor_with_no_stated_unit_is_not_presumed_to_be_per_kilogram() {
+        let mut doc = carbon_reply();
+        *doc.pointer_mut("/inventory/items/0/factor_unit").unwrap() = Value::Null;
+
+        enforce("carbon_accountant", &mut doc);
+
+        assert!(
+            doc.pointer("/inventory/items/0/kg_co2e").unwrap().is_null(),
+            "a factor with no stated basis is not usable in a disclosure, for \
+             the same reason one with no dataset or reference year is not"
+        );
+        assert!(
+            doc.pointer("/inventory/items/0/basis_refusal")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| s.contains("unstated")),
+            "and it says which of the two refusals applied"
+        );
+    }
+
+    /// The same ratio written in different units is the same number, and must
+    /// not be refused as though it were an error. `t CO2e/t` is 1000 kg over
+    /// 1000 kg; a check that fired on it would get switched off.
+    #[test]
+    fn mass_per_mass_units_are_accepted_however_they_are_spelled() {
+        for unit in [
+            "kg CO2e/kg",
+            "kgCO2e/kg",
+            "KG CO2E PER KG",
+            "kg CO2-eq / kg",
+            "t CO2e/t",
+        ] {
+            let mut doc = carbon_reply();
+            *doc.pointer_mut("/inventory/items/0/factor_unit").unwrap() = json!(unit);
+            enforce("carbon_accountant", &mut doc);
+            assert_eq!(
+                doc.pointer("/inventory/items/0/kg_co2e"),
+                Some(&json!(0.058905)),
+                "`{unit}` is mass-per-mass and 0.02805 x 2.1 must still be \
+                 priced; a guard that fires on correct behaviour is a guard \
+                 that gets removed"
+            );
+            assert!(
+                doc.pointer("/inventory/items/0/basis_refusal").is_none(),
+                "`{unit}` was accepted, so no refusal should be recorded"
+            );
+        }
+    }
+
     #[test]
     fn a_line_with_no_factor_is_null_and_the_total_is_partial_and_names_it() {
         let mut doc = carbon_reply();
