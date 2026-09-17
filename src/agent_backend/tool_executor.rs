@@ -26,6 +26,24 @@ use std::time::Instant;
 
 const MAX_ITERATIONS: u32 = 5;
 
+/// Per-request timeout for the flush turn, overriding the 90s the shared
+/// client allows every other hop.
+///
+/// The flush is not another hop of the same size. It is the only call in a run
+/// that is simultaneously the largest input — the whole conversation, including
+/// every accumulated tool result, each capped at `MAX_TOOL_RESULT_CHARS` —
+/// and the largest output, because it is the turn asked to write the entire
+/// structured document in one go. The tool-use calls it shares a client with
+/// emit a few hundred tokens of `tool_use` blocks and return in seconds.
+///
+/// Measured, rather than guessed: a `carbon_accountant` run over a six-line
+/// bill of materials spent 57.9s across its five tool-use calls (11.6s each)
+/// and 9.4s across eighteen searches, then stopped at 157.2s total. The
+/// missing 90s is exactly the client timeout, and the run was recorded as
+/// "tool loop produced empty content" — eighteen successful searches discarded
+/// because the turn that would have written them up was cut off mid-generation.
+const FLUSH_TIMEOUT_SECS: u64 = 240;
+
 /// Detect whether a system prompt declares a structured-output contract
 /// (typically "return raw JSON, no prose"). Agents that demand structured
 /// output must bypass the tool loop — the platform's injected tools
@@ -204,7 +222,9 @@ impl ToolAwareExecutor {
             };
 
             // Send request
-            let response = self.send_anthropic_request(&request, &api_key).await?;
+            let response = self
+                .send_anthropic_request(&request, &api_key, None)
+                .await?;
 
             total_input_tokens += response.usage.input_tokens;
             total_output_tokens += response.usage.output_tokens;
@@ -323,6 +343,8 @@ impl ToolAwareExecutor {
         // into a structured response — see issue #3 / Doc 10.
         let initial_text = extract_text_from_content(&response.content);
         let need_flush = hit_iteration_cap_in_tool_use || initial_text.trim().is_empty();
+        // Why the flush turn did not rescue the run, when it did not.
+        let mut flush_error: Option<String> = None;
         if need_flush {
             // Append the partial assistant response and a user nudge.
             let assistant_blocks: Vec<MessageBlock> = response
@@ -387,14 +409,39 @@ impl ToolAwareExecutor {
                 tool_choice: None,
             };
 
-            if let Ok(flush_response) = self.send_anthropic_request(&flush_request, &api_key).await
+            // The flush gets its own timeout, and its failure is recorded
+            // rather than swallowed. Discarding this error is what made an
+            // eighteen-search run indistinguishable from a run that searched
+            // and found nothing: the panel reported "no factor retrieved"
+            // per line when the truth was that no reply had been obtained at
+            // all. A silent `if let Ok` here costs the only evidence of why.
+            match self
+                .send_anthropic_request(
+                    &flush_request,
+                    &api_key,
+                    Some(std::time::Duration::from_secs(FLUSH_TIMEOUT_SECS)),
+                )
+                .await
             {
-                total_input_tokens += flush_response.usage.input_tokens;
-                total_output_tokens += flush_response.usage.output_tokens;
-                stop_reason = flush_response.stop_reason.clone();
-                response = flush_response;
+                Ok(flush_response) => {
+                    total_input_tokens += flush_response.usage.input_tokens;
+                    total_output_tokens += flush_response.usage.output_tokens;
+                    stop_reason = flush_response.stop_reason.clone();
+                    response = flush_response;
+                }
+                Err(e) => {
+                    // Keep the partial response we had, but remember why the
+                    // flush could not improve on it.
+                    flush_error = Some(e.to_string());
+                    tracing::warn!(
+                        agent = %agent.name,
+                        iterations = iteration,
+                        tool_calls = tool_invocations.len(),
+                        error = %e,
+                        "flush turn failed; tool results will be discarded"
+                    );
+                }
             }
-            // If the flush call itself failed, keep the partial response we had.
         }
 
         let elapsed = start.elapsed();
@@ -406,14 +453,18 @@ impl ToolAwareExecutor {
             (
                 AgentStatus::Failed,
                 Some(format!(
-                    "tool loop produced empty content (stop_reason={}, iterations={}{})",
+                    "tool loop produced empty content (stop_reason={}, iterations={}{}{})",
                     stop_reason.as_deref().unwrap_or("?"),
                     iteration,
                     if hit_iteration_cap_in_tool_use {
                         ", hit_iteration_cap"
                     } else {
                         ""
-                    }
+                    },
+                    flush_error
+                        .as_deref()
+                        .map(|e| format!(", flush_failed: {e}"))
+                        .unwrap_or_default()
                 )),
             )
         } else if stop_reason.as_deref() == Some("max_tokens") {
@@ -758,21 +809,28 @@ impl ToolAwareExecutor {
     }
 
     /// Raw Anthropic API call
+    /// `timeout_override` replaces the client-wide 90s for this one hop. Used
+    /// by the flush turn, whose size is unlike the tool-use calls it shares a
+    /// client with; see [`FLUSH_TIMEOUT_SECS`].
     async fn send_anthropic_request(
         &self,
         request: &ClaudeRequest,
         api_key: &str,
+        timeout_override: Option<std::time::Duration>,
     ) -> Result<ClaudeResponse, ExecutionError> {
-        let response = self
+        let mut builder = self
             .client
             .post("https://api.anthropic.com/v1/messages")
             .header("x-api-key", api_key)
             .header("anthropic-version", "2023-06-01")
-            .header("content-type", "application/json")
-            .json(request)
-            .send()
-            .await
-            .map_err(|e| ExecutionError::ExecutionFailed(format!("API request failed: {}", e)))?;
+            .header("content-type", "application/json");
+        if let Some(t) = timeout_override {
+            builder = builder.timeout(t);
+        }
+        let response =
+            builder.json(request).send().await.map_err(|e| {
+                ExecutionError::ExecutionFailed(format!("API request failed: {}", e))
+            })?;
 
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
