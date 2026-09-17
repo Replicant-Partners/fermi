@@ -45,7 +45,29 @@ extraction, freeze-dried powder for wastewater coagulation, and solar drying
 kinetics. There is no cradle-to-gate food-ingredient factor in kg CO2e/kg.
 Hibiscus should come back `null`, and that is the correct answer.
 
-### 0.2 An unfixed hole, specified here because it is worse than the bug I fixed
+### 0.2 The reference-flow hole — CLOSED in `ac39c763`
+
+**Status: the multiplication is now refused rather than corrected.**
+`inventory.items[].reference_flow` is `Sourced`, `factor_unit` is enforced
+(it was already in the output shape and nothing ever read it), and
+`carbon_basis_refusal` in `grounding_trust.rs` makes any factor that is not
+mass-per-mass leave its line **unpriced** — a state the document already
+expresses — with `basis_refusal` recording which of the two refusals applied.
+An absent `factor_unit` is refused, not presumed to be per kg. `t CO2e/t` and
+`g CO2e/g` are accepted because the ratio is the same number. Three tests, each
+verified to go red with the check defeated; 1115 lib + 234 bin green.
+
+**What is still open, and it is narrower:** a factor correctly labelled
+`kg CO2e/kg` whose denominator is a different *substance* than the BOM line —
+extract against calyces at the same unit. That needs a material match, which is
+the same check `inventory.items[].geography` is already waiting on (see its
+exemption), and should land with it as a mismatch report beside
+`needs_expert` rather than as a refusal.
+
+The original analysis is kept below because it is the argument for why the
+field had to exist at all.
+
+### 0.2.1 The original analysis
 
 The top hibiscus result reports **"5 kg CO2-eq to obtain 1 g of colorant
 extract"** — 5,000 kg CO2e/kg. It would satisfy every guard currently in place:
@@ -370,8 +392,9 @@ seen working end to end:
    "open committed statement" read from workspace git, failed runs rendered as
    failed rather than as six confident `no factor` rows, and the pulse panel
    widened to both credit-spending agents. Full per-run documents await §7.1.
-3. **Add `reference_flow`** (§0.2) before anyone trusts a number, because the
-   failure it prevents is silent.
+3. ~~**Add `reference_flow`**~~ **DONE — `ac39c763`.** See §0.2. The residual
+   same-unit-different-substance case rides with the `geography` material
+   match.
 4. **Centre-panel run history** from `GET /actions`, plus the §7.1 decision.
 5. **Lens registry** (§2) — refactor the three existing lenses into it *without*
    adding a fourth, so the abstraction is proven against known cases.
