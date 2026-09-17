@@ -2456,8 +2456,18 @@ function carbonLineHTML(item, attribution) {
   </div>`;
 }
 
-function carbonPanelHTML() {
-  const r = carbonRun;
+// Takes the run as an argument instead of reading `carbonRun` directly,
+// because one piece of markup now has two callers: the live run in
+// `#ca-result`, and a historical run reopened from its own committed artefact
+// into `#ca-doc`. The default keeps every existing call site unchanged.
+//
+// One renderer rather than two, for the same reason the handler builds the
+// response and the artefact from one construction: two would drift, and the
+// way that drift would surface here is the worst available — a superseded run
+// displayed slightly differently from the day it was produced, with nothing to
+// say which rendering was right.
+function carbonPanelHTML(run = carbonRun) {
+  const r = run;
   if (!r) return '';
 
   if (r.active) {
@@ -2600,20 +2610,30 @@ function renderCarbonPanel() {
 //                      handler wrote to `apply_result` — coverage, total,
 //                      unpriced lines, the provenance stamp, gate violations,
 //                      factors banked, duration. Survives reloads and browsers.
-//   GET /files/<path>  the committed statement, which is the CURRENT one only,
-//                      because `statement.yaml` is overwritten every run.
+//   GET /files/<path>  two documents now, with different lifetimes.
+//                      `dpp/carbon/statement.yaml` is the CURRENT statement
+//                      only, because it is overwritten every run.
+//                      `dpp/carbon/statements/{action_id}.json` is one run's
+//                      own copy and is never rewritten, so a superseded row
+//                      opens the evidence it was actually produced from.
 //
-// So the list comes from the action log and the document comes from git, and
-// the panel says which is which. Rendering a full document for a superseded
-// run would mean showing Tuesday's row beside Thursday's statement, which is
-// the same class of overstatement the agent itself is gated against — a
-// verdict inheriting evidence that does not belong to it.
+// The per-run artefact is why a superseded row has an open button at all. While
+// the newest document was the only openable one, the honest thing was to print
+// a note and no button: showing Tuesday's row beside Thursday's statement is a
+// verdict inheriting evidence that does not belong to it, which is the exact
+// failure this agent is gated against, arriving in the UI. The artefact removes
+// the conflict rather than the warning.
 //
-// Full per-run documents need the handler to commit a per-action artefact at
-// `dpp/carbon/statements/{action_id}`. That is decided but not built (see
-// docs/plans/COORDINATION_DPP_STUDIO_PANELS_AND_PASSPORT.md §7.1); the
-// response JSON is assembled after the git commit, so it is a restructure of
-// `carbon.rs` rather than a line. Until it lands, this reports what it has.
+// It is JSON and not YAML on purpose. The panel consumes deep structure —
+// `statement.inventory.items[]`, `response.model_arithmetic`,
+// `response.grounding_summary` — and pulling a YAML parser into the browser for
+// that shape is the fragile half of a passport. The human-readable rendering
+// already sits beside it in `statement.yaml`; this copy is for a machine and
+// costs one `JSON.parse`.
+//
+// Runs recorded before the artefact existed have none, so `carbonOpenRun` falls
+// back to the note this used to print unconditionally. A 404 there is a missing
+// file, not a failure, and it must not read as one.
 let carbonRuns = [];
 
 async function carbonRunsLoad() {
@@ -2669,6 +2689,29 @@ function carbonRunRowHTML(a, isCurrent) {
   const unpriced = (r.unpriced_items ?? []).length;
   if (unpriced) bits.push(`<span style="color:var(--amb)">${esc(unpriced)} line(s) excluded</span>`);
 
+  // Every row that produced a statement is openable, current or not, because
+  // each run committed its own artefact. The current row additionally offers
+  // the YAML, which exists for one run at a time and is the human-readable
+  // rendering rather than a second source of truth.
+  //
+  // The action_id goes into an `onclick` attribute, and `esc()` deliberately
+  // does not escape quotes — it is an element-content escaper. So the guard
+  // here is the shape check: a UUID is hex and dashes, which cannot terminate
+  // the attribute. Anything else loses its button rather than producing markup
+  // nobody inspected.
+  const openable = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    .test(String(a.action_id ?? ''));
+  const footer = openable
+    ? `<div style="margin-top:4px;display:flex;gap:5px;flex-wrap:wrap">
+         <button class="btn-g btn-sm" style="font-size:9px"
+           onclick="carbonOpenRun('${a.action_id}', ${isCurrent ? 'true' : 'false'})">open this run →</button>
+         ${isCurrent ? `<button class="btn-g btn-sm" style="font-size:9px"
+           onclick="carbonOpenStatement()">statement.yaml →</button>` : ''}
+       </div>`
+    : `<div style="font-size:9px;color:var(--t3);margin-top:3px">This row carries no
+         usable action_id, so its per-run artefact cannot be addressed. The figures
+         above are still the ones the run recorded.</div>`;
+
   return `<div style="border-left:2px solid ${covColour};padding:5px 8px;margin-top:5px;background:var(--s1);border-radius:0 3px 3px 0">
     <div style="font-size:10px;font-family:var(--mono);display:flex;gap:6px;align-items:baseline">
       <span style="flex:1">${total}</span>
@@ -2680,11 +2723,7 @@ function carbonRunRowHTML(a, isCurrent) {
       ${isCurrent ? ' · <span style="color:var(--grn)">current</span>' : ''}
     </div>
     ${bits.length ? `<div style="font-size:9px;color:var(--t2);margin-top:3px;line-height:1.5">${bits.join(' · ')}</div>` : ''}
-    ${isCurrent
-      ? `<div style="margin-top:4px"><button class="btn-g btn-sm" style="font-size:9px"
-           onclick="carbonOpenStatement()">open committed statement →</button></div>`
-      : `<div style="font-size:9px;color:var(--t3);margin-top:3px">superseded — the document at
-           <code style="font-size:9px">dpp/carbon/statement.yaml</code> is a later run's</div>`}
+    ${footer}
   </div>`;
 }
 
@@ -2749,6 +2788,87 @@ async function carbonOpenStatement() {
     </div>`;
   } catch (e) {
     el.innerHTML = `<div style="font-size:10px;color:var(--red);margin-top:6px">${esc(e.message)}</div>`;
+  }
+}
+
+// One run's own committed artefact, re-rendered through the SAME panel that
+// drew it live. This is what makes a superseded row openable at full fidelity:
+// `statement.yaml` can only ever answer for the newest run, but
+// `dpp/carbon/statements/{action_id}.json` is written once and never rewritten.
+//
+// Three properties are inherited from the handler and are the reason this can
+// be trusted rather than merely displayed:
+//
+//   · the artefact is built from the ENFORCED document, so what a reader opens
+//     is what the grounding gate allowed, not what the model said. A factor the
+//     gate stripped is not evidence, and it must not be evidence in the copy.
+//   · a failed run writes no artefact at all, so this never renders a confident
+//     set of "no factor" rows for a run that concluded nothing.
+//   · `written_paths` inside the artefact can be trusted because the file
+//     carrying them is part of the same commit — it is only readable if that
+//     commit landed.
+//
+// Rendered into `#ca-doc` with a banner naming which run it is. Full fidelity
+// makes a superseded document look exactly like a current one, so the one thing
+// this view must never do is let a reader mistake Tuesday for today.
+async function carbonOpenRun(actionId, isCurrent) {
+  const el = document.getElementById('ca-doc');
+  const id = wsId();
+  if (!el || !id) return;
+  const path = `dpp/carbon/statements/${actionId}.json`;
+  el.innerHTML = `<div style="font-size:10px;color:var(--t3);margin-top:6px">
+    <span class="spinner"></span> reading ${esc(path)}…</div>`;
+  try {
+    const res = await fetch(`${base()}/api/workspaces/${id}/files/${path}`,
+      { credentials: 'include', headers: authHeaders() });
+    if (!res.ok) {
+      // Runs recorded before per-run artefacts existed have none. That is a gap
+      // in the history rather than an error, and an HTTP code alone would read
+      // as breakage — so say which it is, and say that the row's own figures are
+      // still that run's.
+      el.innerHTML = `<div style="font-size:10px;color:var(--amb);margin-top:6px;line-height:1.55">
+        No per-run artefact at <code style="font-size:9px">${esc(path)}</code> (HTTP ${res.status}).
+        ${isCurrent ? '' : `This run is superseded, and
+          <code style="font-size:9px">dpp/carbon/statement.yaml</code> is a later
+          run's document, so it is not offered here in place of this one.`}
+        <div style="margin-top:4px;color:var(--t3)">Runs from before the artefact
+          was committed have only the figures on the row above, which the handler
+          wrote when the run finished. Re-run the accountant to produce one.</div>
+      </div>`;
+      return;
+    }
+    const body = await res.json().catch(() => null);
+    // The files endpoint returns `{ path, content }` with the document as TEXT,
+    // so the artefact arrives as a JSON string inside a JSON envelope and needs
+    // the second parse. The `statement !== undefined` branch tolerates that
+    // endpoint one day handing back parsed JSON for `.json` paths; degrading to
+    // showing something beats degrading to showing nothing.
+    const raw = typeof body === 'string' ? body : (body?.content ?? body?.text ?? null);
+    const art = raw != null ? JSON.parse(raw)
+      : (body && body.statement !== undefined ? body : null);
+    if (!art) throw new Error('the artefact was readable but had no recognisable shape');
+
+    // Reassembled into the shape the live panel holds. `response` is the whole
+    // artefact because the artefact IS the response body — same construction in
+    // the handler, which is what lets one renderer serve both.
+    const run = {
+      ok: true,
+      statement: art.statement ?? null,
+      response: art,
+      written: art.written_paths ?? [],
+    };
+    el.innerHTML = `<div style="margin-top:6px">
+      <div style="font-size:9px;color:var(--t3);font-family:var(--mono);margin-bottom:2px">
+        ${esc(path)} · committed to workspace git</div>
+      <div style="font-size:9px;font-family:var(--mono);color:${isCurrent ? 'var(--grn)' : 'var(--amb)'}">
+        ${isCurrent ? 'current run' : 'superseded run'} · ${isCurrent
+          ? 'this is the document dpp/composition.yaml points at'
+          : 'this run\u2019s own document, not the current one \u2014 a later run supersedes it'}</div>
+      ${carbonPanelHTML(run)}
+    </div>`;
+  } catch (e) {
+    el.innerHTML = `<div style="font-size:10px;color:var(--red);margin-top:6px;line-height:1.5">
+      ${esc(path)} could not be read as a run artefact: ${esc(e.message)}</div>`;
   }
 }
 

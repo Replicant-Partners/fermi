@@ -120,6 +120,35 @@ pub struct CalculateCarbonRequest {
 
 const STATEMENT_PATH: &str = "dpp/carbon/statement.yaml";
 
+/// Where one run keeps its own copy of what it concluded.
+///
+/// `STATEMENT_PATH` is overwritten every run, so it can only ever answer for
+/// the newest one. This directory holds a per-action artefact written once and
+/// never rewritten, which is what lets the history panel reopen a superseded
+/// run against the evidence it was actually produced from instead of against a
+/// later run's document.
+///
+/// A const with a builder rather than an inline `format!`, because the client
+/// half builds the same path in a JavaScript template literal and the two
+/// failing to agree **fails silently**: the fetch 404s, the panel falls back to
+/// "this run has no artefact", and that is indistinguishable from the true case
+/// of a run recorded before artefacts existed. A silent regression behind a
+/// graceful fallback is the worst combination available, so the string is
+/// derivable here and `the_client_opens_the_path_this_handler_writes` derives
+/// the client's from the page and compares them.
+const RUN_ARTEFACT_DIR: &str = "dpp/carbon/statements";
+
+/// JSON, and that is a decision rather than a preference.
+///
+/// The panel consumes deep structure — `statement.inventory.items[]`,
+/// `model_arithmetic`, `grounding_summary` — and a browser-side YAML parser for
+/// that shape is the fragile path. The human-readable rendering already exists
+/// beside it at `STATEMENT_PATH`; this copy is for a machine, and the client
+/// costs one `JSON.parse`.
+fn run_artefact_path(action_id: Uuid) -> String {
+    format!("{RUN_ARTEFACT_DIR}/{action_id}.json")
+}
+
 // ─── the bill of materials, read in Rust ─────────────────────────────────────
 
 /// One BOM line, with its quantity resolved to kilograms where that is
@@ -1060,6 +1089,114 @@ fn carbon_intensity_block(doc: &Value, product_mass_kg: Option<f64>) -> String {
     s
 }
 
+/// The response body, and the per-run artefact, from one construction.
+///
+/// They have to be the same shape, because the panel renders both with the
+/// same code: a live run reads this from the HTTP response, and a historical
+/// row reads it back out of `dpp/carbon/statements/{action_id}.json`. Building
+/// them separately is the two-copies-of-one-decision drift this repo keeps
+/// paying for, and the way it would surface here is the worst kind — a
+/// superseded run rendering slightly differently from the day it was produced,
+/// with nothing to say which rendering was right.
+///
+/// So there is one function, and the handler's response is this plus the two
+/// facts that are only known after the commit.
+#[allow(clippy::too_many_arguments)]
+fn response_payload(
+    action_id: Uuid,
+    product_id: &str,
+    doc: &Value,
+    report: &grounding_trust::Report,
+    audit: &ArithmeticAudit,
+    ledger: &LedgerOutcome,
+    hints_offered: usize,
+    composition_updated: bool,
+    resolved_any: bool,
+    boundary: &str,
+    region: &str,
+    written_paths: &[String],
+    run_artefact_path: &str,
+    duration_ms: u64,
+) -> Value {
+    json!({
+        "action_id": action_id,
+        "action_type": "calculate_carbon",
+        "product_id": product_id,
+        "ok": true,
+        "statement": doc,
+        // Null here by construction: a run whose reply could not be read
+        // returns before this is built and writes no artefact at all. Present
+        // so a client can branch on one field for both shapes.
+        "parse_failure": Value::Null,
+        "statement_path": STATEMENT_PATH,
+        "run_artefact_path": run_artefact_path,
+        "written_paths": written_paths,
+        "composition_updated": composition_updated,
+        "boundary_requested": boundary,
+        "region": region,
+        // Why the composition was or was not touched. Absent this, a caller
+        // seeing `composition_updated: false` cannot tell "nothing resolved,
+        // so the fixture was deliberately left alone" from "the rewrite
+        // failed", and those need different responses.
+        "composition_note": if composition_updated {
+            "carbon_intensity rewritten to mode: agent_calculated with a statement_ref."
+        } else if !resolved_any {
+            "Left unchanged on purpose: no factor resolved, so there is nothing \
+             to calculate from. `mode: synthetic` is a bad number honestly \
+             labelled; replacing it with `agent_calculated` and a null would \
+             destroy the only thing that field is for."
+        } else {
+            "No top-level `carbon_intensity:` key in dpp/composition.yaml, so \
+             there was no block to rewrite. The statement stands on its own."
+        },
+        "grounding_summary": {
+            "is_clean": report.is_clean(),
+            "violation_count": report.violations.len(),
+            "provenance": report.provenance.iter()
+                .map(|(b, v)| json!({ "block": b, "verdict": v }))
+                .collect::<Vec<_>>(),
+        },
+        // The arithmetic in the statement is the platform's. This says how
+        // often the model did it anyway and was wrong — reported rather than
+        // hidden, because a derivation makes every stored row correct by
+        // construction and would otherwise conceal exactly the behaviour the
+        // design forbids.
+        "model_arithmetic": {
+            "lines_the_model_priced": audit.attempted,
+            "disagreements": audit.disagreements,
+            "worst_relative_error": audit.worst_relative_error,
+        },
+        // What this run contributed to the evidence base that makes a factor
+        // falsifiable at all. `recorded` are factors carrying all four key
+        // fields, so a later run resolving the same one can be compared
+        // against them; `not_comparable` retrieved a number without enough
+        // identification to place it, which is usable in this statement and
+        // invisible to the cross-check. `hints_offered` is how many lines this
+        // run was spared searching from scratch.
+        "factor_ledger": {
+            "recorded": ledger.recorded,
+            "not_comparable": ledger.incomplete,
+            "hints_offered": hints_offered,
+            "note": "Appended to carbon_emission_factors. Two runs resolving the \
+                     same (material, geography, reference_year, dataset) are two \
+                     readings of one published figure and must agree — that \
+                     comparison is this agent's only cross-check, and it is why \
+                     the hint withholds the value it already knows.",
+        },
+        "duration_ms": duration_ms,
+        // Credits are charged by `dispatch_rabble_action` in a background task
+        // AFTER this is built, so no cost can honestly be reported here.
+        // Quoting an estimate beside a real duration would read as though both
+        // were measured.
+        "cost": {
+            "credits_charged": Value::Null,
+            "where": "GET /api/workspaces/{workspace_id}/budget",
+            "note": "Charged asynchronously after this response. The ledger \
+                     entry carries the agent, action and token count.",
+        },
+    })
+}
+
 // ─── handler ─────────────────────────────────────────────────────────────────
 
 pub async fn calculate_carbon_handler(
@@ -1458,6 +1595,70 @@ pub async fn calculate_carbon_handler(
         }
     };
 
+    // ── the per-run artefact ──────────────────────────────────────────
+    //
+    // `statement.yaml` is overwritten every run, so it can only ever answer
+    // for the newest one. The history panel lists every run from the action
+    // log and, until this existed, had to tell a reader that a superseded row
+    // could not be opened — because showing Tuesday's row beside Thursday's
+    // document is a verdict inheriting evidence that is not its own, which is
+    // the failure this agent is gated against, arriving in the UI.
+    //
+    // So each run also commits its own copy at
+    // `dpp/carbon/statements/{action_id}.json`, and every historical row
+    // becomes openable at full fidelity.
+    //
+    // JSON, not YAML, and that is a decision rather than a preference. The
+    // panel consumes deep structure — `statement.inventory.items[]`,
+    // `model_arithmetic`, `grounding_summary` — and a browser-side YAML parser
+    // for that shape is the fragile path. The human-readable rendering already
+    // exists beside it in `statement.yaml`; this one is for a machine, and the
+    // client costs one `JSON.parse`.
+    //
+    // Built from `doc`, which is the ENFORCED document. An artefact built from
+    // the reply would preserve exactly the values the gate removed, and it
+    // would be the copy a reader opens — the same reasoning as the ledger
+    // append above: a factor the gate stripped is not evidence.
+    //
+    // A failed run reaches none of this: the `parse_failure` branch returns
+    // before `files` is built, so no artefact is written for a run that
+    // concluded nothing. A per-action file on that path would reintroduce
+    // "eighteen searches published as the datasets had nothing" in a new
+    // location, and the history panel already renders those runs correctly
+    // from `apply_result`.
+    let artefact_path = run_artefact_path(action_id);
+    let payload = response_payload(
+        action_id,
+        &product_id,
+        &doc,
+        &report,
+        &audit,
+        &ledger,
+        hints.len(),
+        composition_updated,
+        resolved_any,
+        &boundary,
+        &region,
+        // Intended rather than confirmed, and it cannot lie: this list is only
+        // ever readable from inside a commit that succeeded, because the file
+        // carrying it is part of that same commit. If the commit fails there is
+        // no artefact to read.
+        &files
+            .iter()
+            .map(|(p, _)| p.clone())
+            .chain(std::iter::once(artefact_path.clone()))
+            .collect::<Vec<_>>(),
+        &artefact_path,
+        // Measured at write time, so it excludes the git commit that is about
+        // to happen. Milliseconds, against a run measured in minutes; the
+        // response below reports the true total.
+        request_started.elapsed().as_millis() as u64,
+    );
+    files.push((
+        artefact_path.clone(),
+        serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string()),
+    ));
+
     let git = state.workspace_git.clone();
     let slug_w = slug.clone();
     let commit_files = files.clone();
@@ -1498,79 +1699,19 @@ pub async fn calculate_carbon_handler(
     .execute(&state.db)
     .await;
 
-    Ok(Json(json!({
-        "action_id": action_id,
-        "action_type": "calculate_carbon",
-        "product_id": product_id,
-        "statement": doc,
-        // Null on a normal run. Non-null means the reply was unreadable and the
-        // statement below is the empty one, not a footprint of zero.
-        "parse_failure": parse_failure,
-        "statement_path": STATEMENT_PATH,
-        "written_paths": written,
-        "composition_updated": composition_updated,
-        "boundary_requested": boundary,
-        "region": region,
-        // Why the composition was or was not touched. Absent this, a caller
-        // seeing `composition_updated: false` cannot tell "nothing resolved,
-        // so the fixture was deliberately left alone" from "the rewrite
-        // failed", and those need different responses.
-        "composition_note": if composition_updated {
-            "carbon_intensity rewritten to mode: agent_calculated with a statement_ref."
-        } else if !resolved_any {
-            "Left unchanged on purpose: no factor resolved, so there is nothing \
-             to calculate from. `mode: synthetic` is a bad number honestly \
-             labelled; replacing it with `agent_calculated` and a null would \
-             destroy the only thing that field is for."
-        } else {
-            "No top-level `carbon_intensity:` key in dpp/composition.yaml, so \
-             there was no block to rewrite. The statement stands on its own."
-        },
-        "grounding_summary": {
-            "is_clean": report.is_clean(),
-            "violation_count": report.violations.len(),
-            "provenance": report.provenance.iter()
-                .map(|(b, v)| json!({ "block": b, "verdict": v }))
-                .collect::<Vec<_>>(),
-        },
-        // The arithmetic above is the platform's. This says how often the model
-        // did it anyway and was wrong — reported rather than hidden, because a
-        // derivation makes every stored row correct by construction and would
-        // otherwise conceal exactly the behaviour the design forbids.
-        "model_arithmetic": {
-            "lines_the_model_priced": audit.attempted,
-            "disagreements": audit.disagreements,
-            "worst_relative_error": audit.worst_relative_error,
-        },
-        // What this run contributed to the evidence base that makes a factor
-        // falsifiable at all. `recorded` are factors carrying all four key
-        // fields, so a later run resolving the same one can be compared against
-        // them; `not_comparable` retrieved a number without enough
-        // identification to place it, which is usable in this statement and
-        // invisible to the cross-check. `hints_offered` is how many lines this
-        // run was spared searching from scratch.
-        "factor_ledger": {
-            "recorded": ledger.recorded,
-            "not_comparable": ledger.incomplete,
-            "hints_offered": hints.len(),
-            "note": "Appended to carbon_emission_factors. Two runs resolving the \
-                     same (material, geography, reference_year, dataset) are two \
-                     readings of one published figure and must agree — that \
-                     comparison is this agent's only cross-check, and it is why \
-                     the hint above withholds the value it already knows.",
-        },
-        "duration_ms": request_started.elapsed().as_millis() as u64,
-        // Credits are charged by `dispatch_rabble_action` in a background task
-        // AFTER this response is built, so no cost can honestly be reported
-        // here. Quoting an estimate beside a real duration would read as though
-        // both were measured.
-        "cost": {
-            "credits_charged": Value::Null,
-            "where": "GET /api/workspaces/{workspace_id}/budget",
-            "note": "Charged asynchronously after this response. The ledger \
-                     entry carries the agent, action and token count.",
-        },
-    })))
+    // The response is the artefact plus the two facts only knowable after the
+    // commit: which paths actually landed, and the true total duration.
+    // Everything else is byte-identical to the file a historical row reopens,
+    // because it is the same construction.
+    let mut body = payload;
+    if let Some(obj) = body.as_object_mut() {
+        obj.insert("written_paths".into(), json!(written));
+        obj.insert(
+            "duration_ms".into(),
+            json!(request_started.elapsed().as_millis() as u64),
+        );
+    }
+    Ok(Json(body))
 }
 
 #[cfg(test)]
@@ -1973,5 +2114,142 @@ allergens:
         // A composition that never carried the fixture is a real state, not an
         // error: nothing to replace, and the statement is still written.
         assert!(rewrite_carbon_intensity("product_id: x\n", "carbon_intensity:\n").is_none());
+    }
+
+    /// The Studio page, for the couplings that only exist across the seam.
+    fn studio_page() -> String {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("static/adaptogen-lab/index.html");
+        std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()))
+    }
+
+    /// The body of the client's reader, with its doc comment excluded.
+    ///
+    /// Scoped deliberately. The first version of this searched the whole page
+    /// for a backticked `dpp/carbon/statements/…`, and found three — because
+    /// the prose explaining the decision quotes the path the same way code
+    /// writes it. It failed, which was the right outcome for the wrong reason:
+    /// a check whose subject is "wherever this string appears" is measuring the
+    /// documentation. What is actually being pinned is the path the browser
+    /// FETCHES, and that lives in exactly one function body.
+    fn carbon_open_run_body(src: &str) -> &str {
+        let after = src
+            .split_once("async function carbonOpenRun(")
+            .expect(
+                "carbonOpenRun is gone from static/adaptogen-lab/index.html, so \
+                 no history row can open its own artefact",
+            )
+            .1;
+        &after[..after.find("\n}\n").unwrap_or(after.len())]
+    }
+
+    /// **The client must open the path this handler writes.**
+    ///
+    /// This is pinned because the failure mode is silent and the fallback is
+    /// what hides it. If the two ever disagree, the fetch 404s, the panel shows
+    /// "no per-run artefact for this run", and that message is
+    /// indistinguishable from the true case it exists to cover — a run recorded
+    /// before artefacts were committed. Nothing goes red, history quietly stops
+    /// being openable, and the explanation on screen is a plausible one.
+    ///
+    /// The client's path is **derived from the page**, not restated here. A
+    /// restated copy would only prove this test agrees with itself, which is
+    /// the shape of check this file has already had to correct three times.
+    #[test]
+    fn the_client_opens_the_path_this_handler_writes() {
+        let src = studio_page();
+        let body = carbon_open_run_body(&src);
+
+        let needle = "`dpp/carbon/statements/";
+        assert_eq!(
+            body.matches(needle).count(),
+            1,
+            "expected exactly one template literal building the run artefact \
+             path inside carbonOpenRun. Zero means the client no longer opens \
+             per-run artefacts and this test is vacuous; more than one means \
+             there are two copies of a path only this handler gets to decide."
+        );
+
+        let start = body.find(needle).unwrap() + 1;
+        let rest = &body[start..];
+        let literal = &rest[..rest.find('`').expect("unterminated template literal")];
+
+        let action_id = Uuid::parse_str("0f8fad5b-d9cb-469f-a165-70867728950e").unwrap();
+        let client = literal.replace("${actionId}", &action_id.to_string());
+
+        assert_eq!(
+            client,
+            run_artefact_path(action_id),
+            "the Studio fetches `{client}` and this handler commits `{}`. \
+             Whichever moved, the other has to move with it.",
+            run_artefact_path(action_id)
+        );
+
+        // JSON, not YAML — the one decision a later edit is most likely to
+        // undo, because YAML is what sits beside it and reads better. The
+        // panel consumes `statement.inventory.items[]`,
+        // `response.model_arithmetic` and `response.grounding_summary`, and a
+        // browser-side YAML parser for that shape is the fragile path.
+        assert!(
+            client.ends_with(".json"),
+            "the run artefact is consumed by a `JSON.parse` in the browser, so \
+             it has to be JSON: got `{client}`"
+        );
+        assert!(
+            body.contains("JSON.parse"),
+            "carbonOpenRun reads the artefact with no parser, which cannot \
+             work for a JSON document delivered as text under `content`"
+        );
+    }
+
+    /// **One renderer, and something has to call it.**
+    ///
+    /// A live run and a reopened historical run are drawn by the same function
+    /// for the same reason the response and the artefact come from one
+    /// construction in `response_payload`: two would drift, and the drift would
+    /// surface as a superseded run displayed differently from the day it was
+    /// produced, with nothing on screen to say which rendering was right.
+    ///
+    /// The second assertion is the one that would otherwise rot quietly. A
+    /// reader function that exists and is never wired to a button leaves the
+    /// history exactly as unopenable as before, and every other check here
+    /// would still pass.
+    #[test]
+    fn the_history_panel_reuses_the_live_renderer_and_is_wired_to_it() {
+        let src = studio_page();
+
+        assert_eq!(
+            src.matches("function carbonPanelHTML").count(),
+            1,
+            "there must be exactly one carbonPanelHTML. A second renderer for \
+             historical runs is how a superseded statement starts looking \
+             different from the one that was committed."
+        );
+        assert!(
+            src.contains("function carbonPanelHTML(run = carbonRun)"),
+            "carbonPanelHTML has to take the run as an argument, or a reopened \
+             artefact cannot be rendered without overwriting the live run's \
+             state to do it"
+        );
+        assert!(
+            src.contains("carbonPanelHTML(run)"),
+            "nothing renders a reopened artefact through the shared panel"
+        );
+        assert!(
+            src.contains("onclick=\"carbonOpenRun("),
+            "carbonOpenRun is not reachable from a run row, so the history is \
+             as unopenable as it was before the artefact existed"
+        );
+
+        // The fallback is load-bearing: runs recorded before the artefact
+        // existed have none, and a 404 there is a missing file rather than a
+        // failure. Without this branch the first click on old history reports
+        // breakage for a workspace that is behaving correctly.
+        assert!(
+            carbon_open_run_body(&src).contains("res.ok"),
+            "carbonOpenRun must branch on the response status: a run from \
+             before per-run artefacts has no file to open, and that is a gap \
+             in the history, not an error"
+        );
     }
 }

@@ -313,6 +313,111 @@ fn every_widget_script_parses() {
     );
 }
 
+/// **The standalone single-file apps parse too.**
+///
+/// # The gap this closes
+///
+/// The suite at the top of this file walks `templates/`. The one above it walks
+/// `static/js/`. Neither reaches `static/adaptogen-lab/index.html`, which is a
+/// single-file app carrying **171,000 characters of inline JavaScript in one
+/// `<script>` block** — by some distance the largest concentration of template
+/// literals in the repository, and therefore the likeliest place for the defect
+/// this whole file was written about.
+///
+/// That is now the third time a scan here has been only as good as the list it
+/// scanned. Its own sibling records the first two: `TRUST_MODULES` did not list
+/// `port_trust`, and the trace fold searched a window that no longer reached
+/// its target. The pattern is consistent enough to be worth stating plainly —
+/// when a detector is scoped by a directory, the code moves and the directory
+/// does not follow.
+///
+/// # Why the linter and not `node --check`
+///
+/// These are HTML, so the script has to be extracted first, and extraction by
+/// regex is the exact mistake `scripts/lint-inline-js.py` exists to avoid: a
+/// non-greedy `<script>(.*?)</script>` stops at the first `</script>` even when
+/// it appears inside a string, and the fragment it hands back can parse
+/// cleanly while the page does not load. `html.parser` treats script content as
+/// CDATA and gets the boundaries right.
+#[test]
+fn every_inline_script_in_every_standalone_page_parses() {
+    if !have_node() {
+        eprintln!(
+            "SKIPPED: `node` is not on PATH, so the standalone pages were not \
+             syntax-checked. This is an absence of a check, not a passing one."
+        );
+        return;
+    }
+
+    let root = repo().join("static");
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    let mut stack = vec![root];
+    while let Some(d) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().and_then(|s| s.to_str()) == Some("html") {
+                files.push(p);
+            }
+        }
+    }
+    files.sort();
+
+    // Discovered rather than listed, but the discovery itself is pinned: a walk
+    // that silently returns nothing is how this class of check reports OK for a
+    // page that does not load.
+    assert!(
+        files.len() >= 3,
+        "only found {} HTML page(s) under static/ — the walk is broken, which \
+         would make this vacuously pass",
+        files.len()
+    );
+    let studio = "static/adaptogen-lab/index.html";
+    assert!(
+        files
+            .iter()
+            .any(|p| p.strip_prefix(repo()).map(|r| r.to_string_lossy() == studio) == Ok(true)),
+        "{studio} is not in the walk. It is the reason this test exists: the \
+         DPP Studio's entire client, in one inline script."
+    );
+
+    let out = Command::new("python3")
+        .arg("scripts/lint-inline-js.py")
+        .args(files.iter().map(|p| p.as_os_str()))
+        .current_dir(repo())
+        .output()
+        .expect("run scripts/lint-inline-js.py");
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "inline JavaScript in a standalone page failed to parse. A template \
+         literal containing a stray backtick is the usual cause, and an HTML \
+         comment inside one is the usual place — inside a template literal a \
+         comment is string content, and a backtick in it ends the \
+         string.\n\n{stdout}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // `static/rabble/index.html` loads its script externally and contributes no
+    // inline block, which is why this floor is 2 and not `files.len()`. If it
+    // ever reads 0 the extraction has broken, and every page here would pass
+    // without being read.
+    let checked = stdout.lines().filter(|l| l.starts_with("OK")).count();
+    assert!(
+        checked >= 2,
+        "only {checked} inline script(s) were checked across {} standalone \
+         page(s). The extraction is probably broken — which is exactly how the \
+         regex version of this check reported OK for a page that did not \
+         load.\n{stdout}",
+        files.len()
+    );
+}
+
 /// **The falsifier for the widget scan.**
 ///
 /// The original bug, in the shape it actually took, put in front of the same
