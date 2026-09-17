@@ -70,12 +70,22 @@ const ACCOUNTANT: &str = "carbon_accountant";
 
 /// Wall-clock budget for one statement.
 ///
-/// One run is up to four rounds of `web_search` — `ToolAwareExecutor` caps the
-/// loop at five iterations — plus the reasoning over what came back, inside an
-/// HTTP client that already allows 90s per hop. A six-line bill of materials
-/// against three factor databases is minutes, not seconds, and saying so is
-/// better than leaving a caller to guess whether the request has hung.
-const RUN_TIMEOUT_SECS: u64 = 300;
+/// Has to exceed the executor's own worst case, or this timeout fires first
+/// and cancels a run that was about to succeed — which is the more expensive
+/// failure, because the searches have already been paid for by then.
+///
+/// Measured on a real six-line run rather than guessed: five tool-use calls at
+/// ~11.6s each is 57.9s, and `tool_executor::FLUSH_TIMEOUT_SECS` then allows
+/// 240s for the single turn that writes the whole document up. That is 298s
+/// before any of this handler's own work, so the previous 300s left nothing
+/// and would have cut off a healthy run by a margin of seconds.
+///
+/// 420s is that worst case plus room for the BOM read, the gate and the git
+/// commit. It is a long time to hold a request open, and the alternative —
+/// discarding eighteen successful searches at the finish line — is worse.
+/// The flush timeout is the number to watch: if it moves, this must move with
+/// it.
+const RUN_TIMEOUT_SECS: u64 = 420;
 
 /// `message_type` passed to `dispatch_rabble_action`.
 ///
@@ -1316,6 +1326,71 @@ pub async fn calculate_carbon_handler(
         );
     }
 
+    // ── a run that produced no reply has produced no statement ──────────────
+    //
+    // Observed in production on 2026-09-16, and it is the failure this whole
+    // agent is written against, arriving through the one door left open.
+    //
+    // The run made **eighteen successful searches**, then the turn that would
+    // have written them up was cut off by a 90s client timeout (fixed since,
+    // in `tool_executor::FLUSH_TIMEOUT_SECS`). The reply came back empty. This
+    // handler then did what it was told: rebuilt `inventory.items` from the
+    // BOM with every factor null, derived `coverage: none`, and — because a
+    // block with Sourced fields and no content is stamped `tool_no_match` —
+    // published a document whose provenance reads *"the datasets were asked
+    // and had nothing"*.
+    //
+    // They were asked. Eighteen times. The distinction between "searched and
+    // found nothing" and "never finished asking" is the one this contract
+    // exists to preserve, and collapsing it is exactly the
+    // `tool_no_match`-as-clearance failure the design refuses everywhere else.
+    //
+    // So an unreadable reply is a FAILED RUN, not an empty footprint. Nothing
+    // is persisted, the composition is not touched, and the response says the
+    // run failed. The searches are lost, which is expensive and correct: what
+    // must not happen is a product acquiring a carbon statement that says its
+    // ingredients have no measurable emissions because a turn timed out.
+    if let Some(why) = &parse_failure {
+        let _ = sqlx::query(
+            "UPDATE workspace_action_log
+                SET apply_result = $1, applied = FALSE, applied_at = NOW()
+              WHERE action_id = $2",
+        )
+        .bind(json!({
+            "duration_ms": request_started.elapsed().as_millis() as u64,
+            "outcome": "no_reply",
+            "parse_failure": why,
+        }))
+        .bind(action_id)
+        .execute(&state.db)
+        .await;
+
+        return Ok(Json(json!({
+            "action_id": action_id,
+            "action_type": "calculate_carbon",
+            "product_id": product_id,
+            "ok": false,
+            "outcome": "no_reply",
+            "parse_failure": why,
+            "statement": Value::Null,
+            "written_paths": [],
+            "composition_updated": false,
+            "duration_ms": request_started.elapsed().as_millis() as u64,
+            "note": "The accountant did not return a readable document, so no \
+                     statement was written and dpp/composition.yaml was left \
+                     alone. This is NOT a finding that the product has no \
+                     measurable emissions — nothing was concluded. The run may \
+                     have searched successfully and been cut off while writing \
+                     up; check the episode's token count before assuming the \
+                     corpus was empty. Re-run with `force: true`.",
+            "cost": {
+                "credits_charged": Value::Null,
+                "where": "GET /api/workspaces/{workspace_id}/budget",
+                "note": "A failed run still spends what its searches cost.",
+            },
+        })));
+    }
+
     // Append the retrieved factors to the ledger, from the ENFORCED document
     // rather than the reply: a factor the gate stripped is not evidence, and
     // recording it would put a value into the comparison base that the
@@ -1328,17 +1403,40 @@ pub async fn calculate_carbon_handler(
         statement_yaml(&doc, &product_id, action_id, &audit),
     )];
 
-    // And retire the fixture. 1 ml taken as 1 g again, consistently with the
-    // quantity conversion, so the intensity denominator matches the numerator.
+    // And retire the fixture — but only if something was actually calculated.
+    //
+    // The first version rewrote unconditionally, and the production run showed
+    // what that means: a statement where no factor resolved still flipped
+    // `mode: synthetic` to `mode: agent_calculated` with `value_kg_per_kg:
+    // null` and `coverage: none`. The operator lost the hand-typed 0.41 and
+    // gained nothing, and the document now claimed a CALCULATED mode for a
+    // calculation that had not happened.
+    //
+    // `synthetic` is a bad number, but it is an honest label on a bad number,
+    // and `mode` exists so an operator can tell those apart. Overwriting it
+    // with a calculated-but-empty block destroys the only value the field had.
+    // So the fixture is retired when at least one line resolved, and left
+    // exactly as it was otherwise — with the response saying which happened
+    // and why.
+    let resolved_any = doc
+        .pointer("/inventory/coverage")
+        .and_then(|v| v.as_str())
+        .is_some_and(|c| c != "none");
     let product_mass_kg = basis_ml.map(|ml| ml / 1000.0);
-    let composition_updated = match String::from_utf8(raw.clone()).ok().and_then(|text| {
-        rewrite_carbon_intensity(&text, &carbon_intensity_block(&doc, product_mass_kg))
-    }) {
-        Some(updated) => {
-            files.push(("dpp/composition.yaml".to_string(), updated));
-            true
+    let composition_updated = if !resolved_any {
+        false
+    } else {
+        // 1 ml taken as 1 g again, consistently with the quantity conversion,
+        // so the intensity denominator matches the numerator.
+        match String::from_utf8(raw.clone()).ok().and_then(|text| {
+            rewrite_carbon_intensity(&text, &carbon_intensity_block(&doc, product_mass_kg))
+        }) {
+            Some(updated) => {
+                files.push(("dpp/composition.yaml".to_string(), updated));
+                true
+            }
+            None => false,
         }
-        None => false,
     };
 
     let git = state.workspace_git.clone();
@@ -1394,6 +1492,21 @@ pub async fn calculate_carbon_handler(
         "composition_updated": composition_updated,
         "boundary_requested": boundary,
         "region": region,
+        // Why the composition was or was not touched. Absent this, a caller
+        // seeing `composition_updated: false` cannot tell "nothing resolved,
+        // so the fixture was deliberately left alone" from "the rewrite
+        // failed", and those need different responses.
+        "composition_note": if composition_updated {
+            "carbon_intensity rewritten to mode: agent_calculated with a statement_ref."
+        } else if !resolved_any {
+            "Left unchanged on purpose: no factor resolved, so there is nothing \
+             to calculate from. `mode: synthetic` is a bad number honestly \
+             labelled; replacing it with `agent_calculated` and a null would \
+             destroy the only thing that field is for."
+        } else {
+            "No top-level `carbon_intensity:` key in dpp/composition.yaml, so \
+             there was no block to rewrite. The statement stands on its own."
+        },
         "grounding_summary": {
             "is_clean": report.is_clean(),
             "violation_count": report.violations.len(),
@@ -1542,6 +1655,105 @@ allergens:
              uncontracted id is what produces that — AND that such a report \
              calls itself clean, which is why it has to be refused rather than \
              reported."
+        );
+    }
+
+    /// **A run that produced no reply must not become a footprint of nothing.**
+    ///
+    /// Observed in production on 2026-09-16. The run made eighteen successful
+    /// `web_search` calls and was then cut off by a 90s client timeout on the
+    /// single turn that had to write them up (since fixed —
+    /// `tool_executor::FLUSH_TIMEOUT_SECS`). The reply came back empty, and
+    /// this handler did exactly what it was built to do with a reply: rebuilt
+    /// the lines from the BOM, found no factors, derived `coverage: none`, and
+    /// published a document stamped `tool_no_match` — *"the datasets were
+    /// asked and had nothing"*.
+    ///
+    /// They were asked eighteen times. "Searched and found nothing" and "never
+    /// finished asking" are the two states this entire contract exists to keep
+    /// apart, and the handler collapsed them on the one path where the agent
+    /// says nothing at all.
+    ///
+    /// This pins the shape of the enforced document in that case, so the
+    /// reasoning survives even if the early return above is refactored: an
+    /// empty reply yields a `none`/`tool_no_match` document, which is exactly
+    /// why it must never be persisted or allowed to touch the composition.
+    #[test]
+    fn an_empty_reply_yields_the_document_that_must_never_be_published() {
+        let comp: Value = serde_yaml::from_str(COMPOSITION).unwrap();
+        let (lines, basis) = read_bom(&comp);
+
+        // What `extract_json` hands back for an empty reply, verbatim from the
+        // handler's fallback.
+        let mut doc = json!({ "explanation": Value::Null });
+        normalise_reply(&mut doc, &lines);
+        grounding_trust::enforce(ACCOUNTANT, &mut doc);
+
+        assert_eq!(
+            doc.pointer("/inventory/coverage").and_then(|v| v.as_str()),
+            Some("none")
+        );
+        assert!(doc.pointer("/inventory/total_kg_co2e").unwrap().is_null());
+        assert_eq!(
+            doc.get("inventory_provenance").and_then(|v| v.as_str()),
+            Some(grounding_trust::PROV_NO_MATCH),
+            "an empty reply produces a document that claims the corpus was \
+             asked and had nothing. That claim is false when the run never \
+             finished asking, which is why the handler returns `outcome: \
+             no_reply` instead of persisting this."
+        );
+
+        // And the composition must survive untouched. `synthetic` is a bad
+        // number honestly labelled; `agent_calculated` with a null is a
+        // calculated mode for a calculation that did not happen, and it
+        // destroys the only thing `mode` is for.
+        let block = carbon_intensity_block(&doc, basis.map(|ml| ml / 1000.0));
+        assert!(
+            block.contains("value_kg_per_kg: null") && block.contains("coverage: none"),
+            "the block this run would have written: {block}"
+        );
+        assert!(
+            block.contains("mode: agent_calculated"),
+            "which is the point — the block builder cannot tell a failed run \
+             from a real one, so the CALLER must, and does: the rewrite is \
+             skipped unless a line resolved."
+        );
+    }
+
+    /// The handler's budget has to outlast the executor's, or it cancels runs
+    /// that were about to succeed — and by then the searches are paid for.
+    ///
+    /// Five tool-use calls at ~11.6s measured, plus the flush turn's own
+    /// timeout. Pinned because the two constants live in different files and
+    /// the failure mode of them drifting apart is silent: a healthy run cut
+    /// off at the finish line, recorded as "no reply", which the rest of this
+    /// module now correctly refuses to turn into a statement.
+    #[test]
+    fn the_run_budget_outlasts_the_executors_flush() {
+        const MEASURED_TOOL_PHASE_SECS: u64 = 58;
+        // Read out of the source rather than imported: the constant is
+        // private, and it belongs to a file another session is actively
+        // editing. Same technique `tests/migration_ledger.rs` uses on
+        // `api_server.rs`, and for the same reason — a cross-file invariant
+        // should not require making someone else's internals public.
+        let src = std::fs::read_to_string(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("src/agent_backend/tool_executor.rs"),
+        )
+        .expect("tool_executor.rs");
+        let flush: u64 = src
+            .lines()
+            .find_map(|l| l.trim().strip_prefix("const FLUSH_TIMEOUT_SECS: u64 = "))
+            .and_then(|r| r.trim_end_matches(';').parse().ok())
+            .expect(
+                "FLUSH_TIMEOUT_SECS not found in tool_executor.rs. If it was                  renamed, this invariant still holds and needs re-pointing:                  this handler's budget must outlast the executor's flush.",
+            );
+        assert!(
+            RUN_TIMEOUT_SECS > flush + MEASURED_TOOL_PHASE_SECS,
+            "RUN_TIMEOUT_SECS is {RUN_TIMEOUT_SECS}s but the executor can \
+             legitimately take {flush}s on the flush turn alone, after about \
+             {MEASURED_TOOL_PHASE_SECS}s of tool calls. This handler would \
+             fire first and discard a run that had already done its searching."
         );
     }
 

@@ -2461,6 +2461,25 @@ function carbonPanelHTML() {
   if (r.error) {
     return `<div style="font-size:11px;color:var(--red);white-space:pre-wrap;line-height:1.5">${esc(r.error)}</div>`;
   }
+  // A run that produced no reply is a FAILED run, not an empty footprint.
+  // Rendered before the skipped/statement branches because the handler now
+  // returns no statement at all in that case — and because the production
+  // failure this guards against looked, in this panel, like a confident set of
+  // "no factor" rows. Eighteen searches had succeeded; the turn that would
+  // have written them up timed out.
+  if (r.response?.outcome === 'no_reply') {
+    return `<div style="font-size:11px;color:var(--amb);line-height:1.6">
+      <strong>The accountant returned no readable document.</strong> Nothing was
+      written and <code style="font-size:10px">dpp/composition.yaml</code> was
+      left alone.
+      <div style="margin-top:6px;color:var(--t2)">This is <em>not</em> a finding
+        that the product has no measurable emissions — nothing was concluded. A
+        run can search successfully and still be cut off while writing up, so
+        check the episode's token count before assuming the corpus was empty.</div>
+      <div style="margin-top:6px;font-family:var(--mono);font-size:9px;color:var(--t3);white-space:pre-wrap">${esc(r.response.parse_failure ?? '')}</div>
+      <div style="margin-top:6px;color:var(--t3)">Use ↻ to re-run.</div>
+    </div>`;
+  }
   if (r.response?.skipped) {
     return `<div style="font-size:11px;color:var(--t2);line-height:1.55">
       A statement already exists at <code style="font-size:10px">${esc(r.response.statement_path)}</code>, and nothing was spent.
@@ -2545,6 +2564,10 @@ function carbonPanelHTML() {
       ${r.creditsSpent != null ? ` \u00b7 ${esc(r.creditsSpent)} credits` : (r.costNote ? ` \u00b7 ${esc(r.costNote)}` : '')}<br>
       ${r.written.length ? `written: ${r.written.map(esc).join(', ')}` : `<span style="color:var(--amb)">not committed</span>`}
     </div>
+    ${r.response?.composition_note && !r.response?.composition_updated
+      ? `<div style="font-size:10px;color:var(--t3);margin-top:5px;line-height:1.5">
+           composition unchanged \u00b7 ${esc(r.response.composition_note)}</div>`
+      : ''}
     ${r.note ? `<div style="font-size:10px;color:var(--amb);margin-top:5px">${esc(r.note)}</div>` : ''}
   </div>`;
 }
