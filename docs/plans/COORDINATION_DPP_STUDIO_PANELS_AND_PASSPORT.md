@@ -351,6 +351,48 @@ Rules, learned the expensive way:
    `response.grounding_summary`) and a browser-side YAML parser for that shape
    is the fragile path; the human-readable YAML already exists beside it.
 
+   **Write-set notice — read before you start, `carbon.rs` is no longer
+   untouched.** An earlier version of this section said `carbon.rs` belonged
+   wholly to the carbon session. That is now imprecise: `ac39c763` (the
+   reference-flow guard, §0.2) put three hunks in it. They are in different
+   regions from this task and no conflict is expected, but here they are so it
+   can be checked rather than assumed:
+
+   | hunk | function | what |
+   |---|---|---|
+   | ~`281` | `output_shape` | `reference_flow` added, `factor_unit` told to be verbatim |
+   | ~`494` | `build_query` | the rule explaining why the basis matters |
+   | ~`1887` | `the_statement_is_reproducible_by_hand` | fixture now states `factor_unit` |
+
+   This task lives in `calculate_carbon_handler` — around
+   `git.commit_files_as` (~`1447`) and the response `json!` (~`1483`) — so the
+   two sets do not overlap. Rebase on `main` first regardless.
+
+   **Three things the implementation has to get right**, each of which is a
+   decision already made elsewhere in this handler and would be silently
+   undone by a naive version:
+
+   1. **Write the artefact from the ENFORCED document, not the reply.** The
+      existing ledger append is explicit about this: "a factor the gate
+      stripped is not evidence". An artefact built from the raw reply would
+      preserve exactly the values the gate removed, and it would be the copy a
+      reader opens.
+   2. **A failed run must write no artefact.** The `parse_failure` branch
+      returns before the commit and leaves the composition alone — that is
+      `c12349a8`'s whole point. A per-action file written on that path would
+      reintroduce the "eighteen searches published as the datasets had
+      nothing" failure in a new location, and the history panel already renders
+      those runs correctly from `apply_result` without one.
+   3. **`statement.yaml` stays.** It is the human-readable current pointer and
+      `rewrite_carbon_intensity` writes a `statement_ref` at it. The
+      per-action JSON is additive, not a replacement.
+
+   The client is already waiting for it and needs one change when it lands:
+   `carbonRunRowHTML()` in `index.html` currently renders superseded rows with
+   a "superseded" note instead of an open button. Point that at
+   `dpp/carbon/statements/{action_id}.json`, `JSON.parse` it into the shape
+   `carbonPanelHTML()` already consumes, and every row becomes openable.
+
 2. **Barcode standard. DECIDED: no GS1 prefix, so do not pretend to one.**
 
    Encode a **QR containing the resolver URL** for the workspace product, and
