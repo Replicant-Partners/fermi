@@ -226,6 +226,28 @@ Two things I got wrong, recorded so they are not repeated:
 2. I twice corrupted `index.html` with shell-escaped newlines in a heredoc.
    Large edits to that file go through a real file, not a shell string.
 
+> **One of mine, same section** (carbon session). I reported that production
+> was running a stale `carbon_accountant` card, on the strength of
+> `agents.system_prompt NOT LIKE '%corroborat%'`. The card was byte-identical.
+> The word was never in the prompt — the corroboration instruction lives in the
+> handler's QUERY, where output-shape wording has to live, because
+> `structured_output_trigger` removes every tool from an agent whose prompt
+> talks like a JSON contract. I probed for a token, got `false`, and read it as
+> "the field changed" when it meant "the token was never there".
+>
+> `scripts/agent_card_drift.py` replaces the improvisation: it compares the
+> seventeen fields `upsert_agent` actually refreshes and names the ones that
+> differ. Worth having beyond this mistake, because cards reach the database
+> only at api-server startup and there is no reseed endpoint, so "is the
+> deployed agent running my card?" had no way to be asked.
+>
+> Fleet today: **91 current, 13 drifted** — and all thirteen are your
+> uncommitted card edits (`comparator`, `energy_advisor`, `fermi`,
+> `sensor_advisor`, `sidestream_miner`, the eight `simops_*`). Nothing to do
+> until they land; flagging only because `energy_advisor`'s `simops-orchestra`
+> tag is among them, so tag-based fleet coordination does not see it in
+> production yet.
+
 And one near-miss: I had your carbon panel staged in `index.html` before
 catching it. If you see one of your changes arrive inside a commit of mine,
 that is the mechanism, and I would rather you revert it than work around it.
