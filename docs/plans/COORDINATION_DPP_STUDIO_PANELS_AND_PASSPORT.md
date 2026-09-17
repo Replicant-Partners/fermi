@@ -306,16 +306,39 @@ Rules, learned the expensive way:
 
 ---
 
-## 7. Open decisions — these need the operator or a judgement call
+## 7. Decisions — answered by the operator 2026-09-17
 
-1. **Statement history storage.** Per-action path
-   (`dpp/carbon/statements/{action_id}.yaml`) versus fattening `apply_result`.
-   Per-action files keep workspace git as the record and make the passport
-   diffable; they also grow the repo per run. *Recommendation: per-action path,
-   with `statement.yaml` kept as a pointer to the current one.*
-2. **Barcode standard.** Cannot proceed past a placeholder without knowing
-   whether the operator holds a GS1 prefix, and without someone confirming the
-   current ESPR data-carrier requirement.
+1. **Statement history storage. DECIDED: per-action path,** with
+   `statement.yaml` kept as a pointer to the current one.
+
+   **This is now the one blocking server-side task, and it belongs to whoever
+   owns `carbon.rs`.** The client half shipped in `28b00836` and is honest
+   about the gap: history lists every run from `GET /actions`, and only the
+   newest run that produced a statement can open the committed document,
+   because `statement.yaml` is overwritten per run.
+
+   The implementation is not a one-liner, which is why it was not bundled:
+   the response `json!({…})` in `calculate_carbon_handler` is assembled
+   **after** `git.commit_files_as`, so the artefact the panel wants does not
+   exist at commit time. Building the payload into a `let` above the commit and
+   pushing it onto `files` as `dpp/carbon/statements/{action_id}.json` — the
+   exact POST body, which `carbonPanelHTML()` already renders with no parsing —
+   makes every historical run re-openable at full fidelity and costs the client
+   one `JSON.parse`. **Do not write it as YAML.** The panel consumes deep
+   structure (`statement.inventory.items[]`, `response.model_arithmetic`,
+   `response.grounding_summary`) and a browser-side YAML parser for that shape
+   is the fragile path; the human-readable YAML already exists beside it.
+
+2. **Barcode standard. DECIDED: no GS1 prefix, so do not pretend to one.**
+
+   Encode a **QR containing the resolver URL** for the workspace product, and
+   label the identifier as internal (`part_number`, e.g. `PKH-F2-330`) rather
+   than as a GTIN. Any phone camera opens a URL, which is the whole
+   requirement; retail scanners are not the use case. If a GS1 prefix is leased
+   later, the same QR becomes a GS1 Digital Link by substituting the identifier
+   in the URL path — the scanning and resolver work does not change. Someone
+   must still confirm the current ESPR data-carrier requirement before any of
+   this is described to a customer as compliant.
 3. **Public resolver authorisation.** A scannable passport implies an
    unauthenticated read surface. Which fields are public? A carbon total and a
    regulatory verdict are commercially sensitive in a way a claims list is not.
@@ -324,9 +347,12 @@ Rules, learned the expensive way:
    partial by construction. Raising `MAX_ITERATIONS` globally makes the flush's
    input larger and is the wrong lever. Per-agent budgets are the right shape.
    Judge it after a successful run, with the factor ledger populated.
-5. **Whether the operator wants the restructure before or after a verified
-   carbon run.** The panels are a larger change than everything else here
-   combined, and the carbon path is one re-run away from being demonstrable.
+5. **Restructure ordering. DECIDED: proceed.** The operator is content for the
+   UX work to go ahead in parallel with the carbon agent work, on the grounds
+   that it is UX and therefore separable. Note the practical constraint this
+   creates: `static/adaptogen-lab/index.html` is the contended file and
+   `carbon.rs` is not the UX session's to edit. Keep the write sets disjoint
+   and follow §6.
 
 ---
 
@@ -338,8 +364,12 @@ seen working end to end:
 1. **Re-run `calculate_carbon`.** Confirm the flush fix. Expect partial
    coverage, a divergence flag on sugar, `null` on hibiscus, `needs_expert:
    true`. Read `/api/agents/carbon_accountant/metrics` against the §0 baseline.
-2. **Hydrate the carbon panel from `GET /files/dpp/carbon/statement.yaml`.** One
-   fetch. Fixes the reported bug for the current run.
+2. ~~**Hydrate the carbon panel from `GET /files/dpp/carbon/statement.yaml`.**~~
+   **DONE — `28b00836`.** Run history from `GET /actions` (survives reloads,
+   reports each run's recorded coverage/total/duration/violations/factors), an
+   "open committed statement" read from workspace git, failed runs rendered as
+   failed rather than as six confident `no factor` rows, and the pulse panel
+   widened to both credit-spending agents. Full per-run documents await §7.1.
 3. **Add `reference_flow`** (§0.2) before anyone trusts a number, because the
    failure it prevents is silent.
 4. **Centre-panel run history** from `GET /actions`, plus the §7.1 decision.
