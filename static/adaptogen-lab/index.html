@@ -563,6 +563,7 @@ body.shelf-open .shelf-handle{right:min(380px,42vw)}
       </div>
       <div class="sco-prov">factors: tool_verified | tool_no_match | unavailable_no_tool_source · arithmetic: platform_derived · scope, boundary, fitness: model_inference</div>
       <div id="ca-result" class="sco-result"></div>
+      <div id="ca-runs"></div>
     </div>
     <div style="font-size:10px;color:var(--t2);line-height:1.55;margin-bottom:10px">
       Carbon disclosure is already <a href="https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32023R1542" target="_blank" style="color:var(--blu)">mandatory in the EU Battery DPP</a>, CBAM enters its definitive stage in 2026, and ESRS E1 under CSRD is the shape food is being pulled toward. Each of those regimes wants a different standard of evidence from the same number, which is why the statement says what it is <em>fit for</em> rather than reporting a confidence score.
@@ -798,6 +799,9 @@ function showTab(name) {
     if (!bomYamlText) loadBomYaml().then(renderCarbonFixture);
     else renderCarbonFixture();
     renderCarbonPanel();
+    // Every run this workspace has recorded, from the action log rather than
+    // from whatever this tab happens to have in memory.
+    carbonRunsLoad();
   }
 }
 
@@ -883,7 +887,8 @@ function resetWorkspaceState() {
   if (hireBtn) { hireBtn.style.display = ''; hireBtn.disabled = false; hireBtn.textContent = 'Hire agent \u2192'; }
   const runBtn = document.getElementById('sco-run-btn');
   if (runBtn) runBtn.style.display = 'none';
-  for (const id of ['sco-result', 'rlt-result', 'eval-panel', 'ca-result', 'ca-current']) {
+  carbonRuns = [];
+  for (const id of ['sco-result', 'rlt-result', 'eval-panel', 'ca-result', 'ca-current', 'ca-runs']) {
     const el = document.getElementById(id);
     if (el) { el.innerHTML = ''; el.classList?.remove('show'); }
   }
@@ -2358,6 +2363,9 @@ async function runCarbon(force) {
   // field that said `synthetic` now says `agent_calculated` and points at the
   // statement.
   if (carbonRun.ok) { await loadBomYaml(); renderCarbonFixture(); renderKB(); }
+  // The run is now in the action log, so the history below can include it
+  // without this tab having to remember it.
+  carbonRunsLoad();
   await settleSpend(spendBefore, carbonRun, renderCarbonPanel);
 }
 
@@ -2575,6 +2583,173 @@ function carbonPanelHTML() {
 function renderCarbonPanel() {
   const el = document.getElementById('ca-result');
   if (el) el.innerHTML = carbonPanelHTML();
+}
+
+// ── Run history ─────────────────────────────────────────────────────────────
+//
+// The complaint this answers: a completed carbon calculation could not be got
+// back to. It was never a gating problem. The panel above is drawn from the
+// POST response and nothing else, so a reload discarded it — and the markup
+// printed `dpp/carbon/statement.yaml` as a LABEL while nothing ever fetched
+// it.
+//
+// Two sources, split deliberately because they have different fidelity and
+// only one of them is per-run:
+//
+//   GET /actions       every run, workspace-scoped, carrying the numbers the
+//                      handler wrote to `apply_result` — coverage, total,
+//                      unpriced lines, the provenance stamp, gate violations,
+//                      factors banked, duration. Survives reloads and browsers.
+//   GET /files/<path>  the committed statement, which is the CURRENT one only,
+//                      because `statement.yaml` is overwritten every run.
+//
+// So the list comes from the action log and the document comes from git, and
+// the panel says which is which. Rendering a full document for a superseded
+// run would mean showing Tuesday's row beside Thursday's statement, which is
+// the same class of overstatement the agent itself is gated against — a
+// verdict inheriting evidence that does not belong to it.
+//
+// Full per-run documents need the handler to commit a per-action artefact at
+// `dpp/carbon/statements/{action_id}`. That is decided but not built (see
+// docs/plans/COORDINATION_DPP_STUDIO_PANELS_AND_PASSPORT.md §7.1); the
+// response JSON is assembled after the git commit, so it is a restructure of
+// `carbon.rs` rather than a line. Until it lands, this reports what it has.
+let carbonRuns = [];
+
+async function carbonRunsLoad() {
+  const id = wsId();
+  if (!id) return;
+  try {
+    const res = await fetch(`${base()}/api/workspaces/${id}/actions`,
+      { credentials: 'include', headers: authHeaders() });
+    if (!res.ok) return;
+    const data = await res.json();
+    carbonRuns = (data.actions ?? [])
+      .filter(a => a.action_type === 'calculate_carbon')
+      .sort((x, y) => new Date(y.created_at) - new Date(x.created_at));
+  } catch { /* a history view must not break the page */ }
+  renderCarbonRuns();
+}
+
+// One row per recorded run. `apply_result` is written back by the handler, so
+// a row can report what the run concluded without re-reading the document.
+function carbonRunRowHTML(a, isCurrent) {
+  const r = a.apply_result ?? {};
+  const noReply = r.outcome === 'no_reply' || a.applied === false;
+
+  // A failed run is reported as a failed run. The production failure that
+  // prompted all of this rendered as a confident set of "no factor" rows, and
+  // a history that repeats that mistake is worse than no history.
+  if (noReply) {
+    return `<div style="border-left:2px solid var(--red);padding:5px 8px;margin-top:5px;background:var(--s1);border-radius:0 3px 3px 0">
+      <div style="font-size:10px;font-family:var(--mono)">
+        <span style="color:var(--red);font-weight:700">no statement</span>
+        <span style="color:var(--t3)"> · ${esc(relTime(a.created_at))}</span>
+        ${r.duration_ms != null ? `<span style="color:var(--t3)"> · ${esc((r.duration_ms/1000).toFixed(1))}s</span>` : ''}
+      </div>
+      <div style="font-size:10px;color:var(--t2);margin-top:2px;line-height:1.5">
+        The run produced no readable document, so nothing was concluded and
+        nothing was written. Not a finding of zero emissions.</div>
+      ${r.parse_failure ? `<div style="font-size:9px;font-family:var(--mono);color:var(--t3);margin-top:3px;white-space:pre-wrap">${esc(String(r.parse_failure).slice(0, 300))}</div>` : ''}
+    </div>`;
+  }
+
+  const cov = r.coverage ?? 'unknown';
+  const covColour = { complete:'var(--grn)', partial:'var(--amb)', none:'var(--red)' }[cov] ?? 'var(--t3)';
+  const total = r.total_kg_co2e != null
+    ? `<span style="font-weight:700">${esc(r.total_kg_co2e)}</span> kg CO2e`
+    : `<span style="color:var(--amb);font-weight:700">null</span> <span style="color:var(--t3)">— no factor resolved</span>`;
+
+  const bits = [];
+  if (r.violations) bits.push(`<span style="color:var(--amb)">${esc(r.violations)} gate violation(s)</span>`);
+  if (r.model_arithmetic_disagreements) bits.push(`<span style="color:var(--amb)">${esc(r.model_arithmetic_disagreements)} arithmetic disagreement(s)</span>`);
+  if (r.factors_recorded != null) bits.push(`${esc(r.factors_recorded)} factor(s) banked`);
+  if (r.factors_not_comparable) bits.push(`${esc(r.factors_not_comparable)} not comparable`);
+  if (r.hints_offered) bits.push(`${esc(r.hints_offered)} line(s) had a prior identification`);
+  const unpriced = (r.unpriced_items ?? []).length;
+  if (unpriced) bits.push(`<span style="color:var(--amb)">${esc(unpriced)} line(s) excluded</span>`);
+
+  return `<div style="border-left:2px solid ${covColour};padding:5px 8px;margin-top:5px;background:var(--s1);border-radius:0 3px 3px 0">
+    <div style="font-size:10px;font-family:var(--mono);display:flex;gap:6px;align-items:baseline">
+      <span style="flex:1">${total}</span>
+      <span style="color:${covColour};font-weight:700">${esc(cov)}</span>
+    </div>
+    <div style="font-size:9px;font-family:var(--mono);color:var(--t3);margin-top:2px">
+      ${esc(relTime(a.created_at))}${r.duration_ms != null ? ` · ${esc((r.duration_ms/1000).toFixed(1))}s` : ''}
+      ${r.inventory_provenance ? ` · factors: ${esc(r.inventory_provenance)}` : ''}
+      ${isCurrent ? ' · <span style="color:var(--grn)">current</span>' : ''}
+    </div>
+    ${bits.length ? `<div style="font-size:9px;color:var(--t2);margin-top:3px;line-height:1.5">${bits.join(' · ')}</div>` : ''}
+    ${isCurrent
+      ? `<div style="margin-top:4px"><button class="btn-g btn-sm" style="font-size:9px"
+           onclick="carbonOpenStatement()">open committed statement →</button></div>`
+      : `<div style="font-size:9px;color:var(--t3);margin-top:3px">superseded — the document at
+           <code style="font-size:9px">dpp/carbon/statement.yaml</code> is a later run's</div>`}
+  </div>`;
+}
+
+function carbonRunsHTML() {
+  if (!carbonRuns.length) {
+    return `<div style="font-size:10px;color:var(--t3);margin-top:9px;padding-top:7px;border-top:1px solid var(--b1)">
+      No carbon run recorded for this workspace yet.</div>`;
+  }
+  // The newest run that actually produced a statement is the one the committed
+  // document belongs to. Newest overall is not the same thing: a failed run is
+  // more recent and wrote nothing.
+  const currentId = carbonRuns.find(a =>
+    a.applied !== false && (a.apply_result?.outcome !== 'no_reply'))?.action_id;
+  return `<div style="margin-top:9px;padding-top:7px;border-top:1px solid var(--b1)">
+    <div style="font-size:10px;color:var(--t3);font-family:var(--mono);text-transform:uppercase;letter-spacing:.4px">
+      runs · ${carbonRuns.length} recorded</div>
+    <div style="font-size:9px;color:var(--t3);margin-top:2px;line-height:1.45">
+      From the workspace action log, so this survives a reload. Figures are what
+      each run recorded when it finished.</div>
+    ${carbonRuns.map(a => carbonRunRowHTML(a, a.action_id === currentId)).join('')}
+    <div id="ca-doc"></div>
+  </div>`;
+}
+
+function renderCarbonRuns() {
+  const el = document.getElementById('ca-runs');
+  if (el) el.innerHTML = carbonRunsHTML();
+}
+
+// The committed statement, read from workspace git through the same endpoint
+// the claims and BOM tabs already use. Shown as the document rather than
+// re-inflated into the panel above: this is the artefact that was committed,
+// and a passport's value is that a reader sees what was signed rather than a
+// re-rendering of it.
+async function carbonOpenStatement() {
+  const el = document.getElementById('ca-doc');
+  const id = wsId();
+  if (!el || !id) return;
+  el.innerHTML = '<div style="font-size:10px;color:var(--t3);margin-top:6px"><span class="spinner"></span> reading dpp/carbon/statement.yaml…</div>';
+  try {
+    const res = await fetch(`${base()}/api/workspaces/${id}/files/dpp/carbon/statement.yaml`,
+      { credentials: 'include', headers: authHeaders() });
+    if (!res.ok) {
+      el.innerHTML = `<div style="font-size:10px;color:var(--amb);margin-top:6px;line-height:1.5">
+        No committed statement at <code style="font-size:9px">dpp/carbon/statement.yaml</code>
+        (HTTP ${res.status}). A run that produced no readable document writes nothing,
+        which is deliberate.</div>`;
+      return;
+    }
+    const body = await res.json().catch(() => null);
+    // The files endpoint returns the document under `content` for the paths this
+    // app already reads; fall back to the raw body so a shape change degrades to
+    // showing something rather than to showing nothing.
+    const text = typeof body === 'string' ? body
+      : (body?.content ?? body?.text ?? JSON.stringify(body, null, 2));
+    el.innerHTML = `<div style="margin-top:6px">
+      <div style="font-size:9px;color:var(--t3);font-family:var(--mono);margin-bottom:3px">
+        dpp/carbon/statement.yaml · committed to workspace git</div>
+      <pre style="font-size:9px;font-family:var(--mono);color:var(--t2);background:var(--s1);
+                  border:1px solid var(--b1);border-radius:3px;padding:7px;margin:0;
+                  max-height:320px;overflow:auto;white-space:pre-wrap;line-height:1.5">${esc(text)}</pre>
+    </div>`;
+  } catch (e) {
+    el.innerHTML = `<div style="font-size:10px;color:var(--red);margin-top:6px">${esc(e.message)}</div>`;
+  }
 }
 
 // ── UI scale ────────────────────────────────────────────────────────────────
@@ -3073,9 +3248,14 @@ async function activityLoadPulse() {
   // It is kept because it is genuinely the best answer to "why is this slow"
   // — `tool_usage` gives the per-call cost of `web_search` directly — but it
   // is now labelled for what it is and carries no money.
+  // Both credit-spending agents, not just the evaluator. This panel read
+  // `EVALUATOR` alone, which meant the carbon agent's `tool_usage` was absent
+  // from the UI that ran it — and that series is exactly what identified the
+  // flush timeout: eighteen searches at 520ms inside a 157s run.
   let pulse = '';
+  for (const agentId of [EVALUATOR, ACCOUNTANT]) {
   try {
-    const res = await fetch(`${base()}/api/agents/${EVALUATOR}/metrics`);
+    const res = await fetch(`${base()}/api/agents/${agentId}/metrics`);
     if (res.ok) {
       const m = await res.json();
       const days = m.daily ?? [];
@@ -3085,8 +3265,8 @@ async function activityLoadPulse() {
       const avgMs = timed.length
         ? timed.reduce((a, d) => a + d.avg_time_ms, 0) / timed.length : null;
       const tools = (m.tool_usage ?? []).slice(0, 5);
-      pulse = runs ? `
-        <div class="sb-h" style="margin-top:14px">${esc(EVALUATOR)} — PLATFORM-WIDE, 30d</div>
+      pulse += runs ? `
+        <div class="sb-h" style="margin-top:14px">${esc(agentId)} — PLATFORM-WIDE, 30d</div>
         <div class="sb-sub">Every run of this agent by anyone. Useful for latency, not for cost.</div>
         <div class="pulse-grid">
           <div class="pulse-cell"><b>${runs}</b><span>runs</span></div>
@@ -3102,6 +3282,7 @@ async function activityLoadPulse() {
         ${fails ? `<div class="act-ctx" style="margin-top:6px;color:var(--amb)"><b>failures</b> ${fails}</div>` : ''}` : '';
     }
   } catch { /* ditto */ }
+  }
 
   el.innerHTML = (spend || '') + (pulse || '')
     || '<div class="act-empty">No spend or pulse data for this workspace yet.</div>';
