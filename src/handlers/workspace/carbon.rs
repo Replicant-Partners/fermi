@@ -1254,7 +1254,7 @@ pub async fn calculate_carbon_handler(
     principal: AuthPrincipal,
     Path(workspace_id): Path<String>,
     Json(req): Json<CalculateCarbonRequest>,
-) -> Result<Json<Value>, (StatusCode, String)> {
+) -> Result<(StatusCode, Json<Value>), (StatusCode, String)> {
     let user_id = principal.user_id();
     let request_started = std::time::Instant::now();
     let (ws_uuid, slug) = resolve_workspace(&state, &workspace_id, &user_id).await?;
@@ -1373,17 +1373,20 @@ pub async fn calculate_carbon_handler(
         .await
         .unwrap_or(false);
         if exists {
-            return Ok(Json(json!({
-                "action_type": "calculate_carbon",
-                "skipped": true,
-                "reason": "already_calculated",
-                "statement_path": STATEMENT_PATH,
-                "duration_ms": request_started.elapsed().as_millis() as u64,
-                "note": "A statement already exists. Emission factors are \
-                         expensive to retrieve and do not change between runs, \
-                         so this is a cache read by default. Pass `force: true` \
-                         to recalculate.",
-            })));
+            return Ok((
+                StatusCode::OK,
+                Json(json!({
+                    "action_type": "calculate_carbon",
+                    "skipped": true,
+                    "reason": "already_calculated",
+                    "statement_path": STATEMENT_PATH,
+                    "duration_ms": request_started.elapsed().as_millis() as u64,
+                    "note": "A statement already exists. Emission factors are \
+                             expensive to retrieve and do not change between \
+                             runs, so this is a cache read by default. Pass \
+                             `force: true` to recalculate.",
+                })),
+            ));
         }
     }
 
@@ -1419,6 +1422,179 @@ pub async fn calculate_carbon_handler(
     // anchor pointing at nothing.
     .map_err(|_| ())
     .unwrap_or_else(|_| Uuid::new_v4());
+
+    // ── Hand the run off, and answer now ──────────────────────────────────
+    //
+    // Everything above is fast: two DB reads, a git read, a YAML parse. What
+    // follows is minutes of web_search. It used to happen inside this request,
+    // and that is not a survivable shape on this deployment.
+    //
+    // Railway's edge documents it plainly: an HTTP request "can run for up to
+    // 15 minutes IF DATA KEEPS TRANSFERRING … and is otherwise closed after 5
+    // minutes with no data transferred". This handler transferred nothing until
+    // it was finished, and `RUN_TIMEOUT_SECS` is 420s — longer than the 300s
+    // no-data cap. So any run between 300s and 420s could not deliver its
+    // reply by construction.
+    //
+    // And the way it failed was the expensive way. When the edge severs the
+    // connection the origin sees a CLIENT DISCONNECT, and axum responds by
+    // DROPPING the handler future. Everything below this point is cancelled
+    // mid-flight: the episode stays `running` forever because the code that
+    // would finalise it never runs, the action row keeps `applied = false` with
+    // a null `apply_result`, and the searches are paid for and thrown away.
+    // That is episode `ccf4ae90` on 2026-09-17 — diagnosed in
+    // docs/plans/NOTE_CARBON_ZERO_TOKEN_EPISODE.md §7, which is also where the
+    // telemetry consequence is written up: an un-finalised episode counted as a
+    // non-failure, and an agent that has never succeeded reading as 50% good.
+    //
+    // `tokio::spawn` detaches the work from the connection, so there is nothing
+    // left for a proxy, a closed tab, a sleeping laptop or a flaky network to
+    // cancel. The response goes out in milliseconds, which also means the edge
+    // sees data immediately and the 5-minute rule stops applying at all.
+    //
+    // This is only tolerable because the run is already addressable. §7.1 gave
+    // every run a durable record under its own `action_id`: `apply_result` on
+    // the action row for what it concluded, and
+    // `dpp/carbon/statements/{action_id}.json` for the full statement. The
+    // client polls those instead of holding a socket open. Without that work
+    // this change would trade a lost response for a lost result; with it, the
+    // result is the thing that was already permanent and the response was the
+    // fragile part.
+    //
+    // `RUN_TIMEOUT_SECS` is deliberately NOT reduced to fit under the edge cap.
+    // It no longer has to fit inside anything, so it can go on being a bound on
+    // the work rather than a bound on the transport.
+    let inputs = CarbonRunInputs {
+        ws_uuid,
+        slug,
+        user_id,
+        product_id: product_id.clone(),
+        boundary: boundary.clone(),
+        region: region.clone(),
+        lines,
+        basis_ml,
+        composition,
+        raw,
+        action_id,
+    };
+    let task_state = state.clone();
+    tokio::spawn(async move {
+        let started = std::time::Instant::now();
+        if let Err((code, msg)) = execute_carbon_run(task_state.clone(), inputs, started).await {
+            // Nothing is listening any more, so an error that is only returned
+            // is an error that is lost. Every way this run can end has to land
+            // on the action row, because that row is now the only channel back
+            // to the operator — and a run that vanishes silently is
+            // indistinguishable from one still in flight.
+            tracing::error!(
+                %action_id, status = code.as_u16(), error = %msg,
+                "carbon run failed after the response was already sent"
+            );
+            let _ = sqlx::query(
+                "UPDATE workspace_action_log
+                    SET apply_result = $1, applied = FALSE, applied_at = NOW()
+                  WHERE action_id = $2",
+            )
+            .bind(json!({
+                "duration_ms": started.elapsed().as_millis() as u64,
+                // Distinct from `no_reply`: that one means the accountant
+                // answered and the answer could not be read. This means the run
+                // did not get that far.
+                "outcome": "run_error",
+                "http_status": code.as_u16(),
+                "detail": msg,
+            }))
+            .bind(action_id)
+            .execute(&task_state.db)
+            .await;
+        }
+    });
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(json!({
+            "action_type": "calculate_carbon",
+            "accepted": true,
+            "action_id": action_id,
+            "product_id": product_id,
+            "boundary_requested": boundary,
+            "region": region,
+            "statement_path": STATEMENT_PATH,
+            // Where the finished statement will appear. Absent until the run
+            // concludes, and absent forever if it concludes without one, which
+            // is why the action row is the thing to poll rather than this.
+            "run_artefact_path": run_artefact_path(action_id),
+            "poll": {
+                "actions": "GET /api/workspaces/{workspace_id}/actions",
+                "terminal_when": "the row for this action_id has a non-null \
+                                  `apply_result`",
+                "then": "no `outcome` key means it succeeded and the artefact \
+                         is readable; an `outcome` names how it ended",
+                "artefact": "GET /api/workspaces/{workspace_id}/files/{run_artefact_path}",
+            },
+            "note": "Accepted, not finished. Emission-factor retrieval takes \
+                     minutes, and holding the connection open for it is what \
+                     lost the 2026-09-17 run: the edge closes a request that \
+                     has transferred no data, and the origin then cancels the \
+                     work. The run is detached and will finish whether or not \
+                     anyone is still listening; poll the action log for it.",
+        })),
+    ))
+}
+
+/// Everything a detached carbon run needs, so that the work can outlive the
+/// request that asked for it.
+///
+/// A struct rather than eleven arguments because the fields are destructured
+/// back into identically-named locals at the top of [`execute_carbon_run`],
+/// which is what allowed the body to move out of the handler without a single
+/// line of it being rewritten. Fewer edits, and the diff stays readable.
+struct CarbonRunInputs {
+    ws_uuid: Uuid,
+    slug: String,
+    user_id: String,
+    product_id: String,
+    boundary: String,
+    region: String,
+    lines: Vec<BomLine>,
+    basis_ml: Option<f64>,
+    composition: Value,
+    /// The composition's raw bytes. `rewrite_carbon_intensity` edits the
+    /// document as text rather than re-serialising the parsed value, so the
+    /// comments and key order a human wrote survive the rewrite.
+    raw: Vec<u8>,
+    action_id: Uuid,
+}
+
+/// The run itself, detached from the request.
+///
+/// Returns the response body it would have sent, which nothing now reads — the
+/// durable record is `apply_result` on the action row plus the committed
+/// artefact, both keyed by `action_id`. It is still returned rather than
+/// discarded because it is the same value the artefact is built from, and
+/// because a future streaming or websocket surface will want it.
+///
+/// `Err` here can no longer reach a client. The spawn site above turns it into
+/// an `apply_result` write, so the `?` and early-`Err` sites in this body keep
+/// working unchanged while the operator still learns what happened.
+async fn execute_carbon_run(
+    state: AppState,
+    run: CarbonRunInputs,
+    request_started: std::time::Instant,
+) -> Result<Value, (StatusCode, String)> {
+    let CarbonRunInputs {
+        ws_uuid,
+        slug,
+        user_id,
+        product_id,
+        boundary,
+        region,
+        lines,
+        basis_ml,
+        composition,
+        raw,
+        action_id,
+    } = run;
 
     // ── Run the agent ──────────────────────────────────────────────────────
     //
@@ -1580,7 +1756,7 @@ pub async fn calculate_carbon_handler(
         .execute(&state.db)
         .await;
 
-        return Ok(Json(json!({
+        return Ok(json!({
             "action_id": action_id,
             "action_type": "calculate_carbon",
             "product_id": product_id,
@@ -1603,7 +1779,7 @@ pub async fn calculate_carbon_handler(
                 "where": "GET /api/workspaces/{workspace_id}/budget",
                 "note": "A failed run still spends what its searches cost.",
             },
-        })));
+        }));
     }
 
     // Append the retrieved factors to the ledger, from the ENFORCED document
@@ -1770,7 +1946,7 @@ pub async fn calculate_carbon_handler(
             json!(request_started.elapsed().as_millis() as u64),
         );
     }
-    Ok(Json(body))
+    Ok(body)
 }
 
 #[cfg(test)]
@@ -2182,22 +2358,24 @@ allergens:
         std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()))
     }
 
-    /// The body of the client's reader, with its doc comment excluded.
+    /// The body of a named client function, with its doc comment excluded.
     ///
-    /// Scoped deliberately. The first version of this searched the whole page
-    /// for a backticked `dpp/carbon/statements/…`, and found three — because
-    /// the prose explaining the decision quotes the path the same way code
-    /// writes it. It failed, which was the right outcome for the wrong reason:
-    /// a check whose subject is "wherever this string appears" is measuring the
-    /// documentation. What is actually being pinned is the path the browser
-    /// FETCHES, and that lives in exactly one function body.
-    fn carbon_open_run_body(src: &str) -> &str {
+    /// Scoping matters here. The first version of the path check searched the
+    /// whole page for a backticked `dpp/carbon/statements/…` and found three,
+    /// because the prose explaining the decision quotes the path the same way
+    /// code writes it. It failed, which was the right outcome for the wrong
+    /// reason: a check whose subject is "wherever this string appears" is
+    /// measuring the documentation. What gets pinned is the path the browser
+    /// FETCHES, and that lives in exactly one function.
+    fn client_fn_body<'a>(src: &'a str, decl: &str) -> &'a str {
         let after = src
-            .split_once("async function carbonOpenRun(")
-            .expect(
-                "carbonOpenRun is gone from static/adaptogen-lab/index.html, so \
-                 no history row can open its own artefact",
-            )
+            .split_once(decl)
+            .unwrap_or_else(|| {
+                panic!(
+                    "`{decl}` is gone from static/adaptogen-lab/index.html, so \
+                     the behaviour this pins has moved or been removed"
+                )
+            })
             .1;
         &after[..after.find("\n}\n").unwrap_or(after.len())]
     }
@@ -2217,16 +2395,21 @@ allergens:
     #[test]
     fn the_client_opens_the_path_this_handler_writes() {
         let src = studio_page();
-        let body = carbon_open_run_body(&src);
+        // The single construction. It used to be inlined in the opener; once a
+        // second caller appeared (the live poller) there were briefly two, one
+        // of them feeding a spinner message and the other the request, which is
+        // the worst available way for this to drift.
+        let body = client_fn_body(&src, "function carbonArtefactPath(");
 
         let needle = "`dpp/carbon/statements/";
         assert_eq!(
             body.matches(needle).count(),
             1,
             "expected exactly one template literal building the run artefact \
-             path inside carbonOpenRun. Zero means the client no longer opens \
-             per-run artefacts and this test is vacuous; more than one means \
-             there are two copies of a path only this handler gets to decide."
+             path inside carbonArtefactPath. Zero means the client no longer \
+             addresses per-run artefacts and this test is vacuous; more than \
+             one means there are two copies of a path only this handler gets \
+             to decide."
         );
 
         let start = body.find(needle).unwrap() + 1;
@@ -2255,9 +2438,9 @@ allergens:
              it has to be JSON: got `{client}`"
         );
         assert!(
-            body.contains("JSON.parse"),
-            "carbonOpenRun reads the artefact with no parser, which cannot \
-             work for a JSON document delivered as text under `content`"
+            client_fn_body(&src, "async function carbonFetchArtefact(").contains("JSON.parse"),
+            "carbonFetchArtefact reads the artefact with no parser, which \
+             cannot work for a JSON document delivered as text under `content`"
         );
     }
 
@@ -2453,15 +2636,39 @@ allergens:
              as unopenable as it was before the artefact existed"
         );
 
-        // The fallback is load-bearing: runs recorded before the artefact
-        // existed have none, and a 404 there is a missing file rather than a
-        // failure. Without this branch the first click on old history reports
-        // breakage for a workspace that is behaving correctly.
+        // The fallback is load-bearing, and it now spans two functions: the
+        // reader has to notice the 404, and the opener has to render it as a
+        // gap rather than as breakage. Runs recorded before the artefact
+        // existed have none, so without both halves the first click on old
+        // history reports a failure for a workspace behaving correctly.
         assert!(
-            carbon_open_run_body(&src).contains("res.ok"),
-            "carbonOpenRun must branch on the response status: a run from \
-             before per-run artefacts has no file to open, and that is a gap \
-             in the history, not an error"
+            client_fn_body(&src, "async function carbonFetchArtefact(").contains("res.ok"),
+            "carbonFetchArtefact must branch on the response status: a run \
+             from before per-run artefacts has no file to open, and that is a \
+             gap in the history, not an error"
+        );
+        assert!(
+            client_fn_body(&src, "async function carbonOpenRun(").contains("got.ok"),
+            "carbonOpenRun must branch on whether the artefact was readable, \
+             or a missing one renders as an empty panel"
+        );
+
+        // The live poller and the history opener must read the artefact through
+        // the SAME function. Two readers would drift, and the drift would show
+        // up as a run that rendered one way while it was being watched and
+        // another way when it was reopened.
+        // Three: the declaration, plus a call from each of the two readers.
+        // The first version of this asserted four, having counted a mention
+        // that is in this test file rather than on the page — a check that
+        // failed on correct code, which is the one failure mode this file has
+        // had to correct more than any other.
+        assert_eq!(
+            src.matches("carbonFetchArtefact(").count(),
+            3,
+            "expected carbonFetchArtefact declared once and called by exactly \
+             two places, carbonAwaitRun and carbonOpenRun. A second reader \
+             would drift, and the drift would show as a run rendering one way \
+             while it was watched and another when it was reopened."
         );
     }
 }

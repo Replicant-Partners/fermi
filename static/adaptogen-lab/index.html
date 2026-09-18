@@ -802,6 +802,10 @@ function showTab(name) {
     // Every run this workspace has recorded, from the action log rather than
     // from whatever this tab happens to have in memory.
     carbonRunsLoad();
+    // And if one was in flight when this page was last closed, rejoin it. The
+    // run never depended on the page being open; finding out how it went
+    // should not either.
+    carbonResumeInflight();
   }
 }
 
@@ -2277,10 +2281,16 @@ async function runCarbon(force) {
   });
 
   try {
-    // No client-side timeout: RUN_TIMEOUT_SECS in carbon.rs is 300s, and the
-    // work is up to four rounds of web_search inside a five-iteration tool
-    // loop. A poll budget shorter than the work it waits for reports a
-    // timeout that is really impatience.
+    // This POST returns in milliseconds now. It ACCEPTS the run and detaches
+    // it — the work outlives the request — so nothing here holds a connection
+    // open for four minutes waiting on web_search.
+    //
+    // It used to. Railway's edge closes a request that has transferred no
+    // data, the origin sees that as a client disconnect, and axum then drops
+    // the handler future mid-flight. The searches were paid for and discarded,
+    // and the episode was left in `running` forever. That is how the
+    // 2026-09-17 run was lost; the whole story is in carbon.rs above the spawn
+    // and in docs/plans/NOTE_CARBON_ZERO_TOKEN_EPISODE.md §7.
     const res = await fetch(`${base()}/api/workspaces/${id}/actions/calculate_carbon`,
       fetchOpts('POST', { boundary: 'cradle_to_gate', region: 'EU', force: !!force }));
 
@@ -2303,15 +2313,13 @@ async function runCarbon(force) {
     }
 
     const data = await res.json();
-    carbonRun.ok = true;
-    carbonRun.statement = data.statement ?? null;
-    carbonRun.response = data;
-    carbonRun.written = data.written_paths ?? [];
-    const inv = data.statement?.inventory ?? {};
-    carbonRun.done = (inv.items ?? []).length;
 
     if (data.skipped) {
       // Already calculated and not forced. Not a failure, and the note says so.
+      // Still a synchronous 200: nothing ran, so there is nothing to wait for.
+      carbonRun.ok = true;
+      carbonRun.response = data;
+      carbonRun.skipped = true;
       activityPush({
         severity: 'info', source: `agent:${ACCOUNTANT}`, node: 'calculate_carbon',
         summary: 'A carbon statement already exists \u2014 nothing was spent',
@@ -2320,30 +2328,30 @@ async function runCarbon(force) {
       return;
     }
 
-    const unpriced = inv.unpriced_items ?? [];
-    const disagreements = data.model_arithmetic?.disagreements ?? 0;
-    const violations = data.grounding_summary?.violation_count ?? 0;
-    activityPush({
-      severity: (violations || disagreements) ? 'warn' : 'success',
-      source: `agent:${ACCOUNTANT}`, node: 'calculate_carbon',
-      summary: inv.total_kg_co2e != null
-        ? `Carbon statement written \u00b7 ${inv.total_kg_co2e} kg CO2e \u00b7 coverage ${inv.coverage ?? '?'}`
-        : 'Carbon statement written \u2014 no factor resolved, so the total is null rather than zero',
-      detail: violations
-        ? 'Fields the agent could not ground were nulled before storage.'
-        : (disagreements ? 'The model priced some lines itself and disagreed with the platform\u2019s arithmetic. The platform\u2019s values were stored.' : null),
-      context: [
-        ['factors', inv.inventory_provenance ?? data.statement?.inventory_provenance ?? 'n/a'],
-        ['coverage', inv.coverage ?? 'n/a'],
-        ['unpriced', unpriced.length ? unpriced.join(' ') : 'none'],
-        ['model arithmetic', `${disagreements} disagreement(s) of ${data.model_arithmetic?.lines_the_model_priced ?? 0} priced`],
-        ['gate', data.grounding_summary?.is_clean ? 'clean' : `${violations} violation(s)`],
-        ['duration', data.duration_ms != null ? `${(data.duration_ms/1000).toFixed(1)}s` : 'n/a'],
-      ],
-    });
-    if (!carbonRun.written.length) {
-      carbonRun.note = 'The statement was produced but not committed to the workspace, so it will not be found on reload.';
+    if (!data.action_id) {
+      // The one thing that cannot be recovered from. Without an action_id there
+      // is no handle on a run that is, as far as we know, already spending.
+      // Say so rather than reporting a failure that may not have happened.
+      carbonRun.error = 'The server accepted a run but returned no action_id, '
+        + 'so there is nothing to poll. The run may still be going \u2014 check the '
+        + 'history below before spending on another one.';
+      return;
     }
+
+    // Recorded before the first poll, because from here on the run does not
+    // depend on this tab. A reload, a closed laptop or a dropped connection
+    // leaves the work running server-side, and this is the handle on it.
+    carbonInflightSave(id, data.action_id);
+    carbonRun.actionId = data.action_id;
+    carbonRun.accepted = data;
+    activityPush({
+      severity: 'info', source: `agent:${ACCOUNTANT}`, node: 'calculate_carbon',
+      summary: 'Run accepted and detached \u2014 waiting on the action log',
+      detail: 'The work no longer depends on this page being open.',
+      context: [['action', data.action_id], ['artefact', data.run_artefact_path ?? 'n/a']],
+    });
+
+    await carbonAwaitRun(id, data.action_id);
   } catch (e) {
     carbonRun.error = `network/transport: ${e.message}`;
     activityPush({
@@ -2367,6 +2375,208 @@ async function runCarbon(force) {
   // without this tab having to remember it.
   carbonRunsLoad();
   await settleSpend(spendBefore, carbonRun, renderCarbonPanel);
+}
+
+// ── waiting for a detached run ───────────────────────────────────────────────
+//
+// The run is no longer attached to the request that started it, which is the
+// whole point: a proxy cut, a closed tab or a sleeping laptop can no longer
+// cancel work that has been paid for. The cost is that finishing has to be
+// observed rather than returned.
+//
+// The action log is what is observed, not the artefact, and that is the
+// important choice. A run that FAILS writes `apply_result` and no artefact, so
+// polling the artefact alone would wait out the full budget on every failure
+// and then report a timeout for a run that had already reported why it stopped.
+// `apply_result` becoming non-null is the one signal that covers both endings.
+//
+// Budget is deliberately longer than `RUN_TIMEOUT_SECS` (420s). A poll budget
+// shorter than the work it waits for reports a timeout that is really
+// impatience — and now that the run is detached, giving up watching is not the
+// same as the run stopping, so the message says so.
+const CARBON_POLL_MS = 4000;
+const CARBON_POLL_BUDGET_MS = 12 * 60 * 1000;
+const CARBON_INFLIGHT_KEY = 'adaptogen.carbon.inflight';
+
+function carbonInflightSave(wsid, actionId) {
+  try {
+    localStorage.setItem(CARBON_INFLIGHT_KEY,
+      JSON.stringify({ wsid, actionId, startedAt: Date.now() }));
+  } catch { /* private mode: resume is a convenience, not a correctness need */ }
+}
+function carbonInflightRead() {
+  try { return JSON.parse(localStorage.getItem(CARBON_INFLIGHT_KEY) || 'null'); }
+  catch { return null; }
+}
+function carbonInflightClear() {
+  try { localStorage.removeItem(CARBON_INFLIGHT_KEY); } catch { /* as above */ }
+}
+
+// The action row for one run, read from the log the history panel already uses.
+async function carbonFetchAction(id, actionId) {
+  try {
+    const res = await fetch(`${base()}/api/workspaces/${id}/actions`,
+      { credentials: 'include', headers: authHeaders() });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return (data.actions ?? []).find(a => a.action_id === actionId) ?? null;
+  } catch { return null; }
+}
+
+// Where one run's own copy lives. A function rather than the literal inlined
+// at each use, because the moment there were two of them one was already in a
+// spinner message and the other in the fetch — and a path that is right in the
+// message and wrong in the request is the worst way for this to break. Pinned
+// against the handler's `run_artefact_path()` by
+// `the_client_opens_the_path_this_handler_writes`.
+function carbonArtefactPath(actionId) {
+  return `dpp/carbon/statements/${actionId}.json`;
+}
+
+// One run's committed artefact, parsed. Shared with carbonOpenRun so that a
+// run being watched live and a run reopened from history are read by the same
+// code — the same reason the handler builds the response and the artefact from
+// one construction.
+async function carbonFetchArtefact(id, actionId) {
+  const path = carbonArtefactPath(actionId);
+  const res = await fetch(`${base()}/api/workspaces/${id}/files/${path}`,
+    { credentials: 'include', headers: authHeaders() });
+  if (!res.ok) return { ok: false, status: res.status, path };
+  const body = await res.json().catch(() => null);
+  // The files endpoint returns `{ path, content }` with the document as TEXT,
+  // so the artefact arrives as a JSON string inside a JSON envelope and needs
+  // the second parse. The `statement !== undefined` branch tolerates that
+  // endpoint one day handing back parsed JSON for `.json` paths.
+  const raw = typeof body === 'string' ? body : (body?.content ?? body?.text ?? null);
+  const art = raw != null ? JSON.parse(raw)
+    : (body && body.statement !== undefined ? body : null);
+  if (!art) return { ok: false, status: res.status, path, shape: true };
+  return { ok: true, art, path };
+}
+
+function carbonApplyArtefact(art) {
+  carbonRun.ok = true;
+  carbonRun.statement = art.statement ?? null;
+  carbonRun.response = art;
+  carbonRun.written = art.written_paths ?? [];
+  carbonRun.done = (art.statement?.inventory?.items ?? []).length;
+}
+
+// Poll until the action row reaches a terminal state, then read the result.
+async function carbonAwaitRun(id, actionId) {
+  const deadline = Date.now() + CARBON_POLL_BUDGET_MS;
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, CARBON_POLL_MS));
+    if (carbonRun) carbonRun.polledAt = Date.now();
+    renderCarbonPanel();
+
+    const row = await carbonFetchAction(id, actionId);
+    // A missing row is not a verdict. The log write is soft-failed in the
+    // handler, and a transient 5xx on this poll must not end the wait.
+    if (!row || row.apply_result == null) continue;
+
+    carbonInflightClear();
+    const r = row.apply_result;
+
+    // An `outcome` key only appears on a run that did not produce a statement.
+    // Its absence is what marks success, so this branch must come first.
+    if (r.outcome) {
+      carbonRun.ok = false;
+      carbonRun.response = { outcome: r.outcome, parse_failure: r.parse_failure ?? r.detail ?? null };
+      activityPush({
+        severity: 'error', source: `agent:${ACCOUNTANT}`, node: 'calculate_carbon',
+        summary: r.outcome === 'no_reply'
+          ? 'The accountant returned no readable document \u2014 nothing was written'
+          : `The run ended without a statement (${r.outcome})`,
+        detail: r.parse_failure ?? r.detail ?? null,
+        context: [['action', actionId],
+                  ['duration', r.duration_ms != null ? `${(r.duration_ms/1000).toFixed(1)}s` : 'n/a']],
+      });
+      return;
+    }
+
+    const got = await carbonFetchArtefact(id, actionId);
+    if (!got.ok) {
+      // The run concluded and committed, but its own copy cannot be read. The
+      // figures on the action row are still that run's, so point at them
+      // rather than reporting the run as failed.
+      carbonRun.error = `The run finished, but its artefact at `
+        + `${got.path} could not be read (HTTP ${got.status}). The run history `
+        + `below still carries what it recorded.`;
+      return;
+    }
+    carbonApplyArtefact(got.art);
+
+    const inv = got.art.statement?.inventory ?? {};
+    const unpriced = inv.unpriced_items ?? [];
+    const disagreements = got.art.model_arithmetic?.disagreements ?? 0;
+    const violations = got.art.grounding_summary?.violation_count ?? 0;
+    activityPush({
+      severity: (violations || disagreements) ? 'warn' : 'success',
+      source: `agent:${ACCOUNTANT}`, node: 'calculate_carbon',
+      summary: inv.total_kg_co2e != null
+        ? `Carbon statement written \u00b7 ${inv.total_kg_co2e} kg CO2e \u00b7 coverage ${inv.coverage ?? '?'}`
+        : 'Carbon statement written \u2014 no factor resolved, so the total is null rather than zero',
+      detail: violations
+        ? 'Fields the agent could not ground were nulled before storage.'
+        : (disagreements ? 'The model priced some lines itself and disagreed with the platform\u2019s arithmetic. The platform\u2019s values were stored.' : null),
+      context: [
+        ['factors', got.art.statement?.inventory_provenance ?? 'n/a'],
+        ['coverage', inv.coverage ?? 'n/a'],
+        ['unpriced', unpriced.length ? unpriced.join(' ') : 'none'],
+        ['model arithmetic', `${disagreements} disagreement(s) of ${got.art.model_arithmetic?.lines_the_model_priced ?? 0} priced`],
+        ['gate', got.art.grounding_summary?.is_clean ? 'clean' : `${violations} violation(s)`],
+        ['duration', got.art.duration_ms != null ? `${(got.art.duration_ms/1000).toFixed(1)}s` : 'n/a'],
+      ],
+    });
+    if (!carbonRun.written.length) {
+      carbonRun.note = 'The statement was produced but not committed to the workspace, so it will not be found on reload.';
+    }
+    return;
+  }
+
+  // Watching stopped. The run did not.
+  carbonRun.error = 'Stopped watching after '
+    + `${Math.round(CARBON_POLL_BUDGET_MS / 60000)} minutes. This is NOT a `
+    + 'failure: the run is detached from this page and is very likely still '
+    + 'going. It will appear in the history below when it finishes \u2014 reload '
+    + 'rather than re-running, or a second run will be paid for alongside the '
+    + 'first.';
+}
+
+// A run in flight when the page was last closed. The work never depended on
+// the page, so neither should finding out how it went.
+async function carbonResumeInflight() {
+  const id = wsId();
+  const saved = carbonInflightRead();
+  if (!id || !saved || saved.wsid !== id || carbonRun?.active) return;
+  if (Date.now() - (saved.startedAt ?? 0) > CARBON_POLL_BUDGET_MS) {
+    carbonInflightClear();
+    return;
+  }
+  const row = await carbonFetchAction(id, saved.actionId);
+  // Already finished while the page was away: the history panel renders it, and
+  // resuming a watch on a completed run would only duplicate that.
+  if (!row || row.apply_result != null) { carbonInflightClear(); carbonRunsLoad(); return; }
+
+  carbonRun = { active: true, unit: 'BOM lines', done: 0, startedAt: saved.startedAt,
+                ok: false, error: null, statement: null, written: [],
+                actionId: saved.actionId, resumed: true };
+  renderCarbonPanel();
+  if (carbonTicker) clearInterval(carbonTicker);
+  carbonTicker = setInterval(renderCarbonPanel, 1000);
+  activityPush({
+    severity: 'info', source: `agent:${ACCOUNTANT}`, node: 'calculate_carbon',
+    summary: 'Rejoined a carbon run that was already in flight',
+    context: [['action', saved.actionId]],
+  });
+  try { await carbonAwaitRun(id, saved.actionId); }
+  finally {
+    carbonRun.active = false;
+    if (carbonTicker) { clearInterval(carbonTicker); carbonTicker = null; }
+    renderCarbonPanel();
+    carbonRunsLoad();
+  }
 }
 
 // ── the statement, rendered ──────────────────────────────────────────────────
@@ -2471,9 +2681,16 @@ function carbonPanelHTML(run = carbonRun) {
   if (!r) return '';
 
   if (r.active) {
+    const secs = r.startedAt ? Math.round((Date.now() - r.startedAt) / 1000) : null;
     return `<div style="font-size:11px;color:var(--t3)">
-      <span class="spinner"></span> ${esc(ACCOUNTANT)} running \u2014 one web_search per BOM line against the inventory corpus\u2026
-      <div style="font-size:10px;margin-top:4px">up to ~300s. The arithmetic happens in Rust after the reply comes back.</div>
+      <span class="spinner"></span> ${esc(ACCOUNTANT)} ${r.resumed ? 'still running' : 'running'} \u2014 searching the inventory corpus\u2026
+      ${secs != null ? `<span style="font-family:var(--mono)"> ${esc(secs)}s</span>` : ''}
+      <div style="font-size:10px;margin-top:4px">
+        The run is detached from this page: closing this tab will not stop it,
+        and reopening will rejoin it. The arithmetic happens in Rust once the
+        reply comes back.</div>
+      ${r.actionId ? `<div style="font-size:9px;font-family:var(--mono);color:var(--t3);margin-top:3px">
+        action ${esc(r.actionId)}</div>` : ''}
     </div>`;
   }
   if (r.error) {
@@ -2662,7 +2879,26 @@ async function carbonRunsLoad() {
 // a row can report what the run concluded without re-reading the document.
 function carbonRunRowHTML(a, isCurrent) {
   const r = a.apply_result ?? {};
-  const noReply = r.outcome === 'no_reply' || a.applied === false;
+
+  // Still going. This row exists from the moment the run is accepted, because
+  // the run is detached and the action log is how it is tracked — so an absent
+  // `apply_result` means "not finished", and the old test of `applied === false`
+  // would have rendered every in-flight run as a failed one.
+  if (a.apply_result == null && a.applied !== true) {
+    return `<div style="border-left:2px solid var(--acc);padding:5px 8px;margin-top:5px;background:var(--s1);border-radius:0 3px 3px 0">
+      <div style="font-size:10px;font-family:var(--mono)">
+        <span class="spinner"></span>
+        <span style="color:var(--acc);font-weight:700">in flight</span>
+        <span style="color:var(--t3)"> · started ${esc(relTime(a.created_at))}</span>
+      </div>
+      <div style="font-size:10px;color:var(--t2);margin-top:2px;line-height:1.5">
+        Retrieving factors. The run is detached from this page, so it continues
+        whether or not this tab stays open, and it will report here when it
+        concludes.</div>
+    </div>`;
+  }
+
+  const noReply = r.outcome != null || a.applied === false;
 
   // A failed run is reported as a failed run. The production failure that
   // prompted all of this rendered as a confident set of "no factor" rows, and
@@ -2671,13 +2907,16 @@ function carbonRunRowHTML(a, isCurrent) {
     return `<div style="border-left:2px solid var(--red);padding:5px 8px;margin-top:5px;background:var(--s1);border-radius:0 3px 3px 0">
       <div style="font-size:10px;font-family:var(--mono)">
         <span style="color:var(--red);font-weight:700">no statement</span>
+        ${r.outcome && r.outcome !== 'no_reply' ? `<span style="color:var(--t3)"> · ${esc(r.outcome)}</span>` : ''}
         <span style="color:var(--t3)"> · ${esc(relTime(a.created_at))}</span>
         ${r.duration_ms != null ? `<span style="color:var(--t3)"> · ${esc((r.duration_ms/1000).toFixed(1))}s</span>` : ''}
       </div>
       <div style="font-size:10px;color:var(--t2);margin-top:2px;line-height:1.5">
-        The run produced no readable document, so nothing was concluded and
-        nothing was written. Not a finding of zero emissions.</div>
-      ${r.parse_failure ? `<div style="font-size:9px;font-family:var(--mono);color:var(--t3);margin-top:3px;white-space:pre-wrap">${esc(String(r.parse_failure).slice(0, 300))}</div>` : ''}
+        ${r.outcome === 'run_error'
+          ? 'The run stopped before it could conclude, so nothing was written.'
+          : 'The run produced no readable document, so nothing was concluded and nothing was written.'}
+        Not a finding of zero emissions.</div>
+      ${(r.parse_failure ?? r.detail) ? `<div style="font-size:9px;font-family:var(--mono);color:var(--t3);margin-top:3px;white-space:pre-wrap">${esc(String(r.parse_failure ?? r.detail).slice(0, 300))}</div>` : ''}
     </div>`;
   }
 
@@ -2876,19 +3115,18 @@ async function carbonOpenRun(actionId, isCurrent) {
   const el = document.getElementById('ca-doc');
   const id = wsId();
   if (!el || !id) return;
-  const path = `dpp/carbon/statements/${actionId}.json`;
+  const path = carbonArtefactPath(actionId);
   el.innerHTML = `<div style="font-size:10px;color:var(--t3);margin-top:6px">
     <span class="spinner"></span> reading ${esc(path)}…</div>`;
   try {
-    const res = await fetch(`${base()}/api/workspaces/${id}/files/${path}`,
-      { credentials: 'include', headers: authHeaders() });
-    if (!res.ok) {
+    const got = await carbonFetchArtefact(id, actionId);
+    if (!got.ok) {
       // Runs recorded before per-run artefacts existed have none. That is a gap
       // in the history rather than an error, and an HTTP code alone would read
       // as breakage — so say which it is, and say that the row's own figures are
       // still that run's.
       el.innerHTML = `<div style="font-size:10px;color:var(--amb);margin-top:6px;line-height:1.55">
-        No per-run artefact at <code style="font-size:9px">${esc(path)}</code> (HTTP ${res.status}).
+        No per-run artefact at <code style="font-size:9px">${esc(path)}</code> (HTTP ${got.status}).
         ${isCurrent ? '' : `This run is superseded, and
           <code style="font-size:9px">dpp/carbon/statement.yaml</code> is a later
           run's document, so it is not offered here in place of this one.`}
@@ -2898,16 +3136,7 @@ async function carbonOpenRun(actionId, isCurrent) {
       </div>`;
       return;
     }
-    const body = await res.json().catch(() => null);
-    // The files endpoint returns `{ path, content }` with the document as TEXT,
-    // so the artefact arrives as a JSON string inside a JSON envelope and needs
-    // the second parse. The `statement !== undefined` branch tolerates that
-    // endpoint one day handing back parsed JSON for `.json` paths; degrading to
-    // showing something beats degrading to showing nothing.
-    const raw = typeof body === 'string' ? body : (body?.content ?? body?.text ?? null);
-    const art = raw != null ? JSON.parse(raw)
-      : (body && body.statement !== undefined ? body : null);
-    if (!art) throw new Error('the artefact was readable but had no recognisable shape');
+    const art = got.art;
 
     // Reassembled into the shape the live panel holds. `response` is the whole
     // artefact because the artefact IS the response body — same construction in
