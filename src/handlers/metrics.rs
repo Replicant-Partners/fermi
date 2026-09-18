@@ -131,11 +131,24 @@ pub async fn platform_metrics_handler(
     };
 
     // 2. Daily (30 days)
+    //
+    // Same correction as `agent_metrics_handler`, for the same reason and in
+    // the same direction: an episode dispatched and never concluded is neither
+    // a success nor a failure, and reporting only `failure` as a failure counts
+    // it as fine. Fleet-wide over the last 30 days that is 9 of 320 counted
+    // executions. See the long note on the agent-scoped query above.
+    //
+    // `totals` immediately above is already honest by construction — it counts
+    // `success` and `failure` separately, so its `success_rate` divides by a
+    // `COUNT(*)` that includes unfinished rows and is, if anything,
+    // pessimistic. The per-day series was the surface that inverted it.
     let daily_rows = sqlx::query(
         "SELECT
             DATE(timestamp_ref) AS day,
             COUNT(*) AS executions,
             COUNT(*) FILTER (WHERE execution_status = 'failure') AS failures,
+            COUNT(*) FILTER (WHERE execution_status NOT IN ('success','failure'))
+                AS unfinished,
             COALESCE(SUM(tokens_used), 0) AS tokens
          FROM episodes
          WHERE timestamp_ref > NOW() - INTERVAL '30 days'
@@ -154,6 +167,7 @@ pub async fn platform_metrics_handler(
                 "date": day.to_string(),
                 "executions": r.get::<i64, _>("executions"),
                 "failures": r.get::<i64, _>("failures"),
+                "unfinished": r.get::<i64, _>("unfinished"),
                 "tokens": r.get::<i64, _>("tokens"),
             })
         })
@@ -238,13 +252,48 @@ pub async fn agent_metrics_handler(
     let pool = &state.db;
 
     // 1. Daily (30 days)
+    //
+    // `unfinished` exists because an episode is inserted in `running` when the
+    // work is dispatched and only transitioned to `success` or `failure` when
+    // it returns. If the run never returns, nothing reconciles the row: a
+    // `tokio::time::timeout` or a client disconnect DROPS the handler future,
+    // so the code that would finalise the episode never executes. Seven such
+    // rows exist, across five agents.
+    //
+    // Counting only `failure` as a failure then reports those as though they
+    // were fine. The case that made this visible, from
+    // `docs/plans/NOTE_CARBON_ZERO_TOKEN_EPISODE.md`: `carbon_accountant` read
+    // as "2 executions, 1 failure" — a 50% success rate for an agent that has
+    // never resolved a single emission factor. The second row was episode
+    // `ccf4ae90`, still `running`, 0 tokens, and it is the sole reason the
+    // agent did not read as 100% failing.
+    //
+    // `executions` stays `COUNT(*)`, so nothing disappears and a reader can
+    // subtract; `executions - failures - unfinished` is the number that
+    // actually concluded successfully. Dropping unfinished rows from the count
+    // would hide the mechanism, which is the opposite of the fix.
+    //
+    // `avg_time_ms` is averaged over CONCLUDED episodes only. An unfinished
+    // episode carries `execution_time_ms = 0` — a literal stored zero written
+    // at insert, not a NULL — so including it halves the number. The carbon
+    // series read ~78s against a only real run of 157s, and that average is
+    // the input to the iteration-budget decision.
+    //
+    // `tokens` needs no such guard: `SUM` already skips the NULL these rows
+    // carry. The `COALESCE` is what turns an all-NULL day into `0` rather than
+    // `null`, which is why the symptom presented as a zero rather than an
+    // absence.
     let daily_rows = sqlx::query(
         "SELECT
             DATE(timestamp_ref) AS day,
             COUNT(*) AS executions,
             COUNT(*) FILTER (WHERE execution_status = 'failure') AS failures,
+            COUNT(*) FILTER (WHERE execution_status NOT IN ('success','failure'))
+                AS unfinished,
             COALESCE(SUM(tokens_used), 0) AS tokens,
-            AVG(execution_time_ms)::BIGINT AS avg_time_ms
+            (AVG(execution_time_ms)
+                FILTER (WHERE execution_status IN ('success','failure')))::BIGINT
+                AS avg_time_ms
          FROM episodes
          WHERE agent_id = $1
            AND timestamp_ref > NOW() - INTERVAL '30 days'
@@ -264,7 +313,13 @@ pub async fn agent_metrics_handler(
                 "date": day.to_string(),
                 "executions": r.get::<i64, _>("executions"),
                 "failures": r.get::<i64, _>("failures"),
+                // Dispatched and never concluded. Not a success, and not a
+                // failure either — nothing decided anything about these.
+                "unfinished": r.get::<i64, _>("unfinished"),
                 "tokens": r.get::<i64, _>("tokens"),
+                // `null` rather than `0` on a day whose only episodes never
+                // concluded, because there is no measured duration to report
+                // and a zero would read as an instant run.
                 "avg_time_ms": r.get::<Option<i64>, _>("avg_time_ms"),
             })
         })
