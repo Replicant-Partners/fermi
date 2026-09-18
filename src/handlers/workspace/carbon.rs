@@ -1259,6 +1259,15 @@ pub async fn calculate_carbon_handler(
     let request_started = std::time::Instant::now();
     let (ws_uuid, slug) = resolve_workspace(&state, &workspace_id, &user_id).await?;
 
+    // Hiring is enforced here and not in the browser. Checked before the
+    // cache-read below rather than after it: this endpoint's contract is "run
+    // the accountant", and a caller that may not run it has no business
+    // calling it even when the answer would have been free. The committed
+    // statement stays readable by anyone who can read the workspace, through
+    // `GET /api/workspaces/:id/files/*path`, which is where a reader should be
+    // looking for a document anyway.
+    super::require_hired_agent(&state, ws_uuid, ACCOUNTANT).await?;
+
     let boundary = req
         .boundary
         .as_deref()

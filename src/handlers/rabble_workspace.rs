@@ -19,7 +19,11 @@ use fermi::agent_backend::tool_executor::ToolAwareExecutor;
 use fermi::agent_backend::tools::{PlatformToolRegistry, ToolContext};
 use fermi::agent_backend::ExecutionContext;
 use fermi::ast;
-use fermi::gas::{charge_and_distribute, charge_gas, get_workspace_agent_ids};
+// `get_workspace_agent_ids` was dropped from this import when the execution
+// payout stopped being split across workspace membership. It remains in
+// `fermi::gas` because "who is on this roster" is a real question; it just is
+// not the question "who earned this fee".
+use fermi::gas::{charge_and_distribute, charge_gas};
 
 use crate::{agent_output_to_episode, resolve_agent, resolve_agent_card, AppState};
 
@@ -494,9 +498,34 @@ pub async fn dispatch_rabble_action(
             let _ = state_bg.memory_store.store_workspace_message(&msg).await;
 
             // 3. Gas charge + distribution
+            //
+            // The payout follows the agent that PERFORMED the execution, not
+            // the workspace's membership list.
+            //
+            // It used to be `get_workspace_agent_ids(workspace_id)`, which is
+            // `SELECT agent_id FROM workspace_agents`, and
+            // `charge_and_distribute` splits the pool EQUALLY across whatever
+            // it is handed. This function dispatches exactly one named agent,
+            // so that split was wrong in both directions at once: an agent
+            // that was never hired did the work and earned nothing, while
+            // every hired agent was paid an equal share of a run it had no
+            // part in. Observed in production — a `carbon_accountant` carbon
+            // statement in a workspace hiring only `supply_chain_oracle` and
+            // `regulatory_lens_translator` paid those two and not the
+            // accountant.
+            //
+            // PLATFORM_ECONOMICS.md §2.1 is the governing rule: attribution is
+            // historical, recorded from what actually happened, "rather than
+            // silently retconning itself". Membership is a statement about who
+            // MAY run; it is not a record of who DID.
+            //
+            // `charge_and_distribute` is left alone — splitting equally across
+            // a set is correct for the group flows that pass a real set. What
+            // was wrong was handing it a set that had nothing to do with this
+            // execution.
             let (exec_fee, gas_fee) = state_bg.gas_fees.execution_fee(tokens);
             let total = exec_fee + gas_fee;
-            let agent_ids = get_workspace_agent_ids(&state_bg.db, workspace_id).await;
+            let agent_ids = vec![agent_id_bg];
             let ws_id_str = workspace_id.to_string();
             if let Ok(ws_wallet) = get_or_create_wallet(&state_bg.db, "workspace", &ws_id_str).await
             {

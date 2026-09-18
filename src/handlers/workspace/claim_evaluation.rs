@@ -592,6 +592,11 @@ pub async fn evaluate_claims_handler(
     let request_started = std::time::Instant::now();
     let (ws_uuid, slug) = resolve_workspace(&state, &workspace_id, &user_id).await?;
 
+    // Hiring is enforced server-side, and before the preflight below: whether
+    // the corpus is reachable is a question about a run that is allowed to
+    // happen.
+    super::require_hired_agent(&state, ws_uuid, EVALUATOR).await?;
+
     // ── Preflight: refuse rather than degrade ────────────────────────────
     //
     // Two things must be true before spending anything: the evaluator has to

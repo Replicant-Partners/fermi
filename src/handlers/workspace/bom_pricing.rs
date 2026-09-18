@@ -231,6 +231,11 @@ pub async fn price_bom_handler(
     let started = std::time::Instant::now();
     let (ws_uuid, slug) = resolve_workspace(&state, &workspace_id, &user_id).await?;
 
+    // Hiring is enforced server-side. This App already had a Hire button for
+    // the oracle, which is why its card reads "not hired" — but the button
+    // guarded the UI, not the endpoint.
+    super::require_hired_agent(&state, ws_uuid, ORACLE).await?;
+
     // The oracle must exist, and the corpus must be reachable. Same two
     // preflights as the claim evaluator, for the same reason: `items` on this
     // agent's contract is `sourced` from `web_search`, so without a search
