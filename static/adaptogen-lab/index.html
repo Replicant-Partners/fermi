@@ -39,6 +39,7 @@ body{background:var(--bg);color:var(--t1);font-family:'Inter',system-ui,sans-ser
 .sb-tab.active{color:var(--acc);border-bottom-color:var(--acc)}
 .sb-panel{flex:1;overflow-y:auto;padding:14px}
 .sb-panel.hidden{display:none}
+.lens-panel.hidden{display:none}
 /* ingredient edit table */
 .ing-edit-table{width:100%;border-collapse:collapse;font-size:11px}
 .ing-edit-table th{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--t3);padding:4px 6px;text-align:left;border-bottom:1px solid var(--b1)}
@@ -432,7 +433,6 @@ body.shelf-open .shelf-handle{right:min(380px,42vw)}
     <div class="sb-tab active" onclick="showTab('products')">Products</div>
     <div class="sb-tab" onclick="showTab('claims')">Claims</div>
     <div class="sb-tab" onclick="showTab('ingredients')">BOM</div>
-    <div class="sb-tab" onclick="showTab('carbon')">Supply Chain</div>
     <div class="sb-tab" onclick="showTab('build')">Build</div>
   </div>
 
@@ -519,56 +519,6 @@ body.shelf-open .shelf-handle{right:min(380px,42vw)}
     </div>
   </div>
 
-  <!-- Supply chain / Carbon -->
-  <div class="sb-panel hidden" id="tab-carbon">
-    <div class="sh"><span class="sh-label">Supply Chain Oracle</span><span class="sh-rule"></span></div>
-    <div class="sco-card" id="sco-card">
-      <div class="sco-header">
-        <span class="sco-icon">⛓</span>
-        <span class="sco-name">supply_chain_oracle</span>
-        <span class="sco-badge sb-not" id="sco-badge">not hired</span>
-      </div>
-      <div class="sco-desc">
-        Uses <code style="color:var(--blu);font-size:10px">web_search</code> to get real current mid-market prices for every ingredient in the DPP composition. Prices are <strong>sourced from live web data</strong> — not generated. Returns risk flags (single_source, seasonal, substitution_risk…) as model inference over the sourced prices.
-      </div>
-      <div style="display:flex;gap:6px;margin-bottom:5px">
-        <button class="btn btn-sm" id="sco-hire-btn" onclick="hireOracle()" style="flex:1">Hire agent →</button>
-        <button class="btn-agent btn-sm" id="sco-run-btn" onclick="runBOM()" style="flex:1;justify-content:center;display:none">⚡ Run BOM pricing</button>
-      </div>
-      <div class="cost-note" style="margin-bottom:8px">real web searches · charges the workspace wallet</div>
-      <div class="sco-prov">items: sourced (web_search) · risks: model_inference · summary: model_inference</div>
-      <div id="sco-result" class="sco-result"></div>
-    </div>
-    <div class="sh"><span class="sh-label">Carbon</span><span class="sh-rule"></span><span style="font-size:10px;color:var(--t3)">dpp/carbon/statement.yaml</span></div>
-    <!-- Same card pattern again. This one is the third fixture in the App and
-         the one with a deadline behind it: `carbon_intensity.mode: synthetic`
-         in the composition is a number a person typed. -->
-    <div class="sco-card" id="ca-card">
-      <div class="sco-header">
-        <span class="sco-icon">🌱</span>
-        <span class="sco-name">carbon_accountant</span>
-        <span class="sco-badge sb-cost" id="ca-badge">spends credits</span>
-      </div>
-      <div class="sco-desc">
-        Retrieves one emission factor per BOM line from the published inventory corpus — <code style="color:var(--blu);font-size:10px">ecoinvent</code>, <code style="color:var(--blu);font-size:10px">Agribalyse</code>, <code style="color:var(--blu);font-size:10px">DEFRA</code> — with the dataset, geography, reference year and source URL attached, and classifies each line against the GHG Protocol scopes.
-        <strong>The agent does not multiply.</strong> The handler multiplies the BOM quantity by the retrieved factor in Rust and overwrites whatever the model replied, because a confidently wrong product of two plausible numbers looks exactly like a right one and nobody recomputes a figure that came back formatted.
-      </div>
-      <div id="ca-current"></div>
-      <div style="display:flex;gap:6px">
-        <button class="btn-agent btn-sm" id="ca-run-btn" onclick="runCarbon(false)" style="flex:1;justify-content:center">⚡ Calculate carbon →</button>
-        <button class="btn-g btn-sm" id="ca-force-btn" onclick="runCarbon(true)" title="Recalculate even though a statement exists. Factors are expensive to retrieve and do not change between runs, so the endpoint is a cache read by default.">↻</button>
-      </div>
-      <div class="cost-note" style="margin-top:5px">
-        real web searches · up to ~300s · charges the workspace wallet · reads the <strong>committed</strong> <code style="font-size:10px">dpp/composition.yaml</code>, so save BOM edits first
-      </div>
-      <div class="sco-prov">factors: tool_verified | tool_no_match | unavailable_no_tool_source · arithmetic: platform_derived · scope, boundary, fitness: model_inference</div>
-      <div id="ca-result" class="sco-result"></div>
-      <div id="ca-runs"></div>
-    </div>
-    <div style="font-size:10px;color:var(--t2);line-height:1.55;margin-bottom:10px">
-      Carbon disclosure is already <a href="https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32023R1542" target="_blank" style="color:var(--blu)">mandatory in the EU Battery DPP</a>, CBAM enters its definitive stage in 2026, and ESRS E1 under CSRD is the shape food is being pulled toward. Each of those regimes wants a different standard of evidence from the same number, which is why the statement says what it is <em>fit for</em> rather than reporting a confidence score.
-    </div>
-  </div>
 
   <!-- Build -->
   <div class="sb-panel hidden" id="tab-build">
@@ -598,6 +548,15 @@ body.shelf-open .shelf-handle{right:min(380px,42vw)}
       <div class="travel-tag">⟷ DPP traveling</div>
       <div style="margin-left:auto;font-size:11px;color:var(--t3)">Hover rows for divergence notes</div>
     </div>
+
+    <!-- Lens tabs ─────────────────────────────────────────────────────────
+         The centre panel is where an agent's conclusion goes; the left panel
+         is the product's own record. The split is what makes an agent cheap
+         to add: a new one appends to LENSES and adds one panel here, and
+         touches neither the data panel nor the activity shelf. -->
+    <div class="juri-tabs" id="lens-tabs"></div>
+
+    <div id="lens-regulatory" class="lens-panel">
 
     <div class="sbar">
       <span class="sd sd-demo" id="sb-dot"></span>
@@ -667,6 +626,71 @@ body.shelf-open .shelf-handle{right:min(380px,42vw)}
     <div style="font-size:11px;color:var(--t3);margin-top:8px">
       🔌 Third-party integration: one POST, structured JSON, 120 lines.
       <a href="embed-example.html" style="color:var(--blu)">Open embed example →</a>
+    </div>
+    </div><!-- /lens-regulatory -->
+
+    <div id="lens-supply" class="lens-panel hidden">
+    <div class="sh"><span class="sh-label">Supply Chain Oracle</span><span class="sh-rule"></span></div>
+    <div class="sco-card" id="sco-card">
+      <div class="sco-header">
+        <span class="sco-icon">⛓</span>
+        <span class="sco-name">supply_chain_oracle</span>
+        <span class="sco-badge sb-not" id="sco-badge">not hired</span>
+      </div>
+      <div class="sco-desc">
+        Uses <code style="color:var(--blu);font-size:10px">web_search</code> to get real current mid-market prices for every ingredient in the DPP composition. Prices are <strong>sourced from live web data</strong> — not generated. Returns risk flags (single_source, seasonal, substitution_risk…) as model inference over the sourced prices.
+      </div>
+      <div style="display:flex;gap:6px;margin-bottom:5px">
+        <button class="btn btn-sm" id="sco-hire-btn" onclick="hireOracle()" style="flex:1">Hire agent →</button>
+        <button class="btn-agent btn-sm" id="sco-run-btn" onclick="runBOM()" style="flex:1;justify-content:center;display:none">⚡ Run BOM pricing</button>
+      </div>
+      <div class="cost-note" style="margin-bottom:8px">real web searches · charges the workspace wallet</div>
+      <div class="sco-prov">items: sourced (web_search) · risks: model_inference · summary: model_inference</div>
+      <div id="sco-result" class="sco-result"></div>
+    </div>
+    </div>
+
+    <div id="lens-carbon" class="lens-panel hidden">
+    <div class="sh"><span class="sh-label">Carbon</span><span class="sh-rule"></span><span style="font-size:10px;color:var(--t3)">dpp/carbon/statement.yaml</span></div>
+    <!-- Same card pattern again. This one is the third fixture in the App and
+         the one with a deadline behind it: `carbon_intensity.mode: synthetic`
+         in the composition is a number a person typed. -->
+    <div class="sco-card" id="ca-card">
+      <div class="sco-header">
+        <span class="sco-icon">🌱</span>
+        <span class="sco-name">carbon_accountant</span>
+        <span class="sco-badge sb-cost" id="ca-badge">spends credits</span>
+      </div>
+      <div class="sco-desc">
+        Retrieves one emission factor per BOM line from the published inventory corpus — <code style="color:var(--blu);font-size:10px">ecoinvent</code>, <code style="color:var(--blu);font-size:10px">Agribalyse</code>, <code style="color:var(--blu);font-size:10px">DEFRA</code> — with the dataset, geography, reference year and source URL attached, and classifies each line against the GHG Protocol scopes.
+        <strong>The agent does not multiply.</strong> The handler multiplies the BOM quantity by the retrieved factor in Rust and overwrites whatever the model replied, because a confidently wrong product of two plausible numbers looks exactly like a right one and nobody recomputes a figure that came back formatted.
+      </div>
+      <div id="ca-current"></div>
+      <div style="display:flex;gap:6px">
+        <button class="btn-agent btn-sm" id="ca-run-btn" onclick="runCarbon(false)" style="flex:1;justify-content:center">⚡ Calculate carbon →</button>
+        <button class="btn-g btn-sm" id="ca-force-btn" onclick="runCarbon(true)" title="Recalculate even though a statement exists. Factors are expensive to retrieve and do not change between runs, so the endpoint is a cache read by default.">↻</button>
+      </div>
+      <div class="cost-note" style="margin-top:5px">
+        real web searches · up to ~300s · charges the workspace wallet · reads the <strong>committed</strong> <code style="font-size:10px">dpp/composition.yaml</code>, so save BOM edits first
+      </div>
+      <div class="sco-prov">factors: tool_verified | tool_no_match | unavailable_no_tool_source · arithmetic: platform_derived · scope, boundary, fitness: model_inference</div>
+      <div id="ca-result" class="sco-result"></div>
+      <div id="ca-runs"></div>
+    </div>
+    <div style="font-size:10px;color:var(--t2);line-height:1.55;margin-bottom:10px">
+      Carbon disclosure is already <a href="https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32023R1542" target="_blank" style="color:var(--blu)">mandatory in the EU Battery DPP</a>, CBAM enters its definitive stage in 2026, and ESRS E1 under CSRD is the shape food is being pulled toward. Each of those regimes wants a different standard of evidence from the same number, which is why the statement says what it is <em>fit for</em> rather than reporting a confidence score.
+    </div>
+    </div>
+
+    <div id="lens-coldchain" class="lens-panel hidden">
+      <div style="font-size:12px;color:var(--t2);line-height:1.6;padding:14px;border:1px dashed var(--b2);border-radius:6px">
+        <strong style="color:var(--t1)">No agent for this lens yet.</strong>
+        <div style="margin-top:6px">Listed rather than omitted, so the panel shows what the
+        architecture expects and does not yet have — the same reason a carbon line with no
+        retrievable factor reads <code style="font-size:10px">null</code> rather than being
+        dropped from the table. Cold chain and shelf life need an agent whose sourced fields
+        are time–temperature histories, and there is no such card on the platform today.</div>
+      </div>
     </div>
   </div>
 </div>
@@ -780,33 +804,21 @@ function confirmLogout() {
 }
 
 // ── sidebar tabs ────────────────────────────────────────────────────────────
+// The left panel is the product's own record: what it IS, not what anyone
+// concluded about it. `carbon` left this list when the agent cards moved to the
+// centre — see LENSES.
+const DATA_TABS = ['products', 'claims', 'ingredients', 'build'];
+
 function showTab(name) {
-  ['products','claims','ingredients','carbon','build'].forEach(t => {
+  DATA_TABS.forEach(t => {
     const el = document.getElementById('tab-' + t);
     if (el) el.classList.toggle('hidden', t !== name);
   });
   document.querySelectorAll('.sb-tab').forEach((el, i) => {
-    el.classList.toggle('active', ['products','claims','ingredients','carbon','build'][i] === name);
+    el.classList.toggle('active', DATA_TABS[i] === name);
   });
   if (name === 'claims' && wsId()) loadClaimsCards();
   if (name === 'ingredients' && wsId()) loadBomYaml();
-  // The carbon card shows what the composition currently CLAIMS above the
-  // button that would replace it, so the tab needs the composition loaded even
-  // though its own controls do not read the BOM — the handler does that
-  // server-side from git. Without this the fixture line is blank until the user
-  // happens to visit the BOM tab first.
-  if (name === 'carbon' && wsId()) {
-    if (!bomYamlText) loadBomYaml().then(renderCarbonFixture);
-    else renderCarbonFixture();
-    renderCarbonPanel();
-    // Every run this workspace has recorded, from the action log rather than
-    // from whatever this tab happens to have in memory.
-    carbonRunsLoad();
-    // And if one was in flight when this page was last closed, rejoin it. The
-    // run never depended on the page being open; finding out how it went
-    // should not either.
-    carbonResumeInflight();
-  }
 }
 
 // ── jurisdiction filter ─────────────────────────────────────────────────────
@@ -3275,7 +3287,80 @@ const ACTION_RE = /__ACTION__\n([\s\S]*?)\n__END_ACTION__/g;
 // Which actions spend money. Mirrors `schema_json.parsing.cost_classes` in the
 // manifest; a block in the second set is never executed without a confirm,
 // because the companion proposing something is not the operator asking for it.
-const SPENDS_CREDITS = ['evaluate_claims', 'price_bom', 'calculate_carbon'];
+// ── Lens registry ────────────────────────────────────────────────────────
+//
+// One row per thing an agent can conclude about this product. The centre panel
+// renders from this list, which is the whole point of having it: adding an
+// agent should cost one entry and one panel, not an edit to the data panel, the
+// activity shelf and three parallel arrays.
+//
+// `SPENDS_CREDITS` was one of those parallel arrays. It is the list the
+// companion checks before confirming an action block, so it had to agree with
+// `manifest.schema_json.parsing.cost_classes` and with the buttons, and nothing
+// made it. Deriving it means a lens that spends credits cannot be added without
+// the confirmation knowing.
+//
+// `available: false` is a deliberate row rather than an omission. The panel
+// should show what the architecture expects and does not yet have, for the same
+// reason a carbon line with no retrievable factor reads `null` instead of
+// vanishing from the table: an absence that renders as nothing is
+// indistinguishable from a question nobody asked.
+const LENSES = [
+  { id: 'regulatory', label: 'Regulatory',  agent: EVALUATOR,
+    action: 'evaluate_claims',  spends: true,  available: true },
+  { id: 'supply',     label: 'Supply chain', agent: 'supply_chain_oracle',
+    action: 'price_bom',        spends: true,  available: true,
+    doc: 'dpp/bom_pricing.yaml' },
+  { id: 'carbon',     label: 'Carbon',      agent: ACCOUNTANT,
+    action: 'calculate_carbon', spends: true,  available: true,
+    doc: 'dpp/carbon/statement.yaml' },
+  { id: 'coldchain',  label: 'Cold chain · shelf life', agent: null,
+    action: null,               spends: false, available: false },
+];
+
+const SPENDS_CREDITS = LENSES.filter(l => l.spends && l.action).map(l => l.action);
+
+let activeLens = 'regulatory';
+
+function renderLensTabs() {
+  const el = document.getElementById('lens-tabs');
+  if (!el) return;
+  el.innerHTML = LENSES.map(l => {
+    const cls = ['jt', l.id === activeLens ? 'active' : '', l.available ? '' : 'locked']
+      .filter(Boolean).join(' ');
+    const lock = l.available ? '' : ' \uD83D\uDD12 <span style="font-size:10px">no agent yet</span>';
+    return `<div class="${cls}" onclick="showLens('${l.id}')">${esc(l.label)}${lock}</div>`;
+  }).join('');
+}
+
+function showLens(id) {
+  const lens = LENSES.find(l => l.id === id);
+  if (!lens || !lens.available) return;
+  activeLens = id;
+  LENSES.forEach(l => {
+    const p = document.getElementById('lens-' + l.id);
+    if (p) p.classList.toggle('hidden', l.id !== id);
+  });
+  renderLensTabs();
+
+  // Per-lens hydration. The carbon card shows what the composition currently
+  // CLAIMS above the button that would replace it, so it needs the composition
+  // loaded even though its own controls never read the BOM — the handler does
+  // that server-side from git. Without this the fixture line is blank until the
+  // operator happens to visit the BOM tab first.
+  if (id === 'carbon' && wsId()) {
+    if (!bomYamlText) loadBomYaml().then(renderCarbonFixture);
+    else renderCarbonFixture();
+    renderCarbonPanel();
+    // Every run this workspace has recorded, from the action log rather than
+    // from whatever this tab happens to have in memory.
+    carbonRunsLoad();
+    // And if one was in flight when this page was last closed, rejoin it. The
+    // run never depended on the page being open; finding out how it went should
+    // not either.
+    carbonResumeInflight();
+  }
+}
 const FREE_READ = ['compare_lenses', 'render_lens', 'flag_divergence'];
 
 let shelfTab = 'companion';
@@ -4321,6 +4406,7 @@ function showEmptyWithMessage(msg) {
 window.addEventListener('DOMContentLoaded', () => {
   initScale();
   renderKB();
+  renderLensTabs();
   renderCompanion();
   checkAuth(); // reads abw_session cookie, populates auth-status, fetches workspaces if logged in
 });
