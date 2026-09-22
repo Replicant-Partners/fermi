@@ -2367,6 +2367,36 @@ allergens:
     /// reason: a check whose subject is "wherever this string appears" is
     /// measuring the documentation. What gets pinned is the path the browser
     /// FETCHES, and that lives in exactly one function.
+    /// A function's body with `//` comment text removed.
+    ///
+    /// These checks look for identifiers, and this codebase writes long
+    /// explanatory comments that quote the very identifier being checked for.
+    /// `the_studio_rereads_the_roster_rather_than_trusting_page_load` was
+    /// written, falsified by deleting the call it pins, and **passed anyway**:
+    /// the comment above the deleted line reads "`loadHiredAgents()` used to
+    /// run once", which satisfied a `contains`.
+    ///
+    /// Fourth time in this work that a check measured the prose instead of the
+    /// code, and the third where it would have reported a passing state for a
+    /// broken one. Searching source text for a call is only sound once the
+    /// comments are out of scope, so any check whose needle is a plain
+    /// identifier uses this rather than `client_fn_body`.
+    ///
+    /// Crude on purpose: a `//` inside a string literal would truncate that
+    /// line. That is acceptable here because the needles are identifiers and
+    /// the failure direction is safe — a truncated line can only remove a
+    /// match, making a check fail loudly rather than pass silently.
+    fn client_fn_code(src: &str, decl: &str) -> String {
+        client_fn_body(src, decl)
+            .lines()
+            .map(|l| match l.find("//") {
+                Some(i) => &l[..i],
+                None => l,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     fn client_fn_body<'a>(src: &'a str, decl: &str) -> &'a str {
         let after = src
             .split_once(decl)
@@ -2520,6 +2550,52 @@ allergens:
              138632a9 issued 18 searches inside 5 turns, so batching is \
              available — the model just has to be told that turns are the \
              scarce resource, or it triages lines it did not need to triage."
+        );
+    }
+
+    /// **A stale roster must not become an unclickable button.**
+    ///
+    /// `require_hired_agent` refuses a run for an agent the workspace has not
+    /// hired, and the Studio mirrors that by hiding the run button —
+    /// `renderLensHireState` sets `display:none` on the run controls of an
+    /// unhired lens. Both are correct. Together, with a roster read only once
+    /// at page load, they produce the state observed on 2026-09-21:
+    /// `carbon_accountant` was in `workspace_agents`, and the page still
+    /// offered no way to run it.
+    ///
+    /// That is worse than an error. An agent brought in from the ABW workspace
+    /// view — which is a different page, and the only route for an agent the
+    /// caller owns, since `/hire` refuses those with "Use /add for your own
+    /// agents" — leaves this tab showing "not hired" with nothing to click and
+    /// nothing to read. It reads as "I hired it and it is still broken".
+    ///
+    /// Two halves, and both are pinned because either alone leaves a dead end:
+    /// the roster is re-read whenever a lens is opened, and a `403` from a run
+    /// re-reads it too rather than printing a status code at someone.
+    #[test]
+    fn the_studio_rereads_the_roster_rather_than_trusting_page_load() {
+        let src = studio_page();
+
+        // In `showLens`, so every lens with an agent gets it. Scoped to that
+        // function because a match anywhere in the page would also be
+        // satisfied by the single page-load call this replaced.
+        assert!(
+            client_fn_code(&src, "function showLens(id) {").contains("loadHiredAgents()"),
+            "showLens no longer re-reads the workspace roster, so an agent \
+             hired anywhere other than this page stays invisible here — and \
+             an unhired lens has its run button hidden, so there is nothing \
+             to click and no error to read."
+        );
+
+        // And the run's own refusal has to be actionable. A 403 is the hiring
+        // gate; it is the one refusal this page can do something about.
+        let run = client_fn_code(&src, "async function runCarbon(force) {");
+        assert!(
+            run.contains("res.status === 403") && run.contains("loadHiredAgents()"),
+            "runCarbon reports a 403 without re-reading the roster. That is \
+             the refusal most likely to be stale on the client, and leaving \
+             the stale state in place is what turns `hire it and retry` into \
+             a dead end."
         );
     }
 
