@@ -1,15 +1,109 @@
-//! QR code generation for Rabble events.
+//! QR code generation for Rabble events, and for product passports.
 
 use axum::{
     extract::{Path, State},
     http::{header, StatusCode},
     response::IntoResponse,
 };
+use fermi_auth::{teams, AuthPrincipal};
 use image::Luma;
 use qrcode::QrCode;
 use sqlx::Row;
 
 use crate::AppState;
+
+/// GET /api/workspaces/:workspace_id/dpp/qr — the data carrier for a product
+/// passport.
+///
+/// ## What it encodes, and what it deliberately does not claim
+///
+/// A URL, not a GTIN. The products in this App carry a `part_number` such as
+/// `PKH-F2-330`, which is an internal supplier code: meaningful in its own
+/// workspace and meaningless to a retail scanner. A GTIN requires a GS1 prefix
+/// leased by the manufacturer, and encoding an invented one would produce a
+/// code that looks industry-standard and collides with somebody else's
+/// product.
+///
+/// So this is a plain URL QR, which any phone camera opens, and it is the same
+/// shape a GS1 Digital Link takes — a resolvable URL carrying an identifier.
+/// If a prefix is leased later, the identifier in the path changes and the
+/// scanning, the resolver and this handler do not.
+///
+/// ## Why it still requires membership
+///
+/// The code resolves into the Studio, which requires a session. A passport a
+/// stranger can verify needs an unauthenticated read surface, and which fields
+/// may be public is a live decision (a carbon total and a regulatory verdict
+/// are commercially sensitive in a way a claims list is not — see
+/// COORDINATION_DPP_STUDIO_PANELS_AND_PASSPORT.md §7.3). Until that is
+/// answered, this generates the carrier for the readers who already have
+/// access rather than implying an audience it does not yet serve.
+pub async fn dpp_passport_qr_handler(
+    State(state): State<AppState>,
+    principal: AuthPrincipal,
+    Path(workspace_id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let ws_uuid: uuid::Uuid = workspace_id
+        .parse()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid workspace ID".to_string()))?;
+
+    let user_id = principal.user_id();
+    let role = teams::get_member_role(&state.db, ws_uuid, &user_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if role.is_none() {
+        return Err((StatusCode::FORBIDDEN, "Not a workspace member".to_string()));
+    }
+
+    // A passport for a product that does not exist is a false artefact, so the
+    // workspace row is read rather than assumed from a parseable UUID.
+    let exists: Option<i32> = sqlx::query_scalar("SELECT 1 FROM teams WHERE id = $1")
+        .bind(ws_uuid)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if exists.is_none() {
+        return Err((StatusCode::NOT_FOUND, "Workspace not found".to_string()));
+    }
+
+    let base = std::env::var("APP_BASE_URL")
+        .unwrap_or_else(|_| "https://agent-bestiary.world".to_string());
+    let passport_url = format!("{base}/static/adaptogen-lab/index.html?ws={ws_uuid}&view=passport");
+
+    let code = QrCode::new(passport_url.as_bytes()).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("QR generation failed: {e}"),
+        )
+    })?;
+    let img = code.render::<Luma<u8>>().min_dimensions(320, 320).build();
+
+    let mut png_bytes: Vec<u8> = Vec::new();
+    let encoder = image::codecs::png::PngEncoder::new(&mut png_bytes);
+    image::ImageEncoder::write_image(
+        encoder,
+        img.as_raw(),
+        img.width(),
+        img.height(),
+        image::ExtendedColorType::L8,
+    )
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("PNG encoding failed: {e}"),
+        )
+    })?;
+
+    Ok((
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            // Short, because the URL it encodes is stable but the decision
+            // about what the passport exposes is not.
+            (header::CACHE_CONTROL, "private, max-age=300"),
+        ],
+        png_bytes,
+    ))
+}
 
 /// GET /api/rabble/:id/qr — generate QR code PNG for a rabble's join URL.
 pub async fn rabble_qr_handler(

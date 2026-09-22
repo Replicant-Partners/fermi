@@ -433,6 +433,7 @@ body.shelf-open .shelf-handle{right:min(380px,42vw)}
     <div class="sb-tab active" onclick="showTab('products')">Products</div>
     <div class="sb-tab" onclick="showTab('claims')">Claims</div>
     <div class="sb-tab" onclick="showTab('ingredients')">BOM</div>
+    <div class="sb-tab" onclick="showTab('passport')">Passport</div>
     <div class="sb-tab" onclick="showTab('build')">Build</div>
   </div>
 
@@ -448,6 +449,17 @@ body.shelf-open .shelf-handle{right:min(380px,42vw)}
     <div style="font-size:10px;color:var(--t3);margin-top:10px;line-height:1.5">
       <strong style="color:var(--t2)">One workspace = one product DPP.</strong><br>
       The workspace holds the product composition YAML (ingredients, source claims), the comparison history (committed to git on each run), and any agent outputs. Selecting a workspace runs the regulatory comparison against its current composition.
+    </div>
+  </div>
+
+  <!-- Passport — the product's own record, which is why it is on this side.
+       A passport's property is not that it looks official but that a reader
+       can check it without trusting the bearer, so the verification status and
+       the expert flag sit ABOVE the figures rather than in a footer. -->
+  <div class="sb-panel hidden" id="tab-passport">
+    <div class="sh"><span class="sh-label">Digital Product Passport</span><span class="sh-rule"></span></div>
+    <div id="passport-body">
+      <div class="ws-empty">Select a product workspace to see its passport.</div>
     </div>
   </div>
 
@@ -667,6 +679,11 @@ body.shelf-open .shelf-handle{right:min(380px,42vw)}
       </div>
       <div id="ca-current"></div>
       <div style="display:flex;gap:6px">
+        <!-- The accountant had no hire affordance at all: its run button was
+             always enabled, so the only way to learn it was not hired was a
+             403 from the server once that became enforced. Driven from LENSES
+             so a new lens inherits it. -->
+        <button class="btn btn-sm" id="ca-hire-btn" onclick="hireLensAgent('carbon')" style="flex:1;display:none">Hire agent →</button>
         <button class="btn-agent btn-sm" id="ca-run-btn" onclick="runCarbon(false)" style="flex:1;justify-content:center">⚡ Calculate carbon →</button>
         <button class="btn-g btn-sm" id="ca-force-btn" onclick="runCarbon(true)" title="Recalculate even though a statement exists. Factors are expensive to retrieve and do not change between runs, so the endpoint is a cache read by default.">↻</button>
       </div>
@@ -807,7 +824,7 @@ function confirmLogout() {
 // The left panel is the product's own record: what it IS, not what anyone
 // concluded about it. `carbon` left this list when the agent cards moved to the
 // centre — see LENSES.
-const DATA_TABS = ['products', 'claims', 'ingredients', 'build'];
+const DATA_TABS = ['products', 'passport', 'claims', 'ingredients', 'build'];
 
 function showTab(name) {
   DATA_TABS.forEach(t => {
@@ -819,9 +836,140 @@ function showTab(name) {
   });
   if (name === 'claims' && wsId()) loadClaimsCards();
   if (name === 'ingredients' && wsId()) loadBomYaml();
+  if (name === 'passport' && wsId()) loadPassport();
 }
 
-// ── jurisdiction filter ─────────────────────────────────────────────────────
+// ── Passport ───────────────────────────────────────────────────────────
+//
+// The product's own record, assembled from what the workspace HOLDS rather
+// than from what this tab was told. Every line is either read from a committed
+// file, read from the action log, or labelled as absent — which is the only
+// way a passport can be worth scanning.
+//
+// The verification status and the expert flag are rendered first and in colour,
+// above any number. A passport whose figures read as settled while its status
+// reads `unverified` in small grey type at the bottom is the laundering this
+// whole design refuses: the agent is explicitly not an accredited verifier, and
+// a clean-looking page must not imply otherwise.
+async function loadPassport() {
+  const el = document.getElementById('passport-body');
+  const id = wsId();
+  if (!el || !id) return;
+  el.innerHTML = '<div style="font-size:10px;color:var(--t3)"><span class="spinner"></span> assembling passport…</div>';
+
+  // What the workspace actually contains. Each read is independent and a
+  // failure is reported as "not present" rather than blanking the passport,
+  // because a passport that renders nothing when one document is missing tells
+  // you less than one that names the gap.
+  const get = async (path) => {
+    try {
+      const r = await fetch(`${base()}/api/workspaces/${id}/files/${path}`,
+        { credentials: 'include', headers: authHeaders() });
+      if (!r.ok) return null;
+      const b = await r.json().catch(() => null);
+      return typeof b === 'string' ? b : (b?.content ?? b?.text ?? null);
+    } catch { return null; }
+  };
+
+  const [claims, comp, statement] = await Promise.all([
+    get(CLAIMS_PATH), get(COMPOSITION_PATH), get('dpp/carbon/statement.yaml'),
+  ]);
+
+  // Runs, per lens, from the action log — the workspace-scoped record.
+  let runs = [];
+  try {
+    const r = await fetch(`${base()}/api/workspaces/${id}/actions`,
+      { credentials: 'include', headers: authHeaders() });
+    if (r.ok) runs = (await r.json()).actions ?? [];
+  } catch { /* the passport survives without it */ }
+
+  const lastOf = (action) => runs
+    .filter(a => a.action_type === action)
+    .sort((x, y) => new Date(y.created_at) - new Date(x.created_at))[0] ?? null;
+
+  const yamlField = (txt, key) => {
+    if (!txt) return null;
+    const m = txt.match(new RegExp('^' + key + ':\\s*(.*)$', 'm'));
+    return m ? yamlUnquote(m[1].split('#')[0].trim()) : null;
+  };
+
+  // Verification is read from the statement, never assumed. Absent statement
+  // means absent verification, which is not the same as unverified.
+  const verification = yamlField(statement, '  verification_status')
+    ?? yamlField(statement, 'verification_status');
+  const needsExpert = /needs_expert:\s*true/.test(statement ?? '');
+
+  const stamp = (label, colour, note) => `
+    <div style="border-left:3px solid ${colour};background:var(--s1);padding:7px 9px;margin-bottom:7px;border-radius:0 4px 4px 0">
+      <div style="font-size:11px;font-weight:700;color:${colour};font-family:var(--mono)">${esc(label)}</div>
+      <div style="font-size:10px;color:var(--t2);margin-top:2px;line-height:1.5">${note}</div>
+    </div>`;
+
+  const docRow = (label, path, present, detail) => `
+    <div style="display:flex;gap:6px;align-items:baseline;font-size:10px;padding:3px 0;border-bottom:1px solid var(--b1)">
+      <span style="color:${present ? 'var(--grn)' : 'var(--t3)'};width:11px">${present ? '\u2713' : '\u00b7'}</span>
+      <span style="flex:1">${esc(label)}<div style="font-family:var(--mono);font-size:9px;color:var(--t3)">${esc(path)}</div></span>
+      <span style="color:var(--t3);font-family:var(--mono);font-size:9px;text-align:right">${detail}</span>
+    </div>`;
+
+  const lensRow = (lens) => {
+    const a = lens.action ? lastOf(lens.action) : null;
+    const r = a?.apply_result ?? null;
+    if (!lens.available) {
+      return docRow(lens.label, 'no agent', false, 'not assessed');
+    }
+    if (!a) return docRow(lens.label, lens.agent ?? '', false, 'never run');
+    const when = relTime(a.created_at);
+    let detail = when;
+    if (r?.coverage) detail = `coverage ${esc(r.coverage)} \u00b7 ${when}`;
+    else if (r?.evaluated != null) detail = `${esc(r.evaluated)} evaluated \u00b7 ${when}`;
+    const ok = !(r?.outcome === 'no_reply' || a.applied === false);
+    return docRow(lens.label, lens.agent ?? '', ok, detail);
+  };
+
+  el.innerHTML = `
+    <div style="border:1px solid var(--b2);border-radius:7px;padding:11px;margin-bottom:11px;background:var(--s2)">
+      <div style="font-size:13px;font-weight:700;color:var(--t1);line-height:1.3">${esc(currentProductName || 'Unnamed product')}</div>
+      <div style="font-family:var(--mono);font-size:10px;color:var(--t3);margin-top:2px">${esc(currentProductSku || '\u2014')}</div>
+      <div style="font-family:var(--mono);font-size:9px;color:var(--t3);margin-top:5px">workspace ${esc(id)}</div>
+    </div>
+
+    ${needsExpert
+      ? stamp('\u26a0 needs expert review', 'var(--amb)',
+          'A qualified reviewer must confirm this before it is relied on. The flag is the agent\u2019s own, not a formatting choice.')
+      : ''}
+    ${verification
+      ? stamp(`verification: ${esc(verification)}`,
+          verification === 'unverified' ? 'var(--amb)' : 'var(--grn)',
+          'The accountant is not an accredited verifier. Nothing here states that this product is carbon neutral, climate neutral or offset.')
+      : stamp('verification: not stated', 'var(--t3)',
+          'No carbon statement is committed, so there is no verification status to report \u2014 which is different from being unverified.')}
+
+    <div style="font-size:10px;color:var(--t3);font-family:var(--mono);text-transform:uppercase;letter-spacing:.4px;margin:11px 0 3px">documents</div>
+    ${docRow('Claims', CLAIMS_PATH, !!claims, claims ? `${(claims.match(/^\s*-\s*claim_id:/gm) ?? []).length} claim(s)` : 'absent')}
+    ${docRow('Composition / BOM', COMPOSITION_PATH, !!comp, comp ? `${(comp.match(/^\s*-\s*item_id:/gm) ?? []).length} line(s)` : 'absent')}
+    ${docRow('Carbon statement', 'dpp/carbon/statement.yaml', !!statement, statement ? 'committed' : 'absent')}
+
+    <div style="font-size:10px;color:var(--t3);font-family:var(--mono);text-transform:uppercase;letter-spacing:.4px;margin:11px 0 3px">assessments</div>
+    ${LENSES.map(lensRow).join('')}
+
+    <div style="font-size:10px;color:var(--t3);font-family:var(--mono);text-transform:uppercase;letter-spacing:.4px;margin:11px 0 5px">data carrier</div>
+    <div style="text-align:center;background:#fff;padding:8px;border-radius:6px">
+      <img src="${base()}/api/workspaces/${id}/dpp/qr" alt="Passport QR code"
+           style="width:100%;max-width:190px;image-rendering:pixelated"
+           onerror="this.parentElement.innerHTML='<div style=&quot;font-size:10px;color:#666;padding:12px&quot;>QR unavailable \u2014 the endpoint may not be deployed yet.</div>'">
+    </div>
+    <div style="font-size:10px;color:var(--t2);margin-top:6px;line-height:1.5">
+      A <strong>URL</strong>, not a GTIN. <code style="font-size:9px">${esc(currentProductSku || '')}</code> is an internal
+      supplier code; a retail barcode needs a GS1 prefix this product does not have, and encoding an
+      invented one would collide with somebody else\u2019s goods.
+      <div style="color:var(--t3);margin-top:4px">It resolves for a reader who can already open this
+      workspace. A passport a stranger can verify needs a public read surface, and which fields may be
+      public is an open decision \u2014 so this is not yet that.</div>
+    </div>`;
+}
+
+// ── jurisdiction filter ─────────────────────────────────────────────
 let activeJuri = 'all';
 function setJuri(el, j) {
   if (el.classList.contains('locked')) return;
@@ -1590,65 +1738,121 @@ function resetCascade() {
 // ── supply chain oracle ─────────────────────────────────────────────────────
 let oracleHired = false;
 
-async function hireOracle() {
+// Which agents this workspace has actually hired, and whether we have asked.
+//
+// The `hiredLoaded` flag matters: before the answer is in, the run buttons keep
+// the state the markup gave them. Rendering "not hired" from an empty set would
+// hide a working button on every page load until a fetch returned.
+let hiredAgents = new Set();
+let hiredLoaded = false;
+
+async function loadHiredAgents() {
+  const id = wsId();
+  if (!id) return;
+  try {
+    const res = await fetch(`${base()}/api/workspaces/${id}/agents`,
+      { credentials: 'include', headers: authHeaders() });
+    if (!res.ok) return;
+    const d = await res.json();
+    const list = d.agents ?? d ?? [];
+    hiredAgents = new Set(list.map(a => a.agent_name ?? a.name).filter(Boolean));
+    hiredLoaded = true;
+  } catch { /* a status read must not break the page */ }
+  renderLensHireState();
+}
+
+// One function drives every lens's hire state, from the ids in LENSES. This was
+// four hardcoded getElementById calls for one agent, duplicated across the hire
+// handler, its catch block and the workspace loader — which is why the
+// accountant never got any of it.
+function renderLensHireState() {
+  if (!hiredLoaded) return;
+  for (const l of LENSES) {
+    if (!l.agent || !l.ids) continue;
+    const hired = hiredAgents.has(l.agent);
+    const badge = document.getElementById(l.ids.badge);
+    if (badge) {
+      badge.textContent = hired ? '\u2713 hired' : 'not hired';
+      badge.className = 'sco-badge ' + (hired ? 'sb-hired' : 'sb-not');
+    }
+    const hire = document.getElementById(l.ids.hire);
+    if (hire) {
+      hire.style.display = hired ? 'none' : '';
+      hire.disabled = false;
+      hire.textContent = 'Hire agent \u2192';
+    }
+    for (const rid of (l.ids.run ?? [])) {
+      const b = document.getElementById(rid);
+      if (b) b.style.display = hired ? '' : 'none';
+    }
+  }
+  oracleHired = hiredAgents.has('supply_chain_oracle');
+}
+
+/// Bring a lens's agent into this workspace.
+async function hireLensAgent(lensId) {
+  const lens = LENSES.find(l => l.id === lensId);
+  if (!lens?.agent) return;
   if (!isLiveMode()) {
-    alert('Enter a workspace ID and token to hire the Supply Chain Oracle.');
+    alert(`Enter a workspace ID and token to hire ${lens.agent}.`);
     return;
   }
-  const btn = document.getElementById('sco-hire-btn');
-  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Hiring…';
+  const btn = lens.ids?.hire ? document.getElementById(lens.ids.hire) : null;
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Hiring…'; }
   try {
-    // /hire and /add take the same body and differ only in who may be
-    // brought in: `hire_agent_handler` REFUSES an agent the caller owns
-    // ("Use /add for your own agents", messages.rs:1381) and `/add` is the
-    // path for those.
-    //
-    // Which agent is "yours" is not a property of the agent — it is a
-    // property of who is asking. `seed_agents_to_database` sets `owner_id` on
-    // every curated agent to the first admin user, so for that user every
-    // curated agent is self-owned and /hire is always the wrong endpoint;
-    // for everyone else /hire is the right one. A client cannot know which it
-    // is without reading the agent row, so it tries both rather than
-    // guessing, and reports only if both refuse.
-    //
-    // 409 CONFLICT from either means "already in this workspace", which is
-    // the state we wanted.
-    async function bring(where) {
-      return fetch(`${base()}/api/workspaces/${wsId()}/${where}`,
-        fetchOpts('POST', { agent_id: 'supply_chain_oracle' }));
-    }
-    let res = await bring('hire');
-    if (!res.ok && res.status !== 409) {
-      const first = await res.text();
-      // Only fall through on the ownership refusal. Anything else — no
-      // permission, no such agent, no budget — is a real answer and must not
-      // be retried against a second endpoint that will fail the same way.
-      if (/use \/add|own agents/i.test(first)) {
-        res = await bring('add');
-        if (!res.ok && res.status !== 409) {
-          throw new Error(`hire refused (${first.trim()}); add also refused: ${await res.text()}`);
-        }
-      } else {
-        throw new Error(first);
-      }
-    }
-    oracleHired = true;
-    activityPush({ severity: 'success', source: 'system', node: 'supply_chain_oracle',
-                   summary: 'supply_chain_oracle added to this workspace' });
-    document.getElementById('sco-badge').textContent = '✓ hired';
-    document.getElementById('sco-badge').className = 'sco-badge sb-hired';
-    btn.style.display = 'none';
-    document.getElementById('sco-run-btn').style.display = '';
-  } catch(e) {
-    if (e.message?.includes('already')) {
-      oracleHired = true;
-      document.getElementById('sco-badge').textContent = '✓ hired';
-      document.getElementById('sco-badge').className = 'sco-badge sb-hired';
-      btn.style.display = 'none';
-      document.getElementById('sco-run-btn').style.display = '';
+    await bringAgentIn(lens.agent);
+    hiredAgents.add(lens.agent);
+    hiredLoaded = true;
+    activityPush({ severity: 'success', source: 'system', node: lens.agent,
+                   summary: `${lens.agent} added to this workspace` });
+    renderLensHireState();
+  } catch (e) {
+    if (/already/i.test(e.message ?? '')) {
+      hiredAgents.add(lens.agent);
+      hiredLoaded = true;
+      renderLensHireState();
     } else {
       alert(`Hire failed: ${e.message}`);
-      btn.disabled = false; btn.textContent = 'Hire agent →';
+      if (btn) { btn.disabled = false; btn.textContent = 'Hire agent \u2192'; }
+    }
+  }
+}
+
+async function hireOracle() { return hireLensAgent('supply'); }
+
+async function bringAgentIn(agentId) {
+  // /hire and /add take the same body and differ only in who may be
+  // brought in: `hire_agent_handler` REFUSES an agent the caller owns
+  // ("Use /add for your own agents", messages.rs:1381) and `/add` is the
+  // path for those.
+  //
+  // Which agent is "yours" is not a property of the agent — it is a
+  // property of who is asking. `seed_agents_to_database` sets `owner_id` on
+  // every curated agent to the first admin user, so for that user every
+  // curated agent is self-owned and /hire is always the wrong endpoint;
+  // for everyone else /hire is the right one. A client cannot know which it
+  // is without reading the agent row, so it tries both rather than
+  // guessing, and reports only if both refuse.
+  //
+  // 409 CONFLICT from either means "already in this workspace", which is
+  // the state we wanted.
+  async function bring(where) {
+    return fetch(`${base()}/api/workspaces/${wsId()}/${where}`,
+      fetchOpts('POST', { agent_id: agentId }));
+  }
+  let res = await bring('hire');
+  if (!res.ok && res.status !== 409) {
+    const first = await res.text();
+    // Only fall through on the ownership refusal. Anything else — no
+    // permission, no such agent, no budget — is a real answer and must not
+    // be retried against a second endpoint that will fail the same way.
+    if (/use \/add|own agents/i.test(first)) {
+      res = await bring('add');
+      if (!res.ok && res.status !== 409) {
+        throw new Error(`hire refused (${first.trim()}); add also refused: ${await res.text()}`);
+      }
+    } else {
+      throw new Error(first);
     }
   }
 }
@@ -2313,6 +2517,24 @@ async function runCarbon(force) {
       // status code, because the text is the actionable part.
       const body = (await res.text()).slice(0, 900);
       carbonRun.error = `HTTP ${res.status}\n\n${body}`;
+
+      // A 403 is the hiring gate (`require_hired_agent`), and it is the one
+      // refusal this page can act on rather than just report. It means this
+      // page's idea of the roster disagrees with the server's, so re-read it:
+      // either the agent really is unhired and the Hire button now appears, or
+      // it was hired elsewhere and the run button comes back. Leaving the
+      // stale state in place is what turned "hire it and retry" into a dead
+      // end on 2026-09-21.
+      if (res.status === 403) {
+        await loadHiredAgents();
+        carbonRun.error = hiredAgents.has(ACCOUNTANT)
+          ? `HTTP 403 — but ${ACCOUNTANT} IS on this workspace's roster now. `
+            + `The page was holding a stale copy; it has been refreshed, so `
+            + `run it again.\n\n${body}`
+          : `HTTP 403 — ${ACCOUNTANT} is not hired in this workspace, so the `
+            + `run was refused before anything was spent. Use the Hire button `
+            + `on this card.\n\n${body}`;
+      }
       activityPush({
         severity: res.status === 503 ? 'warn' : 'error',
         source: `agent:${ACCOUNTANT}`, node: 'calculate_carbon',
@@ -3310,10 +3532,12 @@ const LENSES = [
     action: 'evaluate_claims',  spends: true,  available: true },
   { id: 'supply',     label: 'Supply chain', agent: 'supply_chain_oracle',
     action: 'price_bom',        spends: true,  available: true,
-    doc: 'dpp/bom_pricing.yaml' },
+    doc: 'dpp/bom_pricing.yaml',
+    ids: { badge: 'sco-badge', hire: 'sco-hire-btn', run: ['sco-run-btn'] } },
   { id: 'carbon',     label: 'Carbon',      agent: ACCOUNTANT,
     action: 'calculate_carbon', spends: true,  available: true,
-    doc: 'dpp/carbon/statement.yaml' },
+    doc: 'dpp/carbon/statement.yaml',
+    ids: { badge: 'ca-badge', hire: 'ca-hire-btn', run: ['ca-run-btn', 'ca-force-btn'] } },
   { id: 'coldchain',  label: 'Cold chain · shelf life', agent: null,
     action: null,               spends: false, available: false },
 ];
@@ -3334,6 +3558,21 @@ function renderLensTabs() {
 }
 
 function showLens(id) {
+  // Re-read the roster on every lens switch, because hiring can happen
+  // somewhere this page cannot see. `loadHiredAgents()` used to run once, when
+  // the workspace was set, so an agent brought in from the ABW workspace view
+  // after this tab was open stayed invisible here — and invisible is worse
+  // than wrong, because `renderLensHireState` keeps an unhired lens's run
+  // button at `display:none`. There was nothing left to click and no error to
+  // read.
+  //
+  // Observed 2026-09-21: `carbon_accountant` was in `workspace_agents` and
+  // this page still refused to offer it, which read as "I hired it and it is
+  // still broken". Every lens with an agent has the same exposure, so this
+  // sits in `showLens` rather than in the carbon branch. One GET per tab
+  // switch is cheap against a run that costs real searches.
+  if (wsId()) loadHiredAgents();
+
   const lens = LENSES.find(l => l.id === id);
   if (!lens || !lens.available) return;
   activeLens = id;
@@ -4334,20 +4573,11 @@ async function runLive() {
       return;
     }
     renderAll(await res.json(), true);
-    // Check if supply chain oracle is already hired
-    const agentsRes = await fetch(`${base()}/api/workspaces/${id}/agents`,
-      { credentials:'include', headers: authHeaders() });
-    if (agentsRes.ok) {
-      const agentsData = await agentsRes.json();
-      const agents = agentsData.agents ?? agentsData ?? [];
-      if (agents.some(a => (a.agent_name ?? a.name) === 'supply_chain_oracle')) {
-        oracleHired = true;
-        document.getElementById('sco-badge').textContent = '✓ hired';
-        document.getElementById('sco-badge').className = 'sco-badge sb-hired';
-        document.getElementById('sco-hire-btn').style.display = 'none';
-        document.getElementById('sco-run-btn').style.display = '';
-      }
-    }
+    // Every lens's agent, not just the oracle. This read existed and looked
+    // only for `supply_chain_oracle`, so the accountant's card could not know
+    // its own state — and once hiring became enforced server-side, a workspace
+    // that had never hired it showed an enabled button that returned 403.
+    await loadHiredAgents();
   } catch(e) {
     showEmptyWithMessage(`Network error: ${e.message}`);
   } finally {

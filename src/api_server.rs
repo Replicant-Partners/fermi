@@ -4357,6 +4357,13 @@ async fn main() {
             get(handlers::workspace::get_workspace_ontology_handler),
         )
         // Workspace git / files
+        // The passport's data carrier. A URL QR rather than a GTIN barcode —
+        // `part_number` is an internal code and a GS1 prefix is not held; see
+        // the handler for why encoding one anyway would be worse than this.
+        .route(
+            "/api/workspaces/:workspace_id/dpp/qr",
+            get(handlers::qr_codes::dpp_passport_qr_handler),
+        )
         .route(
             "/api/workspaces/:workspace_id/files",
             get(handlers::workspace::list_workspace_files_handler),
