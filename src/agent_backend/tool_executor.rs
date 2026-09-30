@@ -42,6 +42,21 @@ const MAX_ITERATIONS: u32 = 5;
 /// missing 90s is exactly the client timeout, and the run was recorded as
 /// "tool loop produced empty content" — eighteen successful searches discarded
 /// because the turn that would have written them up was cut off mid-generation.
+///
+/// **Applied to every tool-loop turn too, not only the flush.** The premise
+/// above — that tool-use calls "return in seconds" — holds only until the
+/// model decides a loop turn is the one that writes the answer. Which turn that
+/// is is not known until it returns, so any of them can be the large one. When
+/// only the flush had this budget, telling an agent to finish inside the loop
+/// (which `carbon.rs::build_query` does, to avoid the flush) moved the write-up
+/// back under the 90s client timeout: run `c63f6c0d` on 2026-09-22 failed at
+/// 129.5s — about 40s of searching plus exactly 90s — with "operation timed
+/// out" against api.anthropic.com. Same arithmetic as the flush incident, in a
+/// different turn. A genuinely hung tool-use turn now takes 240s rather than 90s
+/// to fail, which the caller's own run budget still bounds.
+///
+/// The OpenAI-compatible path has no per-request override and still uses the
+/// client's 90s for both loop and flush; it is not on the carbon path.
 const FLUSH_TIMEOUT_SECS: u64 = 240;
 
 /// Detect whether a system prompt declares a structured-output contract
@@ -223,7 +238,12 @@ impl ToolAwareExecutor {
 
             // Send request
             let response = self
-                .send_anthropic_request(&request, &api_key, None)
+                // Any loop turn may be the write-up turn; see FLUSH_TIMEOUT_SECS.
+                .send_anthropic_request(
+                    &request,
+                    &api_key,
+                    Some(std::time::Duration::from_secs(FLUSH_TIMEOUT_SECS)),
+                )
                 .await?;
 
             total_input_tokens += response.usage.input_tokens;

@@ -332,10 +332,37 @@ pub async fn dispatch_rabble_action(
         PlatformToolRegistry::all(),
         tool_context,
     );
-    let output = tool_executor
-        .execute(&agent_stmt, &context)
-        .await
-        .map_err(|e| format!("Agent execution failed: {:?}", e))?;
+    let execute_started = std::time::Instant::now();
+    let output = match tool_executor.execute(&agent_stmt, &context).await {
+        Ok(o) => o,
+        Err(e) => {
+            let msg = format!("Agent execution failed: {:?}", e);
+            // Close the reservation before leaving. `Pulse::open` inserted
+            // this episode as `running` with a duration of 0, and the only
+            // code that ever finalises it is the background task below, which
+            // a failed execution never reaches. Returning here used to leave
+            // the row `running` for good — `5a8dc02c` on 2026-09-22, after an
+            // Anthropic request timed out — and the metrics series counted
+            // each one as a non-failure (NOTE_CARBON_ZERO_TOKEN_EPISODE.md §7).
+            //
+            // Guarded on `running` so it can only ever transition a
+            // reservation, never overwrite a row something else completed.
+            // Soft-failed: the caller's error is the answer that matters.
+            let _ = sqlx::query(
+                "UPDATE episodes
+                    SET execution_status = 'failure',
+                        error_details = $1,
+                        execution_time_ms = $2
+                  WHERE episode_id = $3 AND execution_status = 'running'",
+            )
+            .bind(&msg)
+            .bind(execute_started.elapsed().as_millis() as i64)
+            .bind(pulse.episode_id)
+            .execute(&state.db)
+            .await;
+            return Err(msg);
+        }
+    };
 
     // Extract response text — this is what the caller needs.
     // Primary: metadata.reasoning holds the raw LLM text (the full JSON

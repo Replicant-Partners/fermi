@@ -3118,6 +3118,26 @@ function carbonRunRowHTML(a, isCurrent) {
   // the run is detached and the action log is how it is tracked — so an absent
   // `apply_result` means "not finished", and the old test of `applied === false`
   // would have rendered every in-flight run as a failed one.
+  // ...unless it is older than any run can take. The handler bounds the work
+  // at RUN_TIMEOUT_SECS (420s) and this page stops watching at
+  // CARBON_POLL_BUDGET_MS, so a row still unresolved past that did not
+  // finish — its handler future was dropped before it could write anything.
+  // Rendering it with a spinner days later (c4d782f2, started 2026-09-17,
+  // shown as "in flight" on 2026-09-23) tells the operator to wait for
+  // something that will never arrive, and hides whether a real run is going.
+  if (a.apply_result == null && a.applied !== true
+      && Date.now() - new Date(a.created_at).getTime() > CARBON_POLL_BUDGET_MS) {
+    return `<div style="border-left:2px solid var(--t3);padding:5px 8px;margin-top:5px;background:var(--s1);border-radius:0 3px 3px 0">
+      <div style="font-size:10px;font-family:var(--mono)">
+        <span style="color:var(--t2);font-weight:700">abandoned</span>
+        <span style="color:var(--t3)"> · started ${esc(relTime(a.created_at))}</span>
+      </div>
+      <div style="font-size:10px;color:var(--t2);margin-top:2px;line-height:1.5">
+        This run never reported back and is past the longest a run can take,
+        so it is not still going. Nothing was written. Not a finding of zero
+        emissions.</div>
+    </div>`;
+  }
   if (a.apply_result == null && a.applied !== true) {
     return `<div style="border-left:2px solid var(--acc);padding:5px 8px;margin-top:5px;background:var(--s1);border-radius:0 3px 3px 0">
       <div style="font-size:10px;font-family:var(--mono)">

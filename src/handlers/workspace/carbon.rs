@@ -2553,6 +2553,61 @@ allergens:
         );
     }
 
+    /// **Every turn that may write the document gets the write-up budget.**
+    ///
+    /// `build_query` tells the accountant to finish inside the tool loop and
+    /// write the json itself, so that it never reaches the forced flush. That
+    /// advice is only safe if a loop turn is allowed as long as the flush is.
+    /// It was not: `9dd78615` gave the flush 240s and left every loop turn on
+    /// the shared client's 90s, on the premise that tool-use turns "return in
+    /// seconds". Which turn writes the answer is the model's choice, made
+    /// mid-run, so any loop turn can be the large one.
+    ///
+    /// `69bcf2f8` (this handler's query) moved the write-up into the loop and
+    /// so back under 90s. Run `c63f6c0d`, 2026-09-22: `operation timed out`
+    /// against api.anthropic.com at 129.5s — about 40s of searching plus
+    /// exactly 90s. Recorded here because the regression was introduced from
+    /// this file, and the fix lives in another one.
+    ///
+    /// Reads `tool_executor.rs` with comments stripped, since its doc comments
+    /// name the constant this looks for.
+    #[test]
+    fn every_anthropic_turn_gets_the_write_up_timeout() {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/agent_backend/tool_executor.rs");
+        let raw =
+            std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()));
+        let code: String = raw
+            .lines()
+            .map(|l| match l.find("//") {
+                Some(i) => &l[..i],
+                None => l,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let calls: Vec<&str> = code
+            .match_indices(".send_anthropic_request(")
+            .map(|(i, _)| &code[i..(i + 240).min(code.len())])
+            .collect();
+        assert_eq!(
+            calls.len(),
+            2,
+            "expected two Anthropic call sites in the tool executor — the \
+             loop turn and the flush. A new one needs deciding: if it can \
+             carry the write-up, it needs FLUSH_TIMEOUT_SECS too."
+        );
+        for c in calls {
+            assert!(
+                c.contains("FLUSH_TIMEOUT_SECS"),
+                "an Anthropic turn runs under the shared client's 90s \
+                 timeout. Any tool-loop turn may be the one that writes the \
+                 whole statement, and at 90s that turn is cut off \
+                 mid-generation — run c63f6c0d. Call site:\n{c}"
+            );
+        }
+    }
+
     /// **A stale roster must not become an unclickable button.**
     ///
     /// `require_hired_agent` refuses a run for an agent the workspace has not
