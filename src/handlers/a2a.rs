@@ -331,7 +331,7 @@ pub async fn send_message_handler(
         )));
     }
 
-    // ── 8. Build execution context ──────────────────────────────────────
+    // ── 8. Build execution context ──────────────────────────────────
     let credentials = crate::build_execution_credentials(&state, &db_agent, &card).await;
     let owner_secrets = resolve_agent_owner_secrets(&state, &db_agent).await;
 
@@ -353,6 +353,7 @@ pub async fn send_message_handler(
         creature_id: None,
         cognition_tier: None,
         credentials: credentials.clone(),
+        registry: None,
         attachments: vec![],
     };
 
@@ -676,11 +677,11 @@ pub async fn stream_message_handler(
     )
     .await;
 
-    // ── 7. Open episode pulse ─────────────────────────────────────────────
+    // ── 7. Open episode pulse ─────────────────────────────────────
     let pulse = episode_boundary::Pulse::open(&state.memory_store, db_agent.agent_id, &query).await;
     let episode_id = pulse.episode_id;
 
-    // ── 8. Build execution context ──────────────────────────────────────
+    // ── 8. Build execution context ──────────────────────────────────
     let credentials = crate::build_execution_credentials(&state, &db_agent, &card).await;
     let owner_secrets = resolve_agent_owner_secrets(&state, &db_agent).await;
 
@@ -702,6 +703,7 @@ pub async fn stream_message_handler(
         creature_id: None,
         cognition_tier: None,
         credentials: credentials.clone(),
+        registry: None,
         attachments: vec![],
     };
 

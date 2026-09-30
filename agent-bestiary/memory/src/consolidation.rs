@@ -2446,6 +2446,8 @@ mod tests {
             capability_gates: serde_json::Value::Object(serde_json::Map::new()),
             persona_version: 1,
             fermi_contract: None,
+            simops_contract: None,
+            skills: None,
             output_contract: None,
             input_contract: None,
             competition: None,

@@ -153,6 +153,39 @@ for (const refused of ["status", "visibility"]) {
     `refusal would arrive after the click, which is worse than offering nothing`);
 }
 
+// ── 2c. money is never a field, because the PUT is not admin-gated ───────
+//
+// This is the same shape of defect as the publish-gate bypass, one door along.
+// `PUT /api/agents/:agent_id` requires **edit**; every money route on this
+// platform requires **admin** and says so at the call site —
+// `update_fork_pricing_handler`: "Fork pricing is a monetary policy decision —
+// Admin (owner or platform admin) only. No shares."
+//
+// `AgentUpdate` nevertheless HAS `fork_pricing` and the two budget columns, so
+// nothing in the type system stops a field being added here, and adding one
+// would let anybody holding a share re-price or re-fund somebody else's agent
+// through the general endpoint. The ONLY thing standing between that and
+// production is this loop.
+//
+// The shelf offers all three. As actions, against the endpoints that guard
+// them — see `economics()` in the widget.
+const MONEY = {
+  fork_pricing: "PUT /api/agents/:id/fork-pricing (require_admin_on)",
+  education_budget_credits: "POST /api/agents/:id/allocate (require_admin_on)",
+};
+for (const [key, owner] of Object.entries(MONEY)) {
+  ok(!AF.FIELDS.some((f) => f.key === key),
+    `\`${key}\` is offered as a field on \`PUT /api/agents/:agent_id\`, which checks ` +
+    `edit rights. It belongs to ${owner}, which checks admin. As a field it is a ` +
+    `privilege escalation: a share-holder could change it`);
+}
+ok(/require_admin_on/.test(
+     fs.readFileSync(path.join(ROOT, "src", "handlers", "lifecycle.rs"), "utf8")
+       .slice(0, fs.readFileSync(path.join(ROOT, "src", "handlers", "lifecycle.rs"), "utf8")
+         .indexOf("pub async fn publish_checks_handler"))),
+  "fork pricing no longer requires admin, so the reason money is kept off the " +
+  "general PUT may no longer hold — re-check before relaxing the guard above");
+
 // ── 3. the groups, and every field explains itself ───────────────────────
 ok(AF.groups().includes("intelligence") && AF.groups().includes("manage"),
   `groups are ${AF.groups().join(", ")}`);
@@ -388,6 +421,110 @@ for (const f of AF.FIELDS) {
   ok(LAST_FETCH.body.valence.arousal === 0.9, "the edited member did not travel");
   ok(LAST_FETCH.body.valence.primary_affect === "curious",
     "the untouched members were dropped, so saving one would erase the rest");
+
+  // ── 6d. the two groups that are all action and no field ──────────────
+  //
+  // `economics` and `instruments` were the largest part of what the old Manage
+  // tab had and the shelf did not: fund the dreaming budget, price a fork,
+  // collect what it earned, see which servers it can call and which key is
+  // missing. None is a field (see §2c), so the group renders actions only —
+  // and must therefore NOT render a save bar. A permanently-disabled `save`
+  // next to controls that write immediately is the worst of both.
+  const hostE = makeEl("div");
+  AF.mount({ container: hostE, agentId: "football_analyst", group: "economics",
+             profile: { ...PROFILE, fork_pricing: { base_price: 25, ontology_price: null } },
+             record: { dream_budget: 10, dream_used: 10 } });
+  ok(!/data-af-save/.test(hostE.html),
+    "a group with no fields still renders a save bar, which points at nothing");
+  ok(/data-econ-act="topup"/.test(hostE.html),
+    "there is no way to fund dreaming — the one control an owner asked for by " +
+    "name, and the difference between an agent that keeps learning and one that " +
+    "only keeps answering");
+  ok(/Out of dream credits/.test(hostE.html),
+    "an agent that has spent its whole budget is not told so where it could fund it");
+  ok(/data-econ-act="pricing"/.test(hostE.html) && /data-econ="base_price"/.test(hostE.html),
+    "fork pricing is missing, so an agent cannot be priced from the surface an " +
+    "owner is sent to configure it");
+  ok(/not for sale/.test(hostE.html),
+    "an empty ontology price reads as free rather than as withheld, and those are " +
+    "different offers");
+  ok(/admin/.test(hostE.html),
+    "the panel does not say why these are actions rather than fields");
+
+  // Absent is not broke. A host that has not loaded the record must not be
+  // told its agent has stopped learning — `undefined - undefined` is 0, and 0
+  // left is exactly the state that claims it.
+  const hostE2 = makeEl("div");
+  AF.mount({ container: hostE2, agentId: "x", group: "economics", profile: PROFILE });
+  ok(!/Out of dream credits/.test(hostE2.html),
+    "an agent whose record has not loaded is being told it is out of dream credits");
+  ok(/unknown/.test(hostE2.html),
+    "an unloaded budget renders as a figure rather than as unknown");
+
+  // Funding must debit through the top-up endpoint, never the PUT.
+  LAST_FETCH = null;
+  await AF.__act(null, "POST", "/api/agents/football_analyst/dreaming/topup",
+                 { credits: 10 });
+  ok(LAST_FETCH && LAST_FETCH.url.endsWith("/dreaming/topup")
+     && LAST_FETCH.body.credits === 10,
+    "the funding action does not reach the top-up endpoint with an amount");
+
+  // ── 6e. skills ───────────────────────────────────────────────
+  //
+  // `execute_list_agents` — the index every navigator scans — returns
+  // `{id, type, description, skills}` and nothing else. So this field is a
+  // quarter of what any strategist composes on, and until mig-239 it had no
+  // column, no `AgentUpdate` member and no editor: the only lever on
+  // composability, and it was nailed shut.
+  const hostI = makeEl("div");
+  AF.mount({ container: hostI, agentId: "football_analyst", group: "instruments",
+             profile: { ...PROFILE,
+                        skills: { executable: ["run_monte_carlo"],
+                                  labels: ["market-analysis"],
+                                  all: ["run_monte_carlo", "market-analysis"],
+                                  declared: 2,
+                                  source: "agent_card_file", writable: true } } });
+  const skillsField = AF.FIELDS.find((f) => f.key === "skills");
+  ok(!!skillsField && skillsField.group === "instruments",
+    "`skills` is not an editable field, so no owner can change what their agent " +
+    "is discoverable as — which is a quarter of what a strategist composes on");
+  // §1 already proves the key exists on `AgentUpdate`; this proves the control
+  // is wired to the served value rather than to a key that reads undefined.
+  ok(hostI.html.includes("run_monte_carlo, market-analysis"),
+    "the skills control did not load the served list, so saving would clear it");
+  ok(/data-af-save/.test(hostI.html),
+    "the instruments group has no save bar, and it now owns a real field");
+  // Inheriting and owning are different states, and the transition is
+  // one-way: the first save takes the agent off its card file for good.
+  ok(/card file/.test(hostI.html) && /authoritative/.test(hostI.html),
+    "a card-inherited skill list does not say that saving takes ownership of it, " +
+    "which is the one thing about this field that cannot be undone");
+  for (const part of ["servers", "published", "keys"]) {
+    ok(hostI.html.includes(`data-inst="${part}"`),
+      `the instruments group has no "${part}" part`);
+  }
+
+  // The classification, which is the whole reason the field needs an editor
+  // rather than a text box. Two kinds of string share one column and only an
+  // EXACT match is a capability; the page has to say which is which before
+  // the save, because afterwards nothing does.
+  const REG = [{ name: "run_monte_carlo" }, { name: "h3_resolve" }];
+  const cls = AF.__classifySkills(
+    ["run_monte_carlo", "market-analysis", "Run_Monte_Carlo"], REG);
+  ok(cls[0].kind === "exe", "a registered skill is not recognised as executable");
+  ok(cls[1].kind === "lab", "free text is not recognised as a discovery label");
+  // The one mistake that is otherwise silent: a near-miss on case is stored
+  // as a label, and the agent quietly does not get the capability its author
+  // believed they granted. The server refuses it; the page must be able to
+  // say why before the refusal arrives.
+  ok(cls[2].kind === "case" && cls[2].meant === "run_monte_carlo",
+    "a capability name that differs only in case reads as a taxonomy label, so " +
+    "the agent silently does not get the skill");
+  // Unknown is not "none executable". A failed registry read must not tell an
+  // author that every name they typed is a keyword.
+  ok(AF.__classifySkills(["run_monte_carlo"], null) === null,
+    "a registry that failed to load classifies every skill as a plain label, " +
+    "which is a claim about the author's input written by a network error");
 
   // ── 7. creation mode collects instead of saving ──────────────────────────
   const host5 = makeEl("div");

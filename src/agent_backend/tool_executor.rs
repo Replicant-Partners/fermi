@@ -151,11 +151,13 @@ impl ToolAwareExecutor {
     ) -> Result<AgentOutput, ExecutionError> {
         let start = Instant::now();
 
-        let system_prompt = context
-            .agent_card
-            .system_prompt
-            .clone()
-            .unwrap_or_else(|| "You are a forecasting research agent.".to_string());
+        let system_prompt = context.enrich_system_prompt(
+            context
+                .agent_card
+                .system_prompt
+                .clone()
+                .unwrap_or_else(|| "You are a forecasting research agent.".to_string()),
+        );
 
         // Remote MCP tools are resolved by whoever built the ToolContext
         // (it owns the per-agent capability grant); the executor only
@@ -1590,9 +1592,8 @@ mod trigger_tests {
                     .pointer("/capabilities/output_contract/grounding")
                     .and_then(|g| g.as_object())
                     .is_some_and(|g| {
-                        g.values().any(|e| {
-                            e.get("status").and_then(|s| s.as_str()) == Some("sourced")
-                        })
+                        g.values()
+                            .any(|e| e.get("status").and_then(|s| s.as_str()) == Some("sourced"))
                     });
                 if !has_sourced {
                     continue;

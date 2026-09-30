@@ -278,10 +278,11 @@ const shelf = el("drawer").html;
 // a brain it thinks with, a personality it reads as, a bank account it spends
 // from, and what it can be trusted about.
 for (const part of ["What it says", "trusted about", "Brain", "Personality",
-                    "Bank account", "Identity and reach"]) {
+                    "Instruments", "Bank account", "Identity and reach"]) {
   ok(shelf.includes(part), `the shelf has no "${part}" part`);
 }
-for (const g of ["prompt", "intelligence", "personality", "manage"]) {
+for (const g of ["prompt", "intelligence", "personality", "manage",
+                 "economics", "instruments"]) {
   ok(shelf.includes(`id="af-${g}"`), `the ${g} group has no mount point`);
 }
 // Prose budget. The shelf grew a paragraph per group and they were the first
@@ -415,6 +416,54 @@ S.D = { profile: PROFILE,
 S.drawer();
 ok(!/Out of dream credits/.test(el("drawer").html),
   "an agent with credits remaining is warned anyway");
+
+// ── 4c-iii. the bank can be acted on, not only read ────────────────────
+//
+// This panel carried the line "the two that ARE settings — fork price, dreaming
+// budget — are not editable yet and do not pretend to be". Honest, and the
+// whole complaint: both existed on the old Manage tab, so an owner sent here to
+// configure an agent could watch it run out of dream credits and had to go back
+// to the page they were moved off to fund it. The mount point is the fix, and
+// its absence must fail rather than be noticed.
+ok(/id="af-economics"/.test(el("drawer").html),
+  "the bank account is read-only again — there is nowhere to fund the dreaming " +
+  "budget, price a fork, or collect what the agent earned");
+ok(!/not editable yet/.test(el("drawer").html),
+  "the bank still apologises for being read-only while carrying the controls");
+
+// ── 4e. instruments ───────────────────────────────────────────
+//
+// Skills, the servers it may call and the tools it publishes all decide what an
+// agent can DO, and none of the three had a mount point here. The platform's
+// classifier already unions exactly these three as `has_instruments`, so the
+// panel takes that word rather than inventing a second one.
+//
+// The summary line is where absent and empty have to stay apart, and the rule
+// is not cosmetic: a NULL `mcp_servers` column means the DB has no opinion and
+// the filesystem card decides (`interpret_db_column`), while `[]` means the
+// owner removed what the card declared. Printing both as `0` tells an owner
+// their agent reaches nothing while the executor hands it a full card.
+S.D = { profile: { ...PROFILE, skills: { declared: 2 }, instruments: {} },
+        declaration: { rungs: RUNGS, declared: 2, total: 4, next: "output_schema" },
+        record: { runs: 5, dream_budget: 10, dream_used: 2 } };
+S.drawer();
+let reach = el("drawer").html;
+ok(/card file/.test(reach),
+  "an agent whose instrument columns are NULL reads as having none, and the " +
+  "card file it actually inherits from is not mentioned");
+ok(!/0 remote server/.test(reach),
+  "a NULL column is being printed as zero servers, which is a claim about the " +
+  "agent made by an absent row");
+
+S.D = { profile: { ...PROFILE, skills: { declared: 0 },
+                   instruments: { remote_servers: 0, published_tools: 3 } },
+        declaration: { rungs: RUNGS, declared: 2, total: 4, next: "output_schema" },
+        record: { runs: 5, dream_budget: 10, dream_used: 2 } };
+S.drawer();
+reach = el("drawer").html;
+ok(/0 remote server/.test(reach) && /3 tool\(s\) exported/.test(reach),
+  "an explicit empty list and a real count do not render as the counts they are");
+ok(!/undefined|NaN/.test(reach), "the reach line printed a placeholder");
 
 // ── 4b. the recommended rung has the control that closes it ─────────────
 //

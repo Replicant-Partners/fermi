@@ -378,6 +378,7 @@ pub(crate) async fn execute_execute_agent(
         cognition_tier: None,
         // Delegated child inherits the parent execution's funding.
         credentials: ctx.credentials.clone(),
+        registry: None,
         // ...but NOT the parent's attachments, and that is not a dropped frame.
         //
         // Attachments belong to a request, not to a session. Delegation builds a
@@ -680,6 +681,7 @@ async fn execute_delegate_to_agent(
         cognition_tier: None,
         // Delegated child inherits the parent execution's funding.
         credentials: ctx.credentials.clone(),
+        registry: None,
         // ...but NOT the parent's attachments, and that is not a dropped frame.
         //
         // Attachments belong to a request, not to a session. Delegation builds a
@@ -803,6 +805,75 @@ async fn execute_delegate_to_agent(
     })
 }
 
+/// Apply DB skill overrides to registry cards, in place.
+///
+/// # Why the index cannot just read the registry
+///
+/// `AgentRegistry` is an in-memory snapshot of `agents/curated/*/agent_card.json`
+/// loaded once at boot. Every execution path reaches an agent through
+/// `resolve_agent_card`, which bridges the DB over that snapshot — but the
+/// fleet tools call `registry.list_cards()` directly, because they are about
+/// the fleet rather than about one agent and there was no per-agent resolve to
+/// hang the bridge on.
+///
+/// That was harmless while `skills` lived only in a file nobody could write.
+/// With mig-239 it stops being harmless in the worst possible place: an owner
+/// edits what their agent is discoverable as, the fleet index keeps serving
+/// the boot-time value, and **the edit appears to do nothing until the process
+/// restarts.** A discovery field that takes a deploy to take effect is not a
+/// discovery field.
+///
+/// One query, over the rows that have an opinion (`skills IS NOT NULL` — a
+/// handful, not the fleet), applied with the same precedence
+/// `resolve_agent_card` uses. Deliberately NOT done by mutating the registry
+/// cache on write: that would leave the in-memory card holding a DB-derived
+/// value with no way back to "inherit the card" if the column is later
+/// cleared, which is a staleness bug traded for a staleness bug.
+///
+/// No DB handle means no overlay and the card stands. A tool context without
+/// a pool is a real configuration (the standalone MCP binary), and inventing
+/// an empty override map there would strip every agent's skills instead.
+async fn apply_skill_overrides(
+    ctx: &ToolContext,
+    cards: &mut [crate::agent_backend::agent_card::AgentCard],
+) {
+    let Some(db) = ctx.db.as_ref() else {
+        return;
+    };
+    let rows = match sqlx::query("SELECT agent_name, skills FROM agents WHERE skills IS NOT NULL")
+        .fetch_all(db)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            // The card stands. Returning an error here would take down the
+            // whole fleet index over a discovery field, and a navigator with
+            // a slightly stale skill list is strictly better than one with no
+            // fleet at all.
+            eprintln!("[fleet] skill overrides unreadable ({e}); serving card values");
+            return;
+        }
+    };
+
+    let overrides: std::collections::HashMap<String, Vec<String>> = rows
+        .iter()
+        .filter_map(|r| {
+            let name: String = r.try_get("agent_name").ok()?;
+            let skills: Vec<String> = r.try_get("skills").ok()?;
+            Some((name, skills))
+        })
+        .collect();
+
+    for c in cards.iter_mut() {
+        if let Some(s) = overrides.get(&c.agent_id) {
+            // Including the empty vector: `skills = '{}'` is how an owner
+            // removes a card-declared skill, and skipping empties here would
+            // make removal the one edit the index ignores.
+            c.capabilities.skills = s.clone();
+        }
+    }
+}
+
 /// The fleet, as a navigator is actually asked about it.
 ///
 /// # Why this returns more than a description
@@ -843,10 +914,14 @@ async fn execute_delegate_to_agent(
 /// the platform cannot run, which is the failure mode the grounding subsystem
 /// spent this whole rung removing.
 async fn execute_list_agents(ctx: &ToolContext) -> Result<String, String> {
-    let cards = ctx
+    let mut cards = ctx
         .registry
         .list_cards()
         .map_err(|e| format!("Failed to list agents: {}", e))?;
+    // `skills` is one of the four fields below and the only one an owner can
+    // change at runtime, so the index resolves it rather than serving the
+    // boot-time card. See `apply_skill_overrides`.
+    apply_skill_overrides(ctx, &mut cards).await;
 
     // An INDEX, not a dump.
     //
@@ -883,30 +958,31 @@ async fn execute_describe_agent(input: &Value, ctx: &ToolContext) -> Result<Stri
         .and_then(|v| v.as_str())
         .ok_or("Missing required parameter: agent_id")?;
 
-    let cards = ctx
+    let mut cards = ctx
         .registry
         .list_cards()
         .map_err(|e| format!("Failed to list agents: {}", e))?;
+    // `fleet_entry` prints `skills`, so this view needs the same resolution
+    // the index got — otherwise the two disagree about one agent and the
+    // detailed one is the stale one.
+    apply_skill_overrides(ctx, &mut cards).await;
 
-    let card = cards
-        .iter()
-        .find(|c| c.agent_id == id)
-        .ok_or_else(|| {
-            // Names the closest thing rather than only refusing: a navigator
-            // that asked about a misremembered id should be corrected, not
-            // left to invent an answer about an agent that does not exist.
-            let near: Vec<&str> = cards
-                .iter()
-                .map(|c| c.agent_id.as_str())
-                .filter(|c| c.contains(id) || id.contains(*c))
-                .take(5)
-                .collect();
-            if near.is_empty() {
-                format!("No agent `{id}`. Use `list_agents` for the index.")
-            } else {
-                format!("No agent `{id}`. Did you mean one of {near:?}?")
-            }
-        })?;
+    let card = cards.iter().find(|c| c.agent_id == id).ok_or_else(|| {
+        // Names the closest thing rather than only refusing: a navigator
+        // that asked about a misremembered id should be corrected, not
+        // left to invent an answer about an agent that does not exist.
+        let near: Vec<&str> = cards
+            .iter()
+            .map(|c| c.agent_id.as_str())
+            .filter(|c| c.contains(id) || id.contains(*c))
+            .take(5)
+            .collect();
+        if near.is_empty() {
+            format!("No agent `{id}`. Use `list_agents` for the index.")
+        } else {
+            format!("No agent `{id}`. Did you mean one of {near:?}?")
+        }
+    })?;
 
     serde_json::to_string_pretty(&fleet_entry(card))
         .map_err(|e| format!("Serialization error: {}", e))
@@ -1802,8 +1878,11 @@ mod tests {
     /// field at a time. So the index is pinned to the fields it may carry.
     #[test]
     fn the_index_carries_no_per_agent_detail_and_describe_agent_carries_it_all() {
-        let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/agent_backend/tools/domains/platform.rs"))
-            .expect("this file");
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/agent_backend/tools/domains/platform.rs"
+        ))
+        .expect("this file");
         let start = src
             .find("async fn execute_list_agents")
             .expect("execute_list_agents");
@@ -1838,7 +1917,14 @@ mod tests {
         let card =
             crate::agent_backend::agent_card::AgentCard::from_json(&raw).expect("card parses");
         let entry = super::fleet_entry(&card);
-        for field in ["model", "model_ladder", "min_tier", "accepts", "produces", "tools"] {
+        for field in [
+            "model",
+            "model_ladder",
+            "min_tier",
+            "accepts",
+            "produces",
+            "tools",
+        ] {
             assert!(
                 entry.get(field).is_some(),
                 "`describe_agent`'s payload omits `{field}`, so slimming the \

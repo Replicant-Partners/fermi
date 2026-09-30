@@ -82,6 +82,17 @@ const ORCHESTRAS: &[OrchestraSpec] = &[
         view_name: "orchestra_xaman_ek_members",
         accepts_requests: false,
     },
+    OrchestraSpec {
+        name: "simops",
+        strategist_agent_name: Some("simops_companion"),
+        // Capability: simops_contract declared on the card.
+        // Membership: workspace hiring via kask_simops auto_hire manifest.
+        // The view is informational (capability) not governance (membership).
+        // See docs/architecture/SIMOPS_COMPANION_AWARENESS.md.
+        membership_rule: "capability: simops_contract declared; membership = workspace hiring",
+        view_name: "orchestra_simops_members",
+        accepts_requests: false,
+    },
 ];
 
 fn orchestra_by_name(name: &str) -> Option<&'static OrchestraSpec> {
@@ -1105,6 +1116,11 @@ pub async fn withdraw_orchestra_request_handler(
 /// per-member roster; large orchestras get a per-tier digest so the
 /// prompt-token budget doesn't blow up as the catalogue grows.
 enum InjectionStrategy {
+    /// Specialists grouped by primary domain tag with live calibration
+    /// status. The right shape for small, curated, domain-routing
+    /// orchestras (fermi). Degrades to a static fallback rather than
+    /// an empty block on DB error. See `build_domain_roster_block`.
+    DomainRoster { view: &'static str },
     /// One line per member with `agent_type` and a short description.
     /// Suitable up to ~30 members (±1k tokens).
     FullRoster { view: &'static str },
@@ -1117,15 +1133,44 @@ enum InjectionStrategy {
     },
 }
 
+/// Emergency static roster used when the live DB query fails or returns
+/// nothing. Contains the 8 founding fermi specialists in the same
+/// domain-grouped format as the live block, so the prompt looks
+/// identical whether the roster is live or fallback.
+///
+/// Clearly labelled `[static fallback]` so a reader of a logged prompt
+/// can tell the injection did not come from the live registry.
+const FERMI_STATIC_FALLBACK: &str = concat!(
+    "\n\n## ORCHESTRA ROSTER [static fallback \u{2014} live query unavailable]\n\n",
+    "Use only the agent IDs listed here. Do not invent names not present.\n\n",
+    "**macro** (2 specialists)\n",
+    "  \u{00B7} `macro_forecaster`    uncalibrated  \u{2014} Macroeconomic trends, monetary policy, GDP, elections\n",
+    "  \u{00B7} `market_research`     uncalibrated  \u{2014} Market sizing, competitive dynamics, adoption curves\n\n",
+    "**equity** (1 specialist)\n",
+    "  \u{00B7} `equity_analyst`      uncalibrated  \u{2014} Public equities, DCF, earnings, FMP API \u{2014} always include ticker\n\n",
+    "**biotech** (1 specialist)\n",
+    "  \u{00B7} `biotech_analyst`     uncalibrated  \u{2014} Clinical trials, FDA milestones, BioPortal ontology\n\n",
+    "**sentiment** (1 specialist)\n",
+    "  \u{00B7} `sentiment_analyzer`  uncalibrated  \u{2014} Public opinion, social media, narrative momentum\n\n",
+    "**entity** (1 specialist)\n",
+    "  \u{00B7} `entity_investigator` uncalibrated  \u{2014} Company intel, OSINT, regulatory exposure, profiles\n\n",
+    "**sports/basketball** (1 specialist)\n",
+    "  \u{00B7} `nba_analyst`         uncalibrated  \u{2014} NBA outcomes, Elo, NetRtg, injury impact\n\n",
+    "**sports/football** (1 specialist)\n",
+    "  \u{00B7} `football_analyst`    uncalibrated  \u{2014} Soccer/football outcomes, xG, Elo, Premier League\n\n",
+);
+
 /// Strategist agents that get roster context injected into their
 /// system prompt at execute time. Kept in sync with the
 /// strategist_agent_name entries in the ORCHESTRAS const above.
 ///
-/// - `fermi` gets a full roster (small, curated, structural).
+/// - `fermi` gets a domain-aware roster (specialists grouped by domain
+///   with calibration status; falls back to a static hardcoded list on
+///   DB error). See `docs/architecture/FERMI_ORCHESTRA_AWARENESS.md`.
 /// - `xaman_ek` gets a tier digest (large, open, ontological).
 fn strategist_injection(agent_id: &str) -> Option<InjectionStrategy> {
     match agent_id {
-        "fermi" => Some(InjectionStrategy::FullRoster {
+        "fermi" => Some(InjectionStrategy::DomainRoster {
             view: "orchestra_fermi_members",
         }),
         "xaman_ek" => Some(InjectionStrategy::TierDigest {
@@ -1137,6 +1182,211 @@ fn strategist_injection(agent_id: &str) -> Option<InjectionStrategy> {
         }),
         _ => None,
     }
+}
+
+/// Derive a canonical routing domain from an agent's tag list.
+///
+/// Returns the first tag that matches a known domain keyword, after
+/// skipping meta/fleet tags. Falls back to `"general"` if no tag
+/// matches, so every agent always has a domain bucket.
+///
+/// The mapping is intentionally flat (first-match wins) rather than
+/// weighted — the tags were authored with domain intent and the
+/// ordering is meaningful for the founding fermi specialists.
+fn primary_domain(tags: &[String]) -> &'static str {
+    // Tags that carry no domain signal and should be skipped.
+    const SKIP: &[&str] = &["fermi-orchestra", "compound", "forecasting"];
+
+    // Checked in declaration order — first match wins.
+    const MAP: &[(&str, &'static str)] = &[
+        ("macro-economics", "macro"),
+        ("macro", "macro"),
+        ("economics", "macro"),
+        ("gdp", "macro"),
+        ("inflation", "macro"),
+        ("policy", "macro"),
+        ("world-bank", "macro"),
+        ("country-data", "macro"),
+        ("equity", "equity"),
+        ("finance", "equity"),
+        ("stocks", "equity"),
+        ("valuation", "equity"),
+        ("fmp", "equity"),
+        ("biotech", "biotech"),
+        ("pharma", "biotech"),
+        ("clinical-trials", "biotech"),
+        ("life-sciences", "biotech"),
+        ("bioportal", "biotech"),
+        ("sentiment", "sentiment"),
+        ("social-media", "sentiment"),
+        ("public-opinion", "sentiment"),
+        ("market", "market"),
+        ("competitive-analysis", "market"),
+        ("tam-sizing", "market"),
+        ("industry-trends", "market"),
+        ("osint", "entity"),
+        ("investigation", "entity"),
+        ("entity-resolution", "entity"),
+        ("due-diligence", "entity"),
+        ("nba", "sports/basketball"),
+        ("basketball", "sports/basketball"),
+        ("football-institutions", "sports/football"),
+        ("football", "sports/football"),
+        ("soccer", "sports/football"),
+        ("fixture-context", "sports/football"),
+        ("host-advantage", "sports/football"),
+        ("weather", "weather"),
+        ("prediction-markets", "weather"),
+    ];
+
+    for tag in tags {
+        let t = tag.as_str();
+        if SKIP.contains(&t) {
+            continue;
+        }
+        // Skip fleet/factor/world-cup meta-tags.
+        if t.starts_with("fleet:") || t.starts_with("factor-") || t.starts_with("world-") {
+            continue;
+        }
+        for (keyword, domain) in MAP {
+            if t == *keyword {
+                return domain;
+            }
+        }
+    }
+    "general"
+}
+
+/// Domain-aware roster block for the fermi orchestra.
+///
+/// Groups admitted specialists by primary domain tag, annotates each
+/// with live calibration status from `eval_signals`, and formats as a
+/// compact per-domain routing table (~500 tokens for 12 specialists).
+///
+/// Always returns a non-empty string: the live block when the DB
+/// succeeds and returns members, or [`FERMI_STATIC_FALLBACK`] otherwise.
+/// This matters because an empty injection is worse than a static one
+/// — fermi would have no agent IDs to call `execute_agent` with.
+async fn build_domain_roster_block(db: &sqlx::PgPool, agent_id: &str, view: &str) -> String {
+    // One query: members joined to their calibration signal aggregate.
+    // LEFT JOIN so uncalibrated agents still appear.
+    let sql = format!(
+        "SELECT m.agent_name, m.agent_type, m.description, m.tags, \
+                COUNT(es.score)::bigint AS n_calibrated, \
+                AVG(es.score)          AS brier_mean \
+           FROM public.{view} m \
+           LEFT JOIN public.eval_signals es \
+                  ON es.agent_id = m.agent_id \
+                 AND es.dimension = 'forecast_calibration' \
+          GROUP BY m.agent_name, m.agent_type, m.description, m.tags \
+          ORDER BY m.agent_name",
+        view = view
+    );
+
+    let rows = match sqlx::query(&sql).fetch_all(db).await {
+        Ok(r) if !r.is_empty() => r,
+        Ok(_) => {
+            eprintln!("[orchestras] no members in {view} for {agent_id} — using static fallback");
+            return FERMI_STATIC_FALLBACK.to_string();
+        }
+        Err(e) => {
+            eprintln!(
+                "[orchestras] domain-roster query failed for {agent_id}: {e} — using static fallback"
+            );
+            return FERMI_STATIC_FALLBACK.to_string();
+        }
+    };
+
+    struct Member {
+        name: String,
+        domain: &'static str,
+        short_desc: String,
+        n_cal: i64,
+        brier: Option<f64>,
+    }
+
+    let mut members: Vec<Member> = rows
+        .iter()
+        .map(|row| {
+            let name: String = row.try_get("agent_name").unwrap_or_default();
+            let desc: Option<String> = row.try_get("description").ok().flatten();
+            let tags_val: serde_json::Value =
+                row.try_get("tags").unwrap_or(serde_json::Value::Null);
+            let tags: Vec<String> = tags_val
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let n_cal: i64 = row.try_get("n_calibrated").unwrap_or(0);
+            let brier: Option<f64> = row.try_get("brier_mean").ok().flatten();
+            let short_desc: String = desc
+                .as_deref()
+                .unwrap_or("")
+                .lines()
+                .next()
+                .unwrap_or("")
+                .chars()
+                .take(80)
+                .collect();
+            Member {
+                name,
+                domain: primary_domain(&tags),
+                short_desc,
+                n_cal,
+                brier,
+            }
+        })
+        .collect();
+
+    // Sort domain-first, then name, so the grouping loop is simple.
+    members.sort_by(|a, b| a.domain.cmp(b.domain).then(a.name.cmp(&b.name)));
+
+    // Group consecutive same-domain rows.
+    let mut by_domain: Vec<(&'static str, Vec<usize>)> = Vec::new();
+    for (i, m) in members.iter().enumerate() {
+        match by_domain.last_mut() {
+            Some((d, idxs)) if *d == m.domain => idxs.push(i),
+            _ => by_domain.push((m.domain, vec![i])),
+        }
+    }
+
+    let total = members.len();
+    let n_domains = by_domain.len();
+    let mut block = format!(
+        "\n\n## ORCHESTRA ROSTER (live — {total} specialist{s}, {n_domains} domain{ds})\n\n\
+         Use only the agent IDs listed here. Do not invent names not present.\n\
+         Call `get_agent_calibration` when two specialists compete for the same driver.\n\n",
+        s = if total == 1 { "" } else { "s" },
+        ds = if n_domains == 1 { "" } else { "s" },
+    );
+
+    for (domain, idxs) in &by_domain {
+        let n = idxs.len();
+        block.push_str(&format!(
+            "**{domain}** ({n} specialist{s})\n",
+            s = if n == 1 { "" } else { "s" },
+        ));
+        for &i in idxs {
+            let m = &members[i];
+            // Calibration badge: checkmark+Brier / circle+n / middle-dot uncalibrated
+            let badge = match (m.n_cal, m.brier) {
+                (n, Some(b)) if n >= 3 => format!("\u{2713} Brier {b:.2} n={n}"),
+                (n, _) if n > 0 => format!("\u{25CB} new (n={n})"),
+                _ => "\u{00B7} uncalibrated".to_string(),
+            };
+            block.push_str(&format!(
+                "  \u{00B7} `{name}`  {badge:<26}  \u{2014} {desc}\n",
+                name = m.name,
+                desc = m.short_desc,
+            ));
+        }
+        block.push('\n');
+    }
+
+    block
 }
 
 /// Mutates `card.system_prompt` to append a roster/digest block if
@@ -1154,7 +1404,17 @@ pub async fn inject_orchestra_context(
         return card;
     };
 
+    // `DomainRoster` always returns a string (live or static fallback),
+    // so it bypasses the Option path.
+    if let InjectionStrategy::DomainRoster { view } = strategy {
+        let block = build_domain_roster_block(db, &card.agent_id, view).await;
+        let existing = card.system_prompt.clone().unwrap_or_default();
+        card.system_prompt = Some(format!("{existing}{block}"));
+        return card;
+    }
+
     let block_opt = match strategy {
+        InjectionStrategy::DomainRoster { .. } => unreachable!("handled above"),
         InjectionStrategy::FullRoster { view } => {
             build_full_roster_block(db, &card.agent_id, view).await
         }
@@ -1173,7 +1433,7 @@ pub async fn inject_orchestra_context(
     // that. If the card has no system prompt at all (unusual for a
     // strategist), the roster still lands as the whole prompt.
     let existing = card.system_prompt.clone().unwrap_or_default();
-    card.system_prompt = Some(format!("{}{}", existing, block));
+    card.system_prompt = Some(format!("{existing}{block}"));
 
     card
 }
@@ -1541,5 +1801,254 @@ async fn require_orchestra_admin(
                 orchestra_name, strategist_name
             ),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `primary_domain` must recognise every tag the fermi founding
+    /// specialists carry and return a stable, non-"general" domain.
+    #[test]
+    fn primary_domain_classifies_all_founding_specialists() {
+        let cases: &[(&[&str], &str)] = &[
+            (
+                &["economics", "macro", "forecasting", "fermi-orchestra"],
+                "macro",
+            ),
+            (
+                &[
+                    "macro-economics",
+                    "socioeconomic",
+                    "world-bank",
+                    "fermi-orchestra",
+                ],
+                "macro",
+            ),
+            (
+                &["equity", "finance", "stocks", "fmp", "fermi-orchestra"],
+                "equity",
+            ),
+            (
+                &["biotech", "pharma", "clinical-trials", "fermi-orchestra"],
+                "biotech",
+            ),
+            (
+                &["sentiment", "social-media", "fermi-orchestra"],
+                "sentiment",
+            ),
+            (
+                &["market", "competitive-analysis", "fermi-orchestra"],
+                "market",
+            ),
+            (
+                &[
+                    "osint",
+                    "investigation",
+                    "entity-resolution",
+                    "fermi-orchestra",
+                ],
+                "entity",
+            ),
+            (
+                &["nba", "basketball", "sports", "fermi-orchestra"],
+                "sports/basketball",
+            ),
+            (
+                &["football", "soccer", "analytics", "fermi-orchestra"],
+                "sports/football",
+            ),
+            (
+                &["football-institutions", "fifa", "fermi-orchestra"],
+                "sports/football",
+            ),
+            (
+                &["fixture-context", "host-advantage", "fermi-orchestra"],
+                "sports/football",
+            ),
+            (
+                &["weather", "prediction-markets", "fermi-orchestra"],
+                "weather",
+            ),
+        ];
+        for (tags, expected) in cases {
+            let owned: Vec<String> = tags.iter().map(|t| t.to_string()).collect();
+            let got = primary_domain(&owned);
+            assert_eq!(
+                got, *expected,
+                "tags {:?} should map to domain {:?}, got {:?}",
+                tags, expected, got
+            );
+        }
+    }
+
+    /// Meta-only tags produce "general", not a false domain match.
+    #[test]
+    fn primary_domain_falls_back_to_general_for_meta_only_tags() {
+        let tags: Vec<String> = vec![
+            "fermi-orchestra".to_string(),
+            "compound".to_string(),
+            "forecasting".to_string(),
+            "fleet:fermi".to_string(),
+        ];
+        assert_eq!(primary_domain(&tags), "general");
+    }
+
+    /// simops_companion must declare `list_workspace_agents` (discovery tool)
+    /// and must not route to hardcoded agent IDs in the prompt.
+    #[test]
+    fn simops_companion_declares_discovery_tool_and_no_hardcoded_routing() {
+        use std::fs;
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/agents/curated/simops_companion/agent_card.json"
+        );
+        let json = fs::read_to_string(path).expect("simops_companion agent_card.json missing");
+        let card: serde_json::Value = serde_json::from_str(&json).expect("invalid JSON");
+
+        // Discovery tool must be declared.
+        let empty = vec![];
+        let tools: Vec<&str> = card["capabilities"]["mcp_tools"]
+            .as_array()
+            .unwrap_or(&empty)
+            .iter()
+            .filter_map(|t| t["name"].as_str())
+            .collect();
+        assert!(
+            tools.contains(&"list_workspace_agents"),
+            "simops_companion must declare list_workspace_agents tool; declared: {:?}",
+            tools
+        );
+
+        // All 12 auto_hire agents should be in optional deps.
+        let opt = card["dependencies"]["optional"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let opt_names: Vec<&str> = opt.iter().filter_map(|v| v.as_str()).collect();
+        for agent in [
+            "simops_dynamics_runner",
+            "simops_advisor",
+            "sensor_advisor",
+            "energy_advisor",
+        ] {
+            assert!(
+                opt_names.contains(&agent),
+                "simops_companion optional deps must include '{agent}'; got: {:?}",
+                opt_names
+            );
+        }
+
+        // Prompt must route by typed contract fields, not hardcoded agent IDs.
+        let prompt = card["system_prompt"].as_str().unwrap_or("");
+        assert!(
+            prompt.contains("simops_contract"),
+            "prompt must reference simops_contract for routing, not hardcoded agent names"
+        );
+        assert!(
+            prompt.contains("list_workspace_agents"),
+            "prompt must instruct companion to call list_workspace_agents"
+        );
+    }
+
+    /// Every SimOps specialist must declare a `simops_contract` with at
+    /// minimum `role` and `task`. Tags are additive, not the contract.
+    #[test]
+    fn simops_specialists_declare_typed_contract() {
+        use std::fs;
+        let cases: &[(&str, &str)] = &[
+            ("simops_cascade", "cascade"),
+            ("simops_predictor", "predictor"),
+            ("simops_optimizer", "optimizer"),
+            ("simops_narrator", "narrator"),
+            ("simops_dynamics_runner", "dynamics"),
+            ("simops_advisor", "advisor"),
+            ("supply_chain_oracle", "extension"),
+            ("sidestream_miner", "extension"),
+            ("comparator", "extension"),
+            ("energy_advisor", "extension"),
+            ("sensor_advisor", "extension"),
+        ];
+        let base = concat!(env!("CARGO_MANIFEST_DIR"), "/agents/curated/");
+        for (agent, expected_role) in cases {
+            let path = format!("{base}{agent}/agent_card.json");
+            let json = fs::read_to_string(&path)
+                .unwrap_or_else(|_| panic!("{agent}/agent_card.json missing"));
+            let card: serde_json::Value = serde_json::from_str(&json)
+                .unwrap_or_else(|_| panic!("{agent}/agent_card.json invalid JSON"));
+            let contract = &card["capabilities"]["simops_contract"];
+            assert!(
+                !contract.is_null(),
+                "{agent} must declare capabilities.simops_contract"
+            );
+            let role = contract["role"].as_str().unwrap_or("");
+            assert_eq!(
+                role, *expected_role,
+                "{agent} simops_contract.role should be '{expected_role}', got '{role}'"
+            );
+            let task = contract["task"].as_str().unwrap_or("");
+            assert!(
+                !task.is_empty(),
+                "{agent} simops_contract.task must not be empty"
+            );
+            // Extension agents must also declare extension_task.
+            if role == "extension" {
+                let ext_task = contract["extension_task"].as_str().unwrap_or("");
+                assert!(
+                    !ext_task.is_empty(),
+                    "{agent} simops_contract.extension_task must be set for extension role"
+                );
+            }
+        }
+    }
+
+    /// fermi's card must name the dynamic-injection tools so the prompt
+    /// can reference them without being a liar.
+    #[test]
+    fn fermi_card_declares_calibration_tool_and_no_hardcoded_roster() {
+        use std::fs;
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/agents/curated/fermi/agent_card.json"
+        );
+        let json = fs::read_to_string(path).expect("fermi agent_card.json missing");
+        let card: serde_json::Value = serde_json::from_str(&json).expect("invalid JSON");
+
+        let empty = vec![];
+        let tools: Vec<&str> = card["capabilities"]["mcp_tools"]
+            .as_array()
+            .unwrap_or(&empty)
+            .iter()
+            .filter_map(|t| t["name"].as_str())
+            .collect();
+        assert!(
+            tools.contains(&"get_agent_calibration"),
+            "fermi card must declare get_agent_calibration tool; declared: {:?}",
+            tools
+        );
+
+        let prompt = card["system_prompt"].as_str().unwrap_or("");
+        // The old hardcoded orchestra listed these agents by bold name.
+        // After the refactor, no individual specialist ID should appear
+        // as a bold label (the roster is injected dynamically).
+        for agent in [
+            "**macro_forecaster**",
+            "**equity_analyst**",
+            "**biotech_analyst**",
+            "**nba_analyst**",
+        ] {
+            assert!(
+                !prompt.contains(agent),
+                "fermi prompt still contains hardcoded specialist '{agent}' \
+                 — the orchestra section was not removed"
+            );
+        }
+
+        // The prompt must still direct fermi to the injected roster.
+        assert!(
+            prompt.contains("ORCHESTRA ROSTER") || prompt.contains("injected at runtime"),
+            "fermi prompt must reference the dynamic injection mechanism"
+        );
     }
 }

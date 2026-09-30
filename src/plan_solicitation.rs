@@ -382,6 +382,7 @@ pub async fn solicit(
         creature_id: None,
         cognition_tier: None,
         credentials: asker.credentials.clone(),
+        registry: None,
         attachments: Vec::new(),
     };
 

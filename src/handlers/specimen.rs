@@ -808,7 +808,12 @@ pub async fn specimen_handler(
                 a.output_contract,
                 a.status, a.visibility, a.tags, a.accepts, a.produces,
                 a.taxonomy, a.fork_count, a.forked_from, a.persona_version,
-                a.system_prompt, a.sample_queries, a.mcp_tools,
+                a.system_prompt, a.sample_queries, a.mcp_tools, a.mcp_servers, a.skills,
+                -- What a fork of this agent costs, and what the credentials it
+                -- needs are called. Both were on the old Manage tab and neither
+                -- reached the shelf, so the surface an owner configures from
+                -- could not price the agent or say what it needs to run.
+                a.fork_pricing, a.requires_secrets,
                 a.dreaming_budget_credits, a.dreaming_credits_used,
                 (a.output_contract IS NOT NULL)             AS declares_contract,
                 (a.output_contract -> 'schema' IS NOT NULL) AS typed,
@@ -1018,31 +1023,56 @@ pub async fn specimen_handler(
             .into_iter()
             .collect();
 
-    // One producer of the verdict.
+    // Hoisted: the compiled contract is the SECOND place a declaration can
+    // live, and three things below need it -- the field rows, the tool-loop
+    // contradiction check, and `produces_schema`. It was previously read only
+    // for the last of those, which is how the first two came to be computed
+    // from half the evidence.
+    let output_contract: Option<Value> = row
+        .try_get::<Option<Value>, _>("output_contract")
+        .ok()
+        .flatten();
+
+    // One producer of the verdict, and one reader of the two places a contract
+    // is stored.
     //
-    // This match lived here, and the artifact trace had its own words for the
+    // The match lived here, and the artifact trace had its own words for the
     // same five states, and the two disagreed in a way a reader could see:
     // `unsourced` meant "a standing request, not a defect" on this page and "a
     // claim we removed" on that one. `field_state::Declared` owns the
-    // vocabulary now and both surfaces read it.
-    let mut counts = std::collections::BTreeMap::<&'static str, usize>::new();
-    let contract_fields: Vec<Value> = fermi::grounding_trust::contracts_for(&agent_name)
-        .map(|c| {
-            let declared =
-                fermi::field_state::Declared::of(&c.grounding, |t| dispatchable.contains(t));
-            let tool = match c.grounding {
-                fermi::grounding_trust::Grounding::Sourced { tool, .. } => Some(tool),
-                _ => None,
-            };
-            *counts.entry(declared.token()).or_default() += 1;
+    // vocabulary now and every surface reads it.
+    //
+    // `read_contract` rather than `contracts_for`, and the difference was a
+    // FALSE GREEN on this page. `contracts_for` sees only `FIELD_CONTRACTS`,
+    // so for an agent whose contract is compiled onto its card this loop
+    // produced zero rows -- and `compiles` below is `compile_error_count == 0`,
+    // which zero rows satisfies. The page therefore reported
+    // `supply_chain_oracle` as declaring a contract (`declares_contract` is
+    // read from the card) AND compiling cleanly AND having no fields: a tick
+    // over an empty table. That is precisely the vacuous-truth failure the
+    // comment on `compiles` warns about, recurring one level up -- true
+    // because nothing was checked.
+    let reading = fermi::field_state::read_contract(&agent_name, output_contract.as_ref(), |t| {
+        dispatchable.contains(t)
+    });
+    let counts = reading.counts();
+    let contract_fields: Vec<Value> = reading
+        .entries
+        .iter()
+        .map(|e| {
             json!({
-                "path": c.path,
-                "state": declared.token(),
-                "tool": tool,
-                "why": declared.why(),
+                "path": e.path,
+                "state": e.state.token(),
+                "tool": e.tool,
+                "why": e.state.why(),
             })
         })
         .collect();
+    // What the rows are: `field` for a dotted path from the registered table,
+    // `block` for a top-level block from the card. The page prints it, because
+    // a reader comparing two specimens is otherwise comparing populations that
+    // are not the same size by construction.
+    let contract_grain = reading.grain.map(|g| g.token());
 
     // ── The prompt, checked against the contract ─────────────────────────
     //
@@ -1065,23 +1095,19 @@ pub async fn specimen_handler(
     let trigger = system_prompt
         .as_deref()
         .and_then(fermi::agent_backend::tool_executor::structured_output_trigger);
-    let sourced_fields = fermi::grounding_trust::contracts_for(&agent_name)
-        .filter(|c| {
-            matches!(
-                c.grounding,
-                fermi::grounding_trust::Grounding::Sourced { .. }
-            )
-        })
-        .count();
-    let produces_schema: Option<String> = row
-        .try_get::<Option<Value>, _>("output_contract")
-        .ok()
-        .flatten()
-        .and_then(|oc| {
-            oc.get("produces_schema")
-                .and_then(|v| v.as_str())
-                .map(str::to_string)
-        });
+    // From the same reading, so the contradiction is detectable for a
+    // card-only agent. It was not: this counted `FIELD_CONTRACTS` rows, and
+    // the comment directly above names `supply_chain_oracle` as one of three
+    // agents in exactly this state -- while the code that was supposed to show
+    // it counted zero, because that agent has no rows in that table. The
+    // platform knew: `tool_executor`'s shrink-only `KNOWN` list carries
+    // `supply_chain_oracle` for this very pairing. The page could not say so.
+    let sourced_fields = reading.expects_a_retrieval();
+    let produces_schema: Option<String> = output_contract.as_ref().and_then(|oc| {
+        oc.get("produces_schema")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+    });
     // Absent is not bad: an agent with no prompt is unconfigured, and one with no
     // type name cannot fail to mention it.
     let names_its_type = match (&system_prompt, &produces_schema) {
@@ -1128,6 +1154,46 @@ pub async fn specimen_handler(
     };
     let grandfathered = is_type_tier_exempt && !has_any_contract;
 
+    // ── Skills: two different things under one name, told apart ─────────
+    //
+    // `capabilities.skills` on a card carries BOTH, and nothing has ever said
+    // which is which on a surface:
+    //
+    //   executable  a name in `SkillRegistry` — a deterministic function the
+    //               executor can invoke directly, no LLM in the loop
+    //   label       free text like "market-analysis" — read by xaman_ek for
+    //               discovery, and by nothing else
+    //
+    // Printed as one flat chip row (which is what the old page did) an author
+    // cannot tell a capability from a keyword, and a typo in an executable
+    // name degrades silently into a label. `validate_card_skills` already
+    // draws this line at execution time; this is the same line, drawn where
+    // somebody can see it.
+    //
+    // The EFFECTIVE list, by the same precedence the executor resolves:
+    // the `agents.skills` column (mig-239) when it is non-NULL, the card file
+    // otherwise. Reading only the card — which this did before the column
+    // existed — would show an author the value they had just overwritten.
+    //
+    // `source` travels because the two are not interchangeable to an author:
+    // a card-sourced list is inherited and can be replaced, and a
+    // database-sourced one is theirs and already has been.
+    let card = state.registry.get(&agent_name).ok();
+    let db_skills: Option<Vec<String>> = row.try_get("skills").ok().flatten();
+    let skills_from_db = db_skills.is_some();
+    let declared_skills: Vec<String> = db_skills.unwrap_or_else(|| {
+        card.as_ref()
+            .map(|c| c.capabilities.skills.clone())
+            .unwrap_or_default()
+    });
+    let registered: std::collections::HashSet<&'static str> =
+        fermi::agent_backend::tools::SkillRegistry::names()
+            .into_iter()
+            .collect();
+    let (executable_skills, skill_labels): (Vec<&String>, Vec<&String>) = declared_skills
+        .iter()
+        .partition(|s| registered.contains(s.as_str()));
+
     Ok(Json(json!({
         "profile": {
             // Served because three per-agent endpoints are keyed by the uuid
@@ -1154,7 +1220,47 @@ pub async fn specimen_handler(
             "peak_level": row.try_get::<Option<i32>, _>("peak_level").ok().flatten(),
             "forked_from": row.try_get::<Option<String>, _>("forked_from").ok().flatten(),
             "fork_count": row.try_get::<Option<i32>, _>("fork_count").ok().flatten().unwrap_or(0),
+            // What a fork costs. `{base_price, ontology_price, embedding_price}`;
+            // the last two are null when that asset is not for sale, which is a
+            // different fact from priced at zero.
+            "fork_pricing": row.try_get::<Option<Value>, _>("fork_pricing").ok().flatten(),
             "sample_queries": row.try_get::<Option<Vec<String>>, _>("sample_queries").ok().flatten().unwrap_or_default(),
+            // The credentials this agent declares it needs, by NAME. Values live
+            // in the owner's encrypted store and are never served from anywhere.
+            // Pairing this with `/api/secrets` is what lets a surface say "this
+            // agent is one key away from running".
+            "requires_secrets": row.try_get::<Option<Value>, _>("requires_secrets").ok().flatten(),
+            // Writable since mig-239. The split is served rather than derived
+            // on the client so the page cannot disagree with the executor
+            // about which of these names the platform can actually run.
+            "skills": {
+                "executable": executable_skills,
+                "labels": skill_labels,
+                "declared": declared_skills.len(),
+                // The flat list, for the editor. The partition above is for
+                // reading; this is what a save round-trips.
+                "all": declared_skills,
+                "source": if skills_from_db {
+                    "database"
+                } else if card.is_some() {
+                    "agent_card_file"
+                } else {
+                    "none"
+                },
+                "writable": true,
+            },
+            // How many instruments the card/DB declares, in each direction. Only
+            // counts: the endpoints, credential key names and tool allowlists are
+            // operational detail and live behind the edit-gated
+            // `/api/agents/:id/mcp-servers` and `/api/agents/:id/published-tools`.
+            // A count is enough for a reader to know whether there is anything
+            // there, and it is the same number both directions are counted in.
+            "instruments": {
+                "remote_servers": row.try_get::<Option<Value>, _>("mcp_servers").ok().flatten()
+                    .and_then(|v| v.as_array().map(|a| a.len())),
+                "published_tools": row.try_get::<Option<Value>, _>("mcp_tools").ok().flatten()
+                    .and_then(|v| v.as_array().map(|a| a.len())),
+            },
             "substrate": {
                 "provider": row.try_get::<Option<String>, _>("llm_provider").ok().flatten(),
                 "model": row.try_get::<Option<String>, _>("model").ok().flatten(),
@@ -1252,6 +1358,12 @@ pub async fn specimen_handler(
             // The contract's own fields, and whether each resolves.
             "fields": contract_fields,
             "counts": counts,
+            // `field` (registered table, one dotted path per row) or `block`
+            // (the card's grounding map, one response block per row). Null
+            // when there is no contract. Travels with the rows because the
+            // two are not the same unit and a bare row count invites the
+            // comparison.
+            "grain": contract_grain,
             // Three compile states, not two. See the comment above the
             // json! call for the full explanation.
             "compiles": compiles,

@@ -77,7 +77,7 @@ pub const NOT_TEST_CRUFT: &str = "agent_name NOT LIKE 'test\\_agent\\_%'";
 /// Common SELECT columns for agent queries
 const AGENT_COLUMNS: &str = r#"
     agent_id, agent_name, agent_type, version, tier,
-    executor_type, model, temperature, mcp_servers, mcp_tools, description, author,
+    executor_type, model, temperature, mcp_servers, mcp_tools, skills, description, author,
     system_prompt, visibility, user_id, tags,
     current_ontology_commit, current_ontology_snapshot_id,
     last_consolidated_at, total_executions, successful_executions,
@@ -89,7 +89,7 @@ const AGENT_COLUMNS: &str = r#"
     status, fork_pricing, forked_from, fork_count,
     accepts, produces, workflow_template, prompt_template, requires_secrets,
     model_ladder, min_tier, capability_gates,
-    persona_version, fermi_contract, model_params,
+    persona_version, fermi_contract, simops_contract, model_params,
     valence, output_contract, taxonomy, input_contract, competition
 "#;
 
@@ -652,10 +652,10 @@ impl MemoryStore {
                 sample_queries, status, fork_pricing, forked_from, fork_count,
                 accepts, produces, workflow_template, prompt_template, requires_secrets,
                 model_ladder, min_tier, capability_gates,
-                fermi_contract, model_params,
+                fermi_contract, simops_contract, model_params,
                 valence, output_contract, taxonomy, input_contract, competition
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45)
             ON CONFLICT (agent_name)
              DO UPDATE SET
                  agent_type = EXCLUDED.agent_type,
@@ -678,6 +678,7 @@ impl MemoryStore {
                  min_tier = EXCLUDED.min_tier,
                  capability_gates = EXCLUDED.capability_gates,
                  fermi_contract = EXCLUDED.fermi_contract,
+                 simops_contract = EXCLUDED.simops_contract,
                  model_params = EXCLUDED.model_params,
                  -- See the doc comment on upsert_agent: these four were
                  -- absent here, so card edits to them were dropped on reseed
@@ -731,6 +732,7 @@ impl MemoryStore {
         .bind(&agent.min_tier)
         .bind(&agent.capability_gates)
         .bind(&agent.fermi_contract)
+        .bind(&agent.simops_contract)
         .bind(&agent.model_params)
         .bind(&agent.valence)
         .bind(&agent.output_contract)
@@ -833,9 +835,9 @@ impl MemoryStore {
                 sample_queries, status, fork_pricing, forked_from, fork_count,
                 accepts, produces, workflow_template, prompt_template, requires_secrets,
                 model_ladder, min_tier, capability_gates,
-                fermi_contract, model_params
+                fermi_contract, simops_contract, model_params
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38)
             RETURNING agent_id
             "#,
         )
@@ -875,6 +877,7 @@ impl MemoryStore {
         .bind(&agent.min_tier)
         .bind(&agent.capability_gates)
         .bind(&agent.fermi_contract)
+        .bind(&agent.simops_contract)
         .bind(&agent.model_params)
         .fetch_one(&self.pool)
         .await?;
@@ -954,6 +957,10 @@ impl MemoryStore {
         }
         if updates.mcp_tools.is_some() {
             set_clauses.push(format!("mcp_tools = ${}", param_idx));
+            param_idx += 1;
+        }
+        if updates.skills.is_some() {
+            set_clauses.push(format!("skills = ${}", param_idx));
             param_idx += 1;
         }
         if updates.llm_provider.is_some() {
@@ -1063,6 +1070,9 @@ impl MemoryStore {
             query = query.bind(v);
         }
         if let Some(ref v) = updates.mcp_tools {
+            query = query.bind(v);
+        }
+        if let Some(ref v) = updates.skills {
             query = query.bind(v);
         }
         if let Some(ref v) = updates.llm_provider {
@@ -1288,6 +1298,11 @@ impl MemoryStore {
             temperature: row.try_get("temperature")?,
             mcp_servers: row.try_get("mcp_servers")?,
             mcp_tools: row.try_get("mcp_tools")?,
+            // `unwrap_or(None)` rather than `?`, matching the other columns
+            // added by later migrations: a row read through a projection that
+            // predates mig-239 reports NULL, which means "inherit the card" —
+            // the correct answer — rather than failing the whole read.
+            skills: row.try_get("skills").unwrap_or(None),
             description: row.try_get("description")?,
             author: row.try_get("author")?,
             system_prompt: row.try_get("system_prompt")?,
@@ -1352,6 +1367,7 @@ impl MemoryStore {
                 .unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new())),
             persona_version: row.try_get("persona_version").unwrap_or(1),
             fermi_contract: row.try_get("fermi_contract").unwrap_or(None),
+            simops_contract: row.try_get("simops_contract").unwrap_or(None),
             model_params: row
                 .try_get("model_params")
                 .unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new())),
@@ -5281,6 +5297,8 @@ mod tests {
             capability_gates: serde_json::Value::Object(serde_json::Map::new()),
             persona_version: 1,
             fermi_contract: None,
+            simops_contract: None,
+            skills: None,
             output_contract: None,
             input_contract: None,
             competition: None,

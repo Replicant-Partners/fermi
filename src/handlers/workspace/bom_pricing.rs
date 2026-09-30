@@ -96,7 +96,10 @@ struct BomLine {
 /// different mass behind the PRICE and the FOOTPRINT of the same product, and
 /// each document would be internally consistent — the hardest kind of
 /// disagreement to notice.
-pub(super) fn parse_quantity(raw: &str, basis_ml: Option<f64>) -> Option<(f64, &'static str, Option<String>)> {
+pub(super) fn parse_quantity(
+    raw: &str,
+    basis_ml: Option<f64>,
+) -> Option<(f64, &'static str, Option<String>)> {
     let t = raw.trim();
     if let Some(pct) = t.strip_suffix('%') {
         let v: f64 = pct.trim().parse().ok()?;
@@ -111,9 +114,7 @@ pub(super) fn parse_quantity(raw: &str, basis_ml: Option<f64>) -> Option<(f64, &
         ));
     }
     // `12 g`, `0.5kg`, `330 ml`
-    let split = t
-        .find(|c: char| c.is_alphabetic())
-        .filter(|i| *i > 0)?;
+    let split = t.find(|c: char| c.is_alphabetic()).filter(|i| *i > 0)?;
     let (num, unit) = t.split_at(split);
     let v: f64 = num.trim().parse().ok()?;
     let unit = match unit.trim().to_ascii_lowercase().as_str() {
@@ -480,7 +481,11 @@ pub async fn price_bom_handler(
     .unwrap_or(false);
 
     let duration_ms = started.elapsed().as_millis() as u64;
-    let priced_count = doc.get("items").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+    let priced_count = doc
+        .get("items")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
 
     // Outcome back onto the action row — the only workspace-scoped record of
     // how long this took. See the same note in `claim_evaluation.rs`.
@@ -587,10 +592,19 @@ mod tests {
         let lines = build_lines(&comp, Some(330.0));
         let scoby = lines
             .iter()
-            .find(|l| l.value["name"].as_str().unwrap_or("").to_lowercase().contains("scoby"))
+            .find(|l| {
+                l.value["name"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_lowercase()
+                    .contains("scoby")
+            })
             .expect("scoby line");
 
-        assert!(scoby.value["qty"].is_null(), "a number was invented for `trace`");
+        assert!(
+            scoby.value["qty"].is_null(),
+            "a number was invented for `trace`"
+        );
         assert!(scoby.value["unit"].is_null());
         assert_eq!(
             scoby.value["quantity_declared"].as_str(),
@@ -598,7 +612,10 @@ mod tests {
             "the declared value must survive so the agent can see what the document says"
         );
         assert!(
-            scoby.unresolved.as_deref().is_some_and(|u| u.contains("trace")),
+            scoby
+                .unresolved
+                .as_deref()
+                .is_some_and(|u| u.contains("trace")),
             "an unresolvable quantity must be reported, not silently dropped"
         );
     }
@@ -623,9 +640,18 @@ mod tests {
 
     #[test]
     fn absolute_quantities_pass_through_with_their_unit() {
-        assert_eq!(parse_quantity("12 g", None).map(|(q, u, _)| (q, u)), Some((12.0, "g")));
-        assert_eq!(parse_quantity("0.5kg", None).map(|(q, u, _)| (q, u)), Some((0.5, "kg")));
-        assert_eq!(parse_quantity("330 ml", None).map(|(q, u, _)| (q, u)), Some((330.0, "ml")));
+        assert_eq!(
+            parse_quantity("12 g", None).map(|(q, u, _)| (q, u)),
+            Some((12.0, "g"))
+        );
+        assert_eq!(
+            parse_quantity("0.5kg", None).map(|(q, u, _)| (q, u)),
+            Some((0.5, "kg"))
+        );
+        assert_eq!(
+            parse_quantity("330 ml", None).map(|(q, u, _)| (q, u)),
+            Some((330.0, "ml"))
+        );
         // Not a unit the oracle's schema names, so it is not guessed at.
         assert!(parse_quantity("2 handfuls", None).is_none());
         assert!(parse_quantity("trace", None).is_none());

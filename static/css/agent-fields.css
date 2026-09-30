@@ -187,3 +187,71 @@
 .af-pad-read b { color: var(--fg2); font-weight: normal;
                  font-variant-numeric: tabular-nums; }
 .af-q-now { color: var(--yellow); text-transform: uppercase; letter-spacing: 0.07em; }
+
+/* ── Money, and instruments ────────────────────────────────────────────────
+   Neither group has a single field, and that is the point: every write here
+   goes to an admin-gated endpoint of its own. They must therefore NOT look
+   like the field rows above, or an author will look for the save button that
+   is deliberately absent. Parts with their own rules, each with its own act. */
+.af-econ-part, .af-inst-part { padding: 9px 0; border-top: 1px solid var(--bg2); }
+.af-econ-part:first-of-type, .af-inst-part:first-of-type { border-top: none; padding-top: 2px; }
+.af-econ-row { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap;
+               font-size: 0.68rem; color: var(--fg3); margin-bottom: 5px; }
+.af-econ-fig { font-size: 0.72rem; color: var(--fg2); }
+.af-econ-fig b { color: var(--yellow); font-weight: normal;
+                 font-variant-numeric: tabular-nums; font-size: 1.15em; }
+.af-econ-note { font-size: 0.62rem; color: var(--fg4); line-height: 1.45;
+                margin-top: 4px; }
+.af-econ-note code, .af-note code, .af-inst code { color: var(--aqua);
+                font-family: inherit; }
+.af-econ-note a, .af-inst a { color: var(--aqua); }
+.af-econ-in { width: 5.5em; font-family: inherit; font-size: 0.68rem;
+              background: var(--bg0-hard); border: 1px solid var(--bg3);
+              color: var(--fg2); padding: 2px 6px; }
+.af-econ-in.wide { width: 16em; }
+.af-econ-prices { display: flex; gap: 10px; flex-wrap: wrap; }
+.af-econ-prices label { font-size: 0.62rem; color: var(--fg4);
+                        text-transform: uppercase; letter-spacing: 0.06em;
+                        display: flex; flex-direction: column; gap: 2px; }
+.af-econ-prices input { width: 7em; font-family: inherit; font-size: 0.68rem;
+                        background: var(--bg0-hard); border: 1px solid var(--bg3);
+                        color: var(--fg2); padding: 3px 6px; }
+.af-econ-auto { display: flex; gap: 6px; align-items: center; font-size: 0.62rem;
+                color: var(--fg4); }
+.af-econ-auto input[type="range"] { width: 90px; accent-color: var(--yellow); }
+.af-econ-auto b { color: var(--fg2); font-weight: normal;
+                  font-variant-numeric: tabular-nums; }
+/* A warning is a state the agent is IN, not advice. Loud enough to notice on a
+   panel an owner opens for another reason. */
+.af-warn { font-size: 0.64rem; color: var(--orange); line-height: 1.45;
+           border-left: 2px solid var(--orange); padding: 4px 8px; margin: 5px 0;
+           background: var(--bg0-hard); }
+
+/* One instrument per row: what it is, whether it works, and the one action an
+   owner is blocked by. */
+.af-inst-row { padding: 6px 0; border-top: 1px solid var(--bg2); }
+.af-inst-row:first-child { border-top: none; }
+.af-inst-head { display: flex; gap: 7px; align-items: center; flex-wrap: wrap;
+                font-size: 0.7rem; color: var(--fg2); }
+.af-inst-head b { font-weight: normal; }
+.af-inst-ep { font-size: 0.62rem; overflow-wrap: anywhere; }
+.af-inst-key { margin-top: 5px; padding-left: 8px;
+               border-left: 2px solid var(--red, #fb4934); }
+.af-chips { display: flex; gap: 4px; flex-wrap: wrap; margin: 3px 0; }
+/* Three kinds, drawn as three kinds: a capability that resolves, a keyword that
+   resolves to nothing, and a state that is wrong. Flattening them into one chip
+   row is how a typo in an executable skill name passes for a taxonomy label. */
+.af-chip { font-size: 0.6rem; padding: 1px 7px; border: 1px solid var(--bg3);
+           color: var(--fg3); background: var(--bg0-hard); }
+.af-chip.exe { border-color: var(--aqua); color: var(--aqua); }
+.af-chip.lab { color: var(--fg4); }
+.af-chip.ok { border-color: var(--green); color: var(--green); }
+.af-chip.bad { border-color: var(--red, #fb4934); color: var(--red, #fb4934); }
+
+/* The skills box, and the classification under it.
+   A comma-separated string cannot show the one distinction that matters —
+   `run_monte_carlo` grants a capability and `run-monte-carlo` is a keyword —
+   so the strip below the input says which half each entry landed in, live. */
+.af-skills-read { margin-top: 4px; }
+
+/* ── Money, and instruments ────────────────────────────────────────────────

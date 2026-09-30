@@ -61,7 +61,14 @@
       }
     ],
     "min_tier": "free",
-    "capability_gates": {}
+    "capability_gates": {},
+    "simops_contract": {
+      "role": "dynamics",
+      "task": "ODE time-series projection and coupled biology (fermentation, pellicle, BC, rheology) over a user-defined horizon.",
+      "accepts_schema": "kask_simops/dynamics_request",
+      "produces_schema": "kask_simops/trajectory_timeseries",
+      "calibration_signal": null
+    }
   },
   "performance": {
     "forecasts_contributed": 0,
@@ -108,7 +115,8 @@
       "bacterial-cellulose",
       "digital-twin",
       "time-series",
-      "kask"
+      "kask",
+      "simops-orchestra"
     ],
     "sample_queries": [
       "{\"model_uri\": \"kask:dynamics/kombucha_fermentation@v1\", \"initial_state\": {\"chem:brix_percent\": 10, \"chem:ph_value\": 5.0}, \"process_context\": {\"temperature_c\": 26}, \"horizon\": {\"kind\": \"fixed\", \"days\": 14}, \"sample_cadence\": {\"hours\": 6}}",

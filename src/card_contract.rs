@@ -52,6 +52,40 @@ pub const MIN_WHY: usize = 40;
 /// a metadata value.
 pub const GROUNDING_STATUSES: &[&str] = &["sourced", "inferred", "narrative", "unavailable"];
 
+/// Dispositions an author may declare on a **field inside a block**.
+///
+/// A block may refine itself with a `fields` sub-map. When it does, the
+/// entries under `fields` are the declared paths and the block's own status
+/// exists only to stamp `<block>_provenance`.
+///
+/// ## Why this set is one token larger than [`GROUNDING_STATUSES`]
+///
+/// Because the refinement exists to stop a block overclaiming, and the case
+/// that motivated it needs `derived`. `football_analyst.advanced_metrics` is
+/// declared `sourced` from `call_football_api` while holding three different
+/// kinds of claim: `xg` is retrieved, `xgd` is `xg - xga`, and `ppda` is Opta
+/// event data no declared tool carries. Refining it into three `sourced` /
+/// `unavailable` entries would still be wrong about the middle one — `xgd` is
+/// not a retrieval and not a judgement, and calling it either loses the one
+/// property that makes it checkable.
+///
+/// ## Why admitting it is not the thing [`PLATFORM_ASSIGNED_ONLY`] forbids
+///
+/// That list forbids an author *asserting* the platform computed their field.
+/// It is admitted here as a **gated** token, not a free one:
+/// [`validate_derived_declarations`] refuses `derived` unless the platform
+/// already keeps the promise for that exact `(agent_id, path)` — either
+/// `grounding_trust::DERIVATIONS` computes it, or `grounding_trust::CROSS_CHECKS`
+/// checks it. So the claim is still the platform's; the card may only repeat
+/// one the platform has already made.
+///
+/// That gate is queryable at all only because `CROSS_CHECKS` is keyed by
+/// `(agent_id, path)` rather than being a field on a `FieldContract`. While it
+/// was welded to the declaration, "does the platform check this field" could
+/// not be asked about a field whose declaration had moved to a card.
+pub const FIELD_GROUNDING_STATUSES: &[&str] =
+    &["sourced", "inferred", "narrative", "unavailable", "derived"];
+
 /// Runtime dispositions with no authoring token, and why.
 ///
 /// The card vocabulary is a **strict subset** of what
@@ -74,8 +108,12 @@ pub const PLATFORM_ASSIGNED_ONLY: &[(&str, &str)] = &[(
     "derived",
     "`platform_derived` asserts that the PLATFORM computed the value \
      reproducibly. An agent's author cannot make that claim about the agent's \
-     own output, so there is deliberately no authoring token for it — the \
-     runtime assigns it, in `grounding_trust::enforce`.",
+     own output, so there is no UNCONDITIONAL authoring token for it — the \
+     runtime assigns it, in `grounding_trust::enforce`. It is admitted in \
+     FIELD_GROUNDING_STATUSES as a gated token: `validate_derived_declarations` \
+     refuses it unless DERIVATIONS computes that exact (agent_id, path) or \
+     CROSS_CHECKS checks it, so a card may only repeat a promise the platform \
+     has already made rather than originate one.",
 )];
 
 /// One violation of the card contract, phrased for the person who has to
@@ -328,8 +366,161 @@ pub fn validate(
             }
             _ => {}
         }
+
+        // ── refinement: a block declaring its fields individually ──────
+        //
+        // Optional, and absent on every card in the fleet today, so this arm
+        // is additive. When present, the entries under `fields` become the
+        // declared paths and the block's own status is demoted to what stamps
+        // `<block>_provenance`.
+        //
+        // The vocabulary here is one token wider: see
+        // [`FIELD_GROUNDING_STATUSES`]. The extra token is gated, and the gate
+        // needs the agent's identity, which this function does not have — it
+        // lives in [`validate_derived_declarations`], called from
+        // `workflows::agent_contract::typed_tier_violations`.
+        if let Some(fields) = spec.get("fields") {
+            let Some(fields) = fields.as_object() else {
+                out.push(f(
+                    "grounding_fields_shape",
+                    format!("`grounding.{field}.fields` must be an object of field name to declaration."),
+                ));
+                continue;
+            };
+            if fields.is_empty() {
+                out.push(f(
+                    "grounding_fields_shape",
+                    format!(
+                        "`grounding.{field}.fields` is empty. A refinement that \
+                         declares nothing reads as a block with no fields rather \
+                         than as a block declared whole — remove the key instead."
+                    ),
+                ));
+            }
+            for (sub, fspec) in fields {
+                let fstatus = fspec.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                if !FIELD_GROUNDING_STATUSES.contains(&fstatus) {
+                    out.push(f(
+                        "grounding_status_valid",
+                        format!(
+                            "`grounding.{field}.fields.{sub}.status` is `{fstatus}`, \
+                             which is not one of {FIELD_GROUNDING_STATUSES:?}."
+                        ),
+                    ));
+                    continue;
+                }
+                let fwhy = fspec.get("why").and_then(|v| v.as_str()).unwrap_or("");
+                if fwhy.trim().len() < MIN_WHY {
+                    out.push(f(
+                        "grounding_explained",
+                        format!(
+                            "`grounding.{field}.fields.{sub}.why` is missing or too \
+                             short (needs {MIN_WHY}+ characters). A refinement exists \
+                             to say something the block could not; if it cannot say \
+                             why, it is not saying it."
+                        ),
+                    ));
+                }
+                match fstatus {
+                    "sourced" => {
+                        let tool = fspec.get("tool").and_then(|v| v.as_str()).unwrap_or("");
+                        if tool.is_empty() || !tool_names.iter().any(|t| t == tool) {
+                            out.push(f(
+                                "grounding_sourced_names_tool",
+                                format!(
+                                    "`grounding.{field}.fields.{sub}` is `sourced` from \
+                                     `{tool}`, which this agent does not declare. \
+                                     Refining a block must not become a way to name a \
+                                     tool the block itself could not."
+                                ),
+                            ));
+                        }
+                    }
+                    // `derived` needs `from`/`how` for the same reason `inferred`
+                    // needs `from`: a reproducible value nobody can reproduce
+                    // from the declaration is not reproducible.
+                    "inferred" | "derived" => {
+                        if fspec
+                            .get("from")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .is_empty()
+                        {
+                            out.push(f(
+                                "grounding_inferred_names_basis",
+                                format!(
+                                    "`grounding.{field}.fields.{sub}` is `{fstatus}` but \
+                                     does not say what from."
+                                ),
+                            ));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
 
+    out
+}
+
+/// **The gate on `derived`.** Refuses a card that claims the platform computes
+/// a field the platform does not compute or check.
+///
+/// Separate from [`validate`] because it needs the agent's identity, and
+/// `validate` is deliberately agent-agnostic — it judges a document, and the
+/// same document is judged by `contract_sketch` before any agent exists to
+/// attach it to. Called from
+/// `workflows::agent_contract::typed_tier_violations`, which has `view.agent_id`.
+///
+/// The rule is `every_derived_field_is_computed_or_checked` moved from test
+/// time to publish time: **computed by us, or checked by us. Never merely
+/// asserted.** That test could only ever police the Rust table; this polices
+/// the cards, which is where declarations are going.
+pub fn validate_derived_declarations(
+    agent_id: &str,
+    output_contract: Option<&Value>,
+) -> Vec<Finding> {
+    let mut out = Vec::new();
+    let Some(grounding) = output_contract
+        .and_then(|oc| oc.get("grounding"))
+        .and_then(|g| g.as_object())
+    else {
+        return out;
+    };
+
+    for (block, spec) in grounding {
+        let Some(fields) = spec.get("fields").and_then(|f| f.as_object()) else {
+            continue;
+        };
+        for (sub, fspec) in fields {
+            if fspec.get("status").and_then(|v| v.as_str()) != Some("derived") {
+                continue;
+            }
+            let path = format!("{block}.{sub}");
+            let computed = crate::grounding_trust::DERIVATIONS
+                .iter()
+                .any(|(a, p, _)| *a == agent_id && *p == path);
+            let checked = crate::grounding_trust::cross_check_for(agent_id, &path).is_some();
+            if !computed && !checked {
+                out.push(f(
+                    "grounding_derived_is_backed",
+                    format!(
+                        "`grounding.{block}.fields.{sub}` is declared `derived`, and \
+                         the platform neither computes nor checks \
+                         `{agent_id}.{path}`. `derived` asserts the value is \
+                         reproducible by the PLATFORM — a claim an author cannot make \
+                         about their own agent's output on their own authority. \
+                         Register a transform in `grounding_trust::DERIVATIONS`, add a \
+                         query to `grounding_trust::CROSS_CHECKS` comparing the field \
+                         against the values it is computed from, or declare it \
+                         `inferred` — which is the honest status for a number the \
+                         agent works out and nobody verifies."
+                    ),
+                ));
+            }
+        }
+    }
     out
 }
 

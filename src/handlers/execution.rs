@@ -215,6 +215,7 @@ pub async fn execute_agent_handler(
         creature_id: None,
         cognition_tier: None,
         credentials: credentials.clone(),
+        registry: None,
         attachments,
     };
 

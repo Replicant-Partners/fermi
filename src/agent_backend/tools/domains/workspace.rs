@@ -1157,6 +1157,8 @@ async fn execute_list_workspace_agents(ctx: &ToolContext) -> Result<String, Stri
         "SELECT a.agent_name,
                 a.agent_type,
                 a.description,
+                a.tags,
+                a.simops_contract,
                 a.accepts,
                 a.produces,
                 a.output_contract->>'produces_schema' AS output_schema_id,
@@ -1177,7 +1179,13 @@ async fn execute_list_workspace_agents(ctx: &ToolContext) -> Result<String, Stri
                 "name":             row.get::<String, _>("agent_name"),
                 "type":             row.get::<String, _>("agent_type"),
                 "description":      row.get::<Option<String>, _>("description"),
-                // Typed interface — use these for routing decisions, not description text.
+                // SimOps typed contract — the primary routing signal for simops_companion.
+                // Filter by `simops_contract != null` to find SimOps specialists;
+                // read `.role` and `.extension_task` to select the right one.
+                // Tags are kept for backwards compatibility and general-purpose filtering.
+                "simops_contract":  row.get::<Option<serde_json::Value>, _>("simops_contract"),
+                "tags":             row.get::<serde_json::Value, _>("tags"),
+                // Typed schema interface — use for port-matching routing decisions.
                 "accepts":          row.get::<Vec<String>, _>("accepts"),
                 "produces":         row.get::<Vec<String>, _>("produces"),
                 "input_schema_id":  row.get::<Option<String>, _>("input_schema_id"),

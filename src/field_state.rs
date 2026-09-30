@@ -220,6 +220,289 @@ impl Declared {
             GroundingKind::Narrative => Self::Narrative,
         }
     }
+
+    /// The same decision, from a **card's** compiled
+    /// `output_contract.grounding` map.
+    ///
+    /// The third home a contract can have, and the reason the Team tab printed
+    /// *"no contract — nothing about this member's output is checked"* over
+    /// `supply_chain_oracle`, an agent the runtime strips and stamps at every
+    /// hop. `FIELD_CONTRACTS` is Rust and per-field; a card's `grounding` map is
+    /// JSON and per-block, with owned strings. [`Grounding`] cannot hold one —
+    /// its `tool` is `&'static str` — so a surface reading a card cannot reach
+    /// [`Declared::of`], and would have written the match a fourth time.
+    ///
+    /// **Two things this constructor cannot do, and a caller must not paper
+    /// over.**
+    ///
+    /// A block is not a field. Counts from this constructor are not comparable
+    /// with counts from [`Declared::of`]; a surface showing both must say which
+    /// it counted.
+    ///
+    /// `unavailable` maps to [`Declared::Pending`]: both say nothing can supply
+    /// the field, so it must be null and a value in it is the violation.
+    ///
+    /// ## Two card vocabularies, and this reads the wider one
+    ///
+    /// [`crate::card_contract::GROUNDING_STATUSES`] is what a BLOCK may
+    /// declare; [`crate::card_contract::FIELD_GROUNDING_STATUSES`] adds
+    /// `derived` for a field inside a refined block. This constructor accepts
+    /// the wider set, deliberately: **reading is not gating.** Which token is
+    /// legal where is `card_contract`'s judgement, made once at publish with
+    /// the agent's identity in hand — `derived` is admitted only where
+    /// `DERIVATIONS` computes or `CROSS_CHECKS` checks that exact
+    /// `(agent_id, path)`, per
+    /// [`crate::card_contract::validate_derived_declarations`]. Re-deciding it
+    /// here would be a second gate with less evidence than the first, and the
+    /// two would disagree.
+    ///
+    /// Returns `None` for a token in neither set. Bucketing an unrecognised
+    /// status into a state is how a status nobody vetted acquires a trust
+    /// verdict, so the caller should decline to count it rather than guess.
+    pub fn of_card_status(
+        status: &str,
+        tool: Option<&str>,
+        dispatchable: impl Fn(&str) -> bool,
+    ) -> Option<Self> {
+        match status {
+            "sourced" => Some(match tool {
+                Some(t) if dispatchable(t) => Self::Resolved,
+                // Same finding as `of_graded`: a sourced block naming a tool
+                // the platform cannot dispatch, and one naming none at all,
+                // are both blocks no retrieval can ever settle.
+                _ => Self::Unresolvable,
+            }),
+            "inferred" => Some(Self::Inferred),
+            "narrative" => Some(Self::Narrative),
+            "unavailable" => Some(Self::Pending),
+            // Field-level only, and gated at publish rather than here.
+            "derived" => Some(Self::Derived),
+            _ => None,
+        }
+    }
+}
+
+/// What a contract's entries are counted in.
+///
+/// The platform stores declarations in two places at two granularities, and a
+/// count is meaningless without saying which. `23` beside `3` reads as one
+/// agent being eight times better specified; `23 fields` beside `3 blocks`
+/// reads as what it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Grain {
+    /// `FIELD_CONTRACTS`, the registered table. One entry per dotted path.
+    Field,
+    /// The agent card's compiled `output_contract.grounding`. One entry per
+    /// top-level response block, which is several fields.
+    Block,
+}
+
+impl Grain {
+    pub fn token(self) -> &'static str {
+        match self {
+            Self::Field => "field",
+            Self::Block => "block",
+        }
+    }
+}
+
+/// One declaration: where it lands in the document, what it can be trusted
+/// about, and the tool that would settle it.
+#[derive(Debug, Clone)]
+pub struct DeclaredEntry {
+    /// A dotted path (`Grain::Field`) or a block name (`Grain::Block`).
+    pub path: String,
+    pub state: Declared,
+    /// The tool named by a `sourced` declaration, whether or not the platform
+    /// can dispatch it. `None` for every other state.
+    pub tool: Option<String>,
+}
+
+/// Everything the platform declares about one agent's output, from whichever
+/// home holds it.
+#[derive(Debug, Clone)]
+pub struct ContractReading {
+    pub entries: Vec<DeclaredEntry>,
+    /// `None` when there is no contract in either home. Absent, not zero.
+    pub grain: Option<Grain>,
+}
+
+impl ContractReading {
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Entries per state token, for a surface that renders chips.
+    pub fn counts(&self) -> std::collections::BTreeMap<&'static str, usize> {
+        let mut counts = std::collections::BTreeMap::new();
+        for e in &self.entries {
+            *counts.entry(e.state.token()).or_default() += 1;
+        }
+        counts
+    }
+
+    /// Entries that name a tool, dispatchable or not.
+    ///
+    /// Both `Resolved` and `Unresolvable` count: the question this answers is
+    /// "does this contract expect a retrieval", and a contract naming a tool
+    /// the platform lost still expects one. Used to detect a prompt that
+    /// removes the tool loop out from under a contract that needs it.
+    pub fn expects_a_retrieval(&self) -> usize {
+        self.entries
+            .iter()
+            .filter(|e| matches!(e.state, Declared::Resolved | Declared::Unresolvable))
+            .count()
+    }
+}
+
+/// **The one reader.** Every declaration the platform holds about one agent's
+/// output, from whichever of the two homes holds it.
+///
+/// ## Why there are two homes
+///
+/// `grounding_trust::FIELD_CONTRACTS` is a Rust table, per dotted field path.
+/// A card's compiled `output_contract.grounding` is JSON, per top-level block.
+/// `docs/DESIGN_a2a_contracting.md` 7.6 calls the table *legacy for tiers 1
+/// and 2* and *permanent for tier 3*: most of it should migrate onto cards.
+/// Two things hold the rest back, and they are different in kind.
+///
+/// The SQL cross-checks are no longer one of them. They were welded to the
+/// declaration as a `FieldContract` field, so migrating a declaration deleted
+/// the platform's only falsifiable check of it; they now live in
+/// `grounding_trust::CROSS_CHECKS`, keyed by `(agent_id, path)`, and the two
+/// move independently.
+///
+/// What remains: a `Grounding::Derived` field cannot migrate, because it
+/// asserts that PLATFORM code computes the value and
+/// `card_contract::PLATFORM_ASSIGNED_ONLY` withholds the token so an author
+/// cannot claim that about their own agent. And the card vocabulary is
+/// per-block, so the ~105 dotted paths have nowhere to land until it grows a
+/// per-field form.
+///
+/// Until that split is finished both homes are real, and **every consumer that
+/// reads one of them is wrong.** Two already were: the workspace Team tab
+/// printed "no contract - nothing about this member's output is checked" over
+/// ten agents the runtime enforces at every hop, and the specimen page
+/// reported those same agents as compiling cleanly over an empty field table,
+/// because zero rows yield zero errors. This function exists so a third
+/// consumer cannot repeat it.
+///
+/// ## Precedence
+///
+/// The table wins where it exists. This is the opposite of what the migration
+/// direction suggests, and it is deliberate: it matches
+/// `grounding_trust::enforce_from_output_contract`, where reversing it was
+/// measured and *lost* enforcement. Seven agents declare in both homes, and
+/// several have mixed blocks - `genome_profiler.genome` is `sourced` from
+/// `ncbi_genome_search` while `genome.ploidy` beneath it is `Unsourced` - a
+/// distinction the per-block card vocabulary cannot express. A surface that
+/// preferred the card would show those agents as better grounded than they
+/// are.
+pub fn read_contract(
+    agent_id: &str,
+    output_contract: Option<&serde_json::Value>,
+    dispatchable: impl Fn(&str) -> bool,
+) -> ContractReading {
+    let entries: Vec<DeclaredEntry> = crate::grounding_trust::contracts_for(agent_id)
+        .map(|c| DeclaredEntry {
+            path: c.path.to_string(),
+            state: Declared::of(&c.grounding, &dispatchable),
+            tool: match c.grounding {
+                Grounding::Sourced { tool, .. } => Some(tool.to_string()),
+                _ => None,
+            },
+        })
+        .collect();
+    if !entries.is_empty() {
+        return ContractReading {
+            entries,
+            grain: Some(Grain::Field),
+        };
+    }
+
+    let mut entries = Vec::new();
+    let mut refined = false;
+    if let Some(blocks) = output_contract
+        .and_then(|oc| oc.get("grounding"))
+        .and_then(|g| g.as_object())
+    {
+        for (block, spec) in blocks {
+            // `<block>_provenance` keys are the platform's own stamps, written
+            // by `enforce_from_grounding_map` rather than authored. Every card
+            // that has them declares them `inferred`, so counting them would
+            // report each contract at twice its real size with all of the
+            // surplus in one state. Skipped on the same rule, and for the same
+            // reason, as the enforcement path.
+            if block.ends_with("_provenance") {
+                continue;
+            }
+            let status = spec
+                .get("status")
+                .and_then(|s| s.as_str())
+                .unwrap_or_default();
+            // A block may REFINE itself into per-field declarations. When it
+            // does, the refinements are the declared paths and the block's own
+            // status is not one of them: it exists to stamp
+            // `<block>_provenance` and is derived from the fields beneath it.
+            //
+            // This is the vocabulary extension the migration needs. A block is
+            // one stamp over what can be several different kinds of claim, and
+            // a single status over a mixed block is an OVERCLAIM, not a
+            // rounding. `football_analyst.advanced_metrics` is the worked case:
+            // declared `sourced` from `call_football_api` as a block, while
+            // `xg` is retrieved, `xgd` is computed from it, and `ppda` is Opta
+            // event data the tool will never carry. One stamp said all three
+            // came back from the API.
+            if let Some(fields) = spec.get("fields").and_then(|f| f.as_object()) {
+                for (field, fspec) in fields {
+                    let status = fspec
+                        .get("status")
+                        .and_then(|s| s.as_str())
+                        .unwrap_or_default();
+                    let tool = fspec.get("tool").and_then(|s| s.as_str());
+                    if let Some(state) = Declared::of_card_status(status, tool, &dispatchable) {
+                        entries.push(DeclaredEntry {
+                            path: format!("{block}.{field}"),
+                            state,
+                            tool: tool.map(str::to_string),
+                        });
+                        refined = true;
+                    }
+                }
+                continue;
+            }
+
+            let status = spec
+                .get("status")
+                .and_then(|s| s.as_str())
+                .unwrap_or_default();
+            let tool = spec.get("tool").and_then(|s| s.as_str());
+            // `None` for a token no author may declare. Skipped rather than
+            // bucketed: a status nobody vetted must not acquire a trust
+            // verdict on its way to a screen.
+            if let Some(state) = Declared::of_card_status(status, tool, &dispatchable) {
+                entries.push(DeclaredEntry {
+                    path: block.clone(),
+                    state,
+                    tool: tool.map(str::to_string),
+                });
+            }
+        }
+    }
+
+    // A card that refines any block is declaring per PATH, which is the same
+    // unit `FIELD_CONTRACTS` uses -- and `FIELD_CONTRACTS` is itself mixed:
+    // `football_analyst` declares the bare block `league_context` beside the
+    // dotted `advanced_metrics.xg`. So the grain is a property of the finest
+    // declaration present, not of every row.
+    let grain = if entries.is_empty() {
+        None
+    } else if refined {
+        Some(Grain::Field)
+    } else {
+        Some(Grain::Block)
+    };
+    ContractReading { entries, grain }
 }
 
 impl Observed {
@@ -662,6 +945,127 @@ mod tests {
         }
     }
 
+    /// Every token a card author may write resolves to a state, and every
+    /// token they may not write resolves to nothing.
+    ///
+    /// Read off `card_contract` rather than retyped, because the whole failure
+    /// mode here is a third vocabulary: if `GROUNDING_STATUSES` grows a token
+    /// and `of_card_status` does not learn it, every block declaring it goes
+    /// silently uncounted and the agent reads *less* contracted than it is —
+    /// which is exactly how the Team tab came to call `supply_chain_oracle`
+    /// untyped.
+    #[test]
+    fn every_card_status_maps_to_a_state_and_nothing_else_does() {
+        use crate::card_contract::{
+            FIELD_GROUNDING_STATUSES, GROUNDING_STATUSES, PLATFORM_ASSIGNED_ONLY,
+        };
+
+        for status in GROUNDING_STATUSES {
+            assert!(
+                Declared::of_card_status(status, Some("web_search"), |_| true).is_some(),
+                "`{status}` is a publishable grounding status with no \
+                 `Declared` state. A block declaring it would be dropped from \
+                 every trust count, and an agent that declared nothing but \
+                 `{status}` would render as having no contract at all."
+            );
+        }
+
+        // The field vocabulary is wider, and every token in it must also map,
+        // for the same reason: a refined block whose field declares a
+        // publishable token that reaches no state is a declaration silently
+        // dropped from every count.
+        for status in FIELD_GROUNDING_STATUSES {
+            assert!(
+                Declared::of_card_status(status, Some("web_search"), |_| true).is_some(),
+                "`{status}` is publishable on a refined field and reaches no \
+                 `Declared` state."
+            );
+        }
+
+        // A platform-assigned disposition is not *unconditionally* authorable.
+        // It is admitted at field level under a gate, so the rule this asserts
+        // is narrower than it used to be: the token must be refused at BLOCK
+        // level, and gated rather than free at field level.
+        //
+        // This constructor deliberately does not enforce that split — see its
+        // doc comment. Reading is not gating, and a second gate here would
+        // have less evidence than `validate_derived_declarations`, which knows
+        // the agent_id.
+        for (token, _why) in PLATFORM_ASSIGNED_ONLY {
+            assert!(
+                !GROUNDING_STATUSES.contains(token),
+                "`{token}` is in PLATFORM_ASSIGNED_ONLY and also blocklevel- \
+                 declarable. A block-level `derived` stamps a whole block \
+                 platform-derived on the author's word alone."
+            );
+            assert!(
+                FIELD_GROUNDING_STATUSES.contains(token),
+                "`{token}` is excused as platform-assigned and is not in the \
+                 field vocabulary either, so nothing can ever declare it and \
+                 the exemption describes a token with no home."
+            );
+        }
+
+        assert!(
+            Declared::of_card_status("estimated", None, |_| true).is_none(),
+            "an unrecognised status must not be bucketed into a state. \
+             `estimated` is the specific one card_contract refuses at publish, \
+             and giving it a trust verdict here is the fabrication arriving \
+             through the renderer instead of the model."
+        );
+    }
+
+    /// The card constructor agrees with `of` wherever both can speak.
+    ///
+    /// Third producer of one decision; same rule as
+    /// `the_two_constructors_agree_on_every_kind`. The card map cannot express
+    /// `derived`, so that arm is absent by construction rather than untested —
+    /// `every_card_status_maps_to_a_state_and_nothing_else_does` pins it.
+    #[test]
+    fn the_card_constructor_agrees_with_the_runtime_one() {
+        let cases: &[(&str, Option<&'static str>, Grounding)] = &[
+            (
+                "sourced",
+                Some("call_football_api"),
+                Grounding::Sourced {
+                    tool: "call_football_api",
+                    response_field: "x",
+                },
+            ),
+            (
+                "inferred",
+                None,
+                Grounding::Inferred {
+                    from: "taxonomy and proximity",
+                },
+            ),
+            ("narrative", None, Grounding::Narrative),
+            // The one mapping that is a judgement rather than a rename:
+            // `unavailable` and `Unsourced` are the same claim — nothing can
+            // supply this, so it must be null — said in two vocabularies.
+            ("unavailable", None, Grounding::Unsourced),
+        ];
+
+        for dispatchable in [true, false] {
+            for (status, tool, grounding) in cases {
+                assert_eq!(
+                    Declared::of_card_status(status, *tool, |_| dispatchable),
+                    Some(Declared::of(grounding, |_| dispatchable)),
+                    "`{status}` and {grounding:?} are the same declaration in \
+                     two vocabularies and must produce the same state \
+                     (dispatchable={dispatchable})."
+                );
+            }
+        }
+
+        // A sourced block naming no tool at all is unsettleable, matching
+        // `of_graded`'s treatment of `settleable_by: None`.
+        assert_eq!(
+            Declared::of_card_status("sourced", None, |_| true),
+            Some(Declared::Unresolvable)
+        );
+    }
+
     /// **The defect, made impossible.**
     ///
     /// `unsourced` meant a declared kind on the specimen page ("pending", a
@@ -864,11 +1268,21 @@ mod tests {
         // `Declared`. The artifact trace has the retained bytes and reads
         // `Observed` — and it is the surface the whole module was built for, so
         // leaving it unscanned would have exempted the one that drifted.
+        //
+        // The two `Declared` surfaces are required to call `read_contract`
+        // rather than `Declared::of` directly. That is a STRENGTHENING, not a
+        // relaxation: `read_contract` still produces the state through
+        // `Declared::of`, and additionally reads BOTH places a contract can be
+        // stored. Calling `Declared::of` straight was not wrong about the
+        // vocabulary — it was wrong about the population, and both surfaces
+        // reported an enforced agent as uncontracted because of it. One
+        // producer of the verdict was never the whole requirement; one reader
+        // of the evidence is the other half.
         const SURFACES: &[(&str, &str)] = &[
-            ("src/handlers/specimen.rs", "field_state::Declared::of"),
+            ("src/handlers/specimen.rs", "field_state::read_contract"),
             (
                 "src/handlers/workspace/core.rs",
-                "field_state::Declared::of",
+                "field_state::read_contract",
             ),
             ("src/artifact_trace.rs", "field_state::Observed::of"),
         ];

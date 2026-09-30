@@ -349,6 +349,15 @@ impl Default for AgentRegistry {
     }
 }
 
+impl std::fmt::Debug for AgentRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let agent_count = self.agents.read().map(|a| a.len()).unwrap_or(0);
+        f.debug_struct("AgentRegistry")
+            .field("agents", &agent_count)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Registry errors
 #[derive(Debug, Clone)]
 pub enum RegistryError {

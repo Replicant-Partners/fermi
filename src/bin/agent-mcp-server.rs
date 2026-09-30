@@ -455,6 +455,7 @@ impl ServerHandler for AgentBestiaryHandler {
                     creature_id: None,
                     cognition_tier: None,
                     credentials: operator_credentials(),
+                    registry: None,
                     // The MCP server's tools/call surface does not accept an image today.
                     // Stated rather than defaulted: when it does, this is the line that
                     // changes, and a reader can see it was a decision.
@@ -651,6 +652,10 @@ impl ServerHandler for AgentBestiaryHandler {
                     creature_id: None,
                     cognition_tier: None,
                     credentials: operator_credentials(),
+                    // Prompt-time fleet-digest injection: the navigator receives
+                    // the live fleet map in its system prompt without needing to
+                    // call `fleet_map` first. See META_AGENT_FLEET_AWARENESS.md.
+                    registry: Some(Arc::clone(&self.registry)),
                     // The MCP server's tools/call surface does not accept an image today.
                     // Stated rather than defaulted: when it does, this is the line that
                     // changes, and a reader can see it was a decision.

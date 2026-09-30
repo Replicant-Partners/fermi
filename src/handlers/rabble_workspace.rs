@@ -289,6 +289,10 @@ pub async fn dispatch_rabble_action(
         creature_id,
         cognition_tier,
         credentials: credentials.clone(),
+        // No prompt-time fleet digest on this path. Stated explicitly, as
+        // every other construction site does, so the decision is visible;
+        // `with_registry` is the builder for the `Some` case.
+        registry: None,
         // Text-only path: this caller carries no image. Stated rather than
         // defaulted, so a path that should carry one cannot acquire the field
         // silently.

@@ -55,7 +55,10 @@ fn no_sourced_field_is_silently_unverified() {
                 fermi::grounding_trust::Grounding::Sourced { .. }
             )
         })
-        .filter(|c| c.cross_check_sql.is_none() && !cross_check_exempt(c.agent_id, c.path))
+        .filter(|c| {
+            fermi::grounding_trust::cross_check_for(c.agent_id, c.path).is_none()
+                && !cross_check_exempt(c.agent_id, c.path)
+        })
         .map(|c| format!("{}.{}", c.agent_id, c.path))
         .collect();
     assert!(
@@ -159,10 +162,7 @@ fn the_factor_check_and_its_denominator_count_the_same_pairs() {
     const AGENT: &str = "carbon_accountant";
     const PATH: &str = "inventory.items[].factor_kg_co2e_per_kg";
 
-    let check = FIELD_CONTRACTS
-        .iter()
-        .find(|c| c.agent_id == AGENT && c.path == PATH)
-        .and_then(|c| c.cross_check_sql)
+    let check = fermi::grounding_trust::cross_check_for(AGENT, PATH)
         .expect("the factor value must carry a cross-check; its exemption was discharged");
     let coverage = coverage_sql_for(AGENT, PATH)
         .expect("and a denominator, or an empty ledger reads as verified");
@@ -223,11 +223,7 @@ async fn the_factor_cross_check_can_go_red() {
         .await
         .expect("connect");
 
-    let check = FIELD_CONTRACTS
-        .iter()
-        .find(|c| c.agent_id == AGENT && c.path == PATH)
-        .and_then(|c| c.cross_check_sql)
-        .expect("cross_check_sql");
+    let check = fermi::grounding_trust::cross_check_for(AGENT, PATH).expect("a CROSS_CHECKS entry");
     let coverage = coverage_sql_for(AGENT, PATH).expect("coverage");
 
     let mut tx = pool.begin().await.expect("begin");
@@ -1098,11 +1094,8 @@ async fn the_weather_checks_are_live_or_say_they_are_inert() {
 
 /// Re-host one declared check's predicate over a single supplied document.
 fn predicate_over_one_doc(agent: &str, path: &str) -> String {
-    let sql = FIELD_CONTRACTS
-        .iter()
-        .find(|c| c.agent_id == agent && c.path == path)
-        .and_then(|c| c.cross_check_sql)
-        .unwrap_or_else(|| panic!("{agent}.{path} declares no cross_check_sql"));
+    let sql = fermi::grounding_trust::cross_check_for(agent, path)
+        .unwrap_or_else(|| panic!("{agent}.{path} has no CROSS_CHECKS entry"));
 
     let (_, predicate) = sql.split_once(COHORT_PLACEHOLDER).unwrap_or_else(|| {
         panic!(

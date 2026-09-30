@@ -1,0 +1,96 @@
+{
+  "_prototype": "NOT LIVE. This is the `grounding` map football_analyst would carry if the card vocabulary had a per-field form, and it exists to answer one question: can a card express what `grounding_trust::FIELD_CONTRACTS` expresses for this agent, exactly? `tests/per_field_card_vocabulary.rs` asserts it can, path for path and state for state, against the 13 registered rows. Nothing reads this file at runtime; the live card still carries the per-block map beside it.",
+
+  "_why_this_agent": "football_analyst is the smallest agent that proves the need. It declares in BOTH homes, so the two readings can be compared directly. Its `advanced_metrics` block holds three different kinds of claim under one `sourced` stamp — `xg` retrieved, `xgd` computed from it, `ppda` never available — which is the overclaim the per-block form cannot avoid. And it owns exactly one cross-check, on `advanced_metrics.xgd`, so it also exercises the thing that made this migration possible: the check is keyed by (agent_id, path) in CROSS_CHECKS and survives its declaration moving here.",
+
+  "_the_extension": "A block MAY carry `fields`. When it does, the entries under `fields` are the declared paths and the block's own `status` is not one of them — it exists only to stamp `<block>_provenance`, and the platform derives it from the fields beneath (strongest wins: sourced > derived > inferred > unavailable, mirroring `grounding_trust::enforce`). A block with no `fields` behaves exactly as today, so every card in the fleet stays valid and unchanged.",
+
+  "_open_question_derived": "`xgd` is declared `derived`, which `card_contract::GROUNDING_STATUSES` does not currently admit — `PLATFORM_ASSIGNED_ONLY` withholds it so an author cannot assert that the platform computes their field. The proposed resolution is a gate rather than a new token's worth of trust: an author may write `derived` only where the platform already keeps the promise, i.e. `(agent_id, path)` appears in `DERIVATIONS` (we compute it) or in `CROSS_CHECKS` (we check it). That is `every_derived_field_is_computed_or_checked` moved from test time to publish time, and it is queryable at all only because CROSS_CHECKS is now keyed independently of the declaration. `xgd` passes on the second limb: nothing computes it, and the cross-check compares the document against itself.",
+
+  "grounding": {
+    "league_context": {
+      "status": "sourced",
+      "tool": "call_football_api",
+      "response_field": "league, season, standings",
+      "why": "API-Football returns league identity, season and the standings table directly. No field in this block is computed or judged, so the block needs no refinement."
+    },
+    "fixtures": {
+      "status": "sourced",
+      "tool": "call_football_api",
+      "response_field": "fixtures (date, teams, venue, status)",
+      "why": "Fixture lists come back whole from the fixtures endpoint. Nothing here is inferred."
+    },
+    "head_to_head": {
+      "status": "sourced",
+      "tool": "call_football_api",
+      "response_field": "h2h fixtures and aggregate record",
+      "why": "The h2h endpoint returns the prior meetings; the aggregate is read off them rather than recomputed here."
+    },
+    "injuries": {
+      "status": "sourced",
+      "tool": "call_football_api",
+      "response_field": "injuries (player, type, reason)",
+      "why": "The injuries endpoint returns the squad availability list. Coverage is uneven across leagues, which is a tool_no_match outcome rather than a different kind of claim."
+    },
+    "match_statistics": {
+      "status": "sourced",
+      "tool": "call_football_api",
+      "response_field": "statistics (shots, possession, corners, cards)",
+      "why": "Per-match statistics come back from the fixtures/statistics endpoint as reported by the data provider."
+    },
+
+    "advanced_metrics": {
+      "status": "sourced",
+      "tool": "call_football_api",
+      "response_field": "statistics.expected_goals",
+      "why": "Refined below. The block-level status is retained for readers that do not understand `fields`, and is the strongest of its fields — but it is precisely the thing that was misleading: two of the three fields under it are not retrievals at all.",
+      "fields": {
+        "xg": {
+          "status": "sourced",
+          "tool": "call_football_api",
+          "response_field": "statistics.expected_goals",
+          "why": "API-Football exposes expected_goals on the fixture statistics payload for covered leagues. Often absent, which is a tool_no_match on this field rather than a gap in the contract."
+        },
+        "xgd": {
+          "status": "derived",
+          "from": "advanced_metrics.xg, advanced_metrics.xga",
+          "how": "xg - xga",
+          "why": "Not retrieved and not judged: it is the difference of two retrieved numbers. Declared derived rather than sourced because no endpoint returns it, and derived rather than inferred because it is reproducible — which is what makes the platform's cross-check possible. Nothing in DERIVATIONS computes it deliberately: computing it here would make the cross-check true by construction and destroy the only falsifiable signal this agent has that is affordable on every run. See CROSS_CHECKS for (football_analyst, advanced_metrics.xgd)."
+        },
+        "ppda": {
+          "status": "unavailable",
+          "why": "Passes allowed per defensive action is Opta event-stream data. API-Football does not carry it and no other declared tool does, so the field must be null; a value here came from the model. This is the declaration the per-block form could not make — under one `sourced` stamp, a fabricated ppda read as tool-verified."
+        }
+      }
+    },
+
+    "ratings": {
+      "status": "unavailable",
+      "why": "Refined below. Both fields are the same kind of absence, so the block status happens to be faithful here — the refinement buys the per-field count and the per-field strip, not a correction.",
+      "fields": {
+        "elo_current": {
+          "status": "unavailable",
+          "why": "API-Football has no Elo endpoint. The card names ClubElo as the methodology and no ClubElo tool is declared, so every Elo this agent has stated came from the model — one episode reported elo_current = 1834 while describing the method it had not run. Returns to `sourced` when a ClubElo or equivalent tool is added."
+        },
+        "elo_implied_win_probability": {
+          "status": "unavailable",
+          "why": "A transform of elo_current, which is itself unavailable. Deriving a probability from an unavailable input would launder the guess into a number that looks computed."
+        }
+      }
+    },
+
+    "squad_value": {
+      "status": "unavailable",
+      "why": "Market valuations are Transfermarkt data. No declared tool returns them, so the block must be null rather than carry a plausible figure."
+    },
+    "assessment": {
+      "status": "inferred",
+      "from": "league_context, fixtures, head_to_head, injuries, match_statistics",
+      "why": "The judgement this agent is commissioned to make. No database holds a match assessment; producing one from the retrieved blocks is the work, and it is stamped model_inference so it can never present as a retrieval."
+    },
+    "summary": {
+      "status": "narrative",
+      "why": "Prose for a reader. Carries no proposition to settle, so it takes no provenance stamp and is scanned instead for claims the sourced blocks cannot support."
+    }
+  }
+}

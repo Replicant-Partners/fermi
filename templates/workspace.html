@@ -1015,6 +1015,8 @@
                border-radius:2px;padding:1px 5px;}
       .team-cs.bad{color:var(--red,#fb4934);border-color:var(--red,#fb4934);}
       .team-cs.none{border:none;padding:0;color:var(--fg4);font-style:italic;}
+      /* The grain is not a state, so it must not wear a state's chip. */
+      .team-cs.grain{border:none;padding:0 0 0 2px;color:var(--fg4);}
 
       /* ─── Team tab ───────────────────────────────────────────────────── */
       .team-section-title { font-size:0.72rem; color:var(--aqua); text-transform:uppercase;
@@ -4057,12 +4059,31 @@
               // and coloured because it is the one state that is a defect: a
               // contract naming a tool the platform cannot dispatch, so that
               // field can never settle.
+              //
+              // `contract_grain` says WHAT was counted, and the row prints it
+              // because the two grains are not comparable. A contract in
+              // `FIELD_CONTRACTS` is per field; one compiled onto the agent's
+              // card is per block, and a block is several fields. `23 fields`
+              // beside `3 blocks` is a fair comparison between two members;
+              // `23` beside `3` says one is eight times better specified,
+              // which is an artefact of where its contract happens to live.
               const cs = a.contract_states || {};
               const ORDER = ["error", "resolved", "pending", "derived", "inferred", "narrative"];
               const csParts = ORDER.filter(k => cs[k]).map(k =>
                 `<span class="team-cs ${k === "error" ? "bad" : ""}">${cs[k]} ${tEsc(k)}</span>`);
+              const csTotal = ORDER.reduce((n, k) => n + (cs[k] || 0), 0);
+              const GRAIN_WHY = {
+                field: "Counted per field, from the platform's registered contract table.",
+                block: "Counted per block, from the contract compiled onto this agent's card. "
+                     + "A block is several fields, so this count does not compare with a "
+                     + "member counted per field.",
+              };
+              const grain = a.contract_grain
+                ? `<span class="team-cs grain" title="${tEsc(GRAIN_WHY[a.contract_grain] || "")}">over `
+                  + `${csTotal} ${tEsc(a.contract_grain)}${csTotal === 1 ? "" : "s"}</span>`
+                : "";
               const trust = csParts.length
-                ? `<div class="team-cap-trust"><span class="team-cap-label">trusted about</span>${csParts.join("")}</div>`
+                ? `<div class="team-cap-trust"><span class="team-cap-label">trusted about</span>${csParts.join("")}${grain}</div>`
                 : `<div class="team-cap-trust"><span class="team-cap-label">trusted about</span>
                      <span class="team-cs none">no contract — nothing about this member's
                      output is checked</span></div>`;

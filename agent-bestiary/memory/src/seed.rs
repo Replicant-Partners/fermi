@@ -153,6 +153,8 @@ impl SeedData {
                     json!([{"name": "market-data", "url": "https://api.marketdata.example"}]),
                 ),
                 mcp_tools: None,
+                // NULL: a seeded agent inherits whatever its card file declares.
+                skills: None,
                 description: Some("Semiconductor market analysis and forecasting".to_string()),
                 author: "fermi-lab".to_string(),
                 current_ontology_commit: None,
@@ -193,6 +195,7 @@ impl SeedData {
                 capability_gates: serde_json::Value::Object(serde_json::Map::new()),
                 persona_version: 1,
                 fermi_contract: None,
+                simops_contract: None,
                 model_params: serde_json::Value::Object(serde_json::Map::new()),
                 valence: None,
                 taxonomy: None,
@@ -214,6 +217,8 @@ impl SeedData {
                     {"name": "sanctions-db", "url": "https://sanctions.example"}
                 ])),
                 mcp_tools: None,
+                // NULL: a seeded agent inherits whatever its card file declares.
+                skills: None,
                 description: Some(
                     "Geopolitical conflict and sanctions risk assessment".to_string(),
                 ),
@@ -256,6 +261,7 @@ impl SeedData {
                 capability_gates: serde_json::Value::Object(serde_json::Map::new()),
                 persona_version: 1,
                 fermi_contract: None,
+                simops_contract: None,
                 model_params: serde_json::Value::Object(serde_json::Map::new()),
                 valence: None,
                 taxonomy: None,
@@ -274,6 +280,8 @@ impl SeedData {
                 temperature: 0.5,
                 mcp_servers: None,
                 mcp_tools: None,
+                // NULL: a seeded agent inherits whatever its card file declares.
+                skills: None,
                 description: Some("Crypto and DeFi sentiment tracking".to_string()),
                 author: "community".to_string(),
                 current_ontology_commit: None,
@@ -314,6 +322,7 @@ impl SeedData {
                 capability_gates: serde_json::Value::Object(serde_json::Map::new()),
                 persona_version: 1,
                 fermi_contract: None,
+                simops_contract: None,
                 model_params: serde_json::Value::Object(serde_json::Map::new()),
                 valence: None,
                 taxonomy: None,

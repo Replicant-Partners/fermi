@@ -352,7 +352,7 @@
 
       <!-- LLM Provider Keys -->
       <div class="section">
-        <div class="section-title">LLM Provider Keys</div>
+        <div class="section-title" id="provider-keys">LLM Provider Keys</div>
         <div style="font-size:0.8rem;color:var(--fg3);margin-bottom:16px">
           API keys for LLM and embedding providers. Set here to make a provider
           available to all your agents. Keys are encrypted at rest and never
@@ -364,7 +364,10 @@
       </div>
 
       <!-- Agent Connections (Secrets) -->
-      <div class="section">
+      <!-- Anchored. An agent's Instruments panel tells an owner which key is
+           missing and links here; a link to a page rather than to the section
+           on it leaves them scrolling for the control they were just sent to. -->
+      <div class="section" id="connections">
         <div class="section-title">Connections</div>
         <div style="font-size: 0.8rem; color: var(--fg3); margin-bottom: 12px">
           Credentials used by agents to act on your behalf (API tokens for

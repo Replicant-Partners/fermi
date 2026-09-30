@@ -755,17 +755,31 @@
     const counts = d.counts || {};
     const errors = counts.error || 0;
     const present = COMPILE_ORDER.filter(k => counts[k]);
+    // A contract is stored in one of two places at two granularities, and a
+    // row count means nothing without saying which. `FIELD_CONTRACTS` holds a
+    // dotted path per row; a card's compiled `grounding` holds a response
+    // block per row, and a block is several fields. Printing `3 declared
+    // field(s)` for a card contract would understate it and invite a
+    // comparison with a per-field specimen that is not the same unit.
+    const unit = d.grain === "block" ? "block" : "field";
+    const unitNote = d.grain === "block"
+      ? `<div class="af-note">Declared per <b>block</b>, on the agent's card \u2014 one row
+         per top-level response block, each covering several fields. Agents whose contract
+         is registered in the platform table are counted per field, so these two row counts
+         are not the same unit.</div>`
+      : "";
     // No verdict word here. This block is about the STORED contract's fields,
     // which is one input to the agent's verdict at the top of the shelf and not
     // the verdict itself — it used to say "Compiles." three inches above an
     // editor saying "Not compiled" about a different subject.
     return `<div class="cmp">
       <div class="cmp-head ${errors ? "bad" : "ok"}">The contract as stored:
-        <b>${fields.length} declared field(s)</b>${errors
+        <b>${fields.length} declared ${unit}(s)</b>${errors
           ? `, and <b>${errors}</b> that nothing can settle.`
           : `, nothing unresolvable.`}</div>
       <div class="cmp-tally">${present.map(k =>
         `<span class="cmp-chip c-${k}"><b>${counts[k]}</b> ${esc(k)}</span>`).join("")}</div>
+      ${unitNote}
       ${counts.pending ? `<div class="af-note">Green means zero <b>errors</b>. The
         ${counts.pending} pending field(s) are declared gaps with no source yet \u2014 each
         one a standing request for an integration, and pruning them to reach green would
@@ -777,7 +791,7 @@
           ? ` \u2014 ${esc([...new Set(fields.filter(f => f.state === "error")
               .map(f => f.tool).filter(Boolean))].join(", "))}` : ""}</span>
       </div>`).join("")}
-      <details class="expert"><summary>every declared field</summary>
+      <details class="expert"><summary>every declared ${unit}</summary>
         ${fields.map(f => `<div class="cmp-row">
           <span class="cmp-t c-${esc(f.state)}">${esc(f.state)}</span>
           <span class="cmp-path">${esc(f.path)}</span>
@@ -949,9 +963,16 @@
   // The bank account.
   //
   // An agent that pulses spends money doing it, and the shelf could tell you
-  // what model it runs on but not what that costs. Read-only: every figure is a
-  // measurement, and the two that ARE settings \u2014 fork price, dreaming budget \u2014
-  // are not editable yet and do not pretend to be.
+  // what model it runs on but not what that costs.
+  //
+  // The figures here are MEASUREMENTS \u2014 what it spent, over how many pulses.
+  // The settings that sit next to them (fund the dreaming budget, price a fork,
+  // collect what it earned) used to carry the line "not editable yet and do not
+  // pretend to be", which was true and was also the whole complaint: every one
+  // of them existed on the old page, and an owner sent to the shelf to configure
+  // an agent could read its balance and change nothing about it. They are a
+  // mounted group now \u2014 `af-economics` \u2014 and each writes to the admin-gated
+  // endpoint that owns it rather than to the general PUT.
   function bankBlock(r, p) {
     const money = (n) => (n == null ? "\u2014" : "$" + Number(n).toFixed(Number(n) < 1 ? 4 : 2));
     // Absent is not zero.
@@ -978,6 +999,7 @@
       </div>
       ${known && dreamLeft <= 0 ? `<div class="af-note">Out of dream credits, so Loop 1
         cannot run for this agent \u2014 it will keep answering and stop learning.</div>` : ""}
+      <div id="af-economics"></div>
     </div>`;
   }
 
@@ -1105,6 +1127,32 @@
     </div>`;
   }
 
+  // The instruments, in one line.
+  //
+  // "Instruments" is the platform's own word for exactly this union —
+  // `taxonomy::derive` takes `has_instruments: mcp_servers \u222a mcp_tools \u222a
+  // skills` and ranks the agent by it. Naming the panel anything else would
+  // have put a second word on a concept the classifier already has one for.
+  // (It is also not "reach": `Identity and reach` below is about who may call
+  // this agent, which is the opposite direction.)
+  //
+  // `null` is not zero here and the difference is a real rule: a NULL
+  // `mcp_servers` / `mcp_tools` column means the DB has no opinion and the
+  // filesystem card decides (`interpret_db_column`), while `[]` means the
+  // owner has explicitly removed what the card declared. Printing both as `0`
+  // would tell an owner their agent reaches nothing while the executor hands
+  // it a card full of servers.
+  function instrumentMeta(p) {
+    const sk = p.skills || {}, ins = p.instruments || {};
+    return [
+      sk.declared ? `${sk.declared} skill(s)` : "no skills",
+      ins.remote_servers == null
+        ? "servers from its card file" : `${ins.remote_servers} remote server(s)`,
+      ins.published_tools == null
+        ? "exports from its card file" : `${ins.published_tools} tool(s) exported`,
+    ].join(" \u00b7 ");
+  }
+
   function drawer() {
     const p = D.profile;
     document.getElementById("drawer").innerHTML = `
@@ -1125,6 +1173,9 @@
         <div class="af-meta">${esc((p.substrate || {}).executor || "no executor")}
           \u00b7 persona v${(p.substrate || {}).persona_version ?? 1}</div>
         <div id="af-intelligence"></div></div>
+      <div class="block"><h3><span class="g-mark">\u229e</span>Instruments</h3>
+        <div class="af-meta">${instrumentMeta(p)}</div>
+        <div id="af-instruments"></div></div>
       <div class="block"><h3><span class="g-mark">\u25c9</span>Personality</h3>
         <div class="af-meta">how it reads, and how far that is from its teammates</div>
         <div id="af-personality"></div></div>
@@ -1196,7 +1247,8 @@
     // does the model live" — which is the mistake that made the old page render
     // thirteen metrics twice under different names.
     if (typeof AgentFields !== "undefined") {
-      ["prompt", "intelligence", "personality", "competition", "manage", "ports"].forEach(group => {
+      ["prompt", "intelligence", "personality", "competition", "manage", "ports",
+       "economics", "instruments"].forEach(group => {
         const host = document.getElementById("af-" + group);
         if (!host) return;
         AgentFields.mount({
@@ -1204,6 +1256,14 @@
           agentId: p.agent_name,
           group,
           profile: p,
+          // The dream budget is a measurement and lives on the record, not the
+          // profile. Passed rather than re-fetched: the shelf already has it,
+          // and a second read is a second number that can disagree.
+          record: D.record,
+          // Funding and consolidating change figures this shelf is printing, so
+          // the shelf re-reads rather than patching its local copy \u2014 the same
+          // rule the field save follows, for the same reason.
+          onEconomics: () => boot(),
           // Re-read rather than patch the local copy: the PUT may normalise a
           // value, and a shelf showing what you typed while the platform holds
           // something else is the drift this whole surface exists to prevent.
@@ -1211,7 +1271,8 @@
         });
       });
     } else {
-      ["prompt", "intelligence", "personality", "competition", "manage", "ports"].forEach(group => {
+      ["prompt", "intelligence", "personality", "competition", "manage", "ports",
+       "economics", "instruments"].forEach(group => {
         const host = document.getElementById("af-" + group);
         if (host) {
           host.innerHTML = `<div class="note">The field editor did not load, so this

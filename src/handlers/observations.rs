@@ -699,6 +699,7 @@ pub async fn ingest_observations_handler(
                 creature_id: None,
                 cognition_tier: None,
                 credentials,
+                registry: None,
                 // Text-only path: this caller carries no image. Stated rather than
                 // defaulted, so a path that should carry one cannot acquire the field
                 // silently.

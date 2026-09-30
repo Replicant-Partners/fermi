@@ -62,6 +62,11 @@ CARDINAL RULES (override everything else):
     /// agents that demand a specific output format (JSON schema agents like fermi).
     /// The preamble's "ALWAYS provide analysis" instruction causes the LLM to
     /// ignore JSON format requirements and return narrative text instead.
+    ///
+    /// When `context.registry` is `Some`, the live fleet digest is prepended
+    /// so meta-agents (xaman_ek) receive the fleet map without having to call
+    /// `fleet_map` first. See `docs/architecture/META_AGENT_FLEET_AWARENESS.md`
+    /// — prompt-time injection.
     fn build_system_prompt(&self, context: &ExecutionContext) -> String {
         let base_prompt = if let Some(ref custom) = context.agent_card.system_prompt {
             if !custom.trim().is_empty() {
@@ -72,6 +77,15 @@ CARDINAL RULES (override everything else):
         } else {
             "You are a forecasting research agent helping to generate evidence for probabilistic forecasts.".to_string()
         };
+
+        // Fleet-digest injection (META_AGENT_FLEET_AWARENESS.md — prompt-time tier).
+        //
+        // When a registry is present the agent is a meta-agent (xaman_ek). The
+        // digest is built from the live registry on every call — O(structure),
+        // never stale — and prepended so the navigator has the map without
+        // needing to call `fleet_map` first. If listing fails the prompt
+        // degrades gracefully (the tools still exist and the agent can call them).
+        let base_prompt = context.enrich_system_prompt(base_prompt);
 
         // Skip the preamble for agents that enforce a specific output format.
         // The preamble's "ALWAYS provide your best analysis" causes the LLM to

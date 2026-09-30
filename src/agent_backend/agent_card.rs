@@ -403,6 +403,12 @@ pub struct AgentCapabilities {
     #[serde(default)]
     pub fermi_contract: Option<FermiContract>,
 
+    /// SimOps orchestra specialist contract. Declaring this marks the agent
+    /// as capable of participating in a SimOps pipeline. Membership (workspace
+    /// hiring) is separate. See `docs/architecture/SIMOPS_COMPANION_AWARENESS.md`.
+    #[serde(default)]
+    pub simops_contract: Option<SimopsContract>,
+
     /// Domain output contract — the typed schema every member of a
     /// domain-constrained MoE must produce.
     ///
@@ -538,6 +544,54 @@ pub struct CepSeedFact {
     pub description: String,
     pub properties: serde_json::Value,
     pub confidence: f64,
+}
+
+/// Capability contract for SimOps orchestra specialists.
+///
+/// Declaring this marks the agent as capable of participating in a
+/// SimOps domain-constrained MoE pipeline. Membership (which workspace
+/// the agent is hired into) is separate from capability declaration,
+/// following the same split as `fermi_contract` / `orchestra_members`.
+///
+/// `simops_companion` reads these contracts via `list_workspace_agents`
+/// to route correctly — by role, not by hardcoded agent ID or tag.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimopsContract {
+    /// Pipeline role. Core roles (always on the primary pipeline):
+    ///   `cascade`   — deterministic mass balance, energy, carbon, LCC
+    ///   `predictor` — yield regression, SOSA learning, R² tracking
+    ///   `optimizer` — what-if solver, actuation planning
+    ///   `narrator`  — plain-language explanation of cascade output
+    ///   `dynamics`  — ODE time-series, coupled biology models
+    ///   `advisor`   — conversational process design wizard
+    /// Extension roles (supplementary analysis):
+    ///   `extension` — set `extension_task` for the specific sub-role
+    pub role: String,
+
+    /// Sub-role for `extension` specialists.
+    /// Examples: `pricing`, `sidestream`, `comparison`, `energy`, `sensor`.
+    #[serde(default)]
+    pub extension_task: Option<String>,
+
+    /// One sentence: what this specialist does in the SimOps pipeline.
+    /// Used by `simops_companion` for routing — not the description field.
+    pub task: String,
+
+    /// Schema ID of the primary typed input this specialist accepts.
+    /// Matches the namespaced label in `accepts` where one exists.
+    #[serde(default)]
+    pub accepts_schema: Option<String>,
+
+    /// Schema ID of the primary typed output this specialist produces.
+    /// Matches `output_contract.produces_schema` where compiled.
+    #[serde(default)]
+    pub produces_schema: Option<String>,
+
+    /// Calibration signal emitted on each successful run.
+    ///   `sosa_observation` — SOSA yield measurement vs prediction
+    ///   `null`             — no calibration signal (most extension agents)
+    #[serde(default)]
+    pub calibration_signal: Option<String>,
 }
 
 fn default_provider() -> String {
@@ -781,6 +835,7 @@ impl AgentCard {
                 capability_gates: HashMap::new(),
                 min_provider_class: MinProviderClass::default(),
                 fermi_contract: None,
+                simops_contract: None,
                 output_contract: None,
                 input_contract: None,
                 competition: None,
@@ -1278,7 +1333,12 @@ mod tests {
             .iter()
             .map(|t| t.name())
             .collect();
-        for tool in ["fleet_map", "describe_agent", "who_answers", "agents_of_type"] {
+        for tool in [
+            "fleet_map",
+            "describe_agent",
+            "who_answers",
+            "agents_of_type",
+        ] {
             assert!(
                 prompt.contains(tool),
                 "the prompt does not mention `{tool}`. The roster is gone and \

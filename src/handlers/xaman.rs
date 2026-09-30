@@ -18,6 +18,7 @@ use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::Row;
+use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::AppState;
@@ -613,6 +614,10 @@ async fn call_xaman_ek(state: &AppState, _user_id: &str, query: &str) -> Result<
         creature_id: None,
         cognition_tier: None,
         credentials,
+        // Prompt-time fleet-digest injection: the navigator receives the live
+        // fleet map in its system prompt without needing to call `fleet_map`
+        // first. See docs/architecture/META_AGENT_FLEET_AWARENESS.md.
+        registry: Some(Arc::clone(&state.registry)),
         // Text-only path: this caller carries no image. Stated rather than
         // defaulted, so a path that should carry one cannot acquire the field
         // silently.

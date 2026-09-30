@@ -1,9 +1,9 @@
 # Meta-agent fleet awareness
 
-**Status:** Built — prompt tier (`src/fleet_digest.rs`), tool tier
-(`fleet_map`, `describe_agent`, `who_answers`, `agents_of_type`), and
-`xaman_ek` migrated off its roster. Prompt-time injection is the named next step.
-**Date:** 2026-09-07
+**Status:** Complete — prompt tier (`src/fleet_digest.rs`), tool tier
+(`fleet_map`, `describe_agent`, `who_answers`, `agents_of_type`),
+`xaman_ek` migrated off its roster, and prompt-time injection shipped.
+**Date:** 2026-09-08
 **Related:** `docs/architecture/AKP-ecology-design-doc - roadmap.md` §7,
              `docs/AGENT_MODEL.md` §3.3,
              `docs/plans/WHAT_THE_PLATFORM_CAN_REFUSE.md` §4.5
@@ -241,6 +241,7 @@ contractable meta agent today.
 | prompt | `fleet_digest::digest` / `render`, capped at `MAP_ROWS` | built |
 | prompt | `fleet_digest::WHAT_YOU_DO_NOT_KNOW` | built |
 | prompt | `Digest::describes(live_count)` — staleness | built |
+| prompt | `ExecutionContext::enrich_system_prompt` — injection | **built** |
 | tool | `fleet_map` — the map, from the live registry | built |
 | tool | `describe_agent(agent_id)` — the facts for one agent | built |
 | tool | `who_answers(label)` — cohort plus reading | built |
@@ -253,22 +254,26 @@ roster was 33% of it — and
 `the_navigator_reads_the_fleet_rather_than_reciting_it`, which asserts the
 inverse and is O(1) in the fleet.
 
-### Why the map is a tool rather than injected into the prompt
+### Why the map is ected into the prompt
 
-Injection is the better end state: the map would be present without being asked
-for, which is the difference between a navigator that knows the shape and one
-that has to remember to look.
+Injection is the better end state: the map is present without being asked for,
+which is the difference between a navigator that knows the shape and one that
+has to remember to look.
 
-It needs `AgentRegistry` at `LlmExecutor::build_system_prompt`, and
-`ExecutionContext` carries no registry — its construction sites deliberately
-state every field explicitly, so adding one touches all of them. That is named
-rather than rushed.
+**Shipped 2026-09-08.** `ExecutionContext` gained an optional
+`registry: Option<Arc<AgentRegistry>>` field. All construction sites state it
+explicitly (as `None`). The two xaman_ek execution paths (MCP server
+`ask_xaman_ek` handler and web `call_xaman_ek` handler) pass
+`registry: Some(Arc::clone(&...registry))`. A new
+`ExecutionContext::enrich_system_prompt` method builds the digest from the live
+registry and prepends it; both `LlmExecutor::build_system_prompt` and
+`ToolAwareExecutor::execute_anthropic_loop` call it so injection happens on
+every executor branch xaman_ek might reach.
 
-Served as a tool the map has two properties injection would not improve: it is
-computed from the live registry on every call, so it cannot go stale, and it
-costs nothing for the agents that never ask. The residual risk is real and worth
-stating — a model that does not call `fleet_map` has no map — which is why the
-prompt names the tools in order and says what it does not know.
+The map is still O(structure): `enrich_system_prompt` rebuilds the digest on
+every call, so it cannot go stale, and it costs nothing for agents whose
+construction site supplies `registry: None` — which is every agent that is not
+a meta-agent.
 
 ## Generalising
 

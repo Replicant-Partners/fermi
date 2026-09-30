@@ -49,7 +49,7 @@ Every agent has all of these (code: `AgentCard` in
 pub struct AgentCapabilities {
     pub executor: ExecutorType,          // llm / mcp / manual / skill
     pub mcp_tools: Vec<McpTool>,         // tools this agent can call
-    pub skills: Vec<String>,             // declarative skill labels
+    pub skills: Vec<String>,             // declarative skill labels — see 1.2.1b
     pub model: String,                   // default model
     pub temperature: f64,                // legacy — superseded by model_params
     pub provider: String,                // anthropic / mistral / openrouter / qwen / glm
@@ -76,6 +76,39 @@ tools), `manual` (human-in-the-loop), `skill` (multi-step workflow).
 The same agent card can drive any of these via the
 `MultiModelExecutor → LLMExecutor → MockExecutor` fallback chain
 (`src/agent_backend/multi_model_executor.rs`).
+
+#### 1.2.1b Skills — two kinds of label, one field
+
+`skills` carries two unrelated things, and only one of them does anything at
+run time:
+
+| kind | test | effect |
+|---|---|---|
+| **executable** | an EXACT match in `SkillRegistry::names()` | `validate_card_skills` puts it in the runtime skill set; the executor can invoke it directly, deterministically, with no model in the loop |
+| **taxonomy label** | anything else | read by `xaman_ek` for discovery and composition, and by nothing else |
+
+The consequence is worth stating plainly: **a typo in an executable name is
+not an error, it is a new taxonomy label.** The agent silently does not get
+the capability its author believed they granted. `PUT /api/agents/:id`
+therefore refuses a name that differs from a registered skill only in case
+(`normalise_skills`), which is the one wrong-spelling case decidable without
+guessing, and `GET /api/skills` publishes the vocabulary so an author is not
+declaring against a registry they cannot read.
+
+**Storage and precedence (migration 239).** `agents.skills` (`TEXT[]`,
+nullable, no default) overrides the filesystem card with the same three states
+as `mcp_servers` and `mcp_tools`, applied by `resolve_agent_card`:
+
+| column | meaning |
+|---|---|
+| `NULL` | inherit whatever the agent card file declares |
+| `'{}'` | explicitly none — the only way to remove a card-declared skill |
+| non-empty | authoritative replacement |
+
+The fleet tools (`list_agents`, `describe_agent`) read the registry rather
+than resolving per agent, so they apply the same override themselves via
+`apply_skill_overrides` — otherwise an owner's edit to the field that governs
+discovery would not take effect until the process restarted.
 
 #### 1.2.2 Model ladder + cognition tier (ADR-011)
 

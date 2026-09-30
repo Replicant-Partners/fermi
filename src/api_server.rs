@@ -1388,6 +1388,11 @@ async fn run_migrations(db: &PgPool) {
         // in `lens_actions.rs` says "migration 232 pending". Registering it is
         // what makes those actions actually auditable.
         "migrations/232_lens_action_types.sql",
+        // 233 — `agents.simops_contract` (jsonb, nullable). Typed capability
+        // declaration for SimOps orchestra specialists, plus the informational
+        // `orchestra_simops_members` view. Capability/membership split mirrors
+        // mig-105 (fermi_contract) and mig-180. NULL = not a SimOps participant.
+        "migrations/233_simops_contract.sql",
         // 234 — admits `evaluate_claims` to the same constraint. Unlike its
         // three DPP neighbours, that action runs an agent against the live
         // regulatory corpus and spends credits, so its log row is the audit
@@ -1440,6 +1445,14 @@ async fn run_migrations(db: &PgPool) {
         // real cross-check needing no external corpus. Deliberately has no
         // unique key: the duplicates ARE the evidence.
         "migrations/238_carbon_emission_factors.sql",
+        // 239 — `agents.skills`. `capabilities.skills` is one of the four fields
+        // the fleet index gives a navigator, so it is half of what any
+        // strategist composes on — and it lived only in a card file on a
+        // read-only filesystem, with no column and no `AgentUpdate` member.
+        // No owner could change what their agent is discoverable as, by any
+        // route. Nullable with no default so NULL keeps inheriting the card:
+        // the same three-state precedence as `mcp_servers` and `mcp_tools`.
+        "migrations/239_agents_skills.sql",
     ];
 
     // Bootstrap the ledger before anything is recorded into it.
@@ -2618,21 +2631,20 @@ async fn main() {
             ("DEEPSEEK_API_KEY", "deepseek"),
             ("KIMI_API_KEY", "kimi"),
             ("GEMINI_API_KEY", "gemini"),
-            // Not an LLM provider — a tool credential, and the first to travel
-            // this path. `web_search` (Brave) is what grounds any agent that
-            // answers from a live corpus instead of from training data, so it
-            // is funded like a provider key: the store is authoritative and
-            // env is a one-time bootstrap seed.
+            // Not an LLM provider — a tool credential, and the first one to
+            // travel this path. `web_search` (Brave) is what grounds any
+            // agent that answers from a live corpus instead of from training
+            // data, so it is funded exactly like a provider key: the store is
+            // authoritative and env is a one-time bootstrap seed.
             //
             // mig-171 scoped `agent_credentials` to LLM/embedding providers
-            // and left tool secrets in `user_secrets`. That split cannot serve
-            // a platform-service agent: `resolve_agent_owner_secrets` returns
-            // `None` for curated and system tiers by design, because those
-            // agents have no owner to hold a secret. So a curated agent had no
-            // store path to a tool key at all, and `web_search` reads env
-            // directly — the one thing AGENT_CREDENTIAL_MODEL.md §2 says never
-            // to do. Seeding it here is what makes the key manageable through
-            // ABW rather than only through the deploy environment.
+            // and left tool secrets in `user_secrets`. That split cannot
+            // serve a platform-service agent: `resolve_agent_owner_secrets`
+            // returns `None` for curated and system tiers by design, because
+            // those agents have no owner to hold a secret. So a curated agent
+            // had no store path to a tool key at all, and `web_search` read
+            // env directly — the one thing
+            // docs/specs/AGENT_CREDENTIAL_MODEL.md §2 says never to do.
             ("BRAVE_SEARCH_API_KEY", "brave_search"),
         ] {
             if let Ok(key) = std::env::var(env_var) {
@@ -2946,6 +2958,11 @@ async fn main() {
             "/api/agents/:agent_id/published-tools",
             get(handlers::agents::get_agent_published_tools_handler),
         )
+        // The executable-skill vocabulary. Unauthenticated: a description of
+        // what the platform can run, not of anybody's agent. Exists because
+        // `agents.skills` became writable (mig-239) and an author cannot
+        // declare a capability from a registry that is published nowhere.
+        .route("/api/skills", get(handlers::agents::list_skills_handler))
         .route(
             "/api/agents/:agent_id/eval/test-cases/:test_case_id",
             put(handlers::eval::update_eval_test_case_handler),
@@ -5709,25 +5726,36 @@ async fn seed_agents_to_database(
         eprintln!("seed_agents_to_database: no admin user found — curated agents will have no owner until one is set");
     }
 
-    // ── xaman_ek ontology sync check ───────────────────────────────────────
-    // Enforce the maintenance rule: every agent on disk must be named in
-    // xaman_ek's system_prompt. Missing agents mean xaman_ek will give
-    // incorrect navigation and composition advice.
+    // ── xaman_ek fleet-tool check ───────────────────────────────────────────
+    // Since META_AGENT_FLEET_AWARENESS.md, xaman_ek reads the fleet via tools
+    // (fleet_map, describe_agent, who_answers, agents_of_type) rather than
+    // reciting a per-agent roster in its prompt. The roster check that used to
+    // live here enforced the superseded architecture and produced a wall of
+    // warnings against the new prompt on every startup.
+    //
+    // The replacement verifies that the fleet-query tools are declared on the
+    // card — a missing tool is the failure mode WHAT_YOU_DO_NOT_KNOW guards
+    // against: the navigator is told to call something it cannot reach.
     let xaman_card = cards.iter().find(|c| c.agent_id == "xaman_ek");
     if let Some(xc) = xaman_card {
-        let prompt = xc.system_prompt.as_deref().unwrap_or("");
-        let missing: Vec<&str> = cards
+        let declared_tools: Vec<&str> = xc
+            .capabilities
+            .mcp_tools
             .iter()
-            .filter(|c| c.agent_id != "xaman_ek")
-            .filter(|c| !prompt.contains(&format!("**{}**", c.agent_id)))
-            .map(|c| c.agent_id.as_str())
+            .map(|t| t.name.as_str())
             .collect();
-        if !missing.is_empty() {
-            eprintln!(
-                "⚠  xaman_ek ONTOLOGY DRIFT: {} agent(s) on disk not registered in xaman_ek's system_prompt.\n   Missing: {}\n   Update agents/curated/xaman_ek/agent_card.json per the maintenance rule.",
-                missing.len(),
-                missing.join(", ")
-            );
+        for tool in [
+            "fleet_map",
+            "describe_agent",
+            "who_answers",
+            "agents_of_type",
+        ] {
+            if !declared_tools.contains(&tool) {
+                eprintln!(
+                    "⚠  xaman_ek is missing fleet tool `{tool}` in mcp_tools — \
+                     the navigator cannot call a tool it does not declare."
+                );
+            }
         }
     }
 
@@ -5743,6 +5771,12 @@ async fn seed_agents_to_database(
             temperature: card.capabilities.temperature,
             mcp_servers: None,
             mcp_tools: None,
+            // NULL, like the two above and for the same reason: the card file
+            // this row was seeded FROM is the thing NULL inherits, so writing
+            // the card's skills into the column here would make the DB
+            // authoritative from the first boot and quietly freeze the card.
+            // An owner's edit is what makes the column speak.
+            skills: None,
             description: Some(card.metadata.description.clone()),
             author: card.metadata.author.clone(),
             current_ontology_commit: None,
@@ -5806,6 +5840,11 @@ async fn seed_agents_to_database(
                 .fermi_contract
                 .as_ref()
                 .and_then(|fc| serde_json::to_value(fc).ok()),
+            simops_contract: card
+                .capabilities
+                .simops_contract
+                .as_ref()
+                .and_then(|sc| serde_json::to_value(sc).ok()),
             model_params: card.capabilities.model_params.clone(),
             valence: card
                 .metadata
@@ -6645,7 +6684,11 @@ pub(crate) fn agent_card_from_db(agent: &Agent) -> AgentCard {
             // silently disagree with file cards.
             mcp_tools: vec![],
             mcp_servers: vec![],
-            skills: vec![],
+            // Unlike the two above, this one CAN be filled from the row:
+            // `agents.skills` (mig-239) is the real column, not a misnamed
+            // one, so a DB-only agent carries the skills it declares instead
+            // of reaching the fleet index empty.
+            skills: agent.skills.clone().unwrap_or_default(),
             model: agent.model.clone(),
             temperature: agent.temperature,
             provider: agent.llm_provider.clone(),
@@ -6664,6 +6707,10 @@ pub(crate) fn agent_card_from_db(agent: &Agent) -> AgentCard {
             min_provider_class: fermi::agent_backend::agent_card::MinProviderClass::default(),
             fermi_contract: agent
                 .fermi_contract
+                .as_ref()
+                .and_then(|v| serde_json::from_value(v.clone()).ok()),
+            simops_contract: agent
+                .simops_contract
                 .as_ref()
                 .and_then(|v| serde_json::from_value(v.clone()).ok()),
             output_contract: agent.output_contract.clone(),
@@ -6804,6 +6851,26 @@ pub(crate) fn resolve_agent_card(state: &AppState, db_agent: &Agent) -> AgentCar
     // affected — `to_claude_tools_with_card` starts from all builtins — so
     // this gap only ever broke ABW-as-MCP-server.
     //
+    // Bridge declarative skills from DB — the discovery direction.
+    //
+    // Same three states, and this one is the simplest of the three because
+    // `Vec<String>` admits no shape ambiguity: there is no legacy spill to
+    // defend against and nothing to parse, so `Option` alone carries the
+    // precedence.
+    //
+    //   None            inherit the card file
+    //   Some(vec![])    explicitly none — how an owner REMOVES a
+    //                   card-declared skill
+    //   Some(non-empty) authoritative
+    //
+    // This is what makes the column mean anything: the fleet index, the
+    // executor's skill dispatch (`validate_card_skills`) and the taxonomy's
+    // `has_instruments` all read `capabilities.skills`, and until this bridge
+    // existed they all read a file that no owner could write.
+    if let Some(skills) = db_agent.skills.as_ref() {
+        card.capabilities.skills = skills.clone();
+    }
+
     // Same precedence as mcp_servers: NULL inherits from the file card,
     // `[]` publishes nothing, non-empty is authoritative.
     if let Some(raw) = db_agent.mcp_tools.as_ref() {

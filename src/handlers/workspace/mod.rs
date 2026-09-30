@@ -14,8 +14,8 @@
 
 pub mod actions;
 pub mod agent_params_hook;
-pub mod carbon;
 pub mod bom_pricing;
+pub mod carbon;
 pub mod claim_evaluation;
 mod coherence;
 mod core;

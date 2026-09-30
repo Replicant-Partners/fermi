@@ -16,6 +16,41 @@ use uuid::Uuid;
 
 use crate::AppState;
 
+/// One agent, resolved the way every other agent endpoint resolves one.
+///
+/// # The bug this ends
+///
+/// Every handler in this file opened with `Uuid::parse_str(&agent_id)` and
+/// returned `400 Invalid agent ID` when it failed. Every URL on the platform
+/// carries the **name** — `/agent/football_analyst`, `/specimen/…` — so the
+/// Manage tab's wallet panel called `/api/agents/football_analyst/wallet`,
+/// got a 400, and printed **"Could not load wallet"**. An owner reading that
+/// has been told their agent has no bank account; what happened is that this
+/// file spoke a different dialect from the other ~40 agent routes, all of
+/// which go through `resolve_agent`.
+///
+/// # Why the uuid still travels
+///
+/// Wallets are keyed by `owner_ref`, and the agent wallet's `owner_ref` is
+/// the uuid **string**. Passing the path parameter straight to
+/// `get_or_create_wallet` would have minted a SECOND wallet named
+/// `football_analyst` the first time anyone used a name — an empty balance
+/// beside a funded one, with no error. So callers get the parsed uuid back
+/// and `wallet_ref()` is the only thing they may hand to the wallet layer.
+async fn resolve_agent_for_wallet(
+    state: &AppState,
+    agent_id: &str,
+) -> Result<(Uuid, Option<String>, String), (StatusCode, String)> {
+    let agent = crate::resolve_agent(state, agent_id).await?;
+    Ok((agent.agent_id, agent.owner_id, agent.agent_name))
+}
+
+/// The string the wallet layer keys an agent wallet by. Never the path
+/// parameter — see [`resolve_agent_for_wallet`].
+fn wallet_ref(agent_uuid: Uuid) -> String {
+    agent_uuid.to_string()
+}
+
 /// v0.10.5: substrate RBAC. Wallet operations are Admin-only
 /// (financial actions on the agent's own credit balance). No share
 /// grants access.
@@ -50,31 +85,19 @@ pub async fn get_agent_wallet_handler(
     Path(agent_id): Path<String>,
     principal: AuthPrincipal,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let agent_uuid = Uuid::parse_str(&agent_id)
-        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid agent ID".to_string()))?;
+    let (agent_uuid, owner_id, agent_name) = resolve_agent_for_wallet(&state, &agent_id).await?;
 
-    // Look up agent to check ownership
-    let agent_row =
-        sqlx::query("SELECT user_id, agent_name, auto_collect_pct FROM agents WHERE agent_id = $1")
+    let auto_collect_pct: i32 =
+        sqlx::query_scalar("SELECT auto_collect_pct FROM agents WHERE agent_id = $1")
             .bind(agent_uuid)
-            .fetch_optional(&state.db)
+            .fetch_one(&state.db)
             .await
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("DB error: {}", e),
-                )
-            })?
-            .ok_or((StatusCode::NOT_FOUND, "Agent not found".to_string()))?;
-
-    let owner_id: Option<String> = agent_row.try_get("user_id").unwrap_or(None);
-    let agent_name: String = agent_row.try_get("agent_name").unwrap_or_default();
-    let auto_collect_pct: i32 = agent_row.try_get("auto_collect_pct").unwrap_or(0);
+            .unwrap_or(0);
 
     require_admin_on_agent(&state.db, &principal, agent_uuid, &owner_id).await?;
 
     // Get or create agent wallet
-    let wallet = get_or_create_wallet(&state.db, "agent", &agent_id)
+    let wallet = get_or_create_wallet(&state.db, "agent", &wallet_ref(agent_uuid))
         .await
         .map_err(|e| {
             (
@@ -112,7 +135,9 @@ pub async fn get_agent_wallet_handler(
 
     Ok(Json(json!({
         "wallet_id": wallet.wallet_id,
-        "agent_id": agent_id,
+        // The uuid, not whatever the caller happened to put in the path. A
+        // response that echoes the request cannot be used to key anything.
+        "agent_id": agent_uuid,
         "agent_name": agent_name,
         "balance": wallet.balance,
         "total_earned": total_earned,
@@ -141,21 +166,7 @@ pub async fn get_agent_earnings_handler(
     Query(params): Query<EarningsQuery>,
     principal: AuthPrincipal,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let agent_uuid = Uuid::parse_str(&agent_id)
-        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid agent ID".to_string()))?;
-
-    let owner_id: Option<String> =
-        sqlx::query_scalar("SELECT user_id FROM agents WHERE agent_id = $1")
-            .bind(agent_uuid)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("DB error: {}", e),
-                )
-            })?
-            .ok_or((StatusCode::NOT_FOUND, "Agent not found".to_string()))?;
+    let (agent_uuid, owner_id, _) = resolve_agent_for_wallet(&state, &agent_id).await?;
 
     require_admin_on_agent(&state.db, &principal, agent_uuid, &owner_id).await?;
 
@@ -223,28 +234,12 @@ pub async fn collect_handler(
     principal: AuthPrincipal,
     Json(body): Json<CollectBody>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let agent_uuid = Uuid::parse_str(&agent_id)
-        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid agent ID".to_string()))?;
-
-    let agent_row = sqlx::query("SELECT user_id, agent_name FROM agents WHERE agent_id = $1")
-        .bind(agent_uuid)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("DB error: {}", e),
-            )
-        })?
-        .ok_or((StatusCode::NOT_FOUND, "Agent not found".to_string()))?;
-
-    let owner_id: Option<String> = agent_row.try_get("user_id").unwrap_or(None);
-    let agent_name: String = agent_row.try_get("agent_name").unwrap_or_default();
+    let (agent_uuid, owner_id, agent_name) = resolve_agent_for_wallet(&state, &agent_id).await?;
     let user_id = principal.user_id();
 
     require_admin_on_agent(&state.db, &principal, agent_uuid, &owner_id).await?;
 
-    let agent_wallet = get_or_create_wallet(&state.db, "agent", &agent_id)
+    let agent_wallet = get_or_create_wallet(&state.db, "agent", &wallet_ref(agent_uuid))
         .await
         .map_err(|e| {
             (
@@ -360,21 +355,7 @@ pub async fn allocate_handler(
     principal: AuthPrincipal,
     Json(body): Json<AllocateBody>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let agent_uuid = Uuid::parse_str(&agent_id)
-        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid agent ID".to_string()))?;
-
-    let owner_id: Option<String> =
-        sqlx::query_scalar("SELECT user_id FROM agents WHERE agent_id = $1")
-            .bind(agent_uuid)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("DB error: {}", e),
-                )
-            })?
-            .ok_or((StatusCode::NOT_FOUND, "Agent not found".to_string()))?;
+    let (agent_uuid, owner_id, _) = resolve_agent_for_wallet(&state, &agent_id).await?;
 
     require_admin_on_agent(&state.db, &principal, agent_uuid, &owner_id).await?;
 
@@ -397,7 +378,7 @@ pub async fn allocate_handler(
         ));
     }
 
-    let agent_wallet = get_or_create_wallet(&state.db, "agent", &agent_id)
+    let agent_wallet = get_or_create_wallet(&state.db, "agent", &wallet_ref(agent_uuid))
         .await
         .map_err(|e| {
             (
@@ -423,7 +404,9 @@ pub async fn allocate_handler(
         body.amount,
         tx_type,
         &format!("Allocate to {}", body.service),
-        Some(&agent_id),
+        // The uuid, so the ledger reference resolves whether the caller
+        // addressed the agent by name or by id.
+        Some(&wallet_ref(agent_uuid)),
     )
     .await
     .map_err(|e| {
@@ -471,21 +454,7 @@ pub async fn set_auto_collect_handler(
     principal: AuthPrincipal,
     Json(body): Json<AutoCollectBody>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let agent_uuid = Uuid::parse_str(&agent_id)
-        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid agent ID".to_string()))?;
-
-    let owner_id: Option<String> =
-        sqlx::query_scalar("SELECT user_id FROM agents WHERE agent_id = $1")
-            .bind(agent_uuid)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("DB error: {}", e),
-                )
-            })?
-            .ok_or((StatusCode::NOT_FOUND, "Agent not found".to_string()))?;
+    let (agent_uuid, owner_id, _) = resolve_agent_for_wallet(&state, &agent_id).await?;
 
     require_admin_on_agent(&state.db, &principal, agent_uuid, &owner_id).await?;
 
@@ -511,4 +480,56 @@ pub async fn set_auto_collect_handler(
     Ok(Json(json!({
         "auto_collect_pct": body.pct,
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    /// Every route on this platform is addressed by agent NAME.
+    ///
+    /// `/agent/football_analyst`, `/specimen/football_analyst`,
+    /// `/api/agents/football_analyst/…` — the uuid appears in no URL a human
+    /// or a page ever holds. Every handler in this file nonetheless opened
+    /// with `Uuid::parse_str(&agent_id)` and returned `400 Invalid agent ID`,
+    /// so the Manage tab's wallet panel rendered **"Could not load wallet"**
+    /// for every agent on the platform, for as long as the panel has existed.
+    ///
+    /// The failure is invisible to the type system and to every unit test,
+    /// because the handler is correct in isolation — it is wrong only about
+    /// which dialect the rest of the platform speaks. So this reads the file:
+    /// the path parameter goes through `resolve_agent`, like everywhere else,
+    /// or the wallet stops being reachable again.
+    ///
+    /// The needles are assembled rather than written, because this test's own
+    /// prose names the pattern it forbids and a literal would match itself.
+    #[test]
+    fn the_wallet_is_addressed_the_way_every_other_agent_route_is() {
+        // Code only. Both the resolver's doc comment and this test's own prose
+        // quote the patterns being forbidden, which is the point of them.
+        let whole = include_str!("agent_wallet.rs");
+        let code: String = whole[..whole.find("#[cfg(test)]").unwrap_or(whole.len())]
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let src = code.as_str();
+        let parse_path = format!("Uuid::{}(&agent_id)", "parse_str");
+        let wallet_by_path = format!(
+            "get_or_create_wallet(&state.db, {}, &agent_id)",
+            "\"agent\""
+        );
+        assert!(
+            !src.contains(&parse_path),
+            "a wallet handler parses the path parameter as a uuid. Every URL on \
+             this platform carries the agent NAME, so that is a 400 on every \
+             real request and the panel renders \"Could not load wallet\". Use \
+             `resolve_agent_for_wallet`, which accepts either."
+        );
+        assert!(
+            !src.contains(&wallet_by_path),
+            "an agent wallet is being looked up by the raw path parameter. \
+             `owner_ref` is the uuid STRING, so a request addressed by name \
+             would mint a second, empty wallet beside the funded one and report \
+             a zero balance with no error. Use `wallet_ref(agent_uuid)`."
+        );
+    }
 }

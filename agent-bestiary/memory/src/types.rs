@@ -605,6 +605,21 @@ pub struct Agent {
     /// inherits its card's declarations until an operator publishes
     /// explicitly. Writes go through `AgentUpdate`.
     pub mcp_tools: Option<serde_json::Value>,
+    /// Declarative capability labels (migration 239).
+    ///
+    /// Same three-state precedence as `mcp_servers` / `mcp_tools`, and the
+    /// `Option` is what carries it: `None` inherits the filesystem card,
+    /// `Some(vec![])` is an explicit "none" that overrides the card, and a
+    /// non-empty vector replaces it. Collapsing this to a bare `Vec<String>`
+    /// would make "inherit" and "remove everything" the same value and there
+    /// would be no way to express removal.
+    ///
+    /// Two kinds of label share the field by design — names registered in
+    /// `SkillRegistry`, which the executor can invoke directly, and free text
+    /// read by `xaman_ek` for discovery. `validate_card_skills` separates them
+    /// at runtime; nothing here needs to.
+    #[serde(default)]
+    pub skills: Option<Vec<String>>,
     pub description: Option<String>,
     pub author: String,
     pub system_prompt: Option<String>,
@@ -675,6 +690,11 @@ pub struct Agent {
     // CEP: structured probabilistic reasoning contract (migration 105)
     #[serde(default)]
     pub fermi_contract: Option<serde_json::Value>,
+    // SimOps orchestra specialist contract (migration 233).
+    // `simops_contract IS NOT NULL` = agent declares SimOps capability.
+    // Membership (workspace hiring) is separate from capability declaration.
+    #[serde(default)]
+    pub simops_contract: Option<serde_json::Value>,
     // ADR-011 Phase 4: provider-agnostic sampling configuration (migration 106)
     #[serde(default = "default_json_object")]
     pub model_params: serde_json::Value,
@@ -775,6 +795,12 @@ pub struct AgentUpdate {
     /// with `tools::invalid_tool_declarations` before writing — a name with
     /// no dispatch arm becomes a phantom tool.
     pub mcp_tools: Option<serde_json::Value>,
+    /// Declarative capability labels (migration 239).
+    ///
+    /// The one field a composing agent reads that an owner could not write.
+    /// `Some(vec![])` clears a file card's declarations; `None` leaves the
+    /// column alone, which leaves the card in charge.
+    pub skills: Option<Vec<String>>,
     pub llm_provider: Option<String>,
     // ADR-011: cognition economy
     pub model_ladder: Option<serde_json::Value>,

@@ -1,5 +1,6 @@
 use crate::agent_backend::agent_card::{AgentCard, CognitionTier};
 use crate::agent_backend::credentials::ResolvedCredentials;
+use crate::agent_backend::registry::AgentRegistry;
 use crate::ast::{AgentStmt, EvidenceStmt, Program};
 /// Agent Executors
 ///
@@ -30,6 +31,18 @@ pub struct ExecutionContext {
     /// that forgets to resolve credentials must not quietly spend the
     /// platform's money.
     pub credentials: Arc<ResolvedCredentials>,
+    /// The fleet registry, for prompt-time fleet-digest injection.
+    ///
+    /// `None` on every execution path except meta-agents (xaman_ek). When
+    /// `Some`, `LlmExecutor::build_system_prompt` prepends the live fleet
+    /// digest so the navigator has the map without having to call
+    /// `fleet_map` first. See `docs/architecture/META_AGENT_FLEET_AWARENESS.md`
+    /// — prompt-time injection.
+    ///
+    /// All construction sites state this field explicitly (as `None`) so
+    /// a reader can see the decision and a reviewer can see where it is
+    /// `Some`. `with_registry` is the builder for the `Some` case.
+    pub registry: Option<Arc<AgentRegistry>>,
     /// Images travelling with this request.
     ///
     /// Empty on every existing path, and every literal construction site states
@@ -56,12 +69,24 @@ impl ExecutionContext {
             creature_id: None,
             cognition_tier: None,
             credentials: ResolvedCredentials::unfunded_arc(),
+            registry: None,
             attachments: Vec::new(),
         }
     }
 
     pub fn with_credentials(mut self, credentials: Arc<ResolvedCredentials>) -> Self {
         self.credentials = credentials;
+        self
+    }
+
+    /// Attach the fleet registry for prompt-time digest injection.
+    ///
+    /// Only meta-agents (e.g. xaman_ek) should receive a registry. The
+    /// digest is O(structure) rather than O(agents), but is not free.
+    /// Setting it here lets `LlmExecutor::build_system_prompt` inject
+    /// the live fleet map without the agent needing to call `fleet_map`.
+    pub fn with_registry(mut self, registry: Arc<AgentRegistry>) -> Self {
+        self.registry = Some(registry);
         self
     }
 
@@ -141,6 +166,43 @@ impl ExecutionContext {
     /// settings rather than on the prompt.
     pub fn card_prompt_hash(&self) -> Option<String> {
         self.agent_card.declared_prompt_sha256.clone()
+    }
+
+    /// Apply the live fleet digest to a system prompt when a registry is present.
+    ///
+    /// When `self.registry` is `Some`, the digest is built from the live
+    /// registry (O(structure), not O(agents)) and prepended to `base_prompt`.
+    /// When `None`, `base_prompt` is returned unchanged.
+    ///
+    /// Called by every executor branch that builds a system prompt
+    /// (LlmExecutor, ToolAwareExecutor) so the injection point is the context,
+    /// not duplicated code per executor. See META_AGENT_FLEET_AWARENESS.md.
+    pub fn enrich_system_prompt(&self, base_prompt: String) -> String {
+        use crate::fleet_digest::{digest, CardFacts};
+        if let Some(ref registry) = self.registry {
+            match registry.list_cards() {
+                Ok(cards) => {
+                    let facts: Vec<CardFacts> = cards
+                        .iter()
+                        .map(|c| {
+                            let mut port_labels = c.accepts.clone();
+                            port_labels.extend(c.produces.iter().cloned());
+                            CardFacts {
+                                agent_id: c.agent_id.clone(),
+                                agent_type: c.agent_type.clone(),
+                                accepts: c.accepts.clone(),
+                                port_labels,
+                            }
+                        })
+                        .collect();
+                    let map = digest(&facts).render();
+                    format!("{map}\n\n{base_prompt}")
+                }
+                Err(_) => base_prompt,
+            }
+        } else {
+            base_prompt
+        }
     }
 
     /// `md5`-free hash of the prompt the model was ACTUALLY sent, including any
@@ -517,5 +579,49 @@ mod tests {
         // Doc 12 § Capability 2 — version stamp fields default to None.
         assert!(m.agent_version_id.is_none());
         assert!(m.agent_version_number.is_none());
+    }
+
+    /// Without a registry, `enrich_system_prompt` is a no-op.
+    #[test]
+    fn enrich_system_prompt_passthrough_when_no_registry() {
+        let card = crate::agent_backend::AgentCard::new("test".to_string(), "research".to_string());
+        let ctx = ExecutionContext::for_agent(Program { statements: vec![] }, card);
+        let base = "You are a research agent.".to_string();
+        assert_eq!(ctx.enrich_system_prompt(base.clone()), base);
+    }
+
+    /// With a registry, the live fleet map is prepended.
+    #[test]
+    fn enrich_system_prompt_prepends_digest_when_registry_present() {
+        use crate::agent_backend::registry::AgentRegistry;
+        use std::sync::Arc;
+        let card = crate::agent_backend::AgentCard::new("xaman_ek".to_string(), "meta".to_string());
+        let registry = Arc::new(AgentRegistry::new());
+        // Register a couple of agents so the digest has something to say.
+        registry
+            .register(crate::agent_backend::AgentCard::new(
+                "weather_oracle".to_string(),
+                "research".to_string(),
+            ))
+            .unwrap();
+        let ctx = ExecutionContext::for_agent(Program { statements: vec![] }, card)
+            .with_registry(Arc::clone(&registry));
+        let base = "You are the navigator.".to_string();
+        let enriched = ctx.enrich_system_prompt(base.clone());
+        // The digest is prepended: it must start with FLEET MAP.
+        assert!(
+            enriched.starts_with("FLEET MAP"),
+            "expected enriched prompt to start with FLEET MAP, got: {enriched:.80}"
+        );
+        // The original prompt text is still present.
+        assert!(
+            enriched.contains(&base),
+            "original prompt text missing from enriched prompt"
+        );
+        // The WHAT_YOU_DO_NOT_KNOW boundary is included.
+        assert!(
+            enriched.contains("describe_agent"),
+            "WHAT_YOU_DO_NOT_KNOW block missing from enriched prompt"
+        );
     }
 }

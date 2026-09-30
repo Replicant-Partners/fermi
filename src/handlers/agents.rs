@@ -759,6 +759,15 @@ pub(crate) struct CreateAgentRequest {
     /// original defect, admitted through a newer door.
     #[serde(default)]
     pub(crate) mcp_tools: Option<serde_json::Value>,
+    /// Declarative capability labels (migration 239).
+    ///
+    /// Accepted at birth because this is half of what a composing agent sees:
+    /// the fleet index hands a navigator `{id, type, description, skills}` and
+    /// nothing else. An agent created without them is created undiscoverable,
+    /// and the create wizard is the one moment an author is already thinking
+    /// about what the thing is for.
+    #[serde(default)]
+    pub(crate) skills: Option<Vec<String>>,
 }
 
 pub fn default_agent_type() -> String {
@@ -854,7 +863,17 @@ pub async fn create_agent_handler(
         agent_type: req.agent_type.clone(),
         produces: req.produces.clone(),
         has_required_deps: false,
-        has_instruments: false,
+        // Was hard-coded `false`, which classified every agent created here as
+        // carrying no instruments even when the same request declared tools.
+        // `api_server.rs` computes it as `mcp_servers ∪ mcp_tools ∪ skills`
+        // when seeding from a card file; this is the same union over the two
+        // of those an API-created agent can have.
+        has_instruments: req
+            .mcp_tools
+            .as_ref()
+            .and_then(|v| v.as_array())
+            .is_some_and(|a| !a.is_empty())
+            || req.skills.as_ref().is_some_and(|s| !s.is_empty()),
     });
 
     let agent = Agent {
@@ -868,6 +887,10 @@ pub async fn create_agent_handler(
         temperature: req.temperature,
         mcp_servers: None,
         mcp_tools: req.mcp_tools.clone().filter(|v| !v.is_null()),
+        // No filesystem card exists for an agent created here, so there is
+        // nothing for NULL to inherit and the two states collapse. Stored as
+        // given.
+        skills: req.skills.clone(),
         description: req.description,
         author: user_id.clone(),
         system_prompt: req.system_prompt,
@@ -908,6 +931,7 @@ pub async fn create_agent_handler(
         capability_gates: serde_json::Value::Object(serde_json::Map::new()),
         persona_version: 1,
         fermi_contract: None,
+        simops_contract: None,
         model_params: serde_json::Value::Object(serde_json::Map::new()),
         valence: None,
         output_contract: req.output_contract.filter(|v| v.is_object()),
@@ -1155,6 +1179,18 @@ pub async fn import_agent_handler(
         // field or a new agent would come up with a server list that is
         // actually a tool list.
         mcp_servers: caps.and_then(|c| c.get("mcp_servers")).cloned(),
+        // Same reason as `mcp_tools` below: the card arrives in the request
+        // body and is never written to disk, so NULL here would inherit from
+        // a file that does not exist and the imported agent would reach the
+        // fleet index with no skills — invisible to composition, though its
+        // card declares them.
+        skills: caps.and_then(|c| c.get("skills")).and_then(|v| {
+            v.as_array().map(|a| {
+                a.iter()
+                    .filter_map(|s| s.as_str().map(str::to_string))
+                    .collect()
+            })
+        }),
         // Persisted, not left to inherit: an agent created through this
         // path has no filesystem card to inherit from (the card arrives in
         // the request body), so dropping this would mean the agent
@@ -1249,6 +1285,13 @@ pub async fn import_agent_handler(
         fermi_contract: if principal.can_admin() {
             card.get("capabilities")
                 .and_then(|c| c.get("fermi_contract"))
+                .cloned()
+        } else {
+            None
+        },
+        simops_contract: if principal.can_admin() {
+            card.get("capabilities")
+                .and_then(|c| c.get("simops_contract"))
                 .cloned()
         } else {
             None
@@ -2328,6 +2371,16 @@ pub async fn update_agent_handler(
         }
     }
 
+    // Clean the skill list and refuse a case-mismatched capability name.
+    //
+    // Rewrites `updates.skills` in place, so what is stored is what the
+    // classification below reports — a response describing a list the DB does
+    // not hold is the drift this endpoint's own diff exists to prevent.
+    if let Some(raw) = updates.skills.as_ref() {
+        let cleaned = normalise_skills(raw).map_err(|m| (StatusCode::BAD_REQUEST, m))?;
+        updates.skills = Some(cleaned);
+    }
+
     // Capture pre-update version number for the activity-feed event (Doc 12 §
     // Capability 3). Snapshotting *after* the update means the previous max
     // is the from-version; cheap query, runs once per PUT.
@@ -2389,11 +2442,115 @@ pub async fn update_agent_handler(
         });
     }
 
+    // When skills changed, say which of them the platform can actually run.
+    //
+    // The split is invisible in the stored value — both kinds are strings in
+    // one array — and it is the whole difference between granting a
+    // capability and adding a keyword. An author who typed `monte_carlo`
+    // instead of `run_monte_carlo` gets a valid save and a response saying
+    // the name resolved to nothing executable, which is the only moment the
+    // platform can tell them.
+    let skills_report = updates.skills.as_ref().map(|s| {
+        let registered: std::collections::HashSet<&'static str> =
+            fermi::agent_backend::tools::SkillRegistry::names()
+                .into_iter()
+                .collect();
+        let (executable, labels): (Vec<&String>, Vec<&String>) =
+            s.iter().partition(|k| registered.contains(k.as_str()));
+        json!({
+            "executable": executable,
+            "labels": labels,
+            "note": "`executable` names resolve in SkillRegistry and the executor \
+                     can invoke them directly. `labels` are discovery text read by \
+                     xaman_ek and by nothing else — a label cannot make this agent \
+                     able to do anything.",
+        })
+    });
+
     Ok(Json(json!({
         "message": "Agent updated successfully",
         "version_number": new_version.as_ref().map(|v| v.version_number),
         "version_id": new_version.as_ref().map(|v| v.version_id),
+        "skills": skills_report,
     })))
+}
+
+/// The maximum number of skill labels one agent may declare.
+///
+/// Not a storage limit — a bound on the fleet index. `execute_list_agents`
+/// returns `{id, type, description, skills}` for every agent in the registry
+/// on every call, so an agent with three hundred labels is a cost the whole
+/// platform pays each time any navigator asks what exists. 64 is generous
+/// against the fleet's actual maximum (the richest card declares 9).
+const MAX_SKILLS: usize = 64;
+
+/// Clean a submitted skill list, and refuse the one mistake that is silent.
+///
+/// # The failure this exists for
+///
+/// `capabilities.skills` carries two unrelated kinds of label and
+/// `validate_card_skills` tells them apart by **exact** match against
+/// `SkillRegistry`:
+///
+///   * **executable** — `run_monte_carlo`, `h3_resolve`. The executor can
+///     invoke these directly, deterministically, with no model in the loop.
+///   * **taxonomy** — `market-analysis`, `coherence-analysis`. Read by
+///     `xaman_ek` for discovery, and by nothing else.
+///
+/// Any string is a valid taxonomy label, so an unknown name cannot be
+/// rejected: that would make the free-text half of the field unusable. The
+/// consequence is that **a typo in an executable name is not an error, it is
+/// a new taxonomy label** — the agent simply, silently, does not get the
+/// capability its author believed they granted.
+///
+/// One case is decidable without heuristics: a name that matches a registered
+/// skill **case-insensitively but not exactly**. Nobody wants a discovery
+/// keyword that differs from a real capability only in capitalisation, and
+/// `Run_Monte_Carlo` is a request for `run_monte_carlo` by any reading. That
+/// is refused, naming the exact spelling.
+///
+/// Fuzzy matching beyond case is deliberately NOT attempted. "Did you mean"
+/// over edit distance would start refusing legitimate labels that happen to
+/// resemble a skill name, and a validator that rejects correct input is worse
+/// than one that misses some incorrect input.
+fn normalise_skills(raw: &[String]) -> Result<Vec<String>, String> {
+    let registered = fermi::agent_backend::tools::SkillRegistry::names();
+
+    let mut out: Vec<String> = Vec::new();
+    for s in raw {
+        let name = s.trim();
+        if name.is_empty() {
+            continue;
+        }
+        if let Some(exact) = registered
+            .iter()
+            .find(|r| r.eq_ignore_ascii_case(name) && **r != name)
+        {
+            return Err(format!(
+                "`{name}` differs from the registered skill `{exact}` only in case. \
+                 Skills are matched exactly, so this would be stored as a discovery \
+                 label and the agent would not get the capability. Write it as \
+                 `{exact}`, or choose a label that is not a near-miss for a real skill."
+            ));
+        }
+        // Order-preserving dedupe. A duplicate is not an error worth refusing
+        // a save over, but storing it would double-count the label everywhere
+        // the fleet index groups by it.
+        if !out.iter().any(|k| k == name) {
+            out.push(name.to_string());
+        }
+    }
+
+    if out.len() > MAX_SKILLS {
+        return Err(format!(
+            "{} skills declared; the limit is {MAX_SKILLS}. Every one of these is \
+             returned for this agent in the fleet index on every navigator call, \
+             so the list is a summary of what the agent is for rather than an \
+             inventory of everything it touches.",
+            out.len()
+        ));
+    }
+    Ok(out)
 }
 
 /// Lifecycle fields are not editable through `PUT /api/agents/:agent_id`.
@@ -2473,6 +2630,9 @@ fn collect_changed_fields(updates: &AgentUpdate) -> Vec<&'static str> {
     }
     if updates.prompt_template.is_some() {
         fields.push("prompt_template");
+    }
+    if updates.skills.is_some() {
+        fields.push("skills");
     }
     if updates.requires_secrets.is_some() {
         fields.push("requires_secrets");
@@ -3899,7 +4059,58 @@ pub async fn get_agent_published_tools_handler(
     })))
 }
 
-// ─── Tests ───────────────────────────────────────────────
+/// `GET /api/skills`
+///
+/// The executable skills the platform can dispatch, by name.
+///
+/// # Why this has to exist for `skills` to be writable
+///
+/// `capabilities.skills` mixes registered skill names with free-text
+/// discovery labels, and only an exact match against `SkillRegistry` makes a
+/// name the first kind. Until now **nothing published that registry**: the
+/// names existed in a Rust `vec!` and appeared in no API, no page and no tool
+/// response. An author declaring skills was therefore guessing at a
+/// vocabulary they could not read, and `xaman_ek` — which is told to compose
+/// from capabilities — could not enumerate the ones the platform can actually
+/// run.
+///
+/// So: the list, with what each does, what it takes, and whether a model may
+/// choose to call it. Unauthenticated, because this is a description of the
+/// platform rather than of anybody's agent — the same class of fact as the
+/// docs, and useless to withhold from a client that is about to be asked to
+/// pick from it.
+pub async fn list_skills_handler() -> Json<Value> {
+    let skills: Vec<Value> = fermi::agent_backend::tools::SkillRegistry::all()
+        .iter()
+        .map(|s| {
+            json!({
+                "name": s.name(),
+                "description": s.description(),
+                "category": format!("{:?}", s.category()).to_lowercase(),
+                "input_schema": s.input_schema(),
+                // `false` means the executor invokes it as part of a pipeline
+                // and the model never sees it in its tool list. Declaring one
+                // of those on a card is still meaningful — it is how the
+                // pipeline knows to run — so the flag travels rather than the
+                // entry being filtered out.
+                "llm_visible": s.is_llm_visible(),
+            })
+        })
+        .collect();
+
+    Json(json!({
+        "skills": skills,
+        "count": skills.len(),
+        "note": "An agent's `skills` may contain any string. A string that matches \
+                 one of these EXACTLY is executable — the executor can invoke it \
+                 directly, with no model in the loop. Anything else is a discovery \
+                 label, read by xaman_ek when it composes and by nothing else. The \
+                 match is case-sensitive; PUT /api/agents/:id refuses a name that \
+                 differs from one of these only in case.",
+    }))
+}
+
+// ─── Tests ──────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -3949,6 +4160,100 @@ mod tests {
         );
     }
 
+    // ─── Skills ───────────────────────────────────────
+    //
+    // Read against the real `SkillRegistry` rather than a fixture. The thing
+    // that would break these is somebody renaming or removing a skill, and a
+    // fixture would keep passing while the registry moved underneath it.
+
+    fn a_registered_skill() -> &'static str {
+        fermi::agent_backend::tools::SkillRegistry::names()
+            .first()
+            .copied()
+            .expect("the platform registers no skills at all")
+    }
+
+    #[test]
+    fn a_registered_name_and_free_text_both_survive() {
+        let real = a_registered_skill();
+        let out = normalise_skills(&[real.to_string(), "market-analysis".into()]).unwrap();
+        assert_eq!(out, vec![real.to_string(), "market-analysis".to_string()]);
+    }
+
+    /// The silent failure this validator exists for.
+    ///
+    /// `validate_card_skills` matches exactly, so `Run_Monte_Carlo` is not a
+    /// capability — it is a new taxonomy label, stored without complaint,
+    /// and the agent simply never gets the skill its author believed they
+    /// granted. Nothing downstream can tell that apart from a deliberate
+    /// keyword, so it has to be refused here or not at all.
+    #[test]
+    fn a_capability_name_that_differs_only_in_case_is_refused() {
+        let real = a_registered_skill();
+        let shouted = real.to_uppercase();
+        // Guard the premise: a skill whose name has no letters would make
+        // this test vacuous.
+        assert_ne!(shouted, real, "`{real}` has no case to differ in");
+
+        let err = normalise_skills(&[shouted.clone()]).unwrap_err();
+        assert!(
+            err.contains(real),
+            "the refusal does not name the exact spelling that would work: {err}"
+        );
+        assert!(
+            err.contains(&shouted),
+            "the refusal does not name what was submitted: {err}"
+        );
+    }
+
+    /// Free text is the other half of the field and must stay usable.
+    ///
+    /// An unknown name cannot be rejected — that would make discovery labels
+    /// impossible — and no fuzzy "did you mean" is attempted beyond case,
+    /// because a validator that refuses correct input is worse than one that
+    /// misses some incorrect input.
+    #[test]
+    fn an_unknown_name_is_a_label_and_not_an_error() {
+        let out = normalise_skills(&["run_monte_carl".into(), "nothing-like-a-skill".into()])
+            .expect("a near-miss that is not a case difference must not be refused");
+        assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn blanks_are_dropped_and_duplicates_collapse_in_order() {
+        let out = normalise_skills(&[
+            "  forecasting ".into(),
+            "".into(),
+            "   ".into(),
+            "forecasting".into(),
+            "pricing".into(),
+        ])
+        .unwrap();
+        assert_eq!(out, vec!["forecasting".to_string(), "pricing".to_string()]);
+    }
+
+    /// The cap is about the fleet index, not about storage: every skill is
+    /// returned for every agent on every navigator call.
+    #[test]
+    fn an_unbounded_list_is_refused() {
+        let many: Vec<String> = (0..MAX_SKILLS + 1).map(|i| format!("label-{i}")).collect();
+        let err = normalise_skills(&many).unwrap_err();
+        assert!(err.contains(&MAX_SKILLS.to_string()), "got: {err}");
+        // And the boundary itself is allowed.
+        let exact: Vec<String> = (0..MAX_SKILLS).map(|i| format!("label-{i}")).collect();
+        assert!(normalise_skills(&exact).is_ok());
+    }
+
+    /// An empty list is a real edit, not a no-op.
+    ///
+    /// `Some(vec![])` is the only way to remove a skill a card file declares.
+    /// If this ever started returning an error or being filtered out, removal
+    /// would become the one edit the platform ignores.
+    #[test]
+    fn clearing_the_list_is_allowed() {
+        assert_eq!(normalise_skills(&[]).unwrap(), Vec::<String>::new());
+    }
+
     /// Ordinary card edits must still pass. The guard is about lifecycle,
     /// not about freezing the card.
     #[test]
@@ -3983,6 +4288,7 @@ mod tests {
             temperature: default_temperature(),
             mcp_servers: None,
             mcp_tools: None,
+            skills: None,
             description: None,
             author: "tester".into(),
             system_prompt: None,
@@ -4023,6 +4329,7 @@ mod tests {
             capability_gates: json!({}),
             persona_version: 1,
             fermi_contract: None,
+            simops_contract: None,
             model_params: json!({}),
             valence: None,
             output_contract: None,
@@ -4111,6 +4418,7 @@ mod tests {
             requires_secrets: Some(json!([])),
             mcp_servers: Some(json!([])),
             mcp_tools: Some(json!([])),
+            skills: Some(vec!["run_monte_carlo".into()]),
             llm_provider: Some("anthropic".into()),
             model_ladder: Some(json!([])),
             min_tier: Some("free".into()),
@@ -4124,12 +4432,12 @@ mod tests {
             taxonomy: Some(json!({})),
         };
         let fields = collect_changed_fields(&updates);
-        // 26 fields on AgentUpdate today — if the count drifts here,
+        // 27 fields on AgentUpdate today — if the count drifts here,
         // either a field was added (good — wire it up above) or a
         // maintainer wired one twice (bad — dedupe).
         assert_eq!(
             fields.len(),
-            26,
+            27,
             "AgentUpdate has fields that collect_changed_fields doesn't cover: got {:?}",
             fields
         );

@@ -283,7 +283,17 @@ pub fn typed_tier_violations(view: &ContractView) -> Vec<crate::card_contract::F
     if is_typed_tier_exempt(view.agent_id) {
         return Vec::new();
     }
-    crate::card_contract::validate(view.output_contract, view.produces, &view.tool_names)
+    let mut out =
+        crate::card_contract::validate(view.output_contract, view.produces, &view.tool_names);
+    // The one check that needs to know WHICH agent this is. `validate` judges a
+    // document and is called before an agent exists to attach it to;
+    // `derived` can only be judged against the platform's registries for this
+    // agent_id, so it is asked here, where the identity is in hand.
+    out.extend(crate::card_contract::validate_derived_declarations(
+        view.agent_id,
+        view.output_contract,
+    ));
+    out
 }
 
 /// Judge a view against the contract. Empty result means conforming.

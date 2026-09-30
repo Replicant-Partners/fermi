@@ -878,12 +878,8 @@ const FALSIFICATIONS: &[Falsification] = &[
         check: "port_trust::is_mismatch",
         owner: "src/port_trust.rs",
         // Permissive reading: "the asking matched the declaration."
-        passes: || {
-            !fermi::port_trust::bind_input(&["query".to_string()]).is_mismatch()
-        },
-        fires: || {
-            !fermi::port_trust::bind_input(&["creature_id".to_string()]).is_mismatch()
-        },
+        passes: || !fermi::port_trust::bind_input(&["query".to_string()]).is_mismatch(),
+        fires: || !fermi::port_trust::bind_input(&["creature_id".to_string()]).is_mismatch(),
         models: "`Undeclared` and `NoTextInput` are different findings and only \
                  one is a mismatch: an agent that declared no ports has not \
                  contradicted anything. Collapsing them counted 9 cards with no \

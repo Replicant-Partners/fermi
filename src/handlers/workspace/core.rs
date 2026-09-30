@@ -289,6 +289,38 @@ pub async fn get_workspace_handler(
     })))
 }
 
+/// What one team member can be trusted about, and at what grain.
+///
+/// Returns `({token: count}, grain)`. The grain is `"field"`, `"block"`, or
+/// `None` when there is genuinely no contract.
+///
+/// Both homes are read, and the reason lives on `field_state::read_contract`.
+/// Reading only `FIELD_CONTRACTS` printed *"no contract — nothing about this
+/// member's output is checked"* over every agent whose contract is compiled
+/// onto its card — agents `enforce_from_output_contract` strips and stamps at
+/// every delegation hop, and that `workspace/bom_pricing.rs` gates explicitly.
+///
+/// A free function rather than a closure in the handler because the bug it
+/// fixes is not reachable through the handler without a database: this is the
+/// decision, so this is the thing a test has to be able to hold.
+///
+/// Deliberately carries no roster of which agents are in which home. The
+/// comment this fix was written from enumerated them and had already drifted —
+/// it named four `weather_*` when `weather_oracle` has 12 rows in the table and
+/// is not card-only. `every_card_only_agent_in_the_fleet_reads_as_contracted`
+/// asserts the property over every card on disk instead.
+fn member_contract_states(
+    agent_name: &str,
+    output_contract: Option<&Value>,
+    dispatchable: &dyn Fn(&str) -> bool,
+) -> (Value, Option<&'static str>) {
+    let reading = fermi::field_state::read_contract(agent_name, output_contract, dispatchable);
+    // An agent with no contract in EITHER home gets an empty map and no grain,
+    // not zeroes. Absent and "declared nothing wrong" are different findings,
+    // and most of the fleet is in the first.
+    (json!(reading.counts()), reading.grain.map(|g| g.token()))
+}
+
 pub async fn list_workspace_agents_handler(
     State(state): State<AppState>,
     _principal: AuthPrincipal,
@@ -312,6 +344,11 @@ pub async fn list_workspace_agents_handler(
                 wa.relationship, wa.added_by, wa.added_at,
                 a.input_contract->>'accepts_schema'   AS input_schema_id,
                 a.output_contract->>'produces_schema'  AS output_schema_id,
+                -- The whole contract, not just its name. `produces_schema`
+                -- says what shape comes back; `grounding` says which parts of
+                -- it can be relied on, and for ten agents it is the ONLY place
+                -- that is said. See `member_contract_states`.
+                a.output_contract,
                 a.accepts,
                 a.produces
          FROM workspace_agents wa
@@ -337,30 +374,33 @@ pub async fn list_workspace_agents_handler(
     // cannot drift from the two surfaces that already print those tokens — the
     // drift that had `unsourced` meaning a declared kind on one page and a
     // violation on another.
+    //
+    // Both homes a contract can have are read, and the grain travels with the
+    // counts. `member_contract_states` carries the whole reason.
     let dispatchable: std::collections::HashSet<&'static str> =
         fermi::agent_backend::tools::dispatchable_tool_names()
             .into_iter()
             .collect();
-    let contract_states = |agent_name: &str| -> Value {
-        let mut counts = std::collections::BTreeMap::<&'static str, usize>::new();
-        for c in fermi::grounding_trust::contracts_for(agent_name) {
-            let d = fermi::field_state::Declared::of(&c.grounding, |t| dispatchable.contains(t));
-            *counts.entry(d.token()).or_default() += 1;
-        }
-        // An agent with no contract gets an empty map, not zeroes. Absent and
-        // "declared nothing wrong" are different findings, and 81 of 102 agents
-        // are in the first.
-        json!(counts)
-    };
+    let dispatchable = |t: &str| dispatchable.contains(t);
 
     let agent_list: Vec<Value> = rows
         .iter()
         .map(|r| {
             let agent_name = r.try_get::<String, _>("agent_name").unwrap_or_default();
+            let output_contract = r
+                .try_get::<Option<Value>, _>("output_contract")
+                .unwrap_or(None);
+            let (states, grain) =
+                member_contract_states(&agent_name, output_contract.as_ref(), &dispatchable);
             json!({
                 "agent_id": r.try_get::<uuid::Uuid, _>("agent_id").ok(),
-                // Per-field contract states, keyed by the shared token.
-                "contract_states": contract_states(&agent_name),
+                // Contract states, keyed by the shared token.
+                "contract_states": states,
+                // What was counted: `field` (FIELD_CONTRACTS) or `block` (the
+                // card's grounding map). Null when there is no contract.
+                // Travels with the counts because the two grains are not
+                // comparable and a bare number invites the comparison.
+                "contract_grain": grain,
                 "agent_name": r.try_get::<String, _>("agent_name").unwrap_or_default(),
                 "display_alias": r.try_get::<Option<String>, _>("display_alias").unwrap_or(None),
                 "agent_type": r.try_get::<String, _>("agent_type").unwrap_or_default(),
@@ -440,6 +480,11 @@ pub async fn create_workspace_agent_handler(
         temperature: req.temperature,
         mcp_servers: None,
         mcp_tools: None,
+        // This path declares no skills, so the agent is created invisible to
+        // the fleet index. Left as-is rather than invented: a workspace agent
+        // is authored for one team's task, and the Instruments panel is where
+        // its author decides whether the rest of the platform should find it.
+        skills: None,
         description: req.description,
         author: principal.user_id(),
         system_prompt: req.system_prompt,
@@ -480,6 +525,7 @@ pub async fn create_workspace_agent_handler(
         capability_gates: serde_json::Value::Object(serde_json::Map::new()),
         persona_version: 1,
         fermi_contract: None,
+        simops_contract: None,
         model_params: serde_json::Value::Object(serde_json::Map::new()),
         valence: None,
         output_contract: None,
@@ -549,11 +595,21 @@ pub async fn workspace_budget_handler(
 
     let wallet = get_or_create_wallet(&state.db, "workspace", &workspace_id)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Wallet error: {e}")))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Wallet error: {e}"),
+            )
+        })?;
 
     let txs = credit_get_transactions(&state.db, wallet.wallet_id, 100)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Ledger error: {e}")))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Ledger error: {e}"),
+            )
+        })?;
 
     let charges: Vec<Value> = txs
         .iter()
@@ -571,8 +627,10 @@ pub async fn workspace_budget_handler(
 
     // Agent runs only. `amount` is negative for a charge, so the spend is the
     // negated sum; reporting the raw sum would show spending as a credit.
-    let exec: Vec<&fermi_auth::CreditTransaction> =
-        txs.iter().filter(|t| t.tx_type == "execution_fee").collect();
+    let exec: Vec<&fermi_auth::CreditTransaction> = txs
+        .iter()
+        .filter(|t| t.tx_type == "execution_fee")
+        .collect();
     let exec_total: i32 = exec.iter().map(|t| t.amount).sum::<i32>();
 
     Ok(Json(json!({
@@ -1087,5 +1145,277 @@ mod strategist_assignment_tests {
                  silently unavailable"
             );
         }
+    }
+}
+
+/// What the Team tab says a member can be trusted about.
+///
+/// The panel's own words are "nothing about this member's output is checked",
+/// which is a claim about the platform rather than a hedge. These pin it to
+/// what the platform actually does.
+#[cfg(test)]
+mod member_contract_state_tests {
+    use super::*;
+
+    fn dispatchable(t: &str) -> bool {
+        fermi::agent_backend::tools::dispatchable_tool_names().contains(&t)
+    }
+
+    /// The compiled contract as it sits on the agent's card in the repo.
+    ///
+    /// Read from the card rather than hand-written so the test cannot keep
+    /// passing against a shape the fleet no longer has.
+    fn card_contract_of(agent_id: &str) -> Value {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("agents/curated")
+            .join(agent_id)
+            .join("agent_card.json");
+        let card: Value = serde_json::from_str(
+            &std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display())),
+        )
+        .expect("agent card is JSON");
+        card["capabilities"]["output_contract"].clone()
+    }
+
+    fn total(states: &Value) -> u64 {
+        states
+            .as_object()
+            .expect("states is an object")
+            .values()
+            .map(|v| v.as_u64().unwrap_or(0))
+            .sum()
+    }
+
+    /// **The defect.**
+    ///
+    /// `supply_chain_oracle` has no `FIELD_CONTRACTS` entry and a fully
+    /// compiled contract on its card. Reading only the table rendered "no
+    /// contract — nothing about this member's output is checked" beside a
+    /// typed `scro/bom_response` port, about an agent
+    /// `enforce_from_output_contract` strips and stamps at every delegation
+    /// hop and that `workspace/bom_pricing.rs` gates explicitly.
+    #[test]
+    fn a_contract_that_lives_only_on_the_card_is_still_a_contract() {
+        let oc = card_contract_of("supply_chain_oracle");
+        assert!(
+            fermi::grounding_trust::contracts_for("supply_chain_oracle")
+                .next()
+                .is_none(),
+            "this test is about the card path. If supply_chain_oracle has \
+             gained FIELD_CONTRACTS entries, point it at another card-only \
+             agent rather than deleting it — ten agents are in this state."
+        );
+
+        let (states, grain) =
+            member_contract_states("supply_chain_oracle", Some(&oc), &dispatchable);
+
+        assert_eq!(
+            grain,
+            Some("block"),
+            "a card contract is counted per block, and the page must say so: \
+             a block is several fields and the counts do not compare with a \
+             member counted per field."
+        );
+        assert!(
+            total(&states) > 0,
+            "empty states render as `no contract` — the exact false negative \
+             this reads both homes to avoid. Got {states}"
+        );
+        // items is sourced from web_search; risks and summary are judgements.
+        assert_eq!(states["resolved"], json!(1), "states: {states}");
+        assert_eq!(states["inferred"], json!(2), "states: {states}");
+    }
+
+    /// The platform's own stamps are not part of the contract's size.
+    ///
+    /// Every `<block>_provenance` key is written by
+    /// `enforce_from_grounding_map` and declared `inferred` on the card.
+    /// Counting them would report each contract at twice its real size, all of
+    /// the surplus in one state — `supply_chain_oracle` would read `1 resolved,
+    /// 5 inferred` over three real blocks.
+    #[test]
+    fn platform_written_provenance_stamps_are_not_counted() {
+        let oc = card_contract_of("supply_chain_oracle");
+        let authored = oc["grounding"]
+            .as_object()
+            .expect("grounding map")
+            .keys()
+            .filter(|k| !k.ends_with("_provenance"))
+            .count() as u64;
+        let stamps = oc["grounding"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .filter(|k| k.ends_with("_provenance"))
+            .count();
+        assert!(stamps > 0, "the card has no stamps, so this proves nothing");
+
+        let (states, _) = member_contract_states("supply_chain_oracle", Some(&oc), &dispatchable);
+        assert_eq!(total(&states), authored, "states: {states}");
+    }
+
+    /// The registered table wins where it exists, as it does at enforcement.
+    ///
+    /// `regulatory_lens_translator` has both. Preferring the card would lose
+    /// enforcement rather than gain it: the table is per field and several of
+    /// these agents have blocks that are `sourced` as a whole with individual
+    /// fields under them that have no source at all — a distinction the card
+    /// vocabulary cannot express. The precedence is documented on
+    /// `grounding_trust::enforce_from_output_contract` and measured there.
+    #[test]
+    fn the_registered_table_wins_where_it_exists() {
+        let fields = fermi::grounding_trust::contracts_for("regulatory_lens_translator").count();
+        assert!(fields > 0, "fixture agent lost its FIELD_CONTRACTS entries");
+
+        let oc = card_contract_of("regulatory_lens_translator");
+        let (states, grain) =
+            member_contract_states("regulatory_lens_translator", Some(&oc), &dispatchable);
+
+        assert_eq!(grain, Some("field"));
+        assert_eq!(
+            total(&states),
+            fields as u64,
+            "the card's block map was mixed into a per-field count, or \
+             replaced it. Either way the number on the page is over a \
+             population nothing names. states: {states}"
+        );
+
+        // And a card is not consulted at all when the table has something to
+        // say — not even a card that disagrees.
+        let lying_card = json!({
+            "grounding": { "whatever": { "status": "narrative" } }
+        });
+        let (same, _) = member_contract_states(
+            "regulatory_lens_translator",
+            Some(&lying_card),
+            &dispatchable,
+        );
+        assert_eq!(states, same);
+    }
+
+    /// Absent is not "declared nothing wrong".
+    ///
+    /// Most of the fleet has no contract in either home, and that must stay
+    /// legible as an absence. An empty map is what makes the page print the
+    /// honest sentence; a map of zeroes would print a clean bill of health.
+    #[test]
+    fn no_contract_in_either_home_reports_absence_not_health() {
+        for oc in [
+            None,
+            Some(json!({})),
+            Some(json!({ "produces_schema": "x/y" })),
+            // A grounding map of nothing but platform stamps is still nothing
+            // the author declared.
+            Some(json!({ "grounding": { "a_provenance": { "status": "inferred" } } })),
+        ] {
+            let (states, grain) =
+                member_contract_states("an_agent_with_no_contract", oc.as_ref(), &dispatchable);
+            assert_eq!(grain, None, "oc: {oc:?}");
+            assert_eq!(total(&states), 0, "oc: {oc:?}");
+        }
+    }
+
+    /// A block naming a tool the platform cannot dispatch is a defect, and the
+    /// page colours it. Silently reading it as `resolved` would promise a
+    /// retrieval that can never happen.
+    #[test]
+    fn a_card_block_naming_an_undispatchable_tool_is_an_error_state() {
+        let oc = json!({
+            "grounding": {
+                "items": { "status": "sourced", "tool": "a_tool_that_was_deleted" }
+            }
+        });
+        let (states, grain) = member_contract_states("anyone", Some(&oc), &dispatchable);
+        assert_eq!(grain, Some("block"));
+        assert_eq!(states["error"], json!(1), "states: {states}");
+    }
+
+    /// **The whole fleet, not the one agent the bug was noticed on.**
+    ///
+    /// `supply_chain_oracle` is how this surfaced, and a test naming only it
+    /// would pass while the other nine stayed invisible. The property is:
+    /// wherever a card declares authored grounding and the table says nothing,
+    /// the panel must read it. Held over every card on disk so a new card-only
+    /// agent is covered on arrival.
+    ///
+    /// Deliberately asserts NO COUNT. The roster this fix was written from
+    /// (`handlers/loops.rs`) enumerated the agents in prose and had drifted —
+    /// it named four `weather_*` when `weather_oracle` has 12 rows in the
+    /// table and is not card-only. A census in a comment goes stale silently;
+    /// a property does not.
+    #[test]
+    fn every_card_only_agent_in_the_fleet_reads_as_contracted() {
+        let agents = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("agents");
+        let mut card_only = 0usize;
+
+        for tier in std::fs::read_dir(&agents).unwrap().filter_map(|e| e.ok()) {
+            if !tier.path().is_dir() {
+                continue;
+            }
+            for entry in std::fs::read_dir(tier.path())
+                .unwrap()
+                .filter_map(|e| e.ok())
+            {
+                let path = entry.path().join("agent_card.json");
+                if !path.exists() {
+                    continue;
+                }
+                let card: Value =
+                    serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+                let id = card["agent_id"].as_str().unwrap_or_default().to_string();
+                let oc = card["capabilities"]["output_contract"].clone();
+
+                let in_table = fermi::grounding_trust::contracts_for(&id).next().is_some();
+                let authored_blocks = oc["grounding"]
+                    .as_object()
+                    .map(|g| g.keys().filter(|k| !k.ends_with("_provenance")).count())
+                    .unwrap_or(0);
+
+                let (states, grain) = member_contract_states(&id, Some(&oc), &dispatchable);
+
+                if !in_table && authored_blocks > 0 {
+                    card_only += 1;
+                    assert_eq!(
+                        grain,
+                        Some("block"),
+                        "{id} declares {authored_blocks} authored grounding \
+                         block(s) on its card and has no FIELD_CONTRACTS row, \
+                         so the Team tab renders `no contract - nothing about \
+                         this member's output is checked` over an agent \
+                         `enforce_from_output_contract` strips and stamps at \
+                         every hop."
+                    );
+                    assert_eq!(
+                        total(&states),
+                        authored_blocks as u64,
+                        "{id}: every authored block must reach a state. A \
+                         dropped block is a contract reported smaller than it \
+                         is, which is the same false negative one size down. \
+                         states: {states}"
+                    );
+                } else if !in_table && authored_blocks == 0 {
+                    assert_eq!(
+                        grain, None,
+                        "{id} has no contract in either home and must read as \
+                         absent, not as a clean bill of health. states: {states}"
+                    );
+                } else {
+                    assert_eq!(
+                        grain,
+                        Some("field"),
+                        "{id} has FIELD_CONTRACTS rows, which win at \
+                         enforcement and must win here. states: {states}"
+                    );
+                }
+            }
+        }
+
+        assert!(
+            card_only > 0,
+            "no card-only agent was found, so this test proved nothing. \
+             Either the fleet moved wholesale into FIELD_CONTRACTS, or the \
+             card path stopped being reachable and the regression is live \
+             again with a green suite."
+        );
     }
 }

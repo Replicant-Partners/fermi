@@ -421,6 +421,7 @@ pub async fn post_workspace_message_handler(
                             creature_id: None,
                             cognition_tier: None,
                             credentials: credentials.clone(),
+                            registry: None,
                             // Text-only path: this caller carries no image. Stated rather than
                             // defaulted, so a path that should carry one cannot acquire the field
                             // silently.

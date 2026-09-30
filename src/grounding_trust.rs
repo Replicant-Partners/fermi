@@ -682,11 +682,552 @@ pub fn coverage_sql_for(agent_id: &str, path: &str) -> Option<&'static str> {
         .map(|(_, _, sql)| *sql)
 }
 
+/// **The platform's own check on a field, independent of what the agent said.**
+///
+/// `(agent_id, path, mismatch_sql)`. The query returns one row, one `bigint`,
+/// aliased `mismatches`: how many times the stored value disagreed with a
+/// source of truth the agent did not write.
+///
+/// ## Why this is a side table and not a field on [`FieldContract`]
+///
+/// Two reasons, and the second is the load-bearing one.
+///
+/// The first is the rule this file already applies to every other minority
+/// concern. [`CROSS_CHECK_COVERAGE`] states it: a fact true of a few entries
+/// does not earn a field on a struct with scores of literals, because the
+/// cost is one edit per literal to express a handful of facts.
+/// [`DERIVATIONS`] and [`CROSS_CHECK_EXEMPTIONS`] are the same shape for the
+/// same reason. `cross_check_sql` was the exception: 17 of 155 entries, and
+/// 138 lines reading `cross_check_sql: None,` to say nothing.
+///
+/// The second is that a contract and a check on it are different concerns
+/// with different futures. `docs/DESIGN_a2a_contracting.md` 7.6 says
+/// `FIELD_CONTRACTS` is **legacy for tiers 1 and 2** and shrinks to zero as
+/// declarations migrate onto agent cards, but **permanent for tier 3** --
+/// these checks, which need the database schema and cannot be authored on a
+/// card by anyone.
+///
+/// While the SQL was welded to the declaration, those two futures were one
+/// object: deleting a migrated declaration deleted its cross-check with it,
+/// silently, and the row that vanished was the only falsifiable thing the
+/// platform held about that field. `weather_oracle` is the sharp case -- it
+/// declares in both homes and owns 8 of these 17 -- so the burn-down could
+/// not start on the agent that would lose the most by it.
+///
+/// Keyed by `(agent_id, path)` so the two can now move independently. A
+/// check whose declaration has migrated to a card still runs;
+/// `every_cross_check_names_a_field_somebody_declares` is what stops it
+/// outliving the field entirely.
+pub const CROSS_CHECKS: &[(&str, &str, &str)] = &[
+    // The first cross-check on this platform that needs no external source
+    // of truth. Every other one compares agent output against a record we
+    // hold; this compares the document against ITSELF. `xgd` must be
+    // `xg - xga`, and an agent that reports all three has stated something
+    // falsifiable without anyone querying anything.
+    //
+    // Worth having precisely because it is cheap: the replay checks the
+    // other football fields need cost an external call each and spend the
+    // agent's own rate limit, so they are deferred. This one costs a
+    // `SELECT`. Internal consistency is the check you can always afford.
+    //
+    // Safety of the cast. `response_text` is prose for 18 of 18 episodes
+    // today, and `'not json'::jsonb` raises. `CASE` is the one construct SQL
+    // guarantees to short-circuit, so the cast is only ever reached for a
+    // row that `IS JSON OBJECT` already accepted. A `WITH ... MATERIALIZED`
+    // would also work but would fail the harness's bare-SELECT guard, and
+    // relaxing that guard to buy syntax would be the wrong trade.
+    // `jsonb_typeof(NULL)` is NULL, so a non-numeric or absent field drops
+    // the row rather than erroring — which matters, because an unrunnable
+    // check reports healthy forever.
+    //
+    // Tolerance 0.15, and the number is derived rather than picked. Reports
+    // round xG to one decimal, so `xg` and `xga` each carry up to 0.05 of
+    // rounding and their difference up to 0.10. A tolerance at or below that
+    // would fire on correctly-reported rounding, and a check that fires on
+    // correct behaviour gets deleted — the deletion looking like cleanup.
+    // 0.15 clears rounding and still catches any disagreement large enough
+    // to mean the three numbers were not computed from each other.
+    (
+        "football_analyst",
+        "advanced_metrics.xgd",
+        "SELECT count(*)::bigint AS mismatches \
+           FROM episodes e \
+           JOIN agents a ON a.agent_id = e.agent_id, \
+           LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
+                                THEN e.response_text::jsonb END AS doc) j \
+          WHERE a.agent_name = 'football_analyst' \
+            {{COHORT}} \
+            AND jsonb_typeof(j.doc #> '{advanced_metrics,xgd}') = 'number' \
+            AND jsonb_typeof(j.doc #> '{advanced_metrics,xg}')  = 'number' \
+            AND jsonb_typeof(j.doc #> '{advanced_metrics,xga}') = 'number' \
+            AND abs( (j.doc #>> '{advanced_metrics,xgd}')::numeric \
+                     - ( (j.doc #>> '{advanced_metrics,xg}')::numeric \
+                       - (j.doc #>> '{advanced_metrics,xga}')::numeric ) ) \
+                > 0.15",
+    ),
+    // Internal consistency against the registry the tool reads from. This
+    // is the check that would have caught the two production forecasts:
+    // both named a city and neither pinned a station, and one routed three
+    // of five drivers to agents with no weather tool at all.
+    //
+    // `IS JSON OBJECT` before the cast, and `CASE` for its guaranteed
+    // short-circuit, because `'not json'::jsonb` raises and would take the
+    // whole harness down rather than report a finding. Same construction as
+    // the football xgd check for the same reason.
+    (
+        "weather_oracle",
+        "settlement_target",
+        "SELECT count(*)::bigint AS mismatches \
+           FROM episodes e \
+           JOIN agents a ON a.agent_id = e.agent_id, \
+           LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
+                                THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
+          WHERE a.agent_name = 'weather_oracle' \
+            {{COHORT}} \
+            AND j.doc #>> '{settlement_target,station}' IS NOT NULL \
+            AND upper(j.doc #>> '{settlement_target,station}') \
+                NOT IN ('CYYZ','EDDM','EFHK','EGLC','EHAM','EPWA','FACT','HKO', \
+                        'KATL','KAUS','KBKF','KDAL','KLAX','KLGA','KMIA','KNYC', \
+                        'KORD','KSEA','KSFO','LEMD','LFPB','LIMC','LLBG','LTAC', \
+                        'LTFM','MMMX','NZWN','OEJN','OPKC','RCSS','RJTT','RKPK', \
+                        'RKSI','RPLL','SAEZ','SBGR','UUWW','VILK','WMKK','WSSS', \
+                        'ZBAA','ZGGG','ZGSZ','ZHCC','ZHHH','ZSJN','ZSPD','ZSQD', \
+                        'ZUCK','ZUUU')",
+    ),
+    // The ensemble mean must sit inside the member cloud it claims to
+    // summarise. A mean outside [min, max] is arithmetically impossible and
+    // means the number came from somewhere other than the tool — the
+    // weather analogue of `xgd != xg - xga`, and equally always affordable.
+    (
+        "weather_oracle",
+        "stages.forecast",
+        "SELECT count(*)::bigint AS mismatches \
+           FROM episodes e \
+           JOIN agents a ON a.agent_id = e.agent_id, \
+           LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
+                                THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
+          WHERE a.agent_name = 'weather_oracle' \
+            {{COHORT}} \
+            AND jsonb_typeof(j.doc #> '{stages,forecast,n_members}') = 'number' \
+            AND ( (j.doc #>> '{stages,forecast,n_members}')::numeric < 1 \
+               OR (jsonb_typeof(j.doc #> '{stages,forecast,ensemble_sd}') = 'number' \
+                   AND (j.doc #>> '{stages,forecast,ensemble_sd}')::numeric < 0) )",
+    ),
+    // A predictive sd must be positive, and a probability must be a
+    // probability. Both are internal and cost nothing.
+    (
+        "weather_oracle",
+        "stages.calibration",
+        "SELECT count(*)::bigint AS mismatches \
+           FROM episodes e \
+           JOIN agents a ON a.agent_id = e.agent_id, \
+           LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
+                                THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
+          WHERE a.agent_name = 'weather_oracle' \
+            {{COHORT}} \
+            AND ( (jsonb_typeof(j.doc #> '{stages,calibration,predictive_sd}') = 'number' \
+                   AND (j.doc #>> '{stages,calibration,predictive_sd}')::numeric <= 0) \
+               OR (jsonb_typeof(j.doc #> '{stages,calibration,calibrated_probability}') = 'number' \
+                   AND ( (j.doc #>> '{stages,calibration,calibrated_probability}')::numeric < 0 \
+                      OR (j.doc #>> '{stages,calibration,calibrated_probability}')::numeric > 1 )) )",
+    ),
+    // A midpoint is a probability, and a book cannot be both untradeable
+    // and carry a positive edge worth acting on. The second half is the one
+    // that matters: a settled market with a resting ask at 0.001 computes a
+    // +54c/share edge, which is an artefact rather than an opportunity.
+    //
+    // The action test matches a NO-TRADE PREFIX rather than the exact token,
+    // and the first draft's exact comparison is why. It fired on three rows
+    // reading "NO TRADE — market is closed and settled" — correct decisions,
+    // failing only because the string was prose instead of the declared
+    // enum. That is a real finding about the card's output contract, but it
+    // is a DIFFERENT finding from the one this check exists for, and
+    // conflating them means the serious case (a trade recommended on a dead
+    // book) arrives buried in formatting noise. One check, one proposition:
+    // this one asks whether the agent recommended acting on an untradeable
+    // book, and "NO TRADE — ..." plainly does not.
+    (
+        "weather_oracle",
+        "stages.pricing",
+        "SELECT count(*)::bigint AS mismatches \
+           FROM episodes e \
+           JOIN agents a ON a.agent_id = e.agent_id, \
+           LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
+                                THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
+          WHERE a.agent_name = 'weather_oracle' \
+            {{COHORT}} \
+            AND jsonb_typeof(j.doc #> '{stages,pricing,implied_probability}') = 'number' \
+            AND ( (j.doc #>> '{stages,pricing,implied_probability}')::numeric < 0 \
+               OR (j.doc #>> '{stages,pricing,implied_probability}')::numeric > 1 \
+               OR ( j.doc #> '{stages,pricing,book_tradeable}' = 'false'::jsonb \
+                    AND j.doc #>> '{recommendation,action}' IS NOT NULL \
+                    AND lower(j.doc #>> '{recommendation,action}') \
+                        NOT LIKE 'no%trade%' ) )",
+    ),
+    (
+        "weather_oracle",
+        "stages.calibration.climatology_base_rate",
+        "SELECT count(*)::bigint AS mismatches \
+           FROM episodes e \
+           JOIN agents a ON a.agent_id = e.agent_id, \
+           LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
+                                THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
+          WHERE a.agent_name = 'weather_oracle' \
+            {{COHORT}} \
+            AND jsonb_typeof(j.doc #> '{stages,calibration,climatology_base_rate}') = 'number' \
+            AND ( (j.doc #>> '{stages,calibration,climatology_base_rate}')::numeric < 0 \
+               OR (j.doc #>> '{stages,calibration,climatology_base_rate}')::numeric > 1 )",
+    ),
+    // Internal: a probability, and consistent with the recommendation. Not
+    // a check on whether it is CORRECT — that is what Brier scoring against
+    // resolved outcomes is for, and it needs volume rather than a query.
+    (
+        "weather_oracle",
+        "final_probability",
+        "SELECT count(*)::bigint AS mismatches \
+           FROM episodes e \
+           JOIN agents a ON a.agent_id = e.agent_id, \
+           LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
+                                THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
+          WHERE a.agent_name = 'weather_oracle' \
+            {{COHORT}} \
+            AND jsonb_typeof(j.doc -> 'final_probability') = 'number' \
+            AND ( (j.doc ->> 'final_probability')::numeric < 0 \
+               OR (j.doc ->> 'final_probability')::numeric > 1 )",
+    ),
+    // The declared range is enforceable even though the value is not
+    // verifiable. `validate_fermi_contract` accepts the range on the card;
+    // nothing until now checked the emitted number against it.
+    (
+        "weather_oracle",
+        "multiplier",
+        "SELECT count(*)::bigint AS mismatches \
+           FROM episodes e \
+           JOIN agents a ON a.agent_id = e.agent_id, \
+           LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
+                                THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
+          WHERE a.agent_name = 'weather_oracle' \
+            {{COHORT}} \
+            AND jsonb_typeof(j.doc -> 'multiplier') = 'number' \
+            AND ( (j.doc ->> 'multiplier')::numeric < 0.1 \
+               OR (j.doc ->> 'multiplier')::numeric > 10.0 )",
+    ),
+    // The flags are judgements, but two of them are judgements the document
+    // CONTRADICTS on its own numbers, and that is checkable without any
+    // external truth.
+    //
+    // `centre_gap_within_predictive_sd` is the guard for the failure class
+    // both production forecasts fell into. If the ensemble centre and the
+    // market-implied centre differ by more than the measured predictive sd,
+    // every bucket in the ladder is one bet on the centre rather than
+    // independent evidence about a bucket — London 2026-08-15 had a 0.95C
+    // gap against a 0.908C sd. The agent is asked to notice; this fires when
+    // it claims to have noticed and its own numbers say otherwise. The
+    // market-implied centre is not in the document, so the proxy is the
+    // probability disagreement it produces: a calibrated probability more
+    // than 25 points from the market's implied probability cannot be a
+    // bucket-level edge, and asserting centre consistency alongside it is
+    // self-contradictory.
+    //
+    // `edge_exceeds_calibration_uncertainty` is the arithmetic one: an edge
+    // smaller than the stated uncertainty is not an edge, and claiming both
+    // is a contradiction inside one document. `uncertainty_pp` is in
+    // percentage points and the probabilities are fractions, hence the /100.
+    //
+    // Both guarded by `jsonb_typeof`, so an absent field drops the row
+    // rather than raising — the same discipline as every check above.
+    (
+        "weather_oracle",
+        "challenge",
+        "SELECT count(*)::bigint AS mismatches \
+           FROM episodes e \
+           JOIN agents a ON a.agent_id = e.agent_id, \
+           LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
+                                THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
+          WHERE a.agent_name = 'weather_oracle' \
+            {{COHORT}} \
+            AND jsonb_typeof(j.doc #> '{stages,calibration,calibrated_probability}') = 'number' \
+            AND jsonb_typeof(j.doc #> '{stages,pricing,implied_probability}') = 'number' \
+            AND ( ( j.doc #> '{challenge,centre_gap_within_predictive_sd}' = 'true'::jsonb \
+                    AND abs( (j.doc #>> '{stages,calibration,calibrated_probability}')::numeric \
+                           - (j.doc #>> '{stages,pricing,implied_probability}')::numeric ) > 0.25 ) \
+               OR ( j.doc #> '{challenge,edge_exceeds_calibration_uncertainty}' = 'true'::jsonb \
+                    AND jsonb_typeof(j.doc #> '{final_probability_uncertainty_pp}') = 'number' \
+                    AND abs( (j.doc #>> '{stages,calibration,calibrated_probability}')::numeric \
+                           - (j.doc #>> '{stages,pricing,implied_probability}')::numeric ) \
+                        < (j.doc #>> '{final_probability_uncertainty_pp}')::numeric / 100.0 ) )",
+    ),
+    // The check that would have caught `Antaxius beieri` — a bush-cricket
+    // profiled as a cerambycid beetle — without a human noticing.
+    // Post-contract rows only: pre-contract documents are known-bad and
+    // archived by migration 202, so including them would leave this
+    // permanently red and therefore permanently ignored.
+    (
+        "genome_profiler",
+        "taxonomy",
+        "SELECT count(*)::bigint AS mismatches \
+           FROM creature_conditions cc \
+           JOIN creatures c ON c.creature_id = cc.creature_id \
+          WHERE cc.genome_profile IS NOT NULL \
+            AND NOT cc.genome_profile ? '_grounding_review' \
+            AND cc.genome_profile->'taxonomy'->>'order' IS NOT NULL \
+            AND ( lower(c.taxonomy->>'order') \
+                    <> lower(cc.genome_profile->'taxonomy'->>'order') \
+               OR lower(c.taxonomy->>'family') \
+                    <> lower(cc.genome_profile->'taxonomy'->>'family') )",
+    ),
+    // Generality check: this agent keeps no cache table, so its output is
+    // read back out of `episodes.response_text` (mig-199). Every creature
+    // id it reports must exist. `jsonb` cast is guarded by a regex so a
+    // prose response cannot raise instead of returning zero rows.
+    (
+        "enemy_sensor",
+        "threats[].creature_id",
+        "SELECT count(*)::bigint AS mismatches \
+           FROM ( \
+             SELECT jsonb_array_elements(e.response_text::jsonb->'threats') AS t \
+               FROM episodes e JOIN agents a ON a.agent_id = e.agent_id \
+              WHERE a.agent_name = 'enemy_sensor' \
+                {{COHORT}} \
+                AND e.response_text ~ '^\\s*\\{' \
+           ) x \
+          WHERE x.t->>'creature_id' IS NOT NULL \
+            AND NOT EXISTS ( \
+                  SELECT 1 FROM creatures c \
+                   WHERE c.creature_id::text = x.t->>'creature_id')",
+    ),
+    // Internal, and the cheapest possible: no recording may be in both
+    // lists. A document claiming to have read a transcript it also reports
+    // as absent has contradicted itself in one object, and that is
+    // checkable without leaving the row.
+    (
+        "video_analyst",
+        "transcripts",
+        "SELECT count(*)::bigint AS mismatches \
+           FROM episodes e \
+           JOIN agents a ON a.agent_id = e.agent_id, \
+           LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
+                                THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
+          WHERE a.agent_name = 'video_analyst' \
+            {{COHORT}} \
+            AND jsonb_typeof(j.doc #> '{transcripts,recordings_read}') = 'array' \
+            AND jsonb_typeof(j.doc #> '{transcripts,recordings_without_transcript}') = 'array' \
+            AND EXISTS (SELECT 1 \
+                          FROM jsonb_array_elements(j.doc #> '{transcripts,recordings_read}') AS r(id) \
+                         WHERE (j.doc #> '{transcripts,recordings_without_transcript}') @> r.id)",
+    ),
+    // Internal, and the load-bearing one: a clip from a recording the
+    // document itself does not claim to have read, or a ragged set of
+    // index-aligned arrays. Both are the fabrication signature for this
+    // agent and both are visible in the row.
+    (
+        "video_analyst",
+        "clips",
+        "SELECT count(*)::bigint AS mismatches \
+           FROM episodes e \
+           JOIN agents a ON a.agent_id = e.agent_id, \
+           LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
+                                THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
+          WHERE a.agent_name = 'video_analyst' \
+            {{COHORT}} \
+            AND jsonb_typeof(j.doc #> '{clips,recording_ids}') = 'array' \
+            AND jsonb_array_length(j.doc #> '{clips,recording_ids}') > 0 \
+            AND ( jsonb_typeof(j.doc #> '{clips,start_seconds}') <> 'array' \
+               OR jsonb_typeof(j.doc #> '{clips,end_seconds}') <> 'array' \
+               OR jsonb_array_length(j.doc #> '{clips,recording_ids}') \
+                  <> jsonb_array_length(j.doc #> '{clips,start_seconds}') \
+               OR jsonb_array_length(j.doc #> '{clips,recording_ids}') \
+                  <> jsonb_array_length(j.doc #> '{clips,end_seconds}') \
+               OR jsonb_typeof(j.doc #> '{transcripts,recordings_read}') <> 'array' \
+               OR EXISTS (SELECT 1 \
+                            FROM jsonb_array_elements(j.doc #> '{clips,recording_ids}') AS r(id) \
+                           WHERE NOT ((j.doc #> '{transcripts,recordings_read}') @> r.id)) )",
+    ),
+    // Internal: on a published run the accepted clip-block count must equal
+    // the number of clips the same document declares. A disagreement is
+    // either a silently dropped clip or a count nobody measured, and both
+    // are worth a row.
+    (
+        "video_analyst",
+        "blocks_written",
+        "SELECT count(*)::bigint AS mismatches \
+           FROM episodes e \
+           JOIN agents a ON a.agent_id = e.agent_id, \
+           LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
+                                THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
+          WHERE a.agent_name = 'video_analyst' \
+            {{COHORT}} \
+            AND j.doc #>> '{curation,mode}' = 'reel_published' \
+            AND jsonb_typeof(j.doc #> '{blocks_written,clip_block_count}') = 'number' \
+            AND jsonb_typeof(j.doc #> '{clips,start_seconds}') = 'array' \
+            AND (j.doc #>> '{blocks_written,clip_block_count}')::numeric \
+                <> jsonb_array_length(j.doc #> '{clips,start_seconds}')",
+    ),
+    // The platform's second copy, built out of the agent's own work.
+    //
+    // This field was exempt, and its exemption named the route: "a second
+    // run resolving the same key makes this falsifiable with no external
+    // corpus". mig-238 built it. `carbon_emission_factors` appends every
+    // factor retrieved, keyed on (material, geography, reference_year,
+    // dataset), and two rows sharing that key are two readings of ONE
+    // published figure. They must agree.
+    //
+    // Why the dataset is in the key. ecoinvent and Agribalyse legitimately
+    // publish different factors for the same material and year — different
+    // system models, different allocation. Comparing across datasets would
+    // fire on correct behaviour, and a check that fires on correct output
+    // gets switched off with the switching-off looking like cleanup.
+    //
+    // Why `retrieval = 'search'` on both sides. A value this ledger itself
+    // supplied back into a statement is not independent confirmation of
+    // itself. Computing agreement from a number we copied is the `xgd`
+    // trap: three numbers we made consistent are evidence of nothing. The
+    // handler writes only `search` rows today; the predicate is here so a
+    // later cache-serving change cannot quietly invalidate the check.
+    //
+    // Tolerance 2%, and it is a transcription band rather than a
+    // measurement one. Two readings of the same dataset row should be the
+    // same number; the slack covers a model writing 2.1 where the page says
+    // 2.08. It is deliberately far tighter than the 5% one might pick for
+    // "do these factors broadly agree", because that is a different
+    // question and this check is not asking it.
+    //
+    // What it does NOT establish, stated because a cross-check whose reach
+    // is overstated is worse than none: agreement is weak evidence. Two
+    // runs could agree because both read the same wrong page. The check is
+    // sound in the direction it makes claims — it fires only on
+    // disagreement, and a disagreement is always something a human must
+    // settle. Ruling out a shared-source error needs the tool-result join,
+    // which is blocked on web_search results not being persisted per
+    // episode. `CROSS_CHECK_COVERAGE` carries the denominator, so an empty
+    // ledger reports INERT rather than clean.
+    (
+        CA,
+        "inventory.items[].factor_kg_co2e_per_kg",
+        "SELECT count(*)::bigint AS mismatches \
+           FROM carbon_emission_factors a \
+           JOIN carbon_emission_factors b \
+             ON b.material_key   = a.material_key \
+            AND b.geography      = a.geography \
+            AND b.reference_year = a.reference_year \
+            AND b.dataset_key    = a.dataset_key \
+            AND b.id > a.id \
+          WHERE a.retrieval = 'search' AND b.retrieval = 'search' \
+            AND abs(a.value_kg_co2e_per_kg - b.value_kg_co2e_per_kg) \
+                > greatest( 0.02 * greatest(abs(a.value_kg_co2e_per_kg), \
+                                            abs(b.value_kg_co2e_per_kg)), \
+                            1e-9 )",
+    ),
+    // The independence property, checked rather than hoped for.
+    //
+    // This is the one cross-check on this agent that reads the AGENT's
+    // behaviour rather than the world, and it is the one that can degrade
+    // silently. Everything else about corroboration is enforced by the
+    // platform: `carbon_corroboration` computes the verdict, so the agent
+    // cannot claim agreement it did not find. But nothing stops it
+    // satisfying the two-source rule by quoting ecoinvent twice, and if it
+    // did, `corroboration: agreeing` would be produced honestly by the
+    // platform, mean nothing, and look identical to the real thing.
+    //
+    // So: count lines where the two datasets normalise to the same string.
+    // Non-zero is not a fabrication, it is a corroboration that decorrelates
+    // nothing, and the distinction is worth having a number for.
+    //
+    // Episode-based, so it carries the cohort placeholder and is read both
+    // scoped to the current prompt and across history — which matters more
+    // here than elsewhere, because "the agent stopped seeking a second
+    // publisher" is exactly the kind of drift a prompt edit causes.
+    //
+    // Reads the RAW reply, so it sees what the model actually returned
+    // before enforcement. It matches only replies that are a bare JSON
+    // object, as `football_analyst`'s does; a fenced block drops out. That
+    // limit is real and is the reason this check is a discipline signal
+    // rather than a guarantee.
+    (
+        CA,
+        "inventory.items[].corroborating_dataset",
+        "SELECT count(*)::bigint AS mismatches \
+           FROM episodes e \
+           JOIN agents a ON a.agent_id = e.agent_id, \
+           LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
+                                THEN e.response_text::jsonb END AS doc) j, \
+           LATERAL jsonb_array_elements( \
+                     CASE WHEN jsonb_typeof(j.doc #> '{inventory,items}') = 'array' \
+                          THEN j.doc #> '{inventory,items}' \
+                          ELSE '[]'::jsonb END) AS li \
+          WHERE a.agent_name = 'carbon_accountant' \
+            {{COHORT}} \
+            AND li.value ->> 'dataset' IS NOT NULL \
+            AND li.value ->> 'corroborating_dataset' IS NOT NULL \
+            AND lower(btrim(li.value ->> 'dataset')) \
+                = lower(btrim(li.value ->> 'corroborating_dataset'))",
+    ),
+    // Compares the document against ITSELF, so it needs no external
+    // corpus and no dataset licence — which is why it was the first real
+    // cross-check this agent had, at a point when every other retrieval
+    // field was exempt. Internal consistency is the check you can always
+    // afford;
+    // `football_analyst.advanced_metrics.xgd` established the pattern.
+    //
+    // What it can and cannot see, stated plainly because a cross-check
+    // whose reach is overstated is worse than none. `episodes.response_text`
+    // holds the RAW reply, before `enforce` ran, so this reads the model's
+    // own arithmetic rather than the platform's — which is the point, and
+    // is the only reason the check is not true by construction. It matches
+    // only replies that are a bare JSON object; a fenced ```json block
+    // fails `IS JSON OBJECT` and drops out, as it does for
+    // `football_analyst` today. A run that obeys the prompt and leaves
+    // `kg_co2e` null also drops out. So a clean result here means "no run
+    // multiplied badly", not "every factor is right" — the factors are
+    // covered, and admitted uncovered, in CROSS_CHECK_EXEMPTIONS.
+    //
+    // Tolerance is relative rather than absolute, and that is forced by
+    // the domain: line totals in this document span roughly 1e-4 kg CO2e
+    // for a trace acidulant to 1e0 for a principal ingredient, so any
+    // fixed epsilon is either blind at the top of that range or fires on
+    // rounding at the bottom. 0.5% clears three-significant-figure
+    // reporting; the 1e-9 floor keeps a zero-valued line from dividing the
+    // check by nothing. A check that fires on correct behaviour gets
+    // deleted, and the deletion looks like cleanup.
+    (
+        CA,
+        "inventory.items",
+        "SELECT count(*)::bigint AS mismatches \
+           FROM episodes e \
+           JOIN agents a ON a.agent_id = e.agent_id, \
+           LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
+                                THEN e.response_text::jsonb END AS doc) j, \
+           LATERAL jsonb_array_elements( \
+                     CASE WHEN jsonb_typeof(j.doc #> '{inventory,items}') = 'array' \
+                          THEN j.doc #> '{inventory,items}' \
+                          ELSE '[]'::jsonb END) AS li \
+          WHERE a.agent_name = 'carbon_accountant' \
+            {{COHORT}} \
+            AND jsonb_typeof(li.value -> 'kg_co2e') = 'number' \
+            AND jsonb_typeof(li.value -> 'activity_qty_kg') = 'number' \
+            AND jsonb_typeof(li.value -> 'factor_kg_co2e_per_kg') = 'number' \
+            AND abs( (li.value ->> 'kg_co2e')::numeric \
+                     - (li.value ->> 'activity_qty_kg')::numeric \
+                       * (li.value ->> 'factor_kg_co2e_per_kg')::numeric ) \
+                > greatest( 1e-9, \
+                            0.005 * abs((li.value ->> 'kg_co2e')::numeric) )",
+    ),
+];
+
+/// The platform's check on one field, if it holds one.
+///
+/// The counterpart of [`coverage_sql_for`], and the replacement for what used
+/// to be a field read straight off a [`FieldContract`].
+pub fn cross_check_for(agent_id: &str, path: &str) -> Option<&'static str> {
+    CROSS_CHECKS
+        .iter()
+        .find(|(a, p, _)| *a == agent_id && *p == path)
+        .map(|(_, _, sql)| *sql)
+}
+
 /// Every declared cross-check, for the live tier to run.
 pub fn cross_checks() -> impl Iterator<Item = (&'static str, &'static str, &'static str)> {
-    FIELD_CONTRACTS
-        .iter()
-        .filter_map(|c| c.cross_check_sql.map(|sql| (c.agent_id, c.path, sql)))
+    CROSS_CHECKS.iter().copied()
 }
 
 // ─── which prompt produced the row ─────────────────────────────────
@@ -726,7 +1267,7 @@ pub fn cross_checks() -> impl Iterator<Item = (&'static str, &'static str, &'sta
 // Unscoped says "has it ever", which stays visible as history rather than being
 // deleted. A check that hard-coded either one would silently lose the other.
 
-/// Token every episode-based `cross_check_sql` must contain exactly once.
+/// Token every episode-based check in [`CROSS_CHECKS`] must contain exactly once.
 pub const COHORT_PLACEHOLDER: &str = "{{COHORT}}";
 
 /// Restrict to rows produced by the prompt the agent currently has.
@@ -1197,28 +1738,12 @@ pub struct FieldContract {
     /// Why, in enough detail that the next person does not have to
     /// re-derive it from the tool list.
     pub why: &'static str,
-    /// A read-only query returning **one row per disagreement** between what
-    /// the agent produced and an independently-held source of truth.
-    ///
-    /// Modelled directly on [`crate::rollup_trust::RollupContract::mismatch_sql`],
-    /// because it answers the same question one layer up. `rollup_trust`
-    /// exists because `agents.total_executions` was present, correctly typed,
-    /// declared in the schema contract, and permanently zero — a *content*
-    /// failure invisible to every check that reasons about shape.
-    ///
-    /// `Grounding::Sourced` turned out to have the same hole. It asserts a
-    /// tool COULD supply a field; it never compared the value to anything. So
-    /// `Antaxius beieri`, a bush-cricket, was profiled as a cerambycid beetle
-    /// and passed every check: present, non-null, correctly typed, declared
-    /// sourced. The verified answer was one `JOIN` away the whole time.
-    ///
-    /// `None` means the platform holds no independent copy to compare
-    /// against; it must then appear in [`CROSS_CHECK_EXEMPTIONS`] with a
-    /// reason. A `Sourced` field that is neither cross-checked nor explicitly
-    /// exempt is a claim nobody can falsify, which is what
-    /// `every_sourced_field_is_verifiable_or_admits_it_is_not` refuses to
-    /// allow.
-    pub cross_check_sql: Option<&'static str>,
+    //
+    // There is deliberately no `cross_check_sql` here. It lived on this struct
+    // and moved to [`CROSS_CHECKS`], keyed by `(agent_id, path)`, so that a
+    // declaration can migrate onto an agent card without taking the
+    // platform's only falsifiable check of it along. That doc comment, and the
+    // `Antaxius beieri` bush-cricket it was written about, moved with it.
 }
 
 /// How a leak needle is matched.
@@ -1469,7 +1994,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         why: "The `standings` endpoint returns position, points, played, goal \
               difference and a form string directly. Nothing here needs \
               inferring.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "football_analyst",
@@ -1480,7 +2004,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         },
         why: "The `fixtures` endpoint is the schedule. Rest days and congestion \
               follow arithmetically from the dates it returns.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "football_analyst",
@@ -1491,7 +2014,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         },
         why: "A dedicated endpoint takes `h2h: 'teamA-teamB'` and returns the \
               record. There is no reason for this to come from memory.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "football_analyst",
@@ -1503,7 +2025,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         why: "The `injuries` endpoint returns the roster of absences. Note that \
               the ESTIMATED IMPACT of an absence is a separate field and a \
               judgement — the list is retrieved, the consequence is reasoned.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "football_analyst",
@@ -1516,7 +2037,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               of box, blocked shots, fouls, corners, offsides, possession, \
               cards, saves, total and accurate passes. All retrievable per \
               fixture.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "football_analyst",
@@ -1532,7 +2052,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               no tool can supply xG at all. The agent has asserted xG for \
               fixtures where the tool has none; that is the case this entry \
               exists to catch.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "football_analyst",
@@ -1545,50 +2064,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               fields, so it is `Derived` rather than `Inferred` for the same \
               reason `phylogeny.superorder` is: the transform can be read and \
               re-run.",
-        // The first cross-check on this platform that needs no external source
-        // of truth. Every other one compares agent output against a record we
-        // hold; this compares the document against ITSELF. `xgd` must be
-        // `xg - xga`, and an agent that reports all three has stated something
-        // falsifiable without anyone querying anything.
-        //
-        // Worth having precisely because it is cheap: the replay checks the
-        // other football fields need cost an external call each and spend the
-        // agent's own rate limit, so they are deferred. This one costs a
-        // `SELECT`. Internal consistency is the check you can always afford.
-        //
-        // Safety of the cast. `response_text` is prose for 18 of 18 episodes
-        // today, and `'not json'::jsonb` raises. `CASE` is the one construct SQL
-        // guarantees to short-circuit, so the cast is only ever reached for a
-        // row that `IS JSON OBJECT` already accepted. A `WITH ... MATERIALIZED`
-        // would also work but would fail the harness's bare-SELECT guard, and
-        // relaxing that guard to buy syntax would be the wrong trade.
-        // `jsonb_typeof(NULL)` is NULL, so a non-numeric or absent field drops
-        // the row rather than erroring — which matters, because an unrunnable
-        // check reports healthy forever.
-        //
-        // Tolerance 0.15, and the number is derived rather than picked. Reports
-        // round xG to one decimal, so `xg` and `xga` each carry up to 0.05 of
-        // rounding and their difference up to 0.10. A tolerance at or below that
-        // would fire on correctly-reported rounding, and a check that fires on
-        // correct behaviour gets deleted — the deletion looking like cleanup.
-        // 0.15 clears rounding and still catches any disagreement large enough
-        // to mean the three numbers were not computed from each other.
-        cross_check_sql: Some(
-            "SELECT count(*)::bigint AS mismatches \
-               FROM episodes e \
-               JOIN agents a ON a.agent_id = e.agent_id, \
-               LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
-                                    THEN e.response_text::jsonb END AS doc) j \
-              WHERE a.agent_name = 'football_analyst' \
-                {{COHORT}} \
-                AND jsonb_typeof(j.doc #> '{advanced_metrics,xgd}') = 'number' \
-                AND jsonb_typeof(j.doc #> '{advanced_metrics,xg}')  = 'number' \
-                AND jsonb_typeof(j.doc #> '{advanced_metrics,xga}') = 'number' \
-                AND abs( (j.doc #>> '{advanced_metrics,xgd}')::numeric \
-                         - ( (j.doc #>> '{advanced_metrics,xg}')::numeric \
-                           - (j.doc #>> '{advanced_metrics,xga}')::numeric ) ) \
-                    > 0.15",
-        ),
     },
     FieldContract {
         agent_id: "football_analyst",
@@ -1602,7 +2077,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               card's own worked example, which the model copied. Returns when a \
               ClubElo or equivalent tool is added, exactly as the NCBI genome \
               fields returned.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "football_analyst",
@@ -1627,7 +2101,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               MORE dangerous than the raw number because the arithmetic lends \
               it an air of derivation. Returns the moment a ratings tool does, \
               at which point it becomes genuinely `Derived`.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "football_analyst",
@@ -1637,7 +2110,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               data. API-Football's statistics list has no defensive-action \
               counts, so it cannot be computed from what the tool returns, let \
               alone retrieved. Same for progressive passes and set-piece share.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "football_analyst",
@@ -1648,7 +2120,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               inputs, so the agent supplies them from memory — and a market \
               valuation from training data is stale by construction, which makes \
               it worse than an absence during a transfer window.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "football_analyst",
@@ -1663,7 +2134,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               instead. Treating them like a fabricated Elo would null the \
               agent's only output and prove the contract cannot tell an agent \
               that fabricates from one that reasons.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "football_analyst",
@@ -1672,7 +2142,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         why: "Prose for a human reader. Permitted, and scanned for quantities \
               the unsourced blocks cannot support — an Elo or a market value \
               recited in the summary is the same claim wearing a different hat.",
-        cross_check_sql: None,
     },
     // ── genome_profiler ────────────────────────────────────────────
     // Tools: gbif_species_search, gbif_taxonomy_tree. Both taxonomy.
@@ -1740,33 +2209,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               Field, not DFW. The tool holds a 50-station registry verified \
               against OurAirports for coordinates and against Open-Meteo for \
               the IANA zone. Nothing here is a judgement.",
-        // Internal consistency against the registry the tool reads from. This
-        // is the check that would have caught the two production forecasts:
-        // both named a city and neither pinned a station, and one routed three
-        // of five drivers to agents with no weather tool at all.
-        //
-        // `IS JSON OBJECT` before the cast, and `CASE` for its guaranteed
-        // short-circuit, because `'not json'::jsonb` raises and would take the
-        // whole harness down rather than report a finding. Same construction as
-        // the football xgd check for the same reason.
-        cross_check_sql: Some(
-            "SELECT count(*)::bigint AS mismatches \
-               FROM episodes e \
-               JOIN agents a ON a.agent_id = e.agent_id, \
-               LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
-                                    THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
-              WHERE a.agent_name = 'weather_oracle' \
-                {{COHORT}} \
-                AND j.doc #>> '{settlement_target,station}' IS NOT NULL \
-                AND upper(j.doc #>> '{settlement_target,station}') \
-                    NOT IN ('CYYZ','EDDM','EFHK','EGLC','EHAM','EPWA','FACT','HKO', \
-                            'KATL','KAUS','KBKF','KDAL','KLAX','KLGA','KMIA','KNYC', \
-                            'KORD','KSEA','KSFO','LEMD','LFPB','LIMC','LLBG','LTAC', \
-                            'LTFM','MMMX','NZWN','OEJN','OPKC','RCSS','RJTT','RKPK', \
-                            'RKSI','RPLL','SAEZ','SBGR','UUWW','VILK','WMKK','WSSS', \
-                            'ZBAA','ZGGG','ZGSZ','ZHCC','ZHHH','ZSJN','ZSPD','ZSQD', \
-                            'ZUCK','ZUUU')",
-        ),
     },
     FieldContract {
         agent_id: "weather_oracle",
@@ -1778,23 +2220,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         why: "Open-Meteo's ensemble endpoint returns every member of up to five \
               independent ensembles. Member count, mean and spread are read off \
               the response; none is inferred.",
-        // The ensemble mean must sit inside the member cloud it claims to
-        // summarise. A mean outside [min, max] is arithmetically impossible and
-        // means the number came from somewhere other than the tool — the
-        // weather analogue of `xgd != xg - xga`, and equally always affordable.
-        cross_check_sql: Some(
-            "SELECT count(*)::bigint AS mismatches \
-               FROM episodes e \
-               JOIN agents a ON a.agent_id = e.agent_id, \
-               LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
-                                    THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
-              WHERE a.agent_name = 'weather_oracle' \
-                {{COHORT}} \
-                AND jsonb_typeof(j.doc #> '{stages,forecast,n_members}') = 'number' \
-                AND ( (j.doc #>> '{stages,forecast,n_members}')::numeric < 1 \
-                   OR (jsonb_typeof(j.doc #> '{stages,forecast,ensemble_sd}') = 'number' \
-                       AND (j.doc #>> '{stages,forecast,ensemble_sd}')::numeric < 0) )",
-        ),
     },
     FieldContract {
         agent_id: "weather_oracle",
@@ -1811,22 +2236,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               significant. `sd_was_measured` distinguishes a fitted value from \
               the documented prior used when no fit is available, which is the \
               difference between a measurement and an assumption.",
-        // A predictive sd must be positive, and a probability must be a
-        // probability. Both are internal and cost nothing.
-        cross_check_sql: Some(
-            "SELECT count(*)::bigint AS mismatches \
-               FROM episodes e \
-               JOIN agents a ON a.agent_id = e.agent_id, \
-               LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
-                                    THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
-              WHERE a.agent_name = 'weather_oracle' \
-                {{COHORT}} \
-                AND ( (jsonb_typeof(j.doc #> '{stages,calibration,predictive_sd}') = 'number' \
-                       AND (j.doc #>> '{stages,calibration,predictive_sd}')::numeric <= 0) \
-                   OR (jsonb_typeof(j.doc #> '{stages,calibration,calibrated_probability}') = 'number' \
-                       AND ( (j.doc #>> '{stages,calibration,calibrated_probability}')::numeric < 0 \
-                          OR (j.doc #>> '{stages,calibration,calibrated_probability}')::numeric > 1 )) )",
-        ),
     },
     FieldContract {
         agent_id: "weather_oracle",
@@ -1838,37 +2247,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         why: "The CLOB book is read directly. `implied_probability` is the \
               midpoint, and the fee-adjusted EV figures are arithmetic over the \
               book and Polymarket's published taker fee of 0.05*p*(1-p).",
-        // A midpoint is a probability, and a book cannot be both untradeable
-        // and carry a positive edge worth acting on. The second half is the one
-        // that matters: a settled market with a resting ask at 0.001 computes a
-        // +54c/share edge, which is an artefact rather than an opportunity.
-        //
-        // The action test matches a NO-TRADE PREFIX rather than the exact token,
-        // and the first draft's exact comparison is why. It fired on three rows
-        // reading "NO TRADE — market is closed and settled" — correct decisions,
-        // failing only because the string was prose instead of the declared
-        // enum. That is a real finding about the card's output contract, but it
-        // is a DIFFERENT finding from the one this check exists for, and
-        // conflating them means the serious case (a trade recommended on a dead
-        // book) arrives buried in formatting noise. One check, one proposition:
-        // this one asks whether the agent recommended acting on an untradeable
-        // book, and "NO TRADE — ..." plainly does not.
-        cross_check_sql: Some(
-            "SELECT count(*)::bigint AS mismatches \
-               FROM episodes e \
-               JOIN agents a ON a.agent_id = e.agent_id, \
-               LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
-                                    THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
-              WHERE a.agent_name = 'weather_oracle' \
-                {{COHORT}} \
-                AND jsonb_typeof(j.doc #> '{stages,pricing,implied_probability}') = 'number' \
-                AND ( (j.doc #>> '{stages,pricing,implied_probability}')::numeric < 0 \
-                   OR (j.doc #>> '{stages,pricing,implied_probability}')::numeric > 1 \
-                   OR ( j.doc #> '{stages,pricing,book_tradeable}' = 'false'::jsonb \
-                        AND j.doc #>> '{recommendation,action}' IS NOT NULL \
-                        AND lower(j.doc #>> '{recommendation,action}') \
-                            NOT LIKE 'no%trade%' ) )",
-        ),
     },
     FieldContract {
         agent_id: "weather_oracle",
@@ -1881,18 +2259,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               across 30 years, with a fitted warming trend. Retrieved, not \
               recalled — and the trend adjustment matters: at EGLC it moves \
               P(>=31.5C) from 2.1% to 3.0%.",
-        cross_check_sql: Some(
-            "SELECT count(*)::bigint AS mismatches \
-               FROM episodes e \
-               JOIN agents a ON a.agent_id = e.agent_id, \
-               LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
-                                    THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
-              WHERE a.agent_name = 'weather_oracle' \
-                {{COHORT}} \
-                AND jsonb_typeof(j.doc #> '{stages,calibration,climatology_base_rate}') = 'number' \
-                AND ( (j.doc #>> '{stages,calibration,climatology_base_rate}')::numeric < 0 \
-                   OR (j.doc #>> '{stages,calibration,climatology_base_rate}')::numeric > 1 )",
-        ),
     },
     // ── the judgements ─────────────────────────────────────────────
     //
@@ -1914,21 +2280,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               calibrated probability differ by a factor of six — so treating \
               this as a retrieval would launder the agent's most consequential \
               judgement as a lookup.",
-        // Internal: a probability, and consistent with the recommendation. Not
-        // a check on whether it is CORRECT — that is what Brier scoring against
-        // resolved outcomes is for, and it needs volume rather than a query.
-        cross_check_sql: Some(
-            "SELECT count(*)::bigint AS mismatches \
-               FROM episodes e \
-               JOIN agents a ON a.agent_id = e.agent_id, \
-               LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
-                                    THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
-              WHERE a.agent_name = 'weather_oracle' \
-                {{COHORT}} \
-                AND jsonb_typeof(j.doc -> 'final_probability') = 'number' \
-                AND ( (j.doc ->> 'final_probability')::numeric < 0 \
-                   OR (j.doc ->> 'final_probability')::numeric > 1 )",
-        ),
     },
     FieldContract {
         agent_id: "weather_oracle",
@@ -1945,21 +2296,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               its BASIS — the settlement target, the ensemble, the fitted \
               dispersion — all of which are `Sourced` above. Verify the inputs, \
               inherit the verdict.",
-        // The declared range is enforceable even though the value is not
-        // verifiable. `validate_fermi_contract` accepts the range on the card;
-        // nothing until now checked the emitted number against it.
-        cross_check_sql: Some(
-            "SELECT count(*)::bigint AS mismatches \
-               FROM episodes e \
-               JOIN agents a ON a.agent_id = e.agent_id, \
-               LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
-                                    THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
-              WHERE a.agent_name = 'weather_oracle' \
-                {{COHORT}} \
-                AND jsonb_typeof(j.doc -> 'multiplier') = 'number' \
-                AND ( (j.doc ->> 'multiplier')::numeric < 0.1 \
-                   OR (j.doc ->> 'multiplier')::numeric > 10.0 )",
-        ),
     },
     FieldContract {
         agent_id: "weather_oracle",
@@ -1973,7 +2309,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               product: settlement timing depends on almost no model skill, \
               realised state on little, ladder arbitrage on none at all, and \
               calibration on all of it.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "weather_oracle",
@@ -1985,7 +2320,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         why: "A decision, reasoned from sourced inputs. Deliberately able to \
               return `no_trade`, which is the most common correct answer once \
               Polymarket's fee reaches 2.5% of notional at even money.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "weather_oracle",
@@ -1998,49 +2332,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               judgement about the chain: did the station stay consistent, does \
               the edge exceed the calibration uncertainty, were the corrections \
               measured or assumed, does it survive a 40% wider spread.",
-        // The flags are judgements, but two of them are judgements the document
-        // CONTRADICTS on its own numbers, and that is checkable without any
-        // external truth.
-        //
-        // `centre_gap_within_predictive_sd` is the guard for the failure class
-        // both production forecasts fell into. If the ensemble centre and the
-        // market-implied centre differ by more than the measured predictive sd,
-        // every bucket in the ladder is one bet on the centre rather than
-        // independent evidence about a bucket — London 2026-08-15 had a 0.95C
-        // gap against a 0.908C sd. The agent is asked to notice; this fires when
-        // it claims to have noticed and its own numbers say otherwise. The
-        // market-implied centre is not in the document, so the proxy is the
-        // probability disagreement it produces: a calibrated probability more
-        // than 25 points from the market's implied probability cannot be a
-        // bucket-level edge, and asserting centre consistency alongside it is
-        // self-contradictory.
-        //
-        // `edge_exceeds_calibration_uncertainty` is the arithmetic one: an edge
-        // smaller than the stated uncertainty is not an edge, and claiming both
-        // is a contradiction inside one document. `uncertainty_pp` is in
-        // percentage points and the probabilities are fractions, hence the /100.
-        //
-        // Both guarded by `jsonb_typeof`, so an absent field drops the row
-        // rather than raising — the same discipline as every check above.
-        cross_check_sql: Some(
-            "SELECT count(*)::bigint AS mismatches \
-               FROM episodes e \
-               JOIN agents a ON a.agent_id = e.agent_id, \
-               LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
-                                    THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
-              WHERE a.agent_name = 'weather_oracle' \
-                {{COHORT}} \
-                AND jsonb_typeof(j.doc #> '{stages,calibration,calibrated_probability}') = 'number' \
-                AND jsonb_typeof(j.doc #> '{stages,pricing,implied_probability}') = 'number' \
-                AND ( ( j.doc #> '{challenge,centre_gap_within_predictive_sd}' = 'true'::jsonb \
-                        AND abs( (j.doc #>> '{stages,calibration,calibrated_probability}')::numeric \
-                               - (j.doc #>> '{stages,pricing,implied_probability}')::numeric ) > 0.25 ) \
-                   OR ( j.doc #> '{challenge,edge_exceeds_calibration_uncertainty}' = 'true'::jsonb \
-                        AND jsonb_typeof(j.doc #> '{final_probability_uncertainty_pp}') = 'number' \
-                        AND abs( (j.doc #>> '{stages,calibration,calibrated_probability}')::numeric \
-                               - (j.doc #>> '{stages,pricing,implied_probability}')::numeric ) \
-                            < (j.doc #>> '{final_probability_uncertainty_pp}')::numeric / 100.0 ) )",
-        ),
     },
     FieldContract {
         agent_id: "weather_oracle",
@@ -2052,7 +2343,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               unchecked prose channel is where a fabrication moves once the \
               structured fields are constrained, which is exactly what happened \
               to genome_profiler's `summary`.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "weather_oracle",
@@ -2060,7 +2350,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         grounding: Grounding::Narrative,
         why: "What would show the analysis wrong. Prose, and load-bearing: a \
               forecast with no stated falsifier is not a forecast.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "genome_profiler",
@@ -2071,23 +2360,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         },
         why: "The one block with a real tool. GBIF returns the full rank \
               ladder with keys.",
-        // The check that would have caught `Antaxius beieri` — a bush-cricket
-        // profiled as a cerambycid beetle — without a human noticing.
-        // Post-contract rows only: pre-contract documents are known-bad and
-        // archived by migration 202, so including them would leave this
-        // permanently red and therefore permanently ignored.
-        cross_check_sql: Some(
-            "SELECT count(*)::bigint AS mismatches \
-               FROM creature_conditions cc \
-               JOIN creatures c ON c.creature_id = cc.creature_id \
-              WHERE cc.genome_profile IS NOT NULL \
-                AND NOT cc.genome_profile ? '_grounding_review' \
-                AND cc.genome_profile->'taxonomy'->>'order' IS NOT NULL \
-                AND ( lower(c.taxonomy->>'order') \
-                        <> lower(cc.genome_profile->'taxonomy'->>'order') \
-                   OR lower(c.taxonomy->>'family') \
-                        <> lower(cc.genome_profile->'taxonomy'->>'family') )",
-        ),
     },
     FieldContract {
         agent_id: "genome_profiler",
@@ -2102,7 +2374,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               real — stripping it along with its neighbours would be a \
               check that overreaches, and an overreaching check gets \
               switched off.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "genome_profiler",
@@ -2118,7 +2389,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               outcome — a fact about the world, not a gap in the platform. \
               The value this replaces was not merely unsourced but wrong: the \
               prompt asserted Lepidoptera ~400-500Mb; the monarch is 245Mb.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "genome_profiler",
@@ -2133,7 +2403,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               cytological karyotype — for Danaus plexippus it returns 30, \
               matching published n=30, and that agreement is not a licence to \
               relabel it. Same coverage as genome size.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "genome_profiler",
@@ -2147,7 +2416,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               \"NCBI\". Without it the figures are unfalsifiable even when \
               correct, because nobody can tell which of several assemblies \
               they came from.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "genome_profiler",
@@ -2159,14 +2427,12 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         why: "The stable identifier the replay cross-check would use: given an \
               accession, NCBI can be re-queried and the size compared. It is \
               therefore the field that makes the other two verifiable later.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "genome_profiler",
         path: "genome.notable_genes",
         grounding: Grounding::Unsourced,
         why: "Species-level gene-family claims have no tool behind them.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "genome_profiler",
@@ -2180,7 +2446,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               A plausible, convenient, wrong mapping is exactly the class \
               this contract exists to stop, so the tool returns ploidy as \
               null with that reason attached.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "genome_profiler",
@@ -2196,7 +2461,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               and its table can be checked row by row, which is not true of \
               the recall it replaces. Unknown orders return None rather than \
               something plausible.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "genome_profiler",
@@ -2205,14 +2469,12 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         why: "Needs a dated phylogeny (TimeTree). Coverage is decent at \
               order/family and sparse at species, so null stays the common \
               answer even once wired.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "genome_profiler",
         path: "phylogeny.defining_traits",
         grounding: Grounding::Unsourced,
         why: "Order-level trait narration from parametric knowledge.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "genome_profiler",
@@ -2224,7 +2486,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               lookup. Once the IUCN tool exists this needs its own \
               provenance value — a queried NE is data; an invented one is \
               not.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "genome_profiler",
@@ -2233,7 +2494,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         why: "An IUCN Red List field with no IUCN tool wired up. Reported \
               as \"stable\" for species that have never been assessed, which \
               reads as a measurement of a population nobody has counted.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "genome_profiler",
@@ -2241,7 +2501,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         grounding: Grounding::Unsourced,
         why: "No structured source at species level. Deprioritised \
               indefinitely absent a literature-mining step.",
-        cross_check_sql: None,
     },
     // ── enemy_sensor ────────────────────────────────────────
     // Tools: scan_nearby_creatures (returns the actual nearby rows),
@@ -2259,24 +2518,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         why: "The scan returns the creatures; the agent may only report ones \
               it was handed. An id not in the scan would be an invented \
               creature.",
-        // Generality check: this agent keeps no cache table, so its output is
-        // read back out of `episodes.response_text` (mig-199). Every creature
-        // id it reports must exist. `jsonb` cast is guarded by a regex so a
-        // prose response cannot raise instead of returning zero rows.
-        cross_check_sql: Some(
-            "SELECT count(*)::bigint AS mismatches \
-               FROM ( \
-                 SELECT jsonb_array_elements(e.response_text::jsonb->'threats') AS t \
-                   FROM episodes e JOIN agents a ON a.agent_id = e.agent_id \
-                  WHERE a.agent_name = 'enemy_sensor' \
-                    {{COHORT}} \
-                    AND e.response_text ~ '^\\s*\\{' \
-               ) x \
-              WHERE x.t->>'creature_id' IS NOT NULL \
-                AND NOT EXISTS ( \
-                      SELECT 1 FROM creatures c \
-                       WHERE c.creature_id::text = x.t->>'creature_id')",
-        ),
     },
     FieldContract {
         agent_id: "enemy_sensor",
@@ -2287,7 +2528,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         },
         why: "Same row as the creature_id it accompanies — the scan carries \
               scientific_name, family and order for every hit.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "enemy_sensor",
@@ -2300,7 +2540,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               guards it — 'Do not invent predation relationships that do not \
               exist' — and that guard is aimed correctly, unlike the one on \
               genome_profiler.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "enemy_sensor",
@@ -2310,7 +2549,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         },
         why: "An enumerated judgement over sourced inputs. Producing it is \
               the entire point of the agent.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "enemy_sensor",
@@ -2319,7 +2557,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
             from: "the aggregate of threats[].risk",
         },
         why: "Roll-up of the per-threat judgements; same status as its parts.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "enemy_sensor",
@@ -2328,7 +2565,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         why: "Prose over the assessment. Checked for the same reason \
               genome_profiler's is: parse_evidence_text lifts it out as the \
               episode's evidence, so it is the sentence a reader sees.",
-        cross_check_sql: None,
     },
     // ── prey_locator ────────────────────────────────────────
     // Same scan tool as enemy_sensor, but this card asks for GEOMETRY, and
@@ -2345,7 +2581,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
             response_field: "nearby[].creature_id",
         },
         why: "As enemy_sensor: prey must be a creature the scan returned.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "prey_locator",
@@ -2357,7 +2592,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         why: "Carried on the same scan row as the creature_id, so it is \
               retrieved rather than recalled — the agent cannot name a \
               species the scan did not hand it.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "prey_locator",
@@ -2367,7 +2601,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
             response_field: "nearby[].order",
         },
         why: "The scan resolves order and family from stored taxonomy.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "prey_locator",
@@ -2376,7 +2609,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
             from: "size ratio, life stage, defences, habitat overlap",
         },
         why: "The tactical judgement the agent exists to make.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "prey_locator",
@@ -2385,7 +2617,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
             from: "the factors behind the vulnerability rating",
         },
         why: "Explanation of a judgement, and therefore judgement.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "prey_locator",
@@ -2398,7 +2629,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               `execute_scan_nearby_creatures` and it becomes Sourced. Until \
               someone does, the number is the model's guess at a quantity \
               the platform could state exactly.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "prey_locator",
@@ -2410,7 +2640,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               where a plausible-looking wrong number is acted on rather than \
               read. H3 cell centres are exactly resolvable, so this is a \
               missing derivation rather than an impossible one.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "prey_locator",
@@ -2418,7 +2647,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         grounding: Grounding::Unsourced,
         why: "Same as the latitude it is paired with — no coordinate for any \
               nearby creature reaches this agent.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "prey_locator",
@@ -2426,7 +2654,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         grounding: Grounding::Unsourced,
         why: "No altitude appears in any tool response, and unlike the \
               coordinates it is not derivable from an H3 cell either.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "prey_locator",
@@ -2435,7 +2662,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         why: "A metre distance to a creature whose position the agent was \
               never told. Derivable once cell centres are resolved; guessed \
               today.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "prey_locator",
@@ -2444,7 +2670,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
             from: "predator capability and prey escape behaviour",
         },
         why: "Tactical judgement, which is the requested product.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "prey_locator",
@@ -2455,7 +2680,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         why: "Tactical judgement over the approach vector — no tool \
               returns an intercept plan, and none could; it is the \
               reasoning the caller is paying for.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "prey_locator",
@@ -2464,7 +2688,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
             from: "the intercept problem as assessed",
         },
         why: "An enumerated judgement, not a measured quantity.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "prey_locator",
@@ -2472,7 +2695,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         grounding: Grounding::Narrative,
         why: "Prose over the scan result; same leak channel as every other \
               summary field in this contract.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "prey_locator",
@@ -2480,7 +2702,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         grounding: Grounding::Narrative,
         why: "Free prose accompanying the flight plan, and therefore the \
               place a stripped coordinate would reappear as text.",
-        cross_check_sql: None,
     },
     // ── forage_identify ──────────────────────────────────────────────────
     // `POST /api/creatures/:id/forage` with action=identify. Photo-based
@@ -2510,7 +2731,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               unavailable by construction rather than by omission. Kept because \
               it is the requested product; labelled because everything \
               downstream is keyed on it.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "forage_identify",
@@ -2522,7 +2742,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               vernacular is what a forager actually reads and is the part most \
               likely to be right about a genus while wrong about the species \
               that matters.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "forage_identify",
@@ -2535,7 +2754,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               reasoning against the specimen in their hand instead of trusting \
               a verdict, which is the only form of help a photograph can \
               actually give.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "forage_identify",
@@ -2548,7 +2766,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               (choice|edible|inedible|toxic) reads exactly like a lookup. \
               Forced null. The refusal is the safe output; a wrong value here \
               is not a data-quality issue.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "forage_identify",
@@ -2559,7 +2776,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               as diligence, and the `danger: fatal|toxic|inedible` enum this \
               was asked for gives an invented entry the shape of a reference \
               work. Null until a curated, citable lookalike source is wired.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "forage_identify",
@@ -2569,7 +2785,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               substrate and local conditions. Nothing in this handler observes \
               any of them, and `now` is a value a forager can act on \
               immediately.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "forage_identify",
@@ -2578,7 +2793,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         why: "Processing advice presupposes the identification is correct and \
               the species is edible, neither of which this handler \
               establishes. Offering it implies both.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "forage_identify",
@@ -2589,7 +2803,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               `hud_contract` removes by computing the band from measured \
               provenance instead. A rating nothing checks is worse than no \
               rating, because `high` is read as evidence.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "forage_identify",
@@ -2607,7 +2820,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               `hud_contract::conditioned` does. A name that fails to resolve is \
               itself informative to a forager: `tool_no_match` on a confident-\
               looking binomial usually means the model invented the epithet.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "forage_identify",
@@ -2622,7 +2834,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               MycoBank key is configured and reports that in its own `source` \
               field, so the answer stays traceable to whichever database \
               supplied it.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "forage_identify",
@@ -2636,7 +2847,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               like the rest of the determination, and a wrong kingdom shows up \
               honestly as `tool_no_match` on the taxonomy block rather than as \
               a wrong ladder.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "forage_identify",
@@ -2650,7 +2860,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               call, and the call where it is omitted is indistinguishable from \
               the ones where it is not. Written by platform code so it is \
               present on every response by construction, and reproducible.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "forage_identify",
@@ -2660,7 +2869,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               reappear in — which is exactly what happened to \
               genome_profiler's summary. Scanned, and it is not where the \
               authoritative warning lives; that is `safety`, above.",
-        cross_check_sql: None,
     },
     // ── harvest_advisor ────────────────────────────────────────────────────
     // Tools: mycobank_lookup, gbif_species_search, execute_agent. Nomenclature
@@ -2688,7 +2896,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               \"harvest within two days\" for a particular patch; producing it \
               is the work. Distinguished from the safety fields below by the \
               consequence of being wrong: a mistimed harvest costs a meal.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "harvest_advisor",
@@ -2698,7 +2905,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               and GBIF returns taxonomy; neither knows whether a thing can be \
               eaten. The enum shape (choice|edible|inedible|toxic) is what makes \
               this worse than prose — it reads as a database column.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "harvest_advisor",
@@ -2710,7 +2916,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               rather than as a gap. The prompt's four curated entries are \
               retained as explicitly partial prose; what is refused is the \
               agent extending them.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "harvest_advisor",
@@ -2720,7 +2925,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               species, not culinary preferences, and nothing here supplies them. \
               Gyromitra is the case that matters: deadly raw, and the difference \
               between a note and its absence is the outcome.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "harvest_advisor",
@@ -2733,7 +2937,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               because stripping it would leave the agent with nothing, and an \
               agent that returns nothing gets replaced by one that returns \
               everything.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "harvest_advisor",
@@ -2742,7 +2945,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         why: "Prose about flavour and preparation. Scanned, because it is the \
               channel a stripped edibility verdict reappears in — \"delicious \
               sauteed\" asserts edibility without using the word.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "harvest_advisor",
@@ -2752,7 +2954,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               channel as every other summary under this contract, and the one \
               genome_profiler's fabrication moved into after the structured \
               fields were cleared.",
-        cross_check_sql: None,
     },
     // ── forage_scout ───────────────────────────────────────────────────────
     // Tools: inat_observations, openweather_forecast, mycobank_lookup,
@@ -2773,7 +2974,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               worth invoking at all: how often a taxon has actually been \
               recorded near here recently. It corroborates plausibility and \
               identifies nothing, which the prose must not blur.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "forage_scout",
@@ -2784,7 +2984,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               location, so an edibility verdict is attached to a species nobody \
               has seen, let alone identified. A forager reading \"choice\" next \
               to a name they have not found yet is being primed to confirm it.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "forage_scout",
@@ -2794,7 +2993,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               with no source for either. The honest version of this field is a \
               statement that no lookalike check was performed, which is what the \
               prompt now returns in prose instead.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "forage_scout",
@@ -2806,7 +3004,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               agent's actual product and it is legitimate: no database holds \
               \"good foraging conditions\" for a coordinate, and the reasoning \
               from rainfall and temperature to fruiting probability is the work.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "forage_scout",
@@ -2817,7 +3014,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         why: "A likelihood judgement, correctly labelled as one. Kept for the \
               same reason foraging_signal is: it reasons over sourced inputs \
               rather than asserting a fact nobody holds.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "forage_scout",
@@ -2826,7 +3022,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         why: "The field report paragraph. Scanned as the channel a cleared \
               edibility verdict would move into, which is the failure mode this \
               whole contract family was written after.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "genome_profiler",
@@ -2836,7 +3031,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               `parse_evidence_text` lifts it out as the episode's evidence, \
               making it the sentence a user actually reads — and therefore \
               the channel a stripped number moves into.",
-        cross_check_sql: None,
     },
     // ── hud_field_scout ────────────────────────────────────────────
     // Tools: gbif_species_search, inat_observations, mycobank_lookup.
@@ -2863,7 +3057,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               belongs in its own block. It also has to be on the card: a \
               wearer judging an identification needs to know whether the \
               agent looked at anything or only heard a description.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "hud_field_scout",
@@ -2881,7 +3074,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               construction rather than by omission. Everything downstream is \
               keyed on this name, which is why `hud_contract::conditioned` \
               floors every other block against it.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "hud_field_scout",
@@ -2893,7 +3085,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               vernacular name is the part a wearer actually reads, and it is \
               the part most likely to be right about a genus while wrong about \
               the species that matters.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "hud_field_scout",
@@ -2908,7 +3099,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               inferred name. The distinction is invisible in the data layer, \
               which is exactly why the display layer conditions on \
               `subject` before choosing a marker.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "hud_field_scout",
@@ -2921,7 +3111,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               whether a name is current or a synonym. Worth surfacing because \
               a superseded name is the common way a field guide and a database \
               appear to disagree about a mushroom when they do not.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "hud_field_scout",
@@ -2935,7 +3124,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               does not identify anything, and the card must not imply that it \
               does — a dense observation cluster raises a prior, it does not \
               confirm a determination.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "hud_field_scout",
@@ -2949,7 +3137,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               consequence worse than a wrong megabase count. The refusal is \
               the product: a wearer who sees `not available` consults a human, \
               whereas one who sees a confident answer does not.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "hud_field_scout",
@@ -2961,7 +3148,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               real lookalikes while omitting the one that matters reads as \
               thorough. Null until a curated lookalike source is wired — \
               `adaptogen_curator` holds the nearest existing schema for this.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "hud_field_scout",
@@ -2971,7 +3157,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               of a safety check is something the card can SAY rather than \
               something a wearer has to notice by the silence. An unmentioned \
               check reads as a passed check.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "hud_field_scout",
@@ -2987,7 +3172,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               left uncontracted because `confidence_display` is the single \
               field a wearer reads as a verdict, and an uncontracted field is \
               one nothing stops the model from writing itself.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "hud_field_scout",
@@ -2998,7 +3182,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               scanned for the same reason every other summary here is: a \
               stripped edibility verdict reappearing as a spoken sentence is \
               the worst outcome this contract can produce.",
-        cross_check_sql: None,
     },
     // ── video_analyst ──────────────────────────────────────────────
     //
@@ -3039,7 +3222,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               the wording of the request rather than read from \
               `reduct_list_projects` lets every later call succeed against the \
               wrong project.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "video_analyst",
@@ -3056,24 +3238,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               transcribes asynchronously — an untranscribed recording is the \
               tool answering honestly, and collapsing the two would turn a \
               known gap into an apparent success.",
-        // Internal, and the cheapest possible: no recording may be in both
-        // lists. A document claiming to have read a transcript it also reports
-        // as absent has contradicted itself in one object, and that is
-        // checkable without leaving the row.
-        cross_check_sql: Some(
-            "SELECT count(*)::bigint AS mismatches \
-               FROM episodes e \
-               JOIN agents a ON a.agent_id = e.agent_id, \
-               LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
-                                    THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
-              WHERE a.agent_name = 'video_analyst' \
-                {{COHORT}} \
-                AND jsonb_typeof(j.doc #> '{transcripts,recordings_read}') = 'array' \
-                AND jsonb_typeof(j.doc #> '{transcripts,recordings_without_transcript}') = 'array' \
-                AND EXISTS (SELECT 1 \
-                              FROM jsonb_array_elements(j.doc #> '{transcripts,recordings_read}') AS r(id) \
-                             WHERE (j.doc #> '{transcripts,recordings_without_transcript}') @> r.id)",
-        ),
     },
     FieldContract {
         agent_id: "video_analyst",
@@ -3093,31 +3257,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               selected the ranges is `curation`, stamped `model_inference`, so \
               a consumer reads two stamps instead of one that would have to \
               lie about half its block.",
-        // Internal, and the load-bearing one: a clip from a recording the
-        // document itself does not claim to have read, or a ragged set of
-        // index-aligned arrays. Both are the fabrication signature for this
-        // agent and both are visible in the row.
-        cross_check_sql: Some(
-            "SELECT count(*)::bigint AS mismatches \
-               FROM episodes e \
-               JOIN agents a ON a.agent_id = e.agent_id, \
-               LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
-                                    THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
-              WHERE a.agent_name = 'video_analyst' \
-                {{COHORT}} \
-                AND jsonb_typeof(j.doc #> '{clips,recording_ids}') = 'array' \
-                AND jsonb_array_length(j.doc #> '{clips,recording_ids}') > 0 \
-                AND ( jsonb_typeof(j.doc #> '{clips,start_seconds}') <> 'array' \
-                   OR jsonb_typeof(j.doc #> '{clips,end_seconds}') <> 'array' \
-                   OR jsonb_array_length(j.doc #> '{clips,recording_ids}') \
-                      <> jsonb_array_length(j.doc #> '{clips,start_seconds}') \
-                   OR jsonb_array_length(j.doc #> '{clips,recording_ids}') \
-                      <> jsonb_array_length(j.doc #> '{clips,end_seconds}') \
-                   OR jsonb_typeof(j.doc #> '{transcripts,recordings_read}') <> 'array' \
-                   OR EXISTS (SELECT 1 \
-                                FROM jsonb_array_elements(j.doc #> '{clips,recording_ids}') AS r(id) \
-                               WHERE NOT ((j.doc #> '{transcripts,recordings_read}') @> r.id)) )",
-        ),
     },
     FieldContract {
         agent_id: "video_analyst",
@@ -3133,7 +3272,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               wrong timestamp it is trivially falsifiable. A read-only run — \
               asked to propose clips, not to publish — leaves this null, which \
               is a complete and successful outcome and not a missing field.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "video_analyst",
@@ -3150,24 +3288,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               previously see: the agent reports a reel, and the reel plays \
               nothing. Counting by outcome rather than reporting a single total \
               is what makes the partially-written reel expressible.",
-        // Internal: on a published run the accepted clip-block count must equal
-        // the number of clips the same document declares. A disagreement is
-        // either a silently dropped clip or a count nobody measured, and both
-        // are worth a row.
-        cross_check_sql: Some(
-            "SELECT count(*)::bigint AS mismatches \
-               FROM episodes e \
-               JOIN agents a ON a.agent_id = e.agent_id, \
-               LATERAL (SELECT CASE WHEN substring(e.response_text from '(?s)\\{.*\\}') IS JSON OBJECT \
-                                    THEN substring(e.response_text from '(?s)\\{.*\\}')::jsonb END AS doc) j \
-              WHERE a.agent_name = 'video_analyst' \
-                {{COHORT}} \
-                AND j.doc #>> '{curation,mode}' = 'reel_published' \
-                AND jsonb_typeof(j.doc #> '{blocks_written,clip_block_count}') = 'number' \
-                AND jsonb_typeof(j.doc #> '{clips,start_seconds}') = 'array' \
-                AND (j.doc #>> '{blocks_written,clip_block_count}')::numeric \
-                    <> jsonb_array_length(j.doc #> '{clips,start_seconds}')",
-        ),
     },
     FieldContract {
         agent_id: "video_analyst",
@@ -3185,7 +3305,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               fabricates from one that reasons. Stamped `model_inference` as a \
               constant so no run can present a chosen moment as a looked-up \
               one.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "video_analyst",
@@ -3198,7 +3317,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               here is — clearing an unsupported claim out of a structured \
               field while leaving it in the prose just moves it to where it \
               does the damage.",
-        cross_check_sql: None,
     },
     // ── regulatory_lens_translator ─────────────────────────────────────────
     //
@@ -3247,7 +3365,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               YAML and checks every claim's status, overwriting contradictions \
               and filing ContradictsCanonical violations before the response \
               is committed.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "regulatory_lens_translator",
@@ -3262,7 +3379,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               agent produces the final form by reasoning across markets. That \
               reasoning is the product — it cannot be sourced from a tool \
               without defeating the point. Stamped model_inference.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "regulatory_lens_translator",
@@ -3276,7 +3392,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               advisory) is prescribed by the ruleset. The handler derives the \
               response block directly from the YAML; the agent does not generate \
               this from regulatory memory. See DERIVED_ELSEWHERE.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "regulatory_lens_translator",
@@ -3292,7 +3407,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               this from training — so Derived is the right grounding: the \
               handler derives it from the file, not from model memory. \
               See DERIVED_ELSEWHERE.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "regulatory_lens_translator",
@@ -3308,7 +3422,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               from the agent's memory of regulatory URLs. Absence is a violation \
               caught by gate_lens_output. Derived rather than Sourced because \
               the handler derives it, not the agent via tool call.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "regulatory_lens_translator",
@@ -3320,7 +3433,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         why: "The overall divergence summary is the agent's synthesis over the \
               handler outputs. Model inference — stamped so no run can present \
               a reasoned comparison as a retrieved fact.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "regulatory_lens_translator",
@@ -3334,7 +3446,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               it doesn't is exactly the failure the gate is designed to catch, \
               and prose is where that failure moves when the structured fields \
               are correctly enforced.",
-        cross_check_sql: None,
     },
     // ── regulatory_lens_translator, EVALUATION document ────────────────────
     //
@@ -3388,7 +3499,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               only one that may be stamped `tool_verified`. An empty array \
               after a search is `tool_no_match` — the corpus was asked and had \
               nothing, which is a gap needing expert review, not clearance.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "regulatory_lens_translator",
@@ -3400,7 +3510,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
         why: "Retrieved regulatory text underlying the US verdict. Same seam as \
               the EU block: citations are sourced, the verdict over them is \
               not.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "regulatory_lens_translator",
@@ -3414,7 +3523,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               fabrication target on this market — the model knows it from \
               training — so the citation requirement carries the most weight \
               here.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "regulatory_lens_translator",
@@ -3429,7 +3537,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               `model_inference` so no run can present a reasoned verdict as a \
               retrieved fact, and so a reviewer can see that the thing needing \
               endorsement is the reasoning, not the retrieval.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "regulatory_lens_translator",
@@ -3442,7 +3549,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               not a field the search returned. The provision's WORDING is in \
               the citation; the assertion that it is the one that applies here \
               is inference.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "regulatory_lens_translator",
@@ -3456,7 +3562,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               regulatory affairs reviewer signs off the wording, and until they \
               do it carries `model_inference`. Null is the correct value when \
               the claim cannot be rendered compliantly at all.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "regulatory_lens_translator",
@@ -3471,7 +3576,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               settles it' are the case the count cannot distinguish and the \
               agent can. A `tool_no_match` evidence block with \
               needs_expert: false is a contradiction the UI should surface.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "regulatory_lens_translator",
@@ -3485,7 +3589,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               is that structure/function doctrine makes a permissive verdict \
               easy to reach from memory alone, so the inference label matters \
               most on the market most likely to return `allowed`.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "regulatory_lens_translator",
@@ -3499,7 +3602,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               structure/function claim under DSHEA is the entire verdict here, \
               and choosing among them is inference over the retrieved text — \
               the search returns the parts, not the classification.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "regulatory_lens_translator",
@@ -3513,7 +3615,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               rewrite the EU lens refuses outright, which makes it the field \
               most likely to be lifted straight onto a label. Endorsable, and \
               `model_inference` until a reviewer signs it.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "regulatory_lens_translator",
@@ -3527,7 +3628,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               FTC substantiation is a body of enforcement practice rather than \
               a published permitted-claims list, so thin search results are the \
               normal case here and must not read as a settled `allowed`.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "regulatory_lens_translator",
@@ -3541,7 +3641,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               track the product sits on — a classification the retrieved \
               standard does not make for this product. That choice is the \
               inference, and it changes the answer completely.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "regulatory_lens_translator",
@@ -3555,7 +3654,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               answer different questions, and selecting the applicable one is \
               inference over the retrieved standards rather than something a \
               search result asserts.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "regulatory_lens_translator",
@@ -3569,7 +3667,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               as a health-function claim pushes the product onto the 保健食品 \
               track and into a registration requirement, so a well-meant \
               rewrite here can change the product's regulatory category.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "regulatory_lens_translator",
@@ -3584,7 +3681,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               药食同源 list authorises an INGREDIENT while saying nothing about \
               claims made about it — a conflation the agent must flag, not \
               resolve.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: "regulatory_lens_translator",
@@ -3596,7 +3692,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               the structured fields are enforced — so it is scanned for \
               regulatory-authority words whose market block returned no \
               citations. See NARRATIVE_LEAKS.",
-        cross_check_sql: None,
     },
     // ── carbon_accountant ───────────────────────────────────────────
     //
@@ -3651,59 +3746,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               have no published factor at this grain, and a null here is what \
               keeps that line out of the total and into `unpriced_items` \
               rather than silently priced at a proxy.",
-        // The platform's second copy, built out of the agent's own work.
-        //
-        // This field was exempt, and its exemption named the route: "a second
-        // run resolving the same key makes this falsifiable with no external
-        // corpus". mig-238 built it. `carbon_emission_factors` appends every
-        // factor retrieved, keyed on (material, geography, reference_year,
-        // dataset), and two rows sharing that key are two readings of ONE
-        // published figure. They must agree.
-        //
-        // Why the dataset is in the key. ecoinvent and Agribalyse legitimately
-        // publish different factors for the same material and year — different
-        // system models, different allocation. Comparing across datasets would
-        // fire on correct behaviour, and a check that fires on correct output
-        // gets switched off with the switching-off looking like cleanup.
-        //
-        // Why `retrieval = 'search'` on both sides. A value this ledger itself
-        // supplied back into a statement is not independent confirmation of
-        // itself. Computing agreement from a number we copied is the `xgd`
-        // trap: three numbers we made consistent are evidence of nothing. The
-        // handler writes only `search` rows today; the predicate is here so a
-        // later cache-serving change cannot quietly invalidate the check.
-        //
-        // Tolerance 2%, and it is a transcription band rather than a
-        // measurement one. Two readings of the same dataset row should be the
-        // same number; the slack covers a model writing 2.1 where the page says
-        // 2.08. It is deliberately far tighter than the 5% one might pick for
-        // "do these factors broadly agree", because that is a different
-        // question and this check is not asking it.
-        //
-        // What it does NOT establish, stated because a cross-check whose reach
-        // is overstated is worse than none: agreement is weak evidence. Two
-        // runs could agree because both read the same wrong page. The check is
-        // sound in the direction it makes claims — it fires only on
-        // disagreement, and a disagreement is always something a human must
-        // settle. Ruling out a shared-source error needs the tool-result join,
-        // which is blocked on web_search results not being persisted per
-        // episode. `CROSS_CHECK_COVERAGE` carries the denominator, so an empty
-        // ledger reports INERT rather than clean.
-        cross_check_sql: Some(
-            "SELECT count(*)::bigint AS mismatches \
-               FROM carbon_emission_factors a \
-               JOIN carbon_emission_factors b \
-                 ON b.material_key   = a.material_key \
-                AND b.geography      = a.geography \
-                AND b.reference_year = a.reference_year \
-                AND b.dataset_key    = a.dataset_key \
-                AND b.id > a.id \
-              WHERE a.retrieval = 'search' AND b.retrieval = 'search' \
-                AND abs(a.value_kg_co2e_per_kg - b.value_kg_co2e_per_kg) \
-                    > greatest( 0.02 * greatest(abs(a.value_kg_co2e_per_kg), \
-                                                abs(b.value_kg_co2e_per_kg)), \
-                                1e-9 )",
-        ),
     },
     FieldContract {
         agent_id: CA,
@@ -3718,7 +3760,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               Must be a result received on this run — a plausible ecoinvent \
               process URL is indistinguishable from a real one to anyone \
               without a licence, which is most readers.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: CA,
@@ -3732,7 +3773,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               system models or allocation rules may not be summed, so this is \
               what lets a reviewer see that a total is internally coherent — \
               or that `boundary.declared` should have said `indeterminate`.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: CA,
@@ -3763,7 +3803,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               basis check catches a basis error, which is why this is Sourced \
               from the same result the factor came from rather than inferred \
               from the material name.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: CA,
@@ -3778,7 +3817,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               Retrieved rather than inferred, because a dataset states its own \
               reference year and a model asked to supply one supplies a \
               plausible one.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: CA,
@@ -3793,7 +3831,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               legitimate, common and defensible choice — and it is only \
               defensible when declared, which is why this is a retrieved field \
               sitting beside `origin` rather than a silent match.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: CA,
@@ -3808,7 +3845,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               while looking entirely ordinary. Retrieved, so that \
               `boundary.declared` is a reading of the bases that came back \
               rather than an assumption about them.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: CA,
@@ -3827,7 +3863,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               publishers consulted in ONE run are decorrelated by \
               construction. Null is honest and common — plenty of materials \
               appear in exactly one inventory.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: CA,
@@ -3841,7 +3876,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               an assertion that a corroboration happened, which is precisely \
               the claim this field exists to make checkable rather than \
               trusted.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: CA,
@@ -3857,48 +3891,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               was built to escape. Named rather than assumed, so the \
               independence property is a value in the document that a query \
               can adjudicate rather than an intention in a prompt.",
-        // The independence property, checked rather than hoped for.
-        //
-        // This is the one cross-check on this agent that reads the AGENT's
-        // behaviour rather than the world, and it is the one that can degrade
-        // silently. Everything else about corroboration is enforced by the
-        // platform: `carbon_corroboration` computes the verdict, so the agent
-        // cannot claim agreement it did not find. But nothing stops it
-        // satisfying the two-source rule by quoting ecoinvent twice, and if it
-        // did, `corroboration: agreeing` would be produced honestly by the
-        // platform, mean nothing, and look identical to the real thing.
-        //
-        // So: count lines where the two datasets normalise to the same string.
-        // Non-zero is not a fabrication, it is a corroboration that decorrelates
-        // nothing, and the distinction is worth having a number for.
-        //
-        // Episode-based, so it carries the cohort placeholder and is read both
-        // scoped to the current prompt and across history — which matters more
-        // here than elsewhere, because "the agent stopped seeking a second
-        // publisher" is exactly the kind of drift a prompt edit causes.
-        //
-        // Reads the RAW reply, so it sees what the model actually returned
-        // before enforcement. It matches only replies that are a bare JSON
-        // object, as `football_analyst`'s does; a fenced block drops out. That
-        // limit is real and is the reason this check is a discipline signal
-        // rather than a guarantee.
-        cross_check_sql: Some(
-            "SELECT count(*)::bigint AS mismatches \
-               FROM episodes e \
-               JOIN agents a ON a.agent_id = e.agent_id, \
-               LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
-                                    THEN e.response_text::jsonb END AS doc) j, \
-               LATERAL jsonb_array_elements( \
-                         CASE WHEN jsonb_typeof(j.doc #> '{inventory,items}') = 'array' \
-                              THEN j.doc #> '{inventory,items}' \
-                              ELSE '[]'::jsonb END) AS li \
-              WHERE a.agent_name = 'carbon_accountant' \
-                {{COHORT}} \
-                AND li.value ->> 'dataset' IS NOT NULL \
-                AND li.value ->> 'corroborating_dataset' IS NOT NULL \
-                AND lower(btrim(li.value ->> 'dataset')) \
-                    = lower(btrim(li.value ->> 'corroborating_dataset'))",
-        ),
     },
     FieldContract {
         agent_id: CA,
@@ -3927,54 +3919,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               and got it wrong — a discipline signal the derivation would \
               otherwise hide, by making every stored row correct by \
               construction.",
-        // Compares the document against ITSELF, so it needs no external
-        // corpus and no dataset licence — which is why it was the first real
-        // cross-check this agent had, at a point when every other retrieval
-        // field was exempt. Internal consistency is the check you can always
-        // afford;
-        // `football_analyst.advanced_metrics.xgd` established the pattern.
-        //
-        // What it can and cannot see, stated plainly because a cross-check
-        // whose reach is overstated is worse than none. `episodes.response_text`
-        // holds the RAW reply, before `enforce` ran, so this reads the model's
-        // own arithmetic rather than the platform's — which is the point, and
-        // is the only reason the check is not true by construction. It matches
-        // only replies that are a bare JSON object; a fenced ```json block
-        // fails `IS JSON OBJECT` and drops out, as it does for
-        // `football_analyst` today. A run that obeys the prompt and leaves
-        // `kg_co2e` null also drops out. So a clean result here means "no run
-        // multiplied badly", not "every factor is right" — the factors are
-        // covered, and admitted uncovered, in CROSS_CHECK_EXEMPTIONS.
-        //
-        // Tolerance is relative rather than absolute, and that is forced by
-        // the domain: line totals in this document span roughly 1e-4 kg CO2e
-        // for a trace acidulant to 1e0 for a principal ingredient, so any
-        // fixed epsilon is either blind at the top of that range or fires on
-        // rounding at the bottom. 0.5% clears three-significant-figure
-        // reporting; the 1e-9 floor keeps a zero-valued line from dividing the
-        // check by nothing. A check that fires on correct behaviour gets
-        // deleted, and the deletion looks like cleanup.
-        cross_check_sql: Some(
-            "SELECT count(*)::bigint AS mismatches \
-               FROM episodes e \
-               JOIN agents a ON a.agent_id = e.agent_id, \
-               LATERAL (SELECT CASE WHEN e.response_text IS JSON OBJECT \
-                                    THEN e.response_text::jsonb END AS doc) j, \
-               LATERAL jsonb_array_elements( \
-                         CASE WHEN jsonb_typeof(j.doc #> '{inventory,items}') = 'array' \
-                              THEN j.doc #> '{inventory,items}' \
-                              ELSE '[]'::jsonb END) AS li \
-              WHERE a.agent_name = 'carbon_accountant' \
-                {{COHORT}} \
-                AND jsonb_typeof(li.value -> 'kg_co2e') = 'number' \
-                AND jsonb_typeof(li.value -> 'activity_qty_kg') = 'number' \
-                AND jsonb_typeof(li.value -> 'factor_kg_co2e_per_kg') = 'number' \
-                AND abs( (li.value ->> 'kg_co2e')::numeric \
-                         - (li.value ->> 'activity_qty_kg')::numeric \
-                           * (li.value ->> 'factor_kg_co2e_per_kg')::numeric ) \
-                    > greatest( 1e-9, \
-                                0.005 * abs((li.value ->> 'kg_co2e')::numeric) )",
-        ),
     },
     FieldContract {
         agent_id: CA,
@@ -3995,7 +3939,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               zero when nothing resolved: zero is a footprint claim and the \
               strongest one in the document, and it is the value an empty sum \
               would produce by accident.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: CA,
@@ -4013,7 +3956,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               omitting three ingredients is the `tool_no_match`-as-clearance \
               failure in a different suit, and an agent that summed what it \
               could find has every incentive to call the result complete.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: CA,
@@ -4028,7 +3970,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               which supplier to ask, which is the difference between a caveat \
               and a work item. Platform-written so that the list cannot shrink \
               to make a statement look better than it is.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: CA,
@@ -4044,7 +3985,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               tank is Scope 2 is the agent's, and it is the work it is \
               commissioned for. Stamped `model_inference` so a statement can \
               never present an allocation as though a dataset had asserted it.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: CA,
@@ -4059,7 +3999,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               if its transport leg is reported separately — a choice about \
               reporting structure, not a property of the hibiscus. Null for \
               scopes 1 and 2, where the categories do not apply.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: CA,
@@ -4073,7 +4012,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               `scope_3` beside `category: 1` is a verdict nobody can agree or \
               disagree with, and a reviewer who cannot disagree is not \
               reviewing.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: CA,
@@ -4089,7 +4027,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               `indeterminate` is the honest verdict for a mixed set, and a \
               mixed set is the normal case when factors come from three \
               databases.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: CA,
@@ -4102,7 +4039,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               what the factors cover rather than a field any of them carries; \
               a dataset says `cradle-to-gate` and leaves a human to work out \
               which stages that is for a fermented beverage.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: CA,
@@ -4117,7 +4053,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               a reader who is not told assumes they are zero rather than \
               unmeasured — the one reading that makes the number actively \
               misleading rather than merely partial.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: CA,
@@ -4131,7 +4066,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               are different exclusions with different remedies, and a reader \
               who cannot tell them apart cannot tell a methodologically sound \
               figure from an incomplete one.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: CA,
@@ -4145,7 +4079,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               factors were too heterogeneous to claim one — naming a standard \
               a statement does not actually satisfy is worse than naming none, \
               because the name is what a reader checks instead of the method.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: CA,
@@ -4164,7 +4097,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               agent can. Under-flagging is the expensive direction: the reader \
               of a carbon statement is usually not the person who could notice \
               the substitution.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: CA,
@@ -4179,7 +4111,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               lands on the same field a consumer already reads, rather than in \
               a comment beside it — and so that the gap between an agent's \
               figure and an assured one is expressible instead of implied.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: CA,
@@ -4196,7 +4127,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               Battery DPP declaration that requires third-party verification. \
               Nothing retrieves that mapping; leaving it unstated is how a \
               screening estimate ends up in a regulatory filing.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: CA,
@@ -4211,7 +4141,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               the difference between two things neither of which is a retrieved \
               value. A gap nobody can action is a disclaimer, and a disclaimer \
               is what this field exists instead of.",
-        cross_check_sql: None,
     },
     FieldContract {
         agent_id: CA,
@@ -4226,7 +4155,6 @@ pub const FIELD_CONTRACTS: &[FieldContract] = &[
               only relocates it into the sentence a human reads. Scanned \
               against the `inventory` block for dataset names and CO2e \
               quantities; see NARRATIVE_LEAKS.",
-        cross_check_sql: None,
     },
 ];
 
@@ -4298,6 +4226,12 @@ pub struct Report {
 impl Report {
     pub fn is_clean(&self) -> bool {
         self.violations.is_empty()
+    }
+
+    /// Absorb another report. Used when a block is enforced by a sub-pass.
+    pub fn merge(&mut self, other: Report) {
+        self.violations.extend(other.violations);
+        self.provenance.extend(other.provenance);
     }
 
     /// **What was refused**, for `gate_decisions.reason`.
@@ -5109,7 +5043,7 @@ pub fn enforce_from_output_contract(
         .filter(|g| !g.is_empty());
 
     if let Some(grounding) = grounding {
-        return enforce_from_grounding_map(grounding, doc);
+        return enforce_from_grounding_map(agent_id, grounding, doc);
     }
 
     // Neither home has anything to say about this agent.
@@ -5133,7 +5067,143 @@ pub fn enforce_from_output_contract(
 /// The platform's verdict overwrites any `_provenance` value the model may
 /// have emitted — the model cannot set its own grounding strength higher than
 /// the contract allows.
+/// One block that declares its fields individually.
+///
+/// The card-side counterpart of what [`enforce`] does per `FieldContract`, and
+/// it must agree with it field for field — `the_two_enforcement_paths_agree`
+/// is what holds them together, because the point of the refinement is that a
+/// declaration can move from the table to a card without the runtime changing
+/// its mind about the same document.
+///
+/// The block stamp is DERIVED from the fields, by the same precedence
+/// [`enforce`] step 4 uses: a populated retrieval outranks an empty one,
+/// an empty retrieval outranks a derivation, and a derivation outranks a
+/// judgement. Taking the author's block-level status instead would reintroduce
+/// the overclaim: `football_analyst.advanced_metrics` says `sourced` while one
+/// of its three fields has no source at all.
+fn enforce_refined_block(
+    agent_id: &str,
+    block: &str,
+    fields: &serde_json::Map<String, Value>,
+    doc: &mut Value,
+    pre_contract: bool,
+) -> Report {
+    let mut report = Report::default();
+
+    let status_of = |spec: &Value| -> String {
+        spec.get("status")
+            .and_then(|s| s.as_str())
+            .unwrap_or("narrative")
+            .to_string()
+    };
+
+    // 1. The platform writes what it can compute, exactly as on the table
+    //    path. Without this, migrating `genome_profiler.phylogeny.superorder`
+    //    onto its card would stop the derivation running and leave the field
+    //    permanently null — the state it was in before DERIVATIONS existed.
+    if !pre_contract {
+        for (agent, path, derive) in DERIVATIONS {
+            if *agent != agent_id {
+                continue;
+            }
+            let Some((b, f)) = path.split_once('.') else {
+                continue;
+            };
+            if b != block {
+                continue;
+            }
+            if fields.get(f).map(&status_of).as_deref() != Some("derived") {
+                continue;
+            }
+            match derive(doc) {
+                Some(v) => {
+                    set_path(doc, path, v);
+                }
+                None => {
+                    if path_has_claim(doc, path) {
+                        let removed = null_path(doc, path).unwrap_or(Value::Null);
+                        report.violations.push(Violation {
+                            path: (*path).to_string(),
+                            removed,
+                            kind: ViolationKind::UngroundedField,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. A field nothing can supply must be null, and a value in it is the
+    //    violation. This is the refinement's whole return: under one `sourced`
+    //    block stamp, a fabricated `advanced_metrics.ppda` survived and read
+    //    as tool-verified.
+    let mut any_sourced = false;
+    let mut sourced_populated = false;
+    let mut any_derived = false;
+    let mut any_inferred = false;
+
+    for (field, spec) in fields {
+        let path = format!("{block}.{field}");
+        match status_of(spec).as_str() {
+            "unavailable" => {
+                if path_has_claim(doc, &path) {
+                    if let Some(removed) = null_path(doc, &path) {
+                        report.violations.push(Violation {
+                            path: path.clone(),
+                            removed,
+                            kind: ViolationKind::UngroundedField,
+                        });
+                    }
+                }
+            }
+            "sourced" => {
+                any_sourced = true;
+                sourced_populated |= !pre_contract && path_has_claim(doc, &path);
+            }
+            "derived" => any_derived = true,
+            "inferred" => any_inferred = true,
+            // Prose inside a data block. No stamp contribution and nothing to
+            // strip; a retrieval verdict on a paragraph is a category error.
+            _ => {}
+        }
+    }
+
+    // 3. The stamp. A block of nothing but narrative gets none, matching
+    //    `enforce`: labelling prose as a data block would imply a retrieval
+    //    claim it never makes.
+    if !any_sourced && !any_derived && !any_inferred {
+        let only_narrative = fields.values().all(|s| status_of(s) == "narrative");
+        if only_narrative && !fields.is_empty() {
+            return report;
+        }
+    }
+
+    let verdict = if pre_contract {
+        PROV_UNAVAILABLE
+    } else if any_sourced && sourced_populated {
+        PROV_TOOL
+    } else if any_sourced {
+        PROV_NO_MATCH
+    } else if any_derived {
+        PROV_DERIVED
+    } else if any_inferred {
+        PROV_INFERRED
+    } else {
+        PROV_UNAVAILABLE
+    };
+
+    if let Some(obj) = doc.as_object_mut() {
+        obj.insert(
+            format!("{block}_provenance"),
+            Value::String(verdict.to_string()),
+        );
+    }
+    report.provenance.push((block.to_string(), verdict));
+    report
+}
+
 fn enforce_from_grounding_map(
+    agent_id: &str,
     grounding: &serde_json::Map<String, Value>,
     doc: &mut Value,
 ) -> Report {
@@ -5148,6 +5218,26 @@ fn enforce_from_grounding_map(
         // Skip the generated `_provenance` siblings — this function stamps
         // them; they are not authored grounding declarations.
         if block_name.ends_with("_provenance") {
+            continue;
+        }
+
+        // ── a refined block: the fields are the declarations ──────────
+        //
+        // Handled before the block-level status because when `fields` is
+        // present the block status is no longer a claim about content — it is
+        // only what stamps `<block>_provenance`, and it is derived here rather
+        // than trusted. A block declared `sourced` over a field with no source
+        // is exactly the overclaim the refinement exists to end, so honouring
+        // the block status in preference to its fields would make the
+        // vocabulary decorative.
+        if let Some(fields) = block_grounding.get("fields").and_then(|f| f.as_object()) {
+            report.merge(enforce_refined_block(
+                agent_id,
+                block_name,
+                fields,
+                doc,
+                pre_contract,
+            ));
             continue;
         }
 
@@ -6143,7 +6233,9 @@ mod tests {
             if !matches!(c.grounding, Grounding::Sourced { .. }) {
                 continue;
             }
-            if c.cross_check_sql.is_none() && !cross_check_exempt(c.agent_id, c.path) {
+            if cross_check_for(c.agent_id, c.path).is_none()
+                && !cross_check_exempt(c.agent_id, c.path)
+            {
                 unaccounted.push(format!("{}.{}", c.agent_id, c.path));
             }
         }
@@ -6153,7 +6245,7 @@ mod tests {
              not:\n  {}\n\nDeclaring a field `Sourced` asserts a tool COULD \
              supply it. It does not assert the value CAME from that tool — \
              which is how `Antaxius beieri` was profiled as a cerambycid \
-             beetle with every check green. Either add a `cross_check_sql` \
+             beetle with every check green. Either add a CROSS_CHECKS entry \
              comparing it against an independently-held copy, or add it to \
              CROSS_CHECK_EXEMPTIONS with what it would take to fix.",
             unaccounted.len(),
@@ -6168,7 +6260,7 @@ mod tests {
             let lower = sql.to_lowercase();
             assert!(
                 lower.trim_start().starts_with("select"),
-                "{agent}.{path}: cross_check_sql must be a bare SELECT"
+                "{agent}.{path}: a CROSS_CHECKS query must be a bare SELECT"
             );
             assert!(
                 lower.contains("as mismatches"),
@@ -6292,17 +6384,17 @@ mod tests {
             // and a denominator on an episode-based check would be a second,
             // disagreeing answer to a question the cohort predicate already
             // answers.
-            let contract = FIELD_CONTRACTS
-                .iter()
-                .find(|c| c.agent_id == *agent && c.path == *path);
-            let Some(contract) = contract else {
-                panic!("coverage declared for {agent}.{path}, which is not a declared field");
-            };
-            let Some(check) = contract.cross_check_sql else {
+            assert!(
+                FIELD_CONTRACTS
+                    .iter()
+                    .any(|c| c.agent_id == *agent && c.path == *path),
+                "coverage declared for {agent}.{path}, which is not a declared field"
+            );
+            let Some(check) = cross_check_for(agent, path) else {
                 panic!(
-                    "{agent}.{path} declares a coverage query and no \
-                     cross_check_sql. A denominator with no numerator measures \
-                     nothing."
+                    "{agent}.{path} declares a coverage query and has no \
+                     CROSS_CHECKS entry. A denominator with no numerator \
+                     measures nothing."
                 );
             };
             assert!(
@@ -6336,16 +6428,13 @@ mod tests {
         const ACCUMULATING: &[&str] = &["carbon_emission_factors"];
 
         let mut bare = Vec::new();
-        for c in FIELD_CONTRACTS {
-            let Some(sql) = c.cross_check_sql else {
-                continue;
-            };
+        for (agent, path, sql) in cross_checks() {
             let lower = sql.to_lowercase();
             if !ACCUMULATING.iter().any(|t| lower.contains(t)) {
                 continue;
             }
-            if coverage_sql_for(c.agent_id, c.path).is_none() {
-                bare.push(format!("{}.{}", c.agent_id, c.path));
+            if coverage_sql_for(agent, path).is_none() {
+                bare.push(format!("{agent}.{path}"));
             }
         }
         assert!(
@@ -6384,6 +6473,74 @@ mod tests {
                 why.len() > 60,
                 "exemption for {agent}.{path} needs to say why not AND what \
                  would fix it, not `{why}`"
+            );
+        }
+    }
+
+    /// **A check must not outlive the field it checks.**
+    ///
+    /// The risk the side table introduces, and the price of being able to
+    /// delete a declaration without deleting its check. While the SQL was a
+    /// field on `FieldContract` the two could not drift: removing the
+    /// declaration removed the check. Now they can, and the failure would be
+    /// a query running forever against a path nothing produces, counting zero
+    /// mismatches and reporting `ok` — verified-because-empty, which is the
+    /// exact shape `CROSS_CHECK_COVERAGE` exists to refuse one layer down.
+    ///
+    /// Accepts a match on the path OR on its first segment, because that is
+    /// what makes the burn-down possible: a check on `advanced_metrics.xgd`
+    /// must survive its declaration migrating to a card, where the vocabulary
+    /// is per-block and the block is `advanced_metrics`. Anything narrower
+    /// would make this guard the thing blocking the migration it was written
+    /// to enable.
+    #[test]
+    fn every_cross_check_names_a_field_somebody_declares() {
+        let dispatchable: std::collections::HashSet<&str> =
+            crate::agent_backend::tools::dispatchable_tool_names()
+                .into_iter()
+                .collect();
+        let cards = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("agents");
+
+        for (agent, path, _) in cross_checks() {
+            if FIELD_CONTRACTS
+                .iter()
+                .any(|c| c.agent_id == agent && c.path == path)
+            {
+                continue;
+            }
+
+            // Not in the table. It must then be declared on the agent's card,
+            // at block granularity.
+            let block = path.split('.').next().unwrap_or(path);
+            let declared = std::fs::read_dir(&cards)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter(|t| t.path().is_dir())
+                .any(|tier| {
+                    let card = tier.path().join(agent).join("agent_card.json");
+                    let Ok(text) = std::fs::read_to_string(card) else {
+                        return false;
+                    };
+                    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+                        return false;
+                    };
+                    let oc = &v["capabilities"]["output_contract"];
+                    crate::field_state::read_contract(agent, Some(oc), |t| dispatchable.contains(t))
+                        .entries
+                        .iter()
+                        .any(|e| e.path == block || e.path == path)
+                });
+
+            assert!(
+                declared,
+                "CROSS_CHECKS holds a query for {agent}.{path}, and nothing \
+                 declares that field — not FIELD_CONTRACTS, not the agent's \
+                 card (looked for block `{block}`). The query still runs, \
+                 finds nothing, counts zero mismatches and reports `ok`. \
+                 Either the declaration was deleted and this check should go \
+                 with it, or it was migrated and the path needs updating to \
+                 the name the card uses."
             );
         }
     }
@@ -7737,7 +7894,7 @@ mod tests {
             let computed = DERIVATIONS
                 .iter()
                 .any(|(a, p, _)| *a == c.agent_id && *p == c.path);
-            let checked = c.cross_check_sql.is_some();
+            let checked = cross_check_for(c.agent_id, c.path).is_some();
             let elsewhere = DERIVED_ELSEWHERE
                 .iter()
                 .any(|(a, p, _)| *a == c.agent_id && *p == c.path);
@@ -7756,7 +7913,7 @@ mod tests {
              `Derived` asserts the value is reproducible. With nothing computing \
              it and nothing checking it, the claim is unbacked and the field is \
              null for ever — which is what `phylogeny.superorder` was. Register a \
-             transform in DERIVATIONS, give it a `cross_check_sql`, or add it to \
+             transform in DERIVATIONS, give it a CROSS_CHECKS entry, or add it to \
              DERIVED_ELSEWHERE naming the file that fills it."
         );
 
@@ -7945,6 +8102,130 @@ mod tests {
                 .iter()
                 .map(|v| &v.path)
                 .collect::<Vec<_>>()
+        );
+    }
+
+    /// **The migration-safety proof: both enforcement paths agree.**
+    ///
+    /// Equal *declarations* are necessary and not sufficient.
+    /// `tests/per_field_card_vocabulary.rs` shows the refined card reproduces
+    /// `FIELD_CONTRACTS` path for path and state for state for
+    /// `football_analyst`. What a caller actually depends on is what
+    /// enforcement DOES: which fields are stripped, and what each block is
+    /// stamped. If the two paths disagree on one document, deleting the 13
+    /// registered rows changes runtime behaviour and the migration is a
+    /// rewrite wearing a refactor's clothes.
+    ///
+    /// Lives here rather than beside its sibling because
+    /// `enforce_from_grounding_map` is private, and
+    /// `enforce_from_output_contract` cannot reach it for this agent: the
+    /// table wins where it exists, so routing through the public entry point
+    /// would run the table path twice and compare it against itself. That is a
+    /// test that cannot fail, which is worse than no test.
+    ///
+    /// The document is hostile on purpose. Every field the contract forbids
+    /// carries a plausible value, because that is what a fabricating model
+    /// produces and what the per-block form let through.
+    #[test]
+    fn the_two_enforcement_paths_agree_on_the_same_document() {
+        const AGENT: &str = "football_analyst";
+
+        let doc = || {
+            serde_json::json!({
+                "league_context": { "league": "Premier League", "season": 2025 },
+                "fixtures": [{ "home": "Arsenal", "away": "Chelsea" }],
+                "head_to_head": { "played": 12 },
+                "injuries": [],
+                "match_statistics": { "shots": 14 },
+                "advanced_metrics": { "xg": 1.8, "xga": 0.9, "xgd": 0.9, "ppda": 8.4 },
+                "ratings": { "elo_current": 1834, "elo_implied_win_probability": 0.61 },
+                "squad_value": { "total_eur": 912000000 },
+                "assessment": { "verdict": "home favoured" },
+                "summary": "Arsenal are favoured at home on recent form."
+            })
+        };
+
+        let proto_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("agents/curated/football_analyst/output_contract.per_field.prototype.json");
+        let proto: Value =
+            serde_json::from_str(&std::fs::read_to_string(&proto_path).unwrap()).unwrap();
+        let grounding = proto["grounding"].as_object().unwrap().clone();
+
+        let mut via_table = doc();
+        let table = enforce(AGENT, &mut via_table);
+
+        let mut via_card = doc();
+        let card = enforce_from_grounding_map(AGENT, &grounding, &mut via_card);
+
+        // 1. The surviving document must be byte-identical. This is the
+        //    assertion a consumer's behaviour actually rests on.
+        assert_eq!(
+            via_card, via_table,
+            "the two paths left different documents. Anything a downstream \
+             agent reads could differ after migration."
+        );
+
+        // 2. The same removals, reported at the same paths. A strip that
+        //    happens without being reported reads as "the agent had no view"
+        //    rather than "the platform removed a claim".
+        let paths = |r: &Report| {
+            let mut v: Vec<String> = r.violations.iter().map(|x| x.path.clone()).collect();
+            v.sort();
+            v
+        };
+        assert_eq!(
+            paths(&card),
+            paths(&table),
+            "different violations reported for the same document"
+        );
+
+        // 3. The same block stamps. `advanced_metrics` is the one that matters:
+        //    it must be `tool_verified` because `xg` came back, even though two
+        //    of its three declared fields are not retrievals at all.
+        let stamps = |r: &Report| {
+            let mut v: Vec<(String, &'static str)> = r.provenance.clone();
+            v.sort();
+            v
+        };
+        assert_eq!(stamps(&card), stamps(&table), "different provenance stamps");
+
+        // And the specific claims, spelled out, so a future reader of a green
+        // suite can see what it proved rather than trusting the equality.
+        assert_eq!(
+            via_card.pointer("/advanced_metrics/ppda").unwrap(),
+            &Value::Null,
+            "a fabricated ppda survived. Under the live per-block card it did, \
+             stamped tool_verified."
+        );
+        assert_eq!(via_card.pointer("/advanced_metrics/xg").unwrap(), 1.8);
+        assert_eq!(
+            via_card.pointer("/ratings/elo_current").unwrap(),
+            &Value::Null
+        );
+        // Per-FIELD nulling, not the whole block: `ratings` stays an object.
+        // A block-level `unavailable` would have replaced it with a bare null
+        // and broken the agent's own schema.
+        assert!(
+            via_card.get("ratings").is_some_and(Value::is_object),
+            "`ratings` became {:?} — the refinement must strip fields, not \
+             blocks",
+            via_card.get("ratings")
+        );
+        assert_eq!(
+            via_card.get("advanced_metrics_provenance").unwrap(),
+            PROV_TOOL
+        );
+        assert_eq!(
+            via_card.get("ratings_provenance").unwrap(),
+            PROV_UNAVAILABLE
+        );
+        assert_eq!(
+            via_card.get("assessment_provenance").unwrap(),
+            PROV_INFERRED
+        );
+        assert!(
+            via_card.get("summary_provenance").is_none(),
+            "prose took a retrieval verdict"
         );
     }
 

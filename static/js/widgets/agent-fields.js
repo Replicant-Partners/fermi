@@ -219,6 +219,15 @@ window.AgentFields = (function () {
     { group: "manage", key: "display_alias", path: "label",
       label: "display name", kind: "text",
       help: "What surfaces show. The agent name is the identity and does not change." },
+    // The one field every catalogue surface prints and the shelf could not
+    // edit. It is the sentence under the name in the register, in search, on
+    // every marketplace card — an author had to open the old page to change
+    // the most-read text the agent has.
+    { group: "manage", key: "description", path: "description",
+      label: "description", kind: "textarea", rows: 3,
+      help: "The sentence the register, the marketplace and every composition " +
+            "picker show under the name. Not read by the executor — the system " +
+            "prompt is what the agent is told." },
     { group: "manage", key: "tags", path: "tags", label: "tags", kind: "tags",
       help: "Comma separated. Used for discovery, not for capability — a tag " +
             "cannot make an agent able to do anything." },
@@ -240,6 +249,25 @@ window.AgentFields = (function () {
         { key: "price_credits_per_call", label: "price (credits/call)", kind: "number" },
         { key: "support_tier", label: "support tier", kind: "text" },
       ] },
+    // ── instruments ─────────────────────────────────────────────
+    //
+    // Writable since mig-239, and it is the highest-leverage field on this
+    // whole surface: `execute_list_agents` hands a navigator
+    // `{id, type, description, skills}` for every agent and nothing else, so
+    // this is a quarter of what any strategist composes on. It was the one
+    // field with no column, no `AgentUpdate` member and no editor — the only
+    // lever on composability, nailed shut.
+    //
+    // `path` reaches into the served split rather than a flat key: the
+    // endpoint serves `skills: {executable, labels, all, source}` so the page
+    // can render the classification without re-deriving it, and `all` is the
+    // round-trip value. `key` stays `skills`, which is what the PUT takes.
+    { group: "instruments", key: "skills", path: "skills.all",
+      label: "skills", kind: "skills",
+      help: "Comma separated. A name that matches a registered skill EXACTLY is " +
+            "executable — the executor can invoke it directly, with no model in " +
+            "the loop. Anything else is a discovery label that `xaman_ek` reads " +
+            "when it composes. Both are useful; they are not the same promise." },
     // ── ports ─────────────────────────────────────────────────────────────
     { group: "ports", key: "accepts", path: "accepts",
       label: "accepts", kind: "tags",
@@ -281,6 +309,12 @@ window.AgentFields = (function () {
         ],
       } },
   ];
+
+  // Groups that are all action and no field, so `FIELDS` cannot name them.
+  // Listed rather than derived, because `groups()` is what a host asks to find
+  // out what it can mount, and a list computed from FIELDS would have answered
+  // that money and instruments do not exist.
+  const ACTION_GROUPS = ["economics", "instruments"];
 
   /// The four cognition tiers, in resolution order. A caller asks at a tier and
   /// gets the highest rung at or below it.
@@ -438,6 +472,22 @@ window.AgentFields = (function () {
       return `<input ${common} type="text" value="${
         esc(Array.isArray(v) ? v.join(", ") : v)}"/>`;
     }
+    if (f.kind === "skills") {
+      // A tags box that says, as you type, which half of the field each entry
+      // landed in.
+      //
+      // Without this the control is a comma-separated string and the
+      // distinction that matters is invisible: `run_monte_carlo` grants a
+      // capability, `run-monte-carlo` is a keyword, and they look identical
+      // in an input. The platform knows which is which — it is a set
+      // membership test against `/api/skills` — so it says so before the
+      // save rather than after the agent fails to do the thing.
+      return `<div class="af-skills" data-skills>
+        <input ${common} type="text" value="${
+          esc(Array.isArray(v) ? v.join(", ") : v)}"/>
+        <div class="af-skills-read" data-skills-read></div>
+      </div>`;
+    }
     return `<input ${common} type="text" value="${esc(v)}"/>`;
   }
 
@@ -454,6 +504,7 @@ window.AgentFields = (function () {
         const n = Number(raw);
         return Number.isFinite(n) ? n : null;
       }
+      case "skills": // same wire shape as tags: a list of strings
       case "tags":
         return raw.split(",").map((t) => t.trim()).filter(Boolean);
       default:
@@ -496,6 +547,154 @@ window.AgentFields = (function () {
         `<button class="af-life-btn" data-lifecycle="${act}" title="${esc(why)}"
           >${esc(label)}</button>`).join("")}</div>
       <div class="af-out" data-life-out></div>
+    </div>`;
+  }
+
+  // ── Economics: the agent as something that earns and spends ──────────
+  //
+  // # Why none of this is a field
+  //
+  // Three money surfaces existed and all three were on the old page, which is
+  // the one an owner was told to stop using. Putting them here as FIELDS would
+  // have been the fast way and the wrong one: `PUT /api/agents/:id` needs only
+  // **edit** rights, while every money route on this platform needs **admin**
+  // — `update_fork_pricing_handler`, `topup_dreaming_budget_handler` and the
+  // wallet handlers all call `require_admin_on`, deliberately, with "monetary
+  // policy decision" written next to the call.
+  //
+  // So a `fork_pricing` entry in the FIELDS table would let anyone holding a
+  // share re-price the owner's agent through the general PUT. That is the same
+  // shape of defect as the publish-gate bypass `reject_lifecycle_fields`
+  // exists to close, and the same answer applies: money is an ACTION against
+  // the endpoint that guards it, never a field on the endpoint that does not.
+  // `check_agent_fields.js` asserts this rather than trusting it.
+  //
+  // # Absent is not zero, again
+  //
+  // The dream figures come from the record, which the host may not have
+  // loaded. `budget - used` on two undefineds is 0, and 0 left is the state
+  // that says "this agent has stopped learning" — a claim about the platform
+  // written by arithmetic. Unknown renders as unknown.
+  function economics(profile, record) {
+    const r = record || null;
+    const known = r && r.dream_budget != null;
+    const budget = known ? r.dream_budget : null;
+    const used = known ? (r.dream_used ?? 0) : null;
+    const left = known ? budget - used : null;
+    const fp = profile.fork_pricing || {};
+    const price = (v) => (v == null ? "" : String(v));
+
+    return `<div class="af-econ">
+      <div class="af-note">None of this is a field. Every money route checks
+        <b>admin</b> rights and <code>PUT /api/agents/:id</code> checks only edit,
+        so pricing and funding are actions against the endpoints that guard them.</div>
+
+      <div class="af-econ-part">
+        <div class="af-sublabel">what it thinks with</div>
+        <div class="af-econ-row">
+          <span class="af-econ-fig"><b>${known ? left : "\u2014"}</b> credits left</span>
+          <span class="af-dim">${known
+            ? `${used} used of ${budget} funded`
+            : "the record has not loaded, so this is unknown rather than empty"}</span>
+        </div>
+        ${known && left <= 0 ? `<div class="af-warn">Out of dream credits. Loop 1
+          cannot run for this agent — it will keep answering and stop learning.</div>` : ""}
+        <div class="af-acts">
+          <input class="af-econ-in" type="number" min="1" max="1000" value="10"
+                 data-econ="topup-amount" aria-label="credits to fund"/>
+          <button class="af-life-btn" data-econ-act="topup"
+            title="debits YOUR wallet and credits this agent's dreaming budget"
+            >fund dreaming</button>
+          <button class="af-life-btn" data-econ-act="consolidate"
+            title="1 dream credit + 3 gas credits">consolidate now</button>
+        </div>
+        <div class="af-econ-note">Funding debits <b>your</b> wallet and credits the
+          agent's budget. Consolidating spends one of these credits to turn episodes
+          into rules — which is the only thing the budget buys.</div>
+        <div class="af-out" data-econ-out="dream"></div>
+      </div>
+
+      <div class="af-econ-part">
+        <div class="af-sublabel">what it earns</div>
+        <div data-econ-wallet><span class="af-dim">reading the wallet…</span></div>
+        <div class="af-out" data-econ-out="wallet"></div>
+      </div>
+
+      <div class="af-econ-part">
+        <div class="af-sublabel">what a fork costs</div>
+        <div class="af-econ-prices">
+          <label>base<input type="number" min="0" data-econ="base_price"
+            value="${esc(price(fp.base_price ?? 0))}"/></label>
+          <label>ontology<input type="number" min="0" data-econ="ontology_price"
+            placeholder="not for sale" value="${esc(price(fp.ontology_price))}"/></label>
+          <label>embeddings<input type="number" min="0" data-econ="embedding_price"
+            placeholder="not for sale" value="${esc(price(fp.embedding_price))}"/></label>
+        </div>
+        <div class="af-econ-note">Empty is <b>not for sale</b>, which is a different
+          offer from priced at zero. Credits, charged to whoever forks it.</div>
+        <div class="af-acts">
+          <button class="af-life-btn" data-econ-act="pricing">save pricing</button>
+          <button class="af-life-btn" data-econ-act="fork"
+            title="opens the fork flow on the agent page">fork this agent</button>
+        </div>
+        <div class="af-out" data-econ-out="pricing"></div>
+      </div>
+    </div>`;
+  }
+
+  // ── Instruments: what it can call, and what it hands out ─────────────
+  //
+  // Three declarations that decide what an agent can actually DO, none of
+  // which the shelf showed:
+  //
+  //   skills        deterministic functions the executor may invoke by name
+  //   mcp_servers   third-party endpoints it may CALL
+  //   mcp_tools     what it PUBLISHES over its own endpoint
+  //
+  // The two MCP reads are edit-gated on purpose ("endpoints and credential key
+  // names are operational detail, not catalogue metadata"), so a 403 hides the
+  // section rather than rendering controls that would all fail. A failed fetch
+  // is not the same as an agent with no instruments and does not read that way.
+  //
+  // Add / edit / remove a server is still the old page's form. Duplicating a
+  // 600-line editor to avoid one link is the drift this file exists to prevent;
+  // what IS here is the read, the credential state, and the one action an
+  // owner is actually blocked by — supplying the key.
+  function instruments(profile) {
+    const sk = profile.skills || {};
+    // Where the list above came from, which an author cannot otherwise tell.
+    //
+    // `agent_card_file` means these are INHERITED and a save takes ownership
+    // of them — the same first-save-seeds-the-DB story the MCP panels tell,
+    // and worth saying before the save rather than after, because from that
+    // point the card file stops taking effect for this agent.
+    const src = sk.source === "database"
+      ? `Stored on the agent. The card file no longer decides.`
+      : sk.source === "agent_card_file"
+        ? `Inherited from this agent's card file. Saving copies the list onto the
+           agent, which becomes authoritative — later edits to the card file will
+           not take effect.`
+        : `Nothing declared anywhere yet.`;
+
+    return `<div class="af-inst">
+      <div class="af-inst-part">
+        <div class="af-note">${src}</div>
+      </div>
+
+      <div class="af-inst-part" data-inst="servers">
+        <div class="af-sublabel">what it can call</div>
+        <div data-inst-body><span class="af-dim">reading…</span></div>
+      </div>
+
+      <div class="af-inst-part" data-inst="published">
+        <div class="af-sublabel">what it publishes</div>
+        <div data-inst-body><span class="af-dim">reading…</span></div>
+      </div>
+
+      <div class="af-inst-part" data-inst="keys">
+        <div class="af-sublabel">keys it needs</div>
+        <div data-inst-body><span class="af-dim">reading…</span></div>
+      </div>
     </div>`;
   }
 
@@ -553,6 +752,518 @@ window.AgentFields = (function () {
         </div>`;
       }).join("")}
     </div>`;
+  }
+
+  // The executable-skill vocabulary, fetched once per page.
+  //
+  // Module-level promise rather than a per-mount fetch: the shelf can mount
+  // this group more than once across a session and the answer is a property
+  // of the deployment, not of the agent. A failed read resolves to `null`,
+  // which the classifier renders as "cannot tell" — not as "none of these are
+  // executable", which is a claim about the author's input made by a network
+  // error.
+  let SKILL_REGISTRY = null;
+  function skillRegistry() {
+    if (!SKILL_REGISTRY) {
+      SKILL_REGISTRY = fetch("/api/skills")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j) => (j && Array.isArray(j.skills) ? j.skills : null))
+        .catch(() => null);
+    }
+    return SKILL_REGISTRY;
+  }
+
+  // Which half each entry fell into, and the one mistake worth interrupting.
+  //
+  // Mirrors `normalise_skills` on the server, and the mirroring is the point:
+  // the PUT refuses a case-mismatched capability name, so the page has to be
+  // able to say WHY before the refusal arrives. The membership test is the
+  // only rule duplicated, and it is duplicated against a list the server
+  // serves rather than a copy of it — which is the difference between a
+  // second reader and a second source.
+  function classifySkills(entries, registry) {
+    if (!registry) return null;
+    const exact = new Set(registry.map((s) => s.name));
+    const lower = new Map(registry.map((s) => [s.name.toLowerCase(), s.name]));
+    return entries.map((name) => {
+      if (exact.has(name)) return { name, kind: "exe" };
+      const near = lower.get(name.toLowerCase());
+      if (near) return { name, kind: "case", meant: near };
+      return { name, kind: "lab" };
+    });
+  }
+
+  // Paint the classification under a skills box, and keep it painted.
+  function wireSkills(el, refresh) {
+    const box = el.querySelector("[data-skills]");
+    if (!box) return;
+    const input = box.querySelector("[data-field]");
+    const out = box.querySelector("[data-skills-read]");
+    if (!input || !out) return;
+
+    let registry = null;
+    const paint = () => {
+      const entries = String(input.value || "")
+        .split(",").map((t) => t.trim()).filter(Boolean);
+      if (!entries.length) {
+        out.innerHTML = `<span class="af-dim">Nothing declared. This agent appears
+          in the fleet index with an empty capability list, which is what a
+          navigator sees when it decides whether to compose with it.</span>`;
+        return;
+      }
+      const rows = classifySkills(entries, registry);
+      if (!rows) {
+        out.innerHTML = `<span class="af-dim">The skill registry could not be read,
+          so which of these are executable is unknown — not none.</span>`;
+        return;
+      }
+      const bad = rows.filter((r) => r.kind === "case");
+      const nExe = rows.filter((r) => r.kind === "exe").length;
+      out.innerHTML = `<div class="af-chips">${rows.map((r) =>
+        `<span class="af-chip ${r.kind === "exe" ? "exe" : r.kind === "case" ? "bad" : "lab"}"
+          >${esc(r.name)}</span>`).join("")}</div>
+        ${bad.length ? `<div class="af-warn">${bad.map((r) =>
+            `<code>${esc(r.name)}</code> differs from the registered skill
+             <code>${esc(r.meant)}</code> only in case, so it would be stored as a
+             label and the agent would not get the capability. The save will refuse
+             it.`).join("<br>")}</div>`
+          : `<div class="af-econ-note">${nExe} executable · ${rows.length - nExe}
+             discovery label(s). <a href="/api/skills" target="_blank">what the
+             platform can run →</a></div>`}`;
+    };
+
+    paint();
+    skillRegistry().then((r) => { registry = r; paint(); });
+    input.addEventListener("input", () => { paint(); if (refresh) refresh(); });
+  }
+
+  // One reporter for every action endpoint in this file.
+  //
+  // The body verbatim on failure, for the same reason the field save does it:
+  // a 402 from the top-up says "Insufficient credits: need 50, have 12", and no
+  // sentence this file could invent is better than that one.
+  async function act(out, verb, url, body) {
+    if (out) { out.className = "af-out"; out.textContent = "\u2026"; }
+    let text = null;
+    try {
+      const r = await fetch(url, {
+        method: verb,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body || {}),
+      });
+      text = await r.text();
+      if (!r.ok) {
+        if (out) { out.className = "af-out bad"; out.textContent = text; }
+        return null;
+      }
+      try { return JSON.parse(text); } catch (_) { return {}; }
+    } catch (err) {
+      if (out) {
+        out.className = "af-out bad";
+        out.textContent = text === null
+          ? "Could not reach the platform: " + err.message
+          : "The platform answered and this page failed to read it: " + err.message;
+      }
+      return null;
+    }
+  }
+
+  // A read that can legitimately be refused. 403 is not an error here: the MCP
+  // and wallet reads are edit- and admin-gated, and a viewer seeing "failed to
+  // load" would be told something broke when nothing did.
+  async function readGated(url) {
+    try {
+      const r = await fetch(url);
+      if (r.status === 403 || r.status === 401) return { forbidden: true };
+      if (r.status === 404) return { missing: true };
+      if (!r.ok) return { error: await r.text() };
+      return { data: await r.json() };
+    } catch (err) {
+      return { error: err.message };
+    }
+  }
+
+  function wireEconomics(el, opts) {
+    const id = encodeURIComponent(opts.agentId || "");
+    const get = (sel) => el.querySelector(sel);
+    const num = (k) => {
+      const i = get(`[data-econ="${k}"]`);
+      const raw = i ? String(i.value).trim() : "";
+      return raw === "" ? null : Number(raw);
+    };
+    const outFor = (k) => get(`[data-econ-out="${k}"]`);
+
+    // ── the wallet, and the admin probe it doubles as ─────────────────
+    //
+    // Every action in this panel is admin-gated and the shelf opens for anyone
+    // who can see the agent, so the controls would render for a reader whose
+    // every click returns 403 — a refusal that arrives AFTER the press, which
+    // is the thing this file refuses to do with fields and must not start
+    // doing with money.
+    //
+    // The wallet GET carries exactly the same gate (`require_admin_on`), so it
+    // is the probe. One read, no new endpoint, and it cannot drift from the
+    // actions because it is the same check on the same resource.
+    const walletHost = get("[data-econ-wallet]");
+    const standDown = (why) => {
+      el.querySelectorAll("[data-econ-act]").forEach((b) => {
+        if (b.dataset.econAct === "fork") return; // forking is not admin-gated
+        b.disabled = true;
+        b.title = why;
+      });
+      el.querySelectorAll("[data-econ]").forEach((i) => { i.disabled = true; });
+    };
+    const paintWallet = async () => {
+      if (!walletHost) return;
+      const res = await readGated(`/api/agents/${id}/wallet`);
+      if (res.forbidden) {
+        walletHost.innerHTML = `<span class="af-dim">Admin-only. This account does
+          not hold admin on this agent, so what it earns, what it costs to fork and
+          what funds its dreaming are all read-only here.</span>`;
+        standDown("admin on this agent is required");
+        return;
+      }
+      if (res.error || !res.data) {
+        walletHost.innerHTML = `<span class="af-out bad">The wallet could not be
+          read: ${esc(res.error || "no response")}. That is unknown, not zero.</span>`;
+        return;
+      }
+      const w = res.data;
+      walletHost.innerHTML = `
+        <div class="af-econ-row">
+          <span class="af-econ-fig"><b>${esc(String(w.balance))}</b> uncollected</span>
+          <span class="af-dim">${esc(String(w.total_earned))} earned ·
+            ${esc(String(w.total_collected))} collected ·
+            ${esc(String(w.total_allocated))} spent on itself</span>
+        </div>
+        <div class="af-acts">
+          <input class="af-econ-in" type="number" min="1" max="${esc(String(w.balance))}"
+                 value="${esc(String(w.balance))}" data-econ="collect-amount"
+                 aria-label="credits to collect"/>
+          <button class="af-life-btn" data-econ-act="collect">collect</button>
+          <label class="af-econ-auto">auto-collect
+            <input type="range" min="0" max="100" value="${esc(String(w.auto_collect_pct))}"
+                   data-econ="auto-pct"/>
+            <b data-econ-auto-read>${esc(String(w.auto_collect_pct))}%</b></label>
+          <button class="af-life-btn" data-econ-act="auto">set</button>
+        </div>
+        <div class="af-econ-note">Auto-collect sweeps that share of each payout to
+          your wallet as it is earned; the rest stays with the agent to spend on
+          its own dreaming.</div>`;
+      const slider = walletHost.querySelector('[data-econ="auto-pct"]');
+      const read = walletHost.querySelector("[data-econ-auto-read]");
+      if (slider && read) {
+        slider.addEventListener("input", () => { read.textContent = slider.value + "%"; });
+      }
+    };
+    paintWallet();
+
+    // Delegated, because the wallet block rewrites itself after a collect.
+    el.addEventListener("click", async (ev) => {
+      const btn = ev.target && ev.target.closest && ev.target.closest("[data-econ-act]");
+      if (!btn || !el.contains(btn)) return;
+      const what = btn.dataset.econAct;
+      btn.disabled = true;
+      try {
+        if (what === "topup") {
+          const out = outFor("dream");
+          const credits = num("topup-amount");
+          if (!credits || credits < 1) {
+            out.className = "af-out bad";
+            out.textContent = "Name an amount. Funding nothing is not funding.";
+            return;
+          }
+          const j = await act(out, "POST", `/api/agents/${id}/dreaming/topup`, { credits });
+          if (j) {
+            out.className = "af-out ok";
+            out.textContent = `funded ${j.credits_added} — ${j.credits_remaining} `
+              + `credit(s) left of ${j.new_budget}`;
+            if (opts.onEconomics) opts.onEconomics("topup", j);
+          }
+          return;
+        }
+        if (what === "consolidate") {
+          const out = outFor("dream");
+          const j = await act(out, "POST", `/api/agents/${id}/consolidate`, {});
+          if (j) {
+            out.className = "af-out ok";
+            // The endpoint distinguishes "ran and found nothing to do" from
+            // "accepted and running", and the first of those is the common
+            // case. Reporting both as "started" would have an owner waiting
+            // for a cycle that already finished with nothing in it.
+            out.textContent = (j.result && j.result.message)
+              || `consolidation ${j.status || "accepted"}`;
+            if (opts.onEconomics) opts.onEconomics("consolidate", j);
+          }
+          return;
+        }
+        if (what === "pricing") {
+          const out = outFor("pricing");
+          // Its own endpoint, not the general PUT: fork pricing is admin-gated
+          // and the general PUT is not. See the comment on `economics`.
+          const j = await act(out, "PUT", `/api/agents/${id}/fork-pricing`, {
+            base_price: num("base_price") ?? 0,
+            ontology_price: num("ontology_price"),
+            embedding_price: num("embedding_price"),
+          });
+          if (j) { out.className = "af-out ok"; out.textContent = "pricing saved"; }
+          return;
+        }
+        if (what === "fork") {
+          location.href = `/agent/${id}#manage`;
+          return;
+        }
+        if (what === "collect") {
+          const out = outFor("wallet");
+          const j = await act(out, "POST", `/api/agents/${id}/collect`,
+            { amount: num("collect-amount") ?? "all" });
+          if (j) {
+            out.className = "af-out ok";
+            out.textContent = `collected ${j.collected} — your balance is ${j.owner_balance}`;
+            await paintWallet();
+          }
+          return;
+        }
+        if (what === "auto") {
+          const out = outFor("wallet");
+          const j = await act(out, "PUT", `/api/agents/${id}/auto-collect`,
+            { pct: num("auto-pct") ?? 0 });
+          if (j) {
+            out.className = "af-out ok";
+            out.textContent = `auto-collect set to ${j.auto_collect_pct}%`;
+          }
+          return;
+        }
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  }
+
+  function wireInstruments(el, opts, profile) {
+    const id = encodeURIComponent(opts.agentId || "");
+    const agentName = profile.agent_name || opts.agentId;
+    const bodyOf = (k) => {
+      const part = el.querySelector(`[data-inst="${k}"]`);
+      return part ? part.querySelector("[data-inst-body]") : null;
+    };
+    const gatedNote = (what) => `<span class="af-dim">${what} is edit-gated —
+      endpoints and credential key names are operational detail, not catalogue
+      metadata — and this account cannot edit this agent.</span>`;
+
+    // ── what it can call ──────────────────────────────────────
+    (async () => {
+      const host = bodyOf("servers");
+      if (!host) return;
+      const res = await readGated(`/api/agents/${id}/mcp-servers`);
+      if (res.forbidden) { host.innerHTML = gatedNote("Remote MCP configuration"); return; }
+      if (res.error || !res.data) {
+        host.innerHTML = `<span class="af-out bad">The server list could not be
+          read: ${esc(res.error || "no response")}. Unknown, not none.</span>`;
+        return;
+      }
+      const d = res.data;
+      const servers = d.servers || [];
+      if (!servers.length) {
+        host.innerHTML = `<div class="af-dim">No remote servers. This agent calls
+          platform builtins only.</div>${instEditLink(agentName, "add one")}`;
+        return;
+      }
+      host.innerHTML = servers.map((s, i) => {
+        const state = !s.credential_required
+          ? ["ok", "no credential"]
+          : s.credential_resolved ? ["ok", "key resolves"] : ["bad", "key missing"];
+        const transport = s.transport_supported
+          ? `<span class="af-chip lab">${esc(String(s.transport || "http"))}</span>`
+          : `<span class="af-chip bad">transport unsupported</span>`;
+        const key = (s.credential_keys || [])[0] || "";
+        const needs = s.credential_required && !s.credential_resolved && key;
+        return `<div class="af-inst-row">
+          <div class="af-inst-head">
+            <b>${esc(s.name || "(unnamed)")}</b>
+            <span class="af-chip ${state[0]}">${esc(state[1])}</span>${transport}
+            <button class="af-life-btn" data-inst-act="test" data-i="${i}">test</button>
+          </div>
+          <div class="af-dim af-inst-ep">${esc(s.endpoint || "(no endpoint)")}</div>
+          ${needs ? `<div class="af-inst-key">
+            <div class="af-econ-note">Needs <code>${esc(key)}</code>, and no secret of
+              that name resolves for this agent. Discovery fails closed until it is
+              stored — so the agent silently has none of this server's tools.</div>
+            <div class="af-acts">
+              <input type="password" autocomplete="new-password" class="af-econ-in wide"
+                     data-inst-secret="${i}" placeholder="value for ${esc(key)}"/>
+              <button class="af-life-btn" data-inst-act="store-key" data-i="${i}"
+                      data-key="${esc(key)}" data-srv="${esc(s.name || "")}">store key</button>
+            </div>
+            <div class="af-econ-note">Encrypted, and scoped to <code>${esc(agentName)}</code>
+              alone. Never shown again.</div>
+          </div>` : ""}
+          <div class="af-out" data-inst-out="${i}"></div>
+        </div>`;
+      }).join("")
+        + (!d.db_is_authoritative ? `<div class="af-note">Inherited from this agent's
+            card file (<code>${esc(String(d.source || ""))}</code>); nothing is stored in
+            the database yet. The first save copies it in, and the file stops
+            taking effect.</div>` : "")
+        + instEditLink(agentName, "add, edit or remove a server");
+
+      // Test and store-key, delegated over the block we just wrote.
+      host.addEventListener("click", async (ev) => {
+        const btn = ev.target && ev.target.closest && ev.target.closest("[data-inst-act]");
+        if (!btn) return;
+        const i = Number(btn.dataset.i);
+        const out = host.querySelector(`[data-inst-out="${i}"]`);
+        btn.disabled = true;
+        try {
+          if (btn.dataset.instAct === "test") {
+            const j = await act(out, "POST", `/api/agents/${id}/mcp-servers/test`, servers[i]);
+            if (j) {
+              // Three outcomes, not two. `ok:false` with no `error` means the
+              // endpoint answered and advertised nothing — reachable and
+              // useless, which is a different thing to fix from a refusal and
+              // reads as neither if both print "the server refused".
+              const n = j.tool_count != null ? j.tool_count : (j.tools || []).length;
+              if (j.error) {
+                out.className = "af-out bad";
+                out.textContent = j.error;
+              } else if (!n) {
+                out.className = "af-out bad";
+                out.textContent = "reached it, and it advertises no tools. The "
+                  + "connection works and the agent gains nothing from it.";
+              } else {
+                out.className = "af-out ok";
+                out.textContent = `reached it \u2014 ${n} tool(s) discovered`;
+              }
+            }
+            return;
+          }
+          if (btn.dataset.instAct === "store-key") {
+            const input = host.querySelector(`[data-inst-secret="${i}"]`);
+            const value = input ? input.value : "";
+            if (!String(value).trim()) {
+              out.className = "af-out bad";
+              out.textContent = "Enter a value.";
+              return;
+            }
+            const j = await act(out, "POST", "/api/secrets", {
+              secret_name: btn.dataset.key,
+              value,
+              // `get_secrets_for_agent` matches `scope = agent_name OR '*'`, so
+              // the NAME is what binds a secret to this agent and nothing else.
+              scope: agentName,
+              label: `MCP server: ${btn.dataset.srv}`,
+            });
+            if (input) input.value = "";
+            if (j) {
+              out.className = "af-out ok";
+              out.textContent = "stored — reopen to see whether it resolves";
+            }
+            return;
+          }
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    })();
+
+    // ── what it publishes ────────────────────────────────────
+    (async () => {
+      const host = bodyOf("published");
+      if (!host) return;
+      const res = await readGated(`/api/agents/${id}/published-tools`);
+      if (res.forbidden) { host.innerHTML = gatedNote("The published-tool list"); return; }
+      if (res.error || !res.data) {
+        host.innerHTML = `<span class="af-out bad">The published-tool list could not
+          be read: ${esc(res.error || "no response")}. Unknown, not none.</span>`;
+        return;
+      }
+      const d = res.data;
+      const pub = d.published || [];
+      const avail = (d.available || []).length;
+      const phantom = d.phantom || [];
+      host.innerHTML = `
+        <div class="af-econ-row">
+          <span class="af-econ-fig"><b>${pub.length}</b> of ${avail} exported</span>
+          <code class="af-dim">${esc(String(d.mcp_endpoint || ""))}</code>
+        </div>
+        ${pub.length ? `<div class="af-chips">${pub.slice(0, 24).map((t) =>
+          `<span class="af-chip lab">${esc(t)}</span>`).join("")}${
+          pub.length > 24 ? `<span class="af-dim">+${pub.length - 24} more</span>` : ""
+        }</div>` : `<div class="af-dim">Nothing exported. External clients see the
+          execute tool and nothing else.</div>`}
+        ${phantom.length ? `<div class="af-warn">${phantom.length} phantom tool(s):
+          ${phantom.map(esc).join(", ")}. These are advertised and then fail with
+          <code>Unknown tool</code> — no dispatch arm exists for them.</div>` : ""}
+        <div class="af-econ-note">An <b>export allowlist, not a capability grant</b>.
+          This agent already receives every platform builtin internally whatever is
+          listed here; unchecking one hides it from external MCP clients.</div>
+        ${(d.remote_discovery_errors || []).length ? `<div class="af-warn">${
+          d.remote_discovery_errors.map((e) =>
+            `${esc(String(e.server))}: ${esc(String(e.error))}`).join("<br>")}</div>` : ""}
+        ${instEditLink(agentName, "change what is exported")}`;
+    })();
+
+    // ── keys it needs ────────────────────────────────────────
+    //
+    // The agent declares names; the owner holds values. Neither side has ever
+    // been shown against the other, so "why will this agent not run" has been
+    // answered by reading two pages and comparing strings by eye.
+    (async () => {
+      const host = bodyOf("keys");
+      if (!host) return;
+      const required = Array.isArray(profile.requires_secrets)
+        ? profile.requires_secrets : [];
+      const [funding, mine] = await Promise.all([
+        readGated(`/api/agents/${id}/funding`),
+        readGated("/api/secrets"),
+      ]);
+      const held = new Set(((mine.data || {}).secrets || [])
+        .filter((s) => s.scope === "*" || s.scope === agentName)
+        .map((s) => s.secret_name));
+
+      const f = funding.data || null;
+      const fundLine = !f ? ""
+        : f.funding_source === "platform"
+          ? `<div class="af-econ-row"><span class="af-chip ok">platform-funded</span>
+             <span class="af-dim">a system-tier agent runs on the platform's own
+             key; nothing to supply.</span></div>`
+          : `<div class="af-econ-row"><span class="af-chip ${f.funded ? "ok" : "bad"}">${
+              f.funded ? "can run" : "cannot run"}</span>
+             <span class="af-dim">${f.funded
+               ? `model key present${(f.providers || []).length
+                   ? ` · ${f.providers.map(esc).join(", ")}` : ""}`
+               : "no model API key resolves for this agent, so every execution fails"
+             }</span></div>`;
+
+      const rows = required.length
+        ? required.map((s) => {
+            const name = typeof s === "string" ? s : (s.name || "");
+            const have = held.has(name);
+            const optional = typeof s === "object" && s.is_required === false;
+            return `<div class="af-inst-row">
+              <div class="af-inst-head">
+                <code>${esc(name)}</code>
+                <span class="af-chip ${have ? "ok" : optional ? "lab" : "bad"}">${
+                  have ? "held" : optional ? "optional, absent" : "missing"}</span>
+              </div>
+              ${typeof s === "object" && s.description
+                ? `<div class="af-dim">${esc(s.description)}</div>` : ""}
+            </div>`;
+          }).join("")
+        : `<div class="af-dim">This agent declares no credentials of its own.</div>`;
+
+      host.innerHTML = fundLine + rows + `<div class="af-econ-note">Values live in
+        your encrypted store and are never served back. A key scoped <code>*</code>
+        reaches every agent you own; one scoped <code>${esc(agentName)}</code> reaches
+        this one. <a href="/profile#connections">Manage keys →</a></div>`;
+    })();
+  }
+
+  // The full server form still lives on the old page. One link beats a second
+  // copy of a 600-line editor — and says which page, rather than "the old page".
+  function instEditLink(agentName, what) {
+    return `<div class="af-econ-note"><a href="/agent/${
+      encodeURIComponent(agentName)}#manage">${esc(what)} →</a></div>`;
   }
 
   function mount(opts) {
@@ -623,10 +1334,12 @@ window.AgentFields = (function () {
       </div>`).join("")}
       ${group === "intelligence" ? ladderBlock(profile) : ""}
       ${group === "manage" ? lifecycle(profile) : ""}
-      <div class="af-bar">
+      ${group === "economics" ? economics(profile, opts.record) : ""}
+      ${group === "instruments" ? instruments(profile) : ""}
+      ${fields.length ? `<div class="af-bar">
         <button class="af-save" data-af-save disabled>save</button>
         <span class="af-out" data-af-out></span>
-      </div>`;
+      </div>` : ""}`;
 
     const inputs = [...el.querySelectorAll("[data-field]")];
 
@@ -929,14 +1642,20 @@ window.AgentFields = (function () {
       return [...keys];
     };
 
+    // A group can be all actions and no fields — `economics` and `instruments`
+    // are, because every write they make goes to an admin-gated endpoint of its
+    // own rather than to the general PUT. Such a group renders no save bar, and
+    // a permanently-disabled `save` button would be the worst of both: a control
+    // that looks like the way to keep your work and is not.
     const refresh = () => {
+      if (!saveBtn) return;
       const n = changed().length;
       saveBtn.disabled = n === 0;
       saveBtn.textContent = n === 0 ? "save" : `save ${n} change${n === 1 ? "" : "s"}`;
     };
     inputs.forEach((i) => i.addEventListener("input", refresh));
 
-    saveBtn.addEventListener("click", async () => {
+    if (saveBtn) saveBtn.addEventListener("click", async () => {
       const diff = {};
       changed().forEach((key) => {
         const f = objectOf(key);
@@ -1012,6 +1731,12 @@ window.AgentFields = (function () {
       });
     });
 
+    if (group === "economics") wireEconomics(el, opts);
+    if (group === "instruments") {
+      wireSkills(el, refresh);
+      wireInstruments(el, opts, profile);
+    }
+
     refresh();
     return { changed };
   }
@@ -1024,6 +1749,15 @@ window.AgentFields = (function () {
     mount,
     FIELDS,
     renderMarkdown: md,
-    groups: () => [...new Set(FIELDS.map((f) => f.group))],
+    // Exported for the same reason as `renderMarkdown`: the money actions must
+    // be shown to reach their own admin-gated endpoints rather than the general
+    // PUT, and that property has to be assertable without a browser.
+    __act: act,
+    // Exported for the check: the case-mismatch rule mirrors the server's
+    // `normalise_skills`, and a mirror that drifts is worse than no mirror —
+    // the page would explain a refusal the endpoint is not making, or stay
+    // silent about one it is.
+    __classifySkills: classifySkills,
+    groups: () => [...new Set(FIELDS.map((f) => f.group)), ...ACTION_GROUPS],
   };
 })();
