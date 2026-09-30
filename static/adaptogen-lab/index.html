@@ -33,7 +33,17 @@ body{background:var(--bg);color:var(--t1);font-family:'Inter',system-ui,sans-ser
 .btn-g:hover{border-color:var(--t1);color:var(--t1)}
 .btn-sm{padding:3px 9px;font-size:11px;border-radius:4px}
 .body{display:flex;flex:1;overflow:hidden;min-height:0}
-.sidebar{width:200px;min-width:160px;display:flex;flex-direction:column;border-right:1px solid var(--b1);overflow:hidden}
+/* The data panel carries the passport, which is the product's twin rather
+   than a sidebar widget, so it is sized for a document and not for a nav
+   rail. 200px was set when this column held five lists of short labels. */
+.sidebar{width:clamp(260px,22vw,360px);min-width:240px;display:flex;flex-direction:column;border-right:1px solid var(--b1);overflow:hidden}
+.twin-strip{flex-shrink:0;padding:10px 12px;border-bottom:1px solid var(--b1);background:var(--s2)}
+.twin-name{font-size:13px;font-weight:700;color:var(--t1);line-height:1.25}
+.twin-sku{font-family:var(--mono);font-size:10px;color:var(--t3);margin-top:1px}
+.twin-state{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px}
+.twin-chip{font-family:var(--mono);font-size:9px;padding:1px 5px;border-radius:3px;border:1px solid var(--b2);color:var(--t3)}
+.twin-chip.on{color:var(--grn);border-color:rgba(34,197,94,.4)}
+.twin-chip.warn{color:var(--amb);border-color:rgba(245,158,11,.4)}
 .sb-tabs{display:flex;border-bottom:1px solid var(--b1);background:var(--s1);flex-shrink:0}
 .sb-tab{flex:1;padding:7px 2px;text-align:center;font-size:10px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--t3);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;line-height:1.3}
 .sb-tab.active{color:var(--acc);border-bottom-color:var(--acc)}
@@ -359,6 +369,21 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
 .shelf-close:hover{color:var(--t1)}
 .shelf-pane{flex:1;overflow-y:auto;padding:11px 13px}
 .shelf-pane.hidden{display:none}
+/* On a wide screen the shelf stops being a drawer and becomes the third
+   column the layout always implied: left is what the product IS, centre is
+   what agents concluded, right is the operator's own view of both. A drawer
+   was right when it overlapped the content it annotated; at this width it
+   only hides the activity feed behind a handle nobody opens.
+
+   Below the breakpoint it stays a drawer, because three columns in 1200px
+   gives none of them enough room to be read. */
+@media (min-width:1500px){
+  .shelf{position:static;transform:none;width:clamp(320px,24vw,420px);
+         flex-shrink:0;z-index:auto;border-left:1px solid var(--b1)}
+  .shelf-handle{display:none}
+  .shelf-close{display:none}
+  body.shelf-open .shelf-handle{right:0}
+}
 .shelf-handle{position:fixed;top:50%;right:0;transform:translateY(-50%);z-index:59;
   background:var(--s2);color:var(--tea);border:1px solid var(--b1);border-right:none;
   border-radius:5px 0 0 5px;padding:13px 5px;cursor:pointer;font-size:11px}
@@ -429,16 +454,24 @@ body.shelf-open .shelf-handle{right:min(380px,42vw)}
 
 <div class="body">
 <div class="sidebar" id="sidebar">
+  <!-- The twin, always on screen ─────────────────────────────────────
+       This App is a digital twin application, and the twin was a tab — one of
+       five, none of them selected by default, so the product being worked on
+       was visible only in a header three columns away. This strip persists
+       across every tab: which product, and whether anyone has verified
+       anything about it. It is deliberately the only thing in this panel that
+       does not scroll away. -->
+  <div id="twin-strip" class="twin-strip"></div>
   <div class="sb-tabs">
-    <div class="sb-tab active" onclick="showTab('products')">Products</div>
+    <div class="sb-tab active" onclick="showTab('passport')">Passport</div>
+    <div class="sb-tab" onclick="showTab('products')">Products</div>
     <div class="sb-tab" onclick="showTab('claims')">Claims</div>
     <div class="sb-tab" onclick="showTab('ingredients')">BOM</div>
-    <div class="sb-tab" onclick="showTab('passport')">Passport</div>
     <div class="sb-tab" onclick="showTab('build')">Build</div>
   </div>
 
   <!-- Products -->
-  <div class="sb-panel" id="tab-products">
+  <div class="sb-panel hidden" id="tab-products">
     <div class="sh"><span class="sh-label">Product workspaces</span><span class="sh-rule"></span></div>
     <div id="ws-list-container">
       <div class="ws-empty">Enter your API token above — your product workspaces will appear here.<br><br>Each workspace <em>is</em> a product DPP. Select one to load its claims and run the regulatory comparison.</div>
@@ -456,7 +489,7 @@ body.shelf-open .shelf-handle{right:min(380px,42vw)}
        A passport's property is not that it looks official but that a reader
        can check it without trusting the bearer, so the verification status and
        the expert flag sit ABOVE the figures rather than in a footer. -->
-  <div class="sb-panel hidden" id="tab-passport">
+  <div class="sb-panel" id="tab-passport">
     <div class="sh"><span class="sh-label">Digital Product Passport</span><span class="sh-rule"></span></div>
     <div id="passport-body">
       <div class="ws-empty">Select a product workspace to see its passport.</div>
@@ -711,6 +744,45 @@ body.shelf-open .shelf-handle{right:min(380px,42vw)}
     </div>
   </div>
 </div>
+
+<button class="shelf-handle" id="shelf-handle" onclick="shelfToggle()" title="Companion and activity">&#9666;</button>
+<aside class="shelf" id="shelf">
+  <div class="shelf-head">
+    <div class="shelf-tabs">
+      <div class="shelf-tab active" id="shelf-tab-companion" onclick="shelfShow('companion')">Companion</div>
+      <div class="shelf-tab" id="shelf-tab-activity" onclick="shelfShow('activity')">Activity</div>
+    </div>
+    <span class="shelf-close" onclick="shelfToggle()" title="Close">&times;</span>
+  </div>
+
+  <div class="shelf-pane" id="shelf-pane-companion">
+    <div class="sb-h">DPP_COMPANION</div>
+    <div class="sb-sub">Domain strategist. Routes to the specialists tagged
+      <code>dpp-orchestra</code>, discovered from the workspace rather than
+      hardcoded. Proposes actions; you decide what runs.</div>
+    <div id="companion-log" class="companion-log"></div>
+    <div class="companion-ask">
+      <textarea id="companion-input" rows="2" placeholder="Can I say &quot;low in sugar&quot; in the EU?"
+        onkeydown="if(event.key==='Enter'&&(event.metaKey||event.ctrlKey)){event.preventDefault();askCompanion();}"></textarea>
+      <button class="btn-agent btn-sm" onclick="askCompanion()" style="width:100%;justify-content:center">Ask &rarr;</button>
+      <div class="cost-note">Asking is one agent turn. The actions it proposes are separate, and the paid ones confirm first.</div>
+    </div>
+  </div>
+
+  <div class="shelf-pane hidden" id="shelf-pane-activity">
+    <div class="sb-h">WORKSPACE ACTIVITY</div>
+    <div class="sb-sub">Every agent run and action here, newest first. Persisted
+      entries come from the action log and survive a reload.</div>
+    <div class="act-filters">
+      <span class="act-filter active" id="actf-all" onclick="activitySetFilter('all')">All</span>
+      <span class="act-filter" id="actf-problems" onclick="activitySetFilter('problems')">Problems</span>
+      <span class="act-refresh" onclick="activityLoad();activityLoadPulse()">&#8635; refresh</span>
+    </div>
+    <div id="activity-pulse"></div>
+    <div class="sb-h" style="margin-top:14px">RUNS &amp; ACTIONS</div>
+    <div id="activity-list"></div>
+  </div>
+</aside>
 </div>
 
 <footer>
@@ -824,7 +896,9 @@ function confirmLogout() {
 // The left panel is the product's own record: what it IS, not what anyone
 // concluded about it. `carbon` left this list when the agent cards moved to the
 // centre — see LENSES.
-const DATA_TABS = ['products', 'passport', 'claims', 'ingredients', 'build'];
+// Passport first, and the default. The twin is the subject of this App; the
+// product list is how you choose one, which is a different and rarer act.
+const DATA_TABS = ['passport', 'products', 'claims', 'ingredients', 'build'];
 
 function showTab(name) {
   DATA_TABS.forEach(t => {
@@ -851,6 +925,34 @@ function showTab(name) {
 // reads `unverified` in small grey type at the bottom is the laundering this
 // whole design refuses: the agent is explicitly not an accredited verifier, and
 // a clean-looking page must not imply otherwise.
+// The persistent twin strip. Cheap and synchronous: it reports what this page
+// already knows, so it repaints on every workspace change without a fetch.
+// `loadPassport` fills in the parts that need the server.
+function renderTwinStrip(state) {
+  const el = document.getElementById('twin-strip');
+  if (!el) return;
+  if (!wsId()) {
+    el.innerHTML = `<div style="font-size:11px;color:var(--t3);line-height:1.5">
+      <strong style="color:var(--t2)">No product selected.</strong><br>
+      Pick one under Products — each workspace is one product's passport.</div>`;
+    return;
+  }
+  const chip = (label, cls) => `<span class="twin-chip ${cls}">${esc(label)}</span>`;
+  const s = state ?? {};
+  const chips = [
+    s.claims == null ? chip('claims ?', '') : chip(`${s.claims} claims`, s.claims ? 'on' : ''),
+    s.bom == null ? chip('BOM ?', '') : chip(`${s.bom} BOM lines`, s.bom ? 'on' : ''),
+    s.carbon === true ? chip('carbon statement', 'on')
+      : s.carbon === false ? chip('no carbon statement', '') : chip('carbon ?', ''),
+    s.needsExpert ? chip('\u26a0 needs expert', 'warn') : '',
+    s.verification ? chip(esc(s.verification), s.verification === 'unverified' ? 'warn' : 'on') : '',
+  ].filter(Boolean).join('');
+  el.innerHTML = `
+    <div class="twin-name">${esc(currentProductName || 'Unnamed product')}</div>
+    <div class="twin-sku">${esc(currentProductSku || '\u2014')}</div>
+    <div class="twin-state">${chips}</div>`;
+}
+
 async function loadPassport() {
   const el = document.getElementById('passport-body');
   const id = wsId();
@@ -926,6 +1028,16 @@ async function loadPassport() {
     const ok = !(r?.outcome === 'no_reply' || a.applied === false);
     return docRow(lens.label, lens.agent ?? '', ok, detail);
   };
+
+  // The strip and the passport read the same facts, so they are filled from
+  // one pass rather than two that could disagree on screen at the same time.
+  renderTwinStrip({
+    claims: claims ? (claims.match(/^\s*-\s*claim_id:/gm) ?? []).length : 0,
+    bom: comp ? (comp.match(/^\s*-\s*item_id:/gm) ?? []).length : 0,
+    carbon: !!statement,
+    needsExpert,
+    verification,
+  });
 
   el.innerHTML = `
     <div style="border:1px solid var(--b2);border-radius:7px;padding:11px;margin-bottom:11px;background:var(--s2)">
@@ -1061,6 +1173,7 @@ function resetWorkspaceState() {
     if (b) b.disabled = false;
   });
   document.querySelectorAll('.eval-launch').forEach(b => { b.disabled = false; });
+  renderTwinStrip();
   activityReset();
 }
 
@@ -1081,6 +1194,12 @@ function selectWorkspace(id, name) {
   document.getElementById('ws-id').value = id; // internal only, field hidden
   currentProductName = name;
   document.getElementById('ch-name').textContent = name;
+  // Choosing a product is the act that makes its twin the subject, so the
+  // panel goes to the passport rather than leaving you on the list you just
+  // finished using. The strip paints immediately from what we already know;
+  // loadPassport fills in what needs the server.
+  renderTwinStrip();
+  showTab('passport');
   fetchWorkspaces(); // re-render list with active state
   loadClaimsCards();
   loadBomYaml();
@@ -4657,6 +4776,7 @@ window.addEventListener('DOMContentLoaded', () => {
   initScale();
   renderKB();
   renderLensTabs();
+  renderTwinStrip();
   renderCompanion();
   checkAuth(); // reads abw_session cookie, populates auth-status, fetches workspaces if logged in
 });
@@ -4665,43 +4785,5 @@ window.addEventListener('DOMContentLoaded', () => {
 <!-- The companion shelf. A third column rather than a sidebar tab: both
      things on it are about a run in progress, and a run is exactly when you
      cannot afford to navigate away from the table you are reading. -->
-<button class="shelf-handle" id="shelf-handle" onclick="shelfToggle()" title="Companion and activity">&#9666;</button>
-<aside class="shelf" id="shelf">
-  <div class="shelf-head">
-    <div class="shelf-tabs">
-      <div class="shelf-tab active" id="shelf-tab-companion" onclick="shelfShow('companion')">Companion</div>
-      <div class="shelf-tab" id="shelf-tab-activity" onclick="shelfShow('activity')">Activity</div>
-    </div>
-    <span class="shelf-close" onclick="shelfToggle()" title="Close">&times;</span>
-  </div>
-
-  <div class="shelf-pane" id="shelf-pane-companion">
-    <div class="sb-h">DPP_COMPANION</div>
-    <div class="sb-sub">Domain strategist. Routes to the specialists tagged
-      <code>dpp-orchestra</code>, discovered from the workspace rather than
-      hardcoded. Proposes actions; you decide what runs.</div>
-    <div id="companion-log" class="companion-log"></div>
-    <div class="companion-ask">
-      <textarea id="companion-input" rows="2" placeholder="Can I say &quot;low in sugar&quot; in the EU?"
-        onkeydown="if(event.key==='Enter'&&(event.metaKey||event.ctrlKey)){event.preventDefault();askCompanion();}"></textarea>
-      <button class="btn-agent btn-sm" onclick="askCompanion()" style="width:100%;justify-content:center">Ask &rarr;</button>
-      <div class="cost-note">Asking is one agent turn. The actions it proposes are separate, and the paid ones confirm first.</div>
-    </div>
-  </div>
-
-  <div class="shelf-pane hidden" id="shelf-pane-activity">
-    <div class="sb-h">WORKSPACE ACTIVITY</div>
-    <div class="sb-sub">Every agent run and action here, newest first. Persisted
-      entries come from the action log and survive a reload.</div>
-    <div class="act-filters">
-      <span class="act-filter active" id="actf-all" onclick="activitySetFilter('all')">All</span>
-      <span class="act-filter" id="actf-problems" onclick="activitySetFilter('problems')">Problems</span>
-      <span class="act-refresh" onclick="activityLoad();activityLoadPulse()">&#8635; refresh</span>
-    </div>
-    <div id="activity-pulse"></div>
-    <div class="sb-h" style="margin-top:14px">RUNS &amp; ACTIONS</div>
-    <div id="activity-list"></div>
-  </div>
-</aside>
 </body>
 </html>
