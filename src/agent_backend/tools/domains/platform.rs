@@ -196,14 +196,20 @@ async fn execute_query_ontology(
 /// can link to it. Same reason the request handler mints ahead of execution
 /// (mig-197): a row that is written later cannot be pointed at by a task that
 /// starts earlier.
+///
+/// Grades against the child's **card** contract, and returns the grade so the
+/// caller can deliver the enforced document. This used `persist_opened`, which
+/// has no card and graded a card-typed child as `undetermined` on the very hop
+/// whose envelope had just enforced the same contract.
 async fn record_delegated_episode(
     ctx: &ToolContext,
     target_agent_id: Uuid,
     agent_slug: &str,
     pulse: crate::episode_boundary::Pulse,
+    output_contract: Option<&serde_json::Value>,
     task: &str,
     output: &crate::agent_backend::executor::AgentOutput,
-) -> Option<Uuid> {
+) -> (Option<Uuid>, crate::episode_boundary::Graded) {
     let mut episode = crate::episodes::agent_output_to_episode(target_agent_id, task, output);
     episode.parent_episode_id = ctx.parent_episode_id;
     // Findable as delegated work without having to join on the parent.
@@ -223,8 +229,14 @@ async fn record_delegated_episode(
     // invisible to retrieval. That is not fixed here: `provenance: None`
     // preserves it deliberately, because embedding on the delegation hop is a
     // per-fan-out cost decision and not a bug to slip into a refactor.
-    match crate::episode_boundary::persist_opened(
+    let graded = pulse.grade(
+        agent_slug,
+        output_contract,
+        episode.response_text.as_deref(),
+    );
+    let stored = match crate::episode_boundary::close(
         pulse,
+        &graded,
         crate::episode_boundary::Write {
             store: &ctx.memory_store,
             db: ctx.db.as_ref(),
@@ -262,7 +274,22 @@ async fn record_delegated_episode(
             );
             None
         }
-    }
+    };
+    (stored, graded)
+}
+
+/// The child's text with the enforced document in place of the claimed one.
+///
+/// What a delegating agent reads as the child's answer. Without it the raw
+/// `response` carries every value grounding removed from the envelope beside
+/// it, and a coordinator that reads prose gets the fabrication anyway.
+fn delivered_text(reasoning: Option<&str>, enforced: Option<&serde_json::Value>) -> Option<String> {
+    let text = reasoning?;
+    Some(
+        enforced
+            .and_then(|e| crate::agent_backend::envelope::amend_document(text, e))
+            .unwrap_or_else(|| text.to_string()),
+    )
 }
 
 pub(crate) async fn execute_execute_agent(
@@ -491,6 +518,7 @@ pub(crate) async fn execute_execute_agent(
                     target_db_id,
                     agent_name,
                     child_pulse,
+                    declared_output_contract.as_ref(),
                     query,
                     &output,
                 )
@@ -568,7 +596,12 @@ pub(crate) async fn execute_execute_agent(
         "agent": output.agent_name,
         "confidence": output.confidence,
         "status": format!("{:?}", output.status),
-        "response": output.metadata.reasoning,
+        // The child's text with the enforced document substituted, so the
+        // prose channel carries no value the envelope's payload removed.
+        "response": delivered_text(
+            output.metadata.reasoning.as_deref(),
+            envelope.get("payload").filter(|p| !p.is_null()),
+        ),
         "envelope": envelope,
         "evidence": output.evidence.iter().map(|e| {
             json!({
@@ -674,6 +707,10 @@ async fn execute_delegate_to_agent(
         confidence_threshold: None,
     };
 
+    // Captured before `card` moves into the context: grading the child against
+    // its own contract is what this hop was missing.
+    let declared_output_contract = card.capabilities.output_contract.clone();
+
     let context = ExecutionContext {
         program: crate::ast::Program { statements: vec![] },
         agent_card: card,
@@ -744,15 +781,27 @@ async fn execute_delegate_to_agent(
 
     // mig-198: record the child's own cost before its output is reduced to
     // prose. Everything below this line throws the token accounting away.
-    record_delegated_episode(ctx, target_agent_id, agent_name, child_pulse, task, &output).await;
+    let (_, graded) = record_delegated_episode(
+        ctx,
+        target_agent_id,
+        agent_name,
+        child_pulse,
+        declared_output_contract.as_ref(),
+        task,
+        &output,
+    )
+    .await;
 
-    let raw_response = output.metadata.reasoning.clone().unwrap_or_default();
     // Post the result as a workspace message from the delegated agent.
     //
-    // Pass the raw LLM response through verbatim (see issue #2 / docs/specs/
-    // 09_RESEARCH_AGENT_OUTPUT_STRIPPED.md). Falling back to evidence summaries
-    // alone destroys structured JSON outputs from research-tier agents.
-    let raw_response = output.metadata.reasoning.clone().unwrap_or_default();
+    // The model's text with the enforced document substituted: structure is
+    // kept (see issue #2 / docs/specs/09_RESEARCH_AGENT_OUTPUT_STRIPPED.md),
+    // and no value grounding removed reaches the caller or the workspace.
+    let raw_response = delivered_text(
+        output.metadata.reasoning.as_deref(),
+        graded.enforced.as_ref(),
+    )
+    .unwrap_or_default();
     let evidence_text = output
         .evidence
         .iter()
@@ -791,6 +840,14 @@ async fn execute_delegate_to_agent(
             "tool_invocations": output.tool_invocations.len(),
             "loop_iterations": output.loop_iterations,
             "raw_response": raw_response,
+            "grounding": {
+                "stripped": graded
+                    .report
+                    .violations
+                    .iter()
+                    .map(|v| v.path.as_str())
+                    .collect::<Vec<_>>(),
+            },
         }),
         created_at: chrono::Utc::now(),
         episode_id: None,

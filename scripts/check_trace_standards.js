@@ -156,7 +156,9 @@ const TRACE = {
             output_grounded: "sha256:c", enforcement_changed_the_bytes: true },
   substrate: { disposition: "legible", legibility: { legibility: "full", present: [], missing: [] },
                declared: ["ports", "field_contract"], because: "declared" },
-  checkpoint_route: { assumed: "agent.execute", recoverable: false, because: "no route column" },
+  checkpoint_route: { command: "agent.execute", label: "Run agent",
+                      route: "POST /api/agents/:agent_id/execute", recovered: true,
+                      source_kind: "execute_handler", because: "read off the writer" },
   // `grounding` is `amend` on the execute route: it cannot refuse the run,
   // and the ungrounded value does not reach the caller. `records only` was
   // true of the code and false of the consequence.

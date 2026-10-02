@@ -441,8 +441,10 @@ primary object is the episode, and the loops are the routes it can take.
                  "declared": ["ports"],
                  "because": "`prey_locator` is a real agent that has not been…" },
 
-  "checkpoint_route": { "assumed": "agent.execute", "recoverable": false,
-                        "because": "`episodes` records no route discriminator…" },
+  "checkpoint_route": { "command": "workspace.message", "label": "Ask agent in workspace",
+                        "route": "POST /api/workspaces/:workspace_id/messages",
+                        "recovered": true, "source_kind": "workspace_message_at_mention",
+                        "because": "Read off the writer that stored this episode…" },
 
   "checkpoints": [ { "rung": "credit", "clock": "invocation",
               "enforcement": "control", "why_not_control": null,
@@ -549,31 +551,47 @@ worklist. Not green, not red — not yet in the system.
 keys beside `checkpoints`, which invited reading `legibility` without
 `disposition` and putting a fixture on somebody's worklist.
 
-### `checkpoint_route` — the trace may show rungs this artifact never passed
+### `checkpoint_route` — which route this artifact travelled
 
-An honest disclosure rather than a feature, and we would rather you knew.
+**Changed shape.** `assumed` / `recoverable` are gone; read `command` /
+`recovered`.
 
-The two routes that persist an episode **do not declare the same checkpoints**:
+The route was recoverable all along: every writer stores `source_ref.kind` on
+the episode, and `artifact_trace::command_for_source_kind` maps it to a declared
+command. The checkpoints are now that command's, so a workspace answer shows the
+workspace route's gates and an A2A answer shows the A2A route's.
 
-| command | rungs |
+| field | |
 |---|---|
-| `agent.execute` | `credit`, `attachment`, `grounding`, `input_binding` — **4** |
-| `agent.execute_stream` | `credit`, `grounding` — **2** |
+| `command` | the `command_registry` id whose checkpoints are served |
+| `label`, `route` | that command's label and `METHOD /path` or `TOOL name`, for the heading |
+| `recovered` | `true` when read off the row; `false` when this is the fallback |
+| `source_kind` | the writer token, or `null` for rows with no `source_ref` |
+| `because` | the sentence to show |
 
-The trace builds `agent.execute`'s checkpoints for every artifact. A comment in the
-handler claimed the two declared the same rungs and that either was therefore
-correct; it was false, and asserting your invariant 1 is what measured it.
+| writer (`source_kind`) | command |
+|---|---|
+| `execute_handler` | `agent.execute` |
+| `execute_stream_handler` | `agent.execute_stream` |
+| `a2a_handler` | `a2a.send` |
+| `a2a_stream_handler` | `a2a.stream` |
+| `workspace_message_at_mention` | `workspace.message` |
+| `delegated_execution` | **not recovered** — both delegation tools write it and they declare different checkpoints |
 
-It is **not fixable in the handler** — `episodes` carries no route discriminator,
-so which route an artifact travelled is not recoverable. We serve the wider route
-deliberately: the opposite error drops two real checkpoints for the majority of
-artifacts. Both directions are wrong; this one is wrong in the direction that
-shows more.
+When `recovered` is `false` the trace falls back to `agent.execute`, the widest
+execute route. Please mark that as unverified in some low-key way; the trace is
+the only place a person will see it.
 
-**What we would like:** if `recoverable` is `false`, mark the route as unverified
-in some low-key way. It is an unverified safety claim and your screen is the only
-place a person will ever see it. Tell us if a route column on `episodes` is worth
-prioritising — it is the real fix and it is small.
+**New rungs will appear.** A2A and workspace outputs now show their own routes.
+Grounding `amend`s on all five (the delivered output carries the enforced
+document); `output_schema` is `report` on A2A. The remaining `metric` rungs are
+advisory by design: `input_binding`, and `input_schema` on the delegation hop.
+
+**A simpler view exists at `/grounding/:episode_id`** (`templates/grounding.html`),
+built on this same payload plus `/lineage`. It draws the route as a path, one node
+per checkpoint, with the enforcement mode as the node's edge and the decision as
+its badge. It is a separate page so it does not collide with the `trace.html`
+rework.
 
 ### `fields[]` — read `strength`, not `grade`
 
@@ -769,7 +787,9 @@ Two things not to be surprised by:
   a decision about durable write volume, and we would rather make them one at a
   time with a reason than promote the set. The token renders that honestly and
   updates itself the day we promote one.
-* **A route discriminator on `episodes`** — see `checkpoint_route` above.
+* **Delegated children cannot be told apart** — `execute_agent` and
+  `delegate_to_agent` both write `source_ref.kind = delegated_execution`. See
+  `checkpoint_route` above.
 
 ---
 

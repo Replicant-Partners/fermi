@@ -149,6 +149,34 @@ fn only_a_fault_renders_red_on_the_artifact_trace() {
     );
 }
 
+/// The grounding page draws every checkpoint, keeps the four enforcement modes
+/// apart, and never folds `undetermined` into a verdict.
+#[test]
+fn the_grounding_page_draws_what_each_gate_can_do_and_did() {
+    if !have("node") || !chrome_present() {
+        eprintln!(
+            "SKIPPED: `node` or Chrome is missing, so the grounding page was not \
+             rendered. This is an absence of a check, not a passing one."
+        );
+        return;
+    }
+    let out = Command::new("node")
+        .arg("scripts/check_grounding_page.js")
+        .current_dir(repo())
+        .output()
+        .expect("run scripts/check_grounding_page.js");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "the grounding page failed its checks in a real browser.\n\n{stdout}\n{stderr}"
+    );
+    assert!(
+        stdout.contains("undetermined kept apart"),
+        "the harness exited cleanly without reporting that it ran.\n\n{stdout}\n{stderr}"
+    );
+}
+
 /// The page prints the served run state and does not spell its own.
 ///
 /// The browser check above proves the tokens on one fixture. This covers the

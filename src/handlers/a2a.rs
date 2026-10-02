@@ -415,6 +415,26 @@ pub async fn send_message_handler(
     let input_binding = fermi::port_trust::bind_input(&card.accepts);
     crate::stamp_input_binding(&mut episode, &input_binding, None);
 
+    // What the external client receives: the enforced document, its schema
+    // status, and the paths grounding removed. Computed here so the Task and
+    // the gate ledger describe the same document.
+    let validation = fermi::agent_backend::envelope::validation_status(
+        card.capabilities.output_contract.as_ref(),
+        graded.enforced.as_ref(),
+    );
+    fermi::gate_trust::decided_about(
+        fermi::gate_trust::Gate::OutputSchema,
+        fermi::agent_backend::envelope::decision_for(validation),
+        Some(&format!("{slug}: {validation}")),
+        Some(&slug),
+    );
+    let stripped: Vec<String> = graded
+        .report
+        .violations
+        .iter()
+        .map(|v| v.path.clone())
+        .collect();
+
     let embed_text = format!(
         "{} {}",
         query,
@@ -494,7 +514,16 @@ pub async fn send_message_handler(
             .unwrap_or("Execution failed");
         fermi::a2a_task::failed_task(stored_id, &caller_id, reason)
     } else {
-        fermi::a2a_task::completed_task(stored_id, &caller_id, output.raw_response.as_deref())
+        fermi::a2a_task::completed_task(
+            stored_id,
+            &caller_id,
+            output.raw_response.as_deref(),
+            fermi::a2a_task::Delivered {
+                document: graded.enforced.as_ref(),
+                stripped: &stripped,
+                validation: Some(validation),
+            },
+        )
     };
 
     // ── 14. Register inline push config (if provided) + fire webhook ──────
@@ -576,9 +605,39 @@ pub async fn get_task_handler(
         Ok(episode) => {
             use agent_bestiary_memory::ExecutionStatus;
             let raw_response = episode.response_text.as_deref();
+            // The episode stores the claim verbatim, so a poll re-applies the
+            // contract rather than serving it. Without this, a client that
+            // polls receives the value `message:send` stripped.
+            let db_agent = resolve_agent(&state, &slug).await.ok();
+            let output_contract = db_agent
+                .as_ref()
+                .and_then(|a| resolve_agent_card(&state, a).capabilities.output_contract);
+            let mut enforced = raw_response.and_then(fermi::agent_backend::envelope::extract_json);
+            let report = match (enforced.as_mut(), db_agent.as_ref()) {
+                (Some(doc), Some(a)) => fermi::grounding_trust::enforce_from_output_contract(
+                    &a.agent_name,
+                    output_contract.as_ref(),
+                    doc,
+                ),
+                _ => fermi::grounding_trust::Report::default(),
+            };
+            let stripped: Vec<String> = report.violations.iter().map(|v| v.path.clone()).collect();
+            let validation = fermi::agent_backend::envelope::validation_status(
+                output_contract.as_ref(),
+                enforced.as_ref(),
+            );
             let task = match episode.execution_status {
                 ExecutionStatus::Success | ExecutionStatus::Partial => {
-                    fermi::a2a_task::completed_task(episode_id, &caller_id, raw_response)
+                    fermi::a2a_task::completed_task(
+                        episode_id,
+                        &caller_id,
+                        raw_response,
+                        fermi::a2a_task::Delivered {
+                            document: enforced.as_ref(),
+                            stripped: &stripped,
+                            validation: Some(validation),
+                        },
+                    )
                 }
                 ExecutionStatus::Failure => {
                     fermi::a2a_task::failed_task(episode_id, &caller_id, "Execution failed")
@@ -786,18 +845,13 @@ pub async fn stream_message_handler(
                     output.raw_response.as_deref(),
                 );
 
-                // OutputSchema gate.
+                // OutputSchema gate. The status also travels on the artifact.
+                let validation = fermi::agent_backend::envelope::validation_status(
+                    declared_oc.as_ref(),
+                    graded.enforced.as_ref(),
+                );
                 {
-                    let doc    = graded.enforced.as_ref();
-                    let schema = declared_oc.as_ref().and_then(|oc| oc.get("schema")).filter(|v| v.is_object());
-                    let status = match (schema, doc) {
-                        (Some(sch), Some(d)) => {
-                            let r = fermi::schema_validate::validate(sch, d);
-                            if r.is_valid() { "valid" } else if r.is_contradiction() { "invalid" } else { "unverified_unsupported_schema" }
-                        }
-                        (None, _)    => "unverified_no_schema",
-                        (Some(_), None) => "unverified_no_payload",
-                    };
+                    let status = validation;
                     fermi::gate_trust::decided_about(
                         fermi::gate_trust::Gate::OutputSchema,
                         fermi::agent_backend::envelope::decision_for(status),
@@ -886,7 +940,23 @@ pub async fn stream_message_handler(
 
                 // ── A2A event 2: artifactUpdate ───────────────────────
                 // The agent's result as a typed Artifact.
-                let artifact = fermi::a2a_task::build_stream_artifact(episode_id, output.raw_response.as_deref());
+                // The enforced document, not the claim: an external client
+                // cannot open the trace to find out what was removed.
+                let stripped: Vec<String> = graded
+                    .report
+                    .violations
+                    .iter()
+                    .map(|v| v.path.clone())
+                    .collect();
+                let artifact = fermi::a2a_task::build_stream_artifact(
+                    episode_id,
+                    output.raw_response.as_deref(),
+                    fermi::a2a_task::Delivered {
+                        document: graded.enforced.as_ref(),
+                        stripped: &stripped,
+                        validation: Some(validation),
+                    },
+                );
                 yield Ok(Event::default().data(
                     json!({
                         "artifactUpdate": {

@@ -2766,6 +2766,15 @@ const EXEMPT: &[(&str, &str)] = &[
     ),
     // artifact_trace
     (
+        "artifact_trace::command_for_source_kind",
+        "A lookup from the writer token already stored on `episodes.source_ref` \
+         to a declared command id. It grades nothing: the checkpoints it selects \
+         belong to `command_registry`. Pinned by \
+         `a_recovered_route_is_a_declared_command_and_delegation_is_not_guessed`, \
+         which asserts every recovered id declares checkpoints and that the \
+         ambiguous `delegated_execution` writer is never resolved.",
+    ),
+    (
         "artifact_trace::checkpoints",
         "Assembles `command_registry::Command.gates` against \
          `gate_trust::GATES` and holds no opinion: the rung order, the \

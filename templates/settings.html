@@ -229,6 +229,17 @@
               placeholder="e.g. CI Pipeline"
             />
           </div>
+          <div class="form-row">
+            <label class="form-label" style="display:flex;gap:8px;align-items:center">
+              <input type="checkbox" id="key-ground-scope" />
+              Ground my agents
+            </label>
+            <div style="font-size:0.85em;color:var(--fg3)">
+              Lets an agent you own, running anywhere, open grounding runs:
+              ABW tools called through a run are charged to your wallet, and
+              checking the output is free.
+            </div>
+          </div>
           <div style="display: flex; gap: 8px">
             <button class="btn btn-primary" onclick="createKey()">
               Create
@@ -390,7 +401,8 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               name,
-              scopes: ["read", "write", "execute"],
+              scopes: ["read", "write", "execute"].concat(
+                document.getElementById("key-ground-scope").checked ? ["ground:*"] : []),
             }),
           });
           if (!res.ok) {

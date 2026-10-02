@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en" class="theme-hasui">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>How this output was grounded — Agent Bestiary</title>
+  <link rel="stylesheet" href="/static/css/variables.css"/>
+  <link rel="stylesheet" href="/static/css/common.css"/>
+  <link rel="stylesheet" href="/static/css/components.css"/>
+  <style>
+  body{font-family:"Berkeley Mono","JetBrains Mono",monospace;line-height:1.5;
+       background:var(--bg0-hard);font-size:13px;margin:0;}
+  a{color:var(--fg3);text-decoration:none;} a:hover{color:var(--yellow);}
+  .wrap{max-width:980px;margin:0 auto;padding:0 20px 60px;}
+  .head{padding:18px 0 12px;border-bottom:1px solid var(--bg2);margin-bottom:16px;}
+  .head h1{font-size:1rem;color:var(--yellow);margin:0 0 3px;}
+  .head .sub{font-size:0.72rem;color:var(--fg4);}
+  .route{font-size:0.72rem;color:var(--fg3);margin-top:6px;}
+  .route .unv{color:var(--orange,#fe8019);}
+
+  .verdict{border-left:3px solid var(--fg4);background:var(--bg1);padding:11px 14px;margin-bottom:18px;}
+  .verdict.fault{border-color:var(--red,#fb4934);}
+  .verdict.amended{border-color:var(--yellow);}
+  .verdict.clean{border-color:var(--green,#b8bb26);}
+  .verdict .said{font-size:0.86rem;color:var(--fg2);}
+  .verdict .gloss{font-size:0.71rem;color:var(--fg4);margin-top:4px;max-width:88ch;}
+
+  h2{font-size:0.66rem;color:var(--fg4);text-transform:uppercase;letter-spacing:0.08em;
+     margin:22px 0 8px;font-weight:normal;}
+
+  /* The path. One spine, one node per checkpoint, in the order the route
+     declares them. The node's border says what the gate CAN do; its badge
+     says what it DID. Those are two questions and they are never merged. */
+  .path{position:relative;padding-left:22px;}
+  .path::before{content:"";position:absolute;left:7px;top:6px;bottom:6px;width:1px;background:var(--bg3);}
+  .node{position:relative;margin:0 0 10px;padding:8px 12px;background:var(--bg0);border:1px solid var(--bg3);}
+  .node::before{content:"";position:absolute;left:-19px;top:13px;width:9px;height:9px;border-radius:50%;
+                background:var(--bg0-hard);border:1px solid var(--fg4);}
+  .node.end{border-style:dashed;color:var(--fg3);}
+  .node.control{border-left:3px solid var(--fg2);}
+  .node.amend{border-left:3px solid var(--yellow);}
+  .node.report{border-left:3px solid var(--aqua,#8ec07c);}
+  .node.metric{border-left:3px dotted var(--fg4);opacity:0.85;}
+  .row1{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;}
+  .gate{color:var(--fg1);}
+  .can{font-size:0.64rem;color:var(--fg4);text-transform:uppercase;letter-spacing:0.05em;}
+  .badge{margin-left:auto;font-size:0.68rem;padding:1px 7px;border:1px solid var(--bg3);color:var(--fg3);}
+  .badge.approved{color:var(--green,#b8bb26);border-color:var(--green,#b8bb26);}
+  .badge.refused{color:var(--red,#fb4934);border-color:var(--red,#fb4934);}
+  .badge.undetermined{color:var(--orange,#fe8019);border-color:var(--orange,#fe8019);border-style:dashed;}
+  .badge.absent{color:var(--fg4);border-style:dotted;}
+  .badge.finding{color:var(--red,#fb4934);border-style:dotted;}
+  .detail{font-size:0.71rem;color:var(--fg4);margin-top:4px;max-width:92ch;}
+  .fix{font-size:0.71rem;color:var(--fg2);margin-top:4px;}
+  .fix b{color:var(--yellow);font-weight:normal;}
+
+  table{width:100%;border-collapse:collapse;font-size:0.72rem;}
+  td,th{padding:5px 8px;border-bottom:1px solid var(--bg2);text-align:left;vertical-align:top;}
+  th{color:var(--fg4);font-weight:normal;font-size:0.64rem;text-transform:uppercase;letter-spacing:0.05em;}
+  td.v{color:var(--fg2);max-width:28ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .t-red{color:var(--red,#fb4934);} .t-amber{color:var(--orange,#fe8019);} .t-neutral{color:var(--fg3);}
+  .hops a{display:block;padding:4px 0;}
+  .empty{padding:14px 0;font-size:0.76rem;color:var(--fg4);line-height:1.55;}
+  .legend{font-size:0.68rem;color:var(--fg4);display:flex;gap:16px;flex-wrap:wrap;margin:6px 0 0;}
+  .legend span::before{content:"";display:inline-block;width:12px;height:10px;margin-right:5px;vertical-align:-1px;background:var(--bg0);}
+  .legend .l-control::before{border-left:3px solid var(--fg2);}
+  .legend .l-amend::before{border-left:3px solid var(--yellow);}
+  .legend .l-report::before{border-left:3px solid var(--aqua,#8ec07c);}
+  .legend .l-metric::before{border-left:3px dotted var(--fg4);}
+  </style>
+</head>
+<body>
+  <div id="nav-root"></div>
+  <div class="wrap">
+    <div class="head">
+      <h1>How this output was grounded</h1>
+      <div class="sub">One agent output, the checkpoints on the route it took, and what reached
+        whoever received it. <a id="full" href="#">Full trace →</a></div>
+      <div class="route" id="route"></div>
+    </div>
+    <div id="content"><div class="empty">Loading…</div></div>
+  </div>
+
+  <script src="/static/js/widgets/nav.js"></script>
+  <script src="/static/js/theme.js"></script>
+  <script>
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
+    ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const ID = decodeURIComponent(location.pathname.split("/").filter(Boolean).pop() || "");
+
+  // What each enforcement mode means for the person holding the output.
+  // Consequences, not bookkeeping: the registry's four modes, in words.
+  const CAN = {
+    control: ["can refuse", "Runs before the effect and can stop it."],
+    amend:   ["removes the bad part", "Cannot refuse, because the answer is unknowable until written. Removes what it rejects before the output leaves."],
+    report:  ["tells the receiver", "Cannot refuse or repair. Its verdict travels with the output."],
+    metric:  ["records only", "Runs and is recorded; whoever receives the output cannot see the verdict."],
+  };
+
+  function badge(r) {
+    if (r.decided) {
+      const d = r.decided.decision;
+      const word = d === "undetermined" ? "could not decide" : d;
+      return `<span class="badge ${esc(d)}">${esc(word)}</span>`;
+    }
+    const tok = r.decided_absent && r.decided_absent.token;
+    // Only one of the four absence tokens is a finding. The rest are shown
+    // plainly so a correct absence never reads as a debt.
+    if (tok === "retained_but_absent") return `<span class="badge finding">missing record</span>`;
+    const word = { fires_before_artifact: "decided before output",
+                   retention_counted: "counted, not recorded",
+                   predates_retention: "before recording began" }[tok] || "unknown";
+    return `<span class="badge absent">${esc(word)}</span>`;
+  }
+
+  function fixLine(r, t) {
+    if (!r.decided) return "";
+    const d = r.decided.decision;
+    if (r.rung === "grounding" && d === "undetermined") {
+      return `<div class="fix"><b>Fix:</b> this agent declares no grounding contract, so nothing
+        could be checked. Not a pass. The agent's author adds an <code>output_contract</code>
+        (${esc((t.substrate && t.substrate.disposition) || "retrofit")}).</div>`;
+    }
+    if (d === "refused" && r.decided.reason) {
+      return `<div class="fix"><b>What was rejected:</b> ${esc(r.decided.reason)}</div>`;
+    }
+    return "";
+  }
+
+  function node(r, t) {
+    const [can, canWhy] = CAN[r.enforcement] || ["unknown", ""];
+    const drift = r.recomputed && r.decided && r.decided.decision === "approved" && r.recomputed.violations > 0
+      ? `<div class="fix"><b>Drift:</b> recorded as approved, but re-running today's contract finds
+         ${r.recomputed.violations} violation(s). The contract was tightened after this ran.</div>` : "";
+    const why = r.decided_absent ? r.decided_absent.because
+              : r.enforcement !== "control" ? (r.why_not_control || canWhy) : r.refuses;
+    return `<div class="node ${esc(r.enforcement)}">
+      <div class="row1"><span class="gate">${esc(r.rung.replace(/_/g, " "))}</span>
+        <span class="can" title="${esc(canWhy)}">${esc(can)}</span>${badge(r)}</div>
+      <div class="detail">${esc(why)}</div>${fixLine(r, t)}${drift}</div>`;
+  }
+
+  function verdict(t) {
+    const g = (t.checkpoints || []).find(r => r.rung === "grounding");
+    const d = g && g.decided && g.decided.decision;
+    const stripped = (t.fields || []).filter(f => f.observed === "stripped").length;
+    if (d === "refused" && g.enforcement === "amend") {
+      return ["amended", `Grounding removed ${stripped || "one or more"} field(s) before delivery.`,
+        "The receiver got the output without values no tool of this agent could have supplied. What the model claimed is kept below, and on the episode."];
+    }
+    if (d === "refused") {
+      return ["fault", "Grounding rejected part of this output, and the receiver was not told.",
+        "This route records the verdict but does not change what is delivered."];
+    }
+    if (d === "approved") {
+      return ["clean", "Every contracted field could have come from a tool this agent has.",
+        "That is not the same as correct: a sourced field can still be paraphrased wrongly."];
+    }
+    return ["", "Nothing about this output's content could be checked.",
+      "The agent declares no grounding contract, so the grounding checkpoint had nothing to grade. That is missing coverage, not a clean result."];
+  }
+
+  function fieldsTable(t) {
+    const f = t.fields || [];
+    if (!f.length) return `<div class="empty">No contracted fields. ${esc(t.owner ? "Owner: " + t.owner + "." : "")}</div>`;
+    return `<table><tr><th>field</th><th>claimed</th><th>source</th><th>state</th><th>next</th></tr>${
+      f.map(x => `<tr><td>${esc(x.name)}</td>
+        <td class="v" title="${esc(JSON.stringify(x.value))}">${esc(JSON.stringify(x.value))}</td>
+        <td>${esc(x.grade)} <span class="can">strength ${esc(x.strength)}</span></td>
+        <td class="t-${esc(x.finding_tone)}">${esc(x.observed)} · ${esc(x.whose || "")}</td>
+        <td>${x.settleable_by ? `run <code>${esc(x.settleable_by)}</code>`
+              : x.not_checkable ? esc(x.not_checkable) : "a person, with a citation"}</td></tr>`).join("")
+    }</table>`;
+  }
+
+  function hops(l) {
+    if (!l) return `<div class="empty">Coordination could not be read.</div>`;
+    const out = [];
+    if (l.parent) {
+      out.push(l.parent.state === "resolved"
+        ? `<a href="/grounding/${esc(l.parent.episode_id)}">↑ asked by ${esc(l.parent.agent || "an agent")}</a>`
+        : `<span class="t-amber">↑ asked by an agent whose output was never recorded</span>`);
+    }
+    (l.children || []).forEach(c => out.push(
+      `<a href="/grounding/${esc(c.episode_id)}">↓ delegated to ${esc(c.agent)}</a>`));
+    (l.delivered || []).forEach(d => out.push(
+      `<span>→ delivered to workspace ${esc(d.workspace || d.workspace_id)}</span>`));
+    return out.length ? `<div class="hops">${out.join("")}</div>`
+      : `<div class="empty">Not part of a coordination chain: no parent, no delegation, not posted to a workspace.</div>`;
+  }
+
+  function render(t, l) {
+    const cr = t.checkpoint_route || {};
+    document.getElementById("full").href = `/trace/${encodeURIComponent(ID)}`;
+    document.getElementById("route").innerHTML =
+      `<b>${esc((t.agent && t.agent.name) || "agent")}</b> via ${esc(cr.label || cr.command)}
+       <span class="can">${esc(cr.route || "")}</span>
+       ${cr.recovered ? "" : `<span class="unv" title="${esc(cr.because)}">· route not recovered, widest shown</span>`}`;
+    const [cls, said, gloss] = verdict(t);
+    document.getElementById("content").innerHTML = `
+      <div class="verdict ${cls}"><div class="said">${esc(said)}</div><div class="gloss">${esc(gloss)}</div></div>
+      <h2>The route, in order</h2>
+      <div class="path">
+        <div class="node end">${esc((t.input && t.input.query) ? "asked: " + t.input.query.slice(0, 160) : "request")}</div>
+        ${(t.checkpoints || []).map(r => node(r, t)).join("")}
+        <div class="node end">delivered · <a href="/trace/${encodeURIComponent(ID)}">read the output</a></div>
+      </div>
+      <div class="legend"><span class="l-control">can refuse</span><span class="l-amend">removes the bad part</span>
+        <span class="l-report">tells the receiver</span><span class="l-metric">records only</span></div>
+      <h2>Fields: what was claimed, and where it could come from</h2>${fieldsTable(t)}
+      <h2>Coordination</h2>${hops(l)}`;
+  }
+
+  async function boot() {
+    if (window.Nav) Nav.init({ current: "stream" });
+    try {
+      const [tr, lr] = await Promise.all([
+        fetch(`/api/episodes/${encodeURIComponent(ID)}/trace`),
+        fetch(`/api/episodes/${encodeURIComponent(ID)}/lineage`),
+      ]);
+      if (tr.status === 401) {
+        document.getElementById("content").innerHTML =
+          `<div class="empty">Sign in to see how this output was grounded.
+           <a href="/auth/google">Google</a> · <a href="/auth/github">GitHub</a></div>`;
+        return;
+      }
+      if (!tr.ok) throw new Error("HTTP " + tr.status);
+      render(await tr.json(), lr.ok ? await lr.json() : null);
+    } catch (e) {
+      document.getElementById("content").innerHTML =
+        `<div class="empty">Could not read this output's trace: ${esc(e.message)}.
+         Nothing is drawn rather than an empty route — an output with no checkpoints and
+         one that could not be read are different claims.</div>`;
+    }
+  }
+  boot();
+  </script>
+</body>
+</html>

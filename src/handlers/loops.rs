@@ -742,6 +742,7 @@ pub async fn episode_trace_handler(
         "SELECT e.episode_id, e.parent_episode_id, e.agent_id, e.query, \
                 e.response_text, e.context, e.provenance, e.model_used, e.provider_used, \
                 e.persona_version_at_write, e.timestamp_ref, e.assertions, \
+                e.source_ref, \
                 a.agent_name, a.accepts, a.produces, a.output_contract \
            FROM episodes e \
            JOIN agents a ON a.agent_id = e.agent_id \
@@ -950,28 +951,23 @@ pub async fn episode_trace_handler(
                 .to_string(),
     };
 
-    // The checkpoints, with the grounding rung's recomputation filled in from
-    // this episode.
+    // The checkpoints of the route this episode actually travelled, read off
+    // the writer that stored it. See `artifact_trace::command_for_source_kind`
+    // for why the route was recoverable all along, and for the one writer it
+    // deliberately does not resolve.
     //
-    // `agent.execute` is assumed, and that assumption is WRONG for a streamed
-    // artifact -- it is disclosed in the payload rather than buried here. The
-    // two routes declare different checkpoints: `agent.execute` has four rungs,
-    // `agent.execute_stream` has two (`credit` and `grounding`). An earlier
-    // comment in this position claimed they declared the same rungs and that
-    // either was therefore a correct answer. It was not true, and
-    // `grounding_execute_coverage` only ever held them to both declaring
-    // grounding.
-    //
-    // It is not fixable here: `episodes` carries no route discriminator, so the
-    // route is not recoverable from the artifact. Serving the wider route is the
-    // deliberate choice of the two errors -- a streamed artifact shows
-    // `attachment` and `input_binding` as rungs its route never had, which reads
-    // as *unrecorded*, whereas serving the narrower route would silently drop two
-    // real checkpoints for the majority of artifacts, and a route that omits
-    // checkpoints looks shorter and safer than it is. Both are wrong; this one
-    // is wrong in the direction that shows more rather than less, and
-    // `checkpoint_route.recoverable` tells the client not to trust it.
-    let route_command = "agent.execute";
+    // The fallback is `agent.execute`, the widest execute route: a trace that
+    // drops checkpoints it cannot place looks shorter and safer than it is.
+    // `checkpoint_route.recovered` says which of the two happened.
+    let source_kind: Option<String> = row
+        .try_get::<Option<Value>, _>("source_ref")
+        .ok()
+        .flatten()
+        .and_then(|s| s.get("kind").and_then(|k| k.as_str()).map(str::to_string));
+    let recovered_command = source_kind
+        .as_deref()
+        .and_then(fermi::artifact_trace::command_for_source_kind);
+    let route_command = recovered_command.unwrap_or("agent.execute");
     let mut checkpoints = fermi::artifact_trace::checkpoints(route_command);
 
     // What the ledger recorded for THIS artifact. Migrations 220 and 221 exist
@@ -1234,22 +1230,34 @@ pub async fn episode_trace_handler(
             enforced.as_ref(),
         ),
         "checkpoints": checkpoints,
-        // Which command's checkpoints these are, and the fact that we cannot know
-        // whether it is the right one. Served rather than assumed: a surface
-        // that draws four checkpoints for an artifact that passed two is making
-        // a safety claim on the platform's behalf, and the client is entitled to
-        // know the claim is unverified.
+        // Which command's checkpoints these are, and whether that was read off
+        // the row or assumed. A surface drawing the checkpoints of a route the
+        // artifact never took is making a safety claim on the platform's
+        // behalf, so the client is told which case this is.
         "checkpoint_route": {
-            "assumed": route_command,
-            "recoverable": false,
-            "because": "`episodes` records no route discriminator, so whether \
-                        this artifact came from POST /execute or \
-                        POST /execute/stream cannot be recovered. The two \
-                        declare DIFFERENT checkpoints - 4 rungs and 2 - so if this \
-                        was a streamed artifact then `attachment` and \
-                        `input_binding` are shown here and its route never had \
-                        them. Fixing it needs a column on `episodes`, not a \
-                        change to this handler.",
+            "command": route_command,
+            "label": fermi::command_registry::command(route_command).map(|c| c.label),
+            "route": fermi::command_registry::command(route_command).map(|c| c.route),
+            "recovered": recovered_command.is_some(),
+            "source_kind": source_kind,
+            "because": match (recovered_command, source_kind.as_deref()) {
+                (Some(_), Some(kind)) => format!(
+                    "Read off the writer that stored this episode \
+                     (`source_ref.kind` = `{kind}`)."
+                ),
+                (None, Some("delegated_execution")) => "A delegated child. Both \
+                    delegation tools write this kind and they declare different \
+                    checkpoints, so which one ran is not recoverable. Showing \
+                    `agent.execute`, the widest route."
+                    .to_string(),
+                (None, Some(kind)) => format!(
+                    "The writer `{kind}` is not mapped to a declared command. \
+                     Showing `agent.execute`, the widest route."
+                ),
+                (_, None) => "This episode carries no `source_ref`, so the route \
+                    is not recoverable. Showing `agent.execute`, the widest route."
+                    .to_string(),
+            },
         },
         "fields": fields,
         // The legend for `fields[].observed`, served once rather than repeated

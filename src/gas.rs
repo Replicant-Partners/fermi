@@ -62,6 +62,10 @@ pub struct GasFees {
     /// Platform infrastructure read fee — charged when users read agent-produced data
     /// (visualization, history, projections). Agents don't get paid (they already learned).
     pub platform_read: i32,
+    /// One ABW tool call made by an agent through the grounding service. The
+    /// check itself is free; the tools are what cost money, and they are also
+    /// the evidence grounding needs.
+    pub ground_tool_call: i32,
     /// Layer 2: Platform transaction fee on crypto token transfers (agent→owner royalties).
     /// Expressed as a fraction (e.g. 0.025 = 2.5%). Applied to every token payout.
     /// Not yet wired — requires SIWE wallet connection + settlement layer.
@@ -118,6 +122,7 @@ impl GasFees {
             host_rabble: env_or("GAS_HOST_RABBLE", 3),
             creature_dream: env_or("GAS_CREATURE_DREAM", 5),
             platform_read: env_or("GAS_PLATFORM_READ", 1),
+            ground_tool_call: env_or("GAS_GROUND_TOOL_CALL", 1),
             crypto_tx_fee_pct: std::env::var("CRYPTO_TX_FEE_PCT")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -180,6 +185,7 @@ impl Default for GasFees {
             host_rabble: 3,
             creature_dream: 5,
             platform_read: 1,
+            ground_tool_call: 1,
             crypto_tx_fee_pct: 0.025, // 2.5% on token transfers
         }
     }

@@ -585,6 +585,24 @@ pub async fn post_workspace_message_handler(
                             card.capabilities.output_contract.as_ref(),
                             output.raw_response.as_deref(),
                         );
+                        // What the workspace will read. Every member and every
+                        // person here reads this message, so it carries the
+                        // enforced document, the same as `/execute`'s body.
+                        let amended: Option<String> = match (
+                            output.metadata.reasoning.as_deref(),
+                            graded.enforced.as_ref(),
+                        ) {
+                            (Some(text), Some(enforced)) => {
+                                fermi::agent_backend::envelope::amend_document(text, enforced)
+                            }
+                            _ => None,
+                        };
+                        let stripped: Vec<String> = graded
+                            .report
+                            .violations
+                            .iter()
+                            .map(|v| v.path.clone())
+                            .collect();
 
                         // Stamp the (agent, human) dyad from the message sender so
                         // workspace conversations feed the companion loop.
@@ -742,7 +760,12 @@ pub async fn post_workspace_message_handler(
                         // the current version (Doc 12 § Capability 2).
                         // `episode_id` rides out too, so the result message can
                         // name the artifact this hop carried (migration 222).
-                        Ok::<_, (StatusCode, String)>((output, db_agent.agent_id, episode_id))
+                        Ok::<_, (StatusCode, String)>((
+                            output,
+                            db_agent.agent_id,
+                            episode_id,
+                            (amended, stripped),
+                        ))
                     }
                     .await;
 
@@ -752,14 +775,14 @@ pub async fn post_workspace_message_handler(
                     // agent. Best-effort: if the lookup fails or the agent
                     // has no version history, the keys are present but null.
                     let agent_uuid_opt: Option<uuid::Uuid> =
-                        result.as_ref().ok().map(|(_, id, _)| *id);
+                        result.as_ref().ok().map(|(_, id, _, _)| *id);
 
                     // The join (migration 222), extracted the same way and for
                     // the same reason. `None` on the error path is correct: the
                     // executor failed before persisting an episode, so there is
                     // no artifact for this arrow to point at.
                     let episode_id_opt: Option<uuid::Uuid> =
-                        result.as_ref().ok().map(|(_, _, eid)| *eid);
+                        result.as_ref().ok().map(|(_, _, eid, _)| *eid);
                     let (av_id, av_num): (Option<uuid::Uuid>, Option<i32>) = match agent_uuid_opt {
                         Some(agent_uuid) => state2
                             .memory_store
@@ -784,9 +807,14 @@ pub async fn post_workspace_message_handler(
                     //   - loop_iterations — tool-loop iteration count
                     //   - agent_version_{id,number} — Doc 12 § Capability 2
                     let (content, metadata, msg_type) = match result {
-                        Ok((output, _agent_uuid, _episode_id)) => {
-                            let raw_response =
-                                output.metadata.reasoning.clone().unwrap_or_default();
+                        Ok((output, _agent_uuid, _episode_id, (amended, stripped))) => {
+                            // The enforced text when grounding changed the
+                            // document, the model's own otherwise. The claim
+                            // is retained verbatim on the episode.
+                            let raw_response = amended
+                                .clone()
+                                .or_else(|| output.metadata.reasoning.clone())
+                                .unwrap_or_default();
                             let evidence_summaries: Vec<&str> = output
                                 .evidence
                                 .iter()
@@ -801,10 +829,16 @@ pub async fn post_workspace_message_handler(
                                 "tokens_used": output.tokens_used,
                                 "status": format!("{:?}", output.status),
                                 "evidence_count": output.evidence.len(),
-                                // Verbatim LLM output for machine consumers — kask's
+                                // The delivered text for machine consumers — kask's
                                 // `_extractBomItems`, comparator narrative readers,
                                 // etc. — so they don't have to re-parse the markdown.
+                                // Enforced, like `content`: a machine reader is the
+                                // likeliest to pass a stripped value on.
                                 "raw_response": raw_response,
+                                "grounding": {
+                                    "amended": amended.is_some(),
+                                    "stripped": stripped,
+                                },
                                 // Observability (issue #3 / Doc 10)
                                 "stop_reason": output.metadata.stop_reason,
                                 "resolved_model": output.metadata.model_used,

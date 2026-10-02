@@ -395,6 +395,20 @@ pub async fn create_api_key(
     Json(body): Json<CreateApiKeyRequest>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let scopes = body.scopes.unwrap_or_else(|| vec!["read".to_string()]);
+    // A key can never carry more authority than the person minting it.
+    //
+    // `can_admin()` on an API key is `scopes.contains("admin")`, and this
+    // handler used to store whatever scopes the caller asked for, so any
+    // signed-in user could mint an admin key. Admins do not need the scope
+    // requested: `validate_api_key` adds it from their role.
+    if scopes.iter().any(|s| s == "admin") && !principal.can_admin() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "The `admin` scope cannot be requested. Admin keys inherit it from \
+             the account's role."
+                .to_string(),
+        ));
+    }
     let (plaintext_key, key_info) =
         api_keys::create_api_key(&state.db, &principal.user_id(), &body.name, &scopes)
             .await

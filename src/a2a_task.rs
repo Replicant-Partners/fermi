@@ -17,15 +17,37 @@ pub mod state {
     pub const CANCELED: &str = "TASK_STATE_CANCELED";
 }
 
+/// What the grounding gate made of the response, as delivered over A2A.
+///
+/// The artifact an external client receives is the **enforced** document,
+/// never the model's claim: an A2A caller cannot open the trace, so a value
+/// the contract forbade that reaches it has reached someone with no way to
+/// know. The claim stays verbatim on the episode.
+#[derive(Debug, Clone, Copy)]
+pub struct Delivered<'a> {
+    /// `Pulse::grade`'s enforced document. `None` when the response carried no
+    /// JSON, in which case the text is delivered as it was written.
+    pub document: Option<&'a Value>,
+    /// Paths grounding nulled, so the client can tell a repaired document from
+    /// a clean one.
+    pub stripped: &'a [String],
+    /// `Gate::OutputSchema`'s status for the delivered document, when checked.
+    pub validation: Option<&'a str>,
+}
+
 /// Wrap a completed agent execution as a Task response body.
 ///
-/// The `raw_response` is placed in an Artifact:
-/// - If it is valid JSON → `Part { data: <json> }`
-/// - Otherwise → `Part { text: "<string>" }`
+/// The artifact carries `delivered.document` as a `data` part when there is
+/// one, otherwise the raw text as a `text` part.
 ///
 /// `context_id` is typically the caller's user_id (groups this caller's tasks).
-pub fn completed_task(episode_id: Uuid, context_id: &str, raw_response: Option<&str>) -> Value {
-    let artifact = build_artifact(episode_id, raw_response);
+pub fn completed_task(
+    episode_id: Uuid,
+    context_id: &str,
+    raw_response: Option<&str>,
+    delivered: Delivered<'_>,
+) -> Value {
+    let artifact = build_artifact(episode_id, raw_response, delivered);
     json!({
         "task": {
             "id": episode_id.to_string(),
@@ -91,31 +113,39 @@ pub fn working_task(episode_id: Uuid, context_id: &str) -> Value {
 
 /// Build an Artifact for use in `artifactUpdate` SSE events (Phase 3).
 /// Public so the stream handler can construct it without duplicating the logic.
-pub fn build_stream_artifact(episode_id: Uuid, raw_response: Option<&str>) -> Value {
-    build_artifact(episode_id, raw_response)
+pub fn build_stream_artifact(
+    episode_id: Uuid,
+    raw_response: Option<&str>,
+    delivered: Delivered<'_>,
+) -> Value {
+    build_artifact(episode_id, raw_response, delivered)
 }
 
-/// Build one Artifact from a raw response string.
-fn build_artifact(episode_id: Uuid, raw_response: Option<&str>) -> Value {
+/// Build one Artifact.
+///
+/// The document comes from `delivered`, not from re-scanning `raw_response`.
+/// A second scan is a second answer to "where is the document", and it could
+/// pick a different object than the one grounding enforced.
+fn build_artifact(episode_id: Uuid, raw_response: Option<&str>, delivered: Delivered<'_>) -> Value {
     let artifact_id = Uuid::new_v4();
-    let parts = match raw_response {
-        None | Some("") => vec![json!({ "text": "" })],
-        Some(text) => {
-            // Try to find and extract the first JSON object from the response
-            // (agents often wrap JSON in markdown code blocks or prose).
-            if let Some(json_val) = extract_json(text) {
-                vec![json!({ "data": json_val })]
-            } else {
-                vec![json!({ "text": text })]
-            }
-        }
+    let parts = match (delivered.document, raw_response) {
+        (Some(doc), _) => vec![json!({ "data": doc })],
+        (None, None | Some("")) => vec![json!({ "text": "" })],
+        (None, Some(text)) => vec![json!({ "text": text })],
     };
     json!({
         "artifactId": artifact_id.to_string(),
         "name": "agent_response",
         "parts": parts,
         "metadata": {
-            "abw_episode_id": episode_id.to_string()
+            "abw_episode_id": episode_id.to_string(),
+            "abw_grounding": {
+                "enforced": delivered.document.is_some(),
+                "stripped": delivered.stripped,
+                "note": "Fields with no possible source are nulled before the \
+                         artifact leaves. The claim is retained on the episode.",
+            },
+            "abw_validation": delivered.validation,
         }
     })
 }
@@ -177,10 +207,25 @@ fn find_matching_brace(s: &str, start: usize) -> Option<usize> {
 mod tests {
     use super::*;
 
+    const NONE: Delivered<'static> = Delivered {
+        document: None,
+        stripped: &[],
+        validation: None,
+    };
+
     #[test]
     fn completed_task_has_required_fields() {
         let id = Uuid::new_v4();
-        let t = completed_task(id, "user_123", Some(r#"{"items":[],"oracle_note":"ok"}"#));
+        let doc = json!({"items": [], "oracle_note": "ok"});
+        let t = completed_task(
+            id,
+            "user_123",
+            Some(r#"{"items":[],"oracle_note":"ok"}"#),
+            Delivered {
+                document: Some(&doc),
+                ..NONE
+            },
+        );
         let task = &t["task"];
         assert_eq!(task["id"], json!(id.to_string()));
         assert_eq!(task["status"]["state"], json!(state::COMPLETED));
@@ -194,7 +239,7 @@ mod tests {
     #[test]
     fn prose_response_becomes_text_part() {
         let id = Uuid::new_v4();
-        let t = completed_task(id, "user_123", Some("This is a prose response."));
+        let t = completed_task(id, "user_123", Some("This is a prose response."), NONE);
         assert_eq!(
             t["task"]["artifacts"][0]["parts"][0]["text"],
             json!("This is a prose response.")
@@ -207,6 +252,37 @@ mod tests {
         let val = extract_json(raw);
         assert!(val.is_some());
         assert_eq!(val.unwrap()["answer"], json!(42));
+    }
+
+    /// The external client receives what grounding left, not what the model
+    /// claimed, and is told what was removed.
+    #[test]
+    fn the_artifact_is_the_enforced_document_not_the_claim() {
+        let id = Uuid::new_v4();
+        let raw = r#"{"taxonomy":{"order":"Coleoptera"},"genome":{"size_mb":"200-400"}}"#;
+        let enforced = json!({"taxonomy": {"order": "Coleoptera"}, "genome": {"size_mb": null}});
+        let stripped = vec!["genome.size_mb".to_string()];
+        let t = completed_task(
+            id,
+            "u",
+            Some(raw),
+            Delivered {
+                document: Some(&enforced),
+                stripped: &stripped,
+                validation: Some("valid"),
+            },
+        );
+        let a = &t["task"]["artifacts"][0];
+        assert_eq!(a["parts"][0]["data"]["genome"]["size_mb"], Value::Null);
+        assert!(
+            !a.to_string().contains("200-400"),
+            "the fabricated value reached the A2A artifact"
+        );
+        assert_eq!(
+            a["metadata"]["abw_grounding"]["stripped"][0],
+            json!("genome.size_mb")
+        );
+        assert_eq!(a["metadata"]["abw_validation"], json!("valid"));
     }
 
     #[test]

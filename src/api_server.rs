@@ -1453,6 +1453,10 @@ async fn run_migrations(db: &PgPool) {
         // route. Nullable with no default so NULL keeps inheriting the card:
         // the same three-state precedence as `mcp_servers` and `mcp_tools`.
         "migrations/239_agents_skills.sql",
+        // 242 — `ground_runs` and `ground_run_tool_calls`, for the grounding
+        // service: an agent ABW does not host opens a run, calls ABW tools under
+        // a run-scoped token, and submits its output to be graded.
+        "migrations/242_ground_runs.sql",
     ];
 
     // Bootstrap the ledger before anything is recorded into it.
@@ -2827,6 +2831,20 @@ async fn main() {
             "/a2a/:slug/:method",
             post(handlers::a2a::method_dispatch_handler),
         )
+        // ── Grounding service ──────────────────────────────────────
+        // An agent ABW does not host opens a run with an API key (scope
+        // `ground:*`), calls ABW tools with the run token, and submits its
+        // output to be graded. Auth is done in the handlers: opening takes an
+        // API key, the other two take the run token.
+        .route("/v1/ground/runs", post(handlers::ground::open_run_handler))
+        .route(
+            "/v1/ground/runs/:run_id/tools/:tool",
+            post(handlers::ground::run_tool_handler),
+        )
+        .route(
+            "/v1/ground/runs/:run_id/output",
+            post(handlers::ground::submit_output_handler),
+        )
         .route(
             "/a2a/:slug/tasks/:episode_id",
             get(handlers::a2a::get_task_handler),
@@ -3538,6 +3556,10 @@ async fn main() {
         .route("/evaluators", get(handlers::pages::loops_view))
         .route("/specimen/:agent_name", get(handlers::pages::specimen_view))
         .route("/trace/:episode_id", get(handlers::pages::trace_view))
+        .route(
+            "/grounding/:episode_id",
+            get(handlers::pages::grounding_view),
+        )
         .route("/flow/:workspace_id", get(handlers::pages::flow_view))
         .route("/stream", get(handlers::pages::stream_view))
         .route("/declarations", get(handlers::pages::declarations_view))

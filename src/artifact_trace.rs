@@ -72,6 +72,34 @@ use crate::surface::Caveat;
 /// not an afterthought here.
 pub const EXECUTE_COMMANDS: &[&str] = &["agent.execute", "agent.execute_stream"];
 
+/// Which command an episode travelled, read off the writer that stored it.
+///
+/// # The discriminator was already on the row
+///
+/// The trace used to assume `agent.execute` for every artifact, and said the
+/// route was unrecoverable because `episodes` had no route column. It had one
+/// in all but name: every writer through `episode_boundary` stores
+/// `source_ref.kind`, a stable token naming the handler that wrote the row.
+///
+/// # What it deliberately does not resolve
+///
+/// `delegated_execution` is written by **both** delegation tools, and they
+/// declare different checkpoints, so it maps to nothing. So does any kind not
+/// listed here and any row with no `source_ref`. The caller serves its
+/// fallback and says the route was not recovered. Guessing the nearer tool
+/// would draw an envelope that was never built.
+pub fn command_for_source_kind(kind: &str) -> Option<&'static str> {
+    match kind {
+        "execute_handler" => Some("agent.execute"),
+        "execute_stream_handler" => Some("agent.execute_stream"),
+        "a2a_handler" => Some("a2a.send"),
+        "a2a_stream_handler" => Some("a2a.stream"),
+        "workspace_message_at_mention" => Some("workspace.message"),
+        "ground_service" => Some("ground.submit"),
+        _ => None,
+    }
+}
+
 /// One checkpoint on the route, as declared, plus what is known about this
 /// episode's passage through it.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -784,18 +812,17 @@ pub const TRACE_CAVEATS: &[Caveat] = &[
     },
     Caveat {
         subject: "trace.checkpoint_route",
-        checked: "Every rung `agent.execute` declares is shown, in the order the \
-                  command registry declares it.",
-        does_not_show: "That this artifact travelled that route. `episodes` \
-                        records no route discriminator, and the two commands \
-                        that persist an episode declare DIFFERENT checkpoints -- \
-                        `agent.execute` four rungs, `agent.execute_stream` two. \
-                        A streamed artifact is therefore shown `attachment` and \
-                        `input_binding` rungs its route never had. The wider \
-                        route is served deliberately, because the opposite error \
-                        drops two real checkpoints for the majority of \
-                        artifacts, but it is an unverified claim either way and \
-                        `checkpoint_route.recoverable` is `false` for that reason.",
+        checked: "Every rung the command in `checkpoint_route.command` declares \
+                  is shown, in the order the command registry declares it. When \
+                  `recovered` is true, that command was read off the writer \
+                  that stored this episode (`source_ref.kind`).",
+        does_not_show: "When `recovered` is false, that this artifact travelled \
+                        the command shown. Delegated children are written with \
+                        one `source_ref.kind` by two tools that declare \
+                        different checkpoints, and older rows carry no \
+                        `source_ref` at all. Those fall back to \
+                        `agent.execute`, the widest route, because dropping \
+                        checkpoints looks shorter and safer than it is.",
     },
     Caveat {
         subject: "trace.rung.decided_absent",
@@ -1050,6 +1077,35 @@ mod tests {
                 "`{id}` does not declare the grounding rung"
             );
         }
+    }
+
+    /// A recovered route must be a declared command, and the ambiguous writer
+    /// must stay unrecovered.
+    ///
+    /// The first half is the fence against a mapping that names a command the
+    /// registry does not have, which would serve an empty row of checkpoints
+    /// and read as an artifact that passed nothing. The second is the one
+    /// tempting shortcut: both delegation tools write `delegated_execution`,
+    /// and resolving it to either would draw checkpoints the other never had.
+    #[test]
+    fn a_recovered_route_is_a_declared_command_and_delegation_is_not_guessed() {
+        for kind in [
+            "execute_handler",
+            "execute_stream_handler",
+            "a2a_handler",
+            "a2a_stream_handler",
+            "workspace_message_at_mention",
+            "ground_service",
+        ] {
+            let id = command_for_source_kind(kind)
+                .unwrap_or_else(|| panic!("`{kind}` is a known writer and did not resolve"));
+            assert!(
+                !checkpoints(id).is_empty(),
+                "`{kind}` resolves to `{id}`, which declares no checkpoints"
+            );
+        }
+        assert_eq!(command_for_source_kind("delegated_execution"), None);
+        assert_eq!(command_for_source_kind("backfill"), None);
     }
 
     /// **Invariant 2.** Exactly one of `decided` / `decided_absent`, everywhere.

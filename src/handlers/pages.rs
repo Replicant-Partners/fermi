@@ -653,6 +653,13 @@ pub async fn trace_view() -> Response {
     app_shell("templates/trace.html")
 }
 
+/// One output and the checkpoints on the route it took, drawn by what each
+/// gate can do and what it did. Reads `/api/episodes/:id/trace` and
+/// `/lineage`; decides nothing of its own.
+pub async fn grounding_view() -> Response {
+    app_shell("templates/grounding.html")
+}
+
 /// A workspace as its seams: every arrow an artifact crossing a checkpoint.
 ///
 /// The composition-level zoom on the artifact trace. The workflow sequence

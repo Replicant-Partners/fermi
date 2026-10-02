@@ -170,6 +170,11 @@ pub struct Command {
     pub scope: Scope,
     pub effect: Effect,
     /// The route or tool this verb resolves to today.
+    ///
+    /// `METHOD /path` for an HTTP route, or `TOOL name` for a verb an agent
+    /// invokes as a platform tool. The delegation hop has no route, and it is
+    /// the verb coordination actually travels; leaving it out because it has
+    /// no URL is how it went undeclared.
     pub route: &'static str,
     pub gates: &'static [GateApplication],
     /// Why a write needs no gate that can refuse it.
@@ -323,6 +328,155 @@ pub const COMMANDS: &[Command] = &[
         ],
         ungated_because: None,
     },
+    // ── Inbound A2A ──────────────────────────────────────────────────────
+    //
+    // The door an agent outside the platform uses, so the one where a
+    // discarded verdict costs most: the caller cannot open the trace.
+    Command {
+        id: "a2a.send",
+        label: "Call agent over A2A",
+        does: "An external A2A client sends a message to a published agent and waits for the task",
+        scope: Scope::Agent,
+        effect: Effect::Write,
+        route: "POST /a2a/:slug/:method",
+        gates: &[
+            control(
+                Gate::Credit,
+                "handlers::a2a::send_message_handler, wallet balance check",
+            ),
+            amend(
+                Gate::Grounding,
+                "episode_boundary::Pulse::grade + a2a_task::completed_task, from \
+                 handlers::a2a::send_message_handler",
+                "Cannot refuse: grounding is unknowable until the model has \
+                 written. The Task artifact is the enforced document, with the \
+                 stripped paths in `metadata.abw_grounding`, so an external client \
+                 never receives a value the contract forbade. `GET /tasks/:id` \
+                 re-applies the contract to the stored claim for the same reason.",
+            ),
+            report(
+                Gate::OutputSchema,
+                "envelope::validation_status, from handlers::a2a::send_message_handler",
+                "Cannot refuse and does not repair: a document that contradicts its \
+                 declared type is delivered labelled, in `metadata.abw_validation`, \
+                 so the external caller can discount it. Recorded to the ledger.",
+            ),
+            metric(
+                Gate::InputBinding,
+                "port_trust::bind_input, from handlers::a2a::send_message_handler",
+                "Advisory for the same reason as on `agent.execute`: `bind_input` is \
+                 pure over the agent's own `accepts` and never sees the query, so a \
+                 mismatch describes the card rather than the caller. Stamped on the \
+                 episode and never returned.",
+            ),
+        ],
+        ungated_because: None,
+    },
+    Command {
+        id: "a2a.stream",
+        label: "Call agent over A2A (streaming)",
+        does: "Same as Call agent over A2A, delivered as server-sent events",
+        scope: Scope::Agent,
+        effect: Effect::Write,
+        route: "POST /a2a/:slug/:method",
+        gates: &[
+            control(
+                Gate::Credit,
+                "handlers::a2a::stream_message_handler, wallet balance check",
+            ),
+            amend(
+                Gate::Grounding,
+                "episode_boundary::Pulse::grade + a2a_task::build_stream_artifact, \
+                 from handlers::a2a::stream_message_handler",
+                "Cannot refuse, for the same reason as `a2a.send`. The \
+                 `artifactUpdate` frame is emitted after grading and carries the \
+                 enforced document and the stripped paths; the stream sends no \
+                 token deltas before it, so no unenforced text leaves.",
+            ),
+            report(
+                Gate::OutputSchema,
+                "envelope::validation_status, from handlers::a2a::stream_message_handler",
+                "Cannot refuse and does not repair. The status is carried on the \
+                 `artifactUpdate` frame as `metadata.abw_validation` and recorded to \
+                 the ledger and to `schema_conformance`.",
+            ),
+            metric(
+                Gate::InputBinding,
+                "port_trust::bind_input, from handlers::a2a::stream_message_handler",
+                "Advisory for the same reason as on `agent.execute`: `bind_input` is \
+                 pure over the agent's own `accepts` and never sees the query. \
+                 Stamped on the episode and never returned.",
+            ),
+        ],
+        ungated_because: None,
+    },
+    // ── Grounding service ───────────────────────────────────────────────
+    //
+    // An agent ABW does not host, grounded by ABW. Three verbs, one run.
+    Command {
+        id: "ground.open",
+        label: "Open grounding run",
+        does: "An agent owner's API key opens a run and receives a run token scoped to it",
+        scope: Scope::Agent,
+        effect: Effect::Write,
+        route: "POST /v1/ground/runs",
+        gates: &[control(
+            Gate::Credit,
+            "handlers::ground::open_run_handler, wallet balance check",
+        )],
+        ungated_because: None,
+    },
+    Command {
+        id: "ground.tool",
+        label: "Call tool in grounding run",
+        does: "The agent calls an ABW tool its card declares; ABW runs it, records it on the run, and charges for it",
+        scope: Scope::Agent,
+        effect: Effect::Write,
+        route: "POST /v1/ground/runs/:run_id/tools/:tool",
+        gates: &[
+            control(Gate::RateLimit, "handlers::ground::run_tool_handler"),
+            control(
+                Gate::Credit,
+                "handlers::ground::run_tool_handler, wallet balance >= price",
+            ),
+        ],
+        ungated_because: None,
+    },
+    Command {
+        id: "ground.submit",
+        label: "Submit output for grounding",
+        does: "The agent submits its output; ABW grades it against the card contract and the run's tool calls",
+        scope: Scope::Agent,
+        effect: Effect::Write,
+        route: "POST /v1/ground/runs/:run_id/output",
+        gates: &[
+            amend(
+                Gate::Grounding,
+                "episode_boundary::Pulse::grade, from handlers::ground::submit_output_handler",
+                "Cannot refuse: the output already exists when it is submitted. \
+                 The response carries the enforced `document` and the stripped \
+                 paths, graded against the tools called through this run, so a \
+                 value is sourced only if ABW ran the tool that could supply it.",
+            ),
+            report(
+                Gate::OutputSchema,
+                "envelope::validation_status, from handlers::ground::submit_output_handler",
+                "Cannot refuse or repair. Returned as `validation.status` so the \
+                 owner can discount a document that contradicts its own type.",
+            ),
+            report(
+                Gate::Completeness,
+                "episode_boundary::Pulse::assess_completeness, from \
+                 handlers::ground::submit_output_handler",
+                "Cannot refuse or repair a field the agent left empty. Returned as \
+                 `completeness.owed`, judged against the tools this run called.",
+            ),
+        ],
+        ungated_because: Some(
+            "No credit gate: checking is free by design. The run's cost is its \
+             tool calls, each charged at `ground.tool`.",
+        ),
+    },
     // ── Lifecycle ────────────────────────────────────────────────────────
     Command {
         id: "agent.publish",
@@ -437,6 +591,106 @@ pub const COMMANDS: &[Command] = &[
         route: "POST /api/workspaces/:workspace_id/add",
         gates: &[control(Gate::Credit, "handlers::rabble_workspace")],
         ungated_because: None,
+    },
+    // ── Coordination ─────────────────────────────────────────────────────
+    //
+    // The three verbs an output travels between members of a workspace. Until
+    // these were declared, the trace could only draw `agent.execute`'s
+    // checkpoints, so coordination was the one path whose gates nobody could
+    // see.
+    Command {
+        id: "workspace.message",
+        label: "Ask agent in workspace",
+        does: "@-mention a hired agent in a workspace; it runs and posts its answer to the conversation",
+        scope: Scope::Workspace,
+        effect: Effect::Write,
+        route: "POST /api/workspaces/:workspace_id/messages",
+        gates: &[
+            control(
+                Gate::Credit,
+                "handlers::workspace::messages, charge_workspace_gas",
+            ),
+            amend(
+                Gate::Grounding,
+                "episode_boundary::Pulse::grade + envelope::amend_document, from \
+                 handlers::workspace::messages::post_workspace_message_handler",
+                "Cannot refuse: grounding is unknowable before the model writes. \
+                 The message posted to the workspace, and its `raw_response` \
+                 metadata, carry the enforced document, with the stripped paths in \
+                 `metadata.grounding`. Every member reads what the gate left, not \
+                 what the model claimed; the claim stays on the episode.",
+            ),
+        ],
+        ungated_because: None,
+    },
+    Command {
+        id: "agent.delegate",
+        label: "Delegate to agent",
+        does: "An agent calls another agent through the `execute_agent` tool and weighs its answer",
+        scope: Scope::Composition,
+        effect: Effect::Write,
+        route: "TOOL execute_agent",
+        gates: &[
+            amend(
+                Gate::Grounding,
+                "agent_backend::envelope::build + platform::delivered_text, from \
+                 tools::domains::platform::execute_execute_agent",
+                "Cannot refuse, like every post-hoc grounding gate. The calling \
+                 agent receives `envelope.payload`, the enforced document with \
+                 per-block provenance, and `response` with the same document \
+                 substituted, so neither channel carries a stripped value. The \
+                 child's ledger row is graded against the same card contract.",
+            ),
+            report(
+                Gate::OutputSchema,
+                "agent_backend::envelope::build, from \
+                 tools::domains::platform::execute_execute_agent",
+                "Validated after grounding against the schema the producer \
+                 declared, and returned as `envelope.validation.status`. It does not \
+                 refuse: an `invalid` document is handed back labelled, and the tool \
+                 description tells the coordinator to discount it.",
+            ),
+            metric(
+                Gate::InputSchema,
+                "agent_backend::envelope::validate_input, from \
+                 tools::domains::platform::execute_execute_agent",
+                "Checked before dispatch and counted, then bound to `_input_report` \
+                 and dropped: neither caller nor callee learns that the query \
+                 contradicted the declared input schema. Advisory by design so \
+                 untyped callers keep working; returning the verdict would not \
+                 change that.",
+            ),
+        ],
+        ungated_because: Some(
+            "No credit gate on the hop. The child runs inside a parent run that \
+             already passed its own entry route's credit gate and inherits the \
+             parent's credentials; the hop charges nothing itself, so the child's \
+             tokens are recorded on its episode and not billed separately.",
+        ),
+    },
+    Command {
+        id: "workspace.delegate",
+        label: "Delegate within workspace",
+        does: "An agent hands a task to a fellow workspace member through `delegate_to_agent`",
+        scope: Scope::Workspace,
+        effect: Effect::Write,
+        route: "TOOL delegate_to_agent",
+        gates: &[amend(
+            Gate::Grounding,
+            "episode_boundary::Pulse::grade + platform::delivered_text, from \
+             tools::domains::platform::execute_delegate_to_agent",
+            "Cannot refuse: grounding is unknowable before the child writes. \
+             The text returned to the caller and posted to the workspace has the \
+             enforced document substituted, and is graded against the child's \
+             card contract. It returns prose rather than an envelope, so the \
+             caller is not told which paths were stripped; the workspace message \
+             metadata is.",
+        )],
+        ungated_because: Some(
+            "No credit gate on the hop, for the same reason as `agent.delegate`: \
+             the child is funded by a parent run that already passed its entry \
+             route's credit gate, and the hop charges nothing itself.",
+        ),
     },
     // ── Money ────────────────────────────────────────────────────────────
     Command {
@@ -603,7 +857,15 @@ mod tests {
     /// stream has already sent its tokens, which is true of the deltas and was
     /// never true of the frame a client actually reads.
     ///
-    /// One remains, and it is not going anywhere soon. `input_binding` looked
+    /// **Then nine, then four.** Declaring the A2A doors and the coordination
+    /// verbs made eight existing discards visible rather than creating any —
+    /// the paper's §5.4, "got worse" versus "became measurable". Five came off
+    /// in the next change, when grounding began amending what A2A clients,
+    /// workspace members and delegating agents receive, and A2A began carrying
+    /// the schema status. What remains is advisory by design: input binding
+    /// and the delegation hop's input schema.
+    ///
+    /// The original survivor, and it is not going anywhere soon. `input_binding` looked
     /// like the cheapest promotion on the platform — genuine prevention, before
     /// a credit is spent — until the rate was measured: **47 of 102 cards would
     /// be refused**, including `prey_locator` at 94 pulses and `enemy_sensor` at
@@ -616,7 +878,12 @@ mod tests {
     fn the_discarded_gate_verdicts_are_the_ones_we_know_about() {
         assert_eq!(
             gates_computed_and_discarded(),
-            vec![("agent.execute", "input_binding")],
+            vec![
+                ("agent.execute", "input_binding"),
+                ("a2a.send", "input_binding"),
+                ("a2a.stream", "input_binding"),
+                ("agent.delegate", "input_schema"),
+            ],
             "the set of verbs whose gate verdict is thrown away has changed. It \
              may only shrink. Promoting one to Control is the fix; adding one is \
              a regression that needs its cost written into `why_not_control`."
@@ -726,8 +993,18 @@ mod tests {
         )
         .expect("api_server.rs is readable");
 
+        // A tool verb is held to the same standard against the tool registry:
+        // a declared `TOOL name` that no longer dispatches governs nothing.
+        let tools = crate::agent_backend::tools::PlatformToolRegistry::all().tool_names();
+
         let mut missing = Vec::new();
         for c in COMMANDS {
+            if let Some(tool) = c.route.strip_prefix("TOOL ") {
+                if !tools.contains(&tool) {
+                    missing.push(format!("{} -> {} (no such tool)", c.id, c.route));
+                }
+                continue;
+            }
             let path = c.route.split_once(' ').map(|(_, p)| p).unwrap_or(c.route);
             if !src.contains(&format!("\"{path}\"")) {
                 missing.push(format!("{} -> {}", c.id, c.route));

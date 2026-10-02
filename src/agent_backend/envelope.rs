@@ -165,6 +165,35 @@ pub fn amend_document(text: &str, enforced: &Value) -> Option<String> {
     Some(out)
 }
 
+/// Check an enforced document against the schema its producer declared.
+///
+/// The same five statuses as [`build`]: `valid`, `invalid`, and three
+/// `unverified_*` that are never a pass. For callers that already hold the
+/// enforced document from `Pulse::grade` and must not re-run enforcement to
+/// get one.
+pub fn validation_status(
+    output_contract: Option<&Value>,
+    enforced: Option<&Value>,
+) -> &'static str {
+    let schema = output_contract
+        .and_then(|oc| oc.get("schema"))
+        .filter(|s| s.is_object());
+    match (schema, enforced) {
+        (Some(sch), Some(doc)) => {
+            let r = crate::schema_validate::validate(sch, doc);
+            if r.is_valid() {
+                "valid"
+            } else if r.is_contradiction() {
+                "invalid"
+            } else {
+                "unverified_unsupported_schema"
+            }
+        }
+        (None, _) => "unverified_no_schema",
+        (Some(_), None) => "unverified_no_payload",
+    }
+}
+
 /// The type this agent declares it produces, if any.
 ///
 /// Takes the `output_contract` rather than the whole card: the card is moved
@@ -886,7 +915,6 @@ mod tests {
         );
     }
 }
-
 
 /// The gate the hop reports to.
 ///

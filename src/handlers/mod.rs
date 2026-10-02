@@ -82,6 +82,8 @@ pub mod forecasts;
 // served and none of any it refused.
 pub mod gates;
 pub mod governance;
+/// The grounding service: ABW grounds an agent it does not host.
+pub mod ground;
 /// Admin "view as user" — short-lived, read-only, fully audited
 /// impersonation for support and debugging.
 /// See docs/specs/SPEC_33_IMPERSONATION.md.
