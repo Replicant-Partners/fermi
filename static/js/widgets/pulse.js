@@ -78,7 +78,9 @@ window.Pulse = (function () {
   }
 
   function row(x) {
-    const href = x.episode_id ? `/trace/${encodeURIComponent(x.episode_id)}` : "";
+    // The grounding view first: it says what each checkpoint did in plain
+    // words, and links to the full trace for the detail.
+    const href = x.episode_id ? `/grounding/${encodeURIComponent(x.episode_id)}` : "";
     return `<div class="ex${href ? "" : " ex-dead"}"${href ? ` data-href="${href}"` : ""}>
       <div class="when">${esc(when(x.at))}</div>
       <div class="body">

@@ -394,7 +394,20 @@ pub async fn create_api_key(
     principal: AuthPrincipal,
     Json(body): Json<CreateApiKeyRequest>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let scopes = body.scopes.unwrap_or_else(|| vec!["read".to_string()]);
+    let mut scopes = body.scopes.unwrap_or_else(|| vec!["read".to_string()]);
+    // `write` only for an account whose role can write. Dropped rather than
+    // refused because the settings page asks for it on every key; the
+    // response says which scopes were not granted.
+    let mut not_granted: Vec<String> = Vec::new();
+    if !principal.can_write() {
+        scopes.retain(|s| {
+            let keep = s != "write";
+            if !keep {
+                not_granted.push(s.clone());
+            }
+            keep
+        });
+    }
     // A key can never carry more authority than the person minting it.
     //
     // `can_admin()` on an API key is `scopes.contains("admin")`, and this
@@ -419,6 +432,7 @@ pub async fn create_api_key(
         "key_id": key_info.key_id,
         "name": key_info.name,
         "scopes": key_info.scopes,
+        "not_granted": not_granted,
         "note": "Save this key — it cannot be retrieved again."
     })))
 }

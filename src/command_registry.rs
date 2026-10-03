@@ -410,6 +410,24 @@ pub const COMMANDS: &[Command] = &[
         ],
         ungated_because: None,
     },
+    // ── MCP door ──────────────────────────────────────────────────────────
+    //
+    // `/mcp/agents/:id` serves discovery to anyone and runs only for a
+    // signed-in caller who can pay. One route, one verb: the JSON-RPC method
+    // decides between a published tool and the agent itself.
+    Command {
+        id: "mcp.call",
+        label: "Call agent over MCP",
+        does: "An MCP client runs one of an agent's published tools, or the agent itself via `execute`",
+        scope: Scope::Agent,
+        effect: Effect::Write,
+        route: "POST /mcp/agents/:agent_id",
+        gates: &[
+            control(Gate::RateLimit, "handlers::mcp::paying_caller"),
+            control(Gate::Credit, "handlers::mcp::paying_caller"),
+        ],
+        ungated_because: None,
+    },
     // ── Grounding service ───────────────────────────────────────────────
     //
     // An agent ABW does not host, grounded by ABW. Three verbs, one run.

@@ -55,7 +55,21 @@ const TRACE = {
       why_not_control: "Advisory.", refuses: "nothing", site: "x::y",
       decided_absent: { token: "retention_counted", because: "counted in memory only" } },
   ],
-  fields: [],
+  // The rows from the first production run, where the page read wrong.
+  fields: [
+    { name: "phylogeny.divergence_mya", value: 45, grade: "tool_verified", strength: 2,
+      kind: "unsourced", observed: "stripped", whose: "the agent's", finding_tone: "red",
+      settleable_by: null },
+    { name: "phylogeny.superorder", value: "Holometabola", grade: "tool_verified", strength: 2,
+      kind: "derived", observed: "filled", whose: "nobody's", finding_tone: "neutral",
+      settleable_by: null },
+    { name: "summary", value: "A stag beetle", grade: "unavailable_no_tool_source", strength: 0,
+      kind: "narrative", observed: "filled", whose: "nobody's", finding_tone: "neutral",
+      settleable_by: null },
+    { name: "genome.chromosome_count", value: null, grade: "tool_no_match", strength: 0,
+      kind: "sourced", observed: "tool_empty", whose: "the world's", finding_tone: "amber",
+      settleable_by: "ncbi_genome_search" },
+  ],
   substrate: { disposition: "retrofit" },
   owner: "agent_author",
 };
@@ -127,6 +141,10 @@ async function main() {
         route: txt(document.getElementById("route")),
         verdict: txt(document.querySelector(".verdict .said")),
         links: Array.from(document.querySelectorAll(".hops a")).map((a) => a.getAttribute("href")),
+        rows: Object.fromEntries(Array.from(document.querySelectorAll("table tr")).slice(1).map((tr) => {
+          const td = Array.from(tr.querySelectorAll("td")).map(txt);
+          return [td[0], { source: td[2], state: td[3], next: td[4] }];
+        })),
         body: txt(document.body).slice(0, 500),
       };
     });
@@ -149,6 +167,21 @@ async function main() {
       "a gate that decides before the output exists is drawn as a missing record");
 
     ok(/not recovered/.test(seen.route), "an unrecovered route is not marked as such");
+
+    const r = seen.rows;
+    const d = r["phylogeny.divergence_mya"] || {};
+    ok(!/tool_verified/.test(d.source) && /no tool can supply/.test(d.source),
+      `a stripped unsourced field reads as tool-verified because its block was: "${d.source}"`);
+    ok(/removed/.test(d.state), `a stripped field does not say it was removed: "${d.state}"`);
+    const s = r["phylogeny.superorder"] || {};
+    ok(/computed/.test(s.source) && !/citation/.test(s.next),
+      `a derived field asks for a citation or hides that ABW computed it: ${JSON.stringify(s)}`);
+    ok(!/citation/.test((r["summary"] || {}).next || ""), "prose asks a person for a citation");
+    const cc = r["genome.chromosome_count"] || {};
+    ok(/no data/.test(cc.state) && /ncbi_genome_search/.test(cc.next),
+      `the world's gap is not said plainly: ${JSON.stringify(cc)}`);
+    ok(!Object.values(r).some((x) => /nobody's|\u00b7/.test(x.state)),
+      "a state cell still prints the bare attribution token");
     ok(seen.links.includes(`/grounding/${CHILD}`),
       "a delegation hop does not link to the child's own grounding page");
   } finally {

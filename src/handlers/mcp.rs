@@ -26,9 +26,12 @@
 //! agent" — it deliberately bypasses the agent.
 //!
 //! Auth: the MCP endpoint sits on public_routes (optional auth middleware).
-//! Workspace-scoped tools (read_workspace_file, list_workspace_agents, etc.)
-//! require a workspace_id in params and a valid Bearer token / API key.
-//! Public tools (list_agents, execute_agent on public agents) work unauthenticated.
+//! Discovery is public: the manifest, `initialize` and `tools/list`.
+//! Anything that RUNS (`tools/call`, `execute`) needs a signed-in caller or
+//! an API key, passes the rate limit and the credit gate, and is charged to
+//! the caller's wallet: a published tool at `GAS_GROUND_TOOL_CALL`, `execute`
+//! at the execution fee with the owner's royalty. It used to run either for
+//! anyone, unmetered, which made it the free door around every metered one.
 
 use std::sync::Arc;
 
@@ -116,6 +119,52 @@ fn advertised_tools(
 }
 
 // ─── Manifest (GET) ──────────────────────────────────────────────────────────
+
+/// The caller and wallet a running call is charged to, after the auth, rate
+/// limit and credit gates. `Err` is the JSON-RPC error to return.
+async fn paying_caller(
+    state: &AppState,
+    principal: &Option<AuthPrincipal>,
+    min_balance: i32,
+    rpc_id: &Value,
+) -> Result<(String, fermi_auth::Wallet), Value> {
+    use fermi::gate_trust::{decided, Decision, Gate};
+    let Some(p) = principal else {
+        return Err(mcp_error(
+            rpc_id.clone(),
+            -32001,
+            "Running a tool or the agent requires an ABW account: send \
+             Authorization: Bearer <api-key>. Discovery (tools/list) is public.",
+        ));
+    };
+    let user_id = p.user_id();
+    if let Err(retry) = state.rate_limits.llm.check(&format!("user:{user_id}")) {
+        decided(Gate::RateLimit, Decision::Refused, Some("mcp"));
+        return Err(mcp_error(
+            rpc_id.clone(),
+            -32029,
+            &format!("Rate limit exceeded. Retry after {retry} seconds."),
+        ));
+    }
+    decided(Gate::RateLimit, Decision::Approved, None);
+    let wallet = fermi_auth::get_or_create_wallet(&state.db, "user", &user_id)
+        .await
+        .map_err(|e| mcp_error(rpc_id.clone(), -32000, &format!("Wallet error: {e}")))?;
+    if wallet.balance < min_balance.max(1) {
+        decided(
+            Gate::Credit,
+            Decision::Refused,
+            Some("mcp: insufficient balance"),
+        );
+        return Err(mcp_error(
+            rpc_id.clone(),
+            -32002,
+            "Insufficient credits. Top up your balance to continue.",
+        ));
+    }
+    decided(Gate::Credit, Decision::Approved, None);
+    Ok((user_id, wallet))
+}
 
 pub async fn mcp_agent_manifest(
     State(state): State<AppState>,
@@ -247,6 +296,13 @@ pub async fn mcp_agent_rpc(
                 return run_llm_execute(&state, &principal, &agent_id, &query, rpc_id).await;
             }
 
+            let price = state.gas_fees.ground_tool_call;
+            let (caller_id, wallet) = match paying_caller(&state, &principal, price, &rpc_id).await
+            {
+                Ok(c) => c,
+                Err(e) => return Ok(Json(e)),
+            };
+
             // ── Dispatch to ToolRegistry directly ────────────────────────────
             //
             // Build a ToolContext from whatever we have. Workspace-scoped tools
@@ -334,6 +390,21 @@ pub async fn mcp_agent_rpc(
             let registry = PlatformToolRegistry::all();
             match registry.execute(&tool_name, &arguments, &tool_ctx).await {
                 Ok(result_str) => {
+                    // Charged only when the tool answered, as on the
+                    // grounding service: a failed call produced nothing.
+                    if let Err((_, e)) = fermi::gas::charge_gas(
+                        &state.db,
+                        wallet.wallet_id,
+                        price,
+                        "gas_fee",
+                        &format!("mcp tool call: {tool_name} on {agent_id}"),
+                        None,
+                    )
+                    .await
+                    {
+                        tracing::error!(caller = %caller_id, tool = %tool_name, error = %e,
+                            "mcp tool call ran and was not charged");
+                    }
                     // Try to parse as JSON for a cleaner response; fall back to text
                     let content = serde_json::from_str::<Value>(&result_str)
                         .map(|v| json!({ "type": "json", "json": v }))
@@ -388,6 +459,11 @@ async fn run_llm_execute(
     query: &str,
     rpc_id: Value,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    let (caller_id, wallet) =
+        match paying_caller(state, principal, state.gas_fees.execution_min, &rpc_id).await {
+            Ok(c) => c,
+            Err(e) => return Ok(Json(e)),
+        };
     let db_agent = resolve_agent(state, agent_id).await?;
     let card = resolve_agent_card(state, &db_agent);
 
@@ -453,6 +529,32 @@ async fn run_llm_execute(
 
     match tool_executor.execute(&agent_stmt, &context).await {
         Ok(output) => {
+            // Charged like `/execute`: the execution fee, with the owner's
+            // royalty, plus the gas surcharge.
+            let tokens = output.tokens_used.unwrap_or(0) as i32;
+            let (execution_fee, gas_fee) = state.gas_fees.execution_fee(tokens);
+            let _ = fermi::gas::charge_execution_with_royalty(
+                &state.db,
+                wallet.wallet_id,
+                &caller_id,
+                execution_fee,
+                db_agent.owner_id.as_deref(),
+                &db_agent.tier,
+                &db_agent.agent_name,
+                tokens,
+                None,
+                state.gas_fees.execution_owner_royalty_pct,
+            )
+            .await;
+            let _ = fermi::gas::charge_gas(
+                &state.db,
+                wallet.wallet_id,
+                gas_fee,
+                "gas_fee",
+                &format!("mcp execute gas fee for {}", db_agent.agent_name),
+                None,
+            )
+            .await;
             let result_json = json!({
                 "status": format!("{:?}", output.status),
                 "confidence": output.confidence,

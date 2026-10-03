@@ -160,16 +160,47 @@
       "The agent declares no grounding contract, so the grounding checkpoint had nothing to grade. That is missing coverage, not a clean result."];
   }
 
+  // What happened to the field on this run, as a sentence. The server's
+  // `observed` token and `whose` attribution, said once in plain words.
+  const STATE = {
+    filled:             "filled",
+    absent_by_contract: "empty, as the contract requires",
+    tool_empty:         "empty: the tool was asked and has no data (not the agent's fault)",
+    owed:               "missing: the agent did not fill it",
+    stripped:           "removed: no source for this value (the agent's fault)",
+  };
+
+  // Where the value can come from, per field. The grade on the wire is the
+  // BLOCK's, so a field the contract says no tool can supply would otherwise
+  // read as tool-verified because its siblings were.
+  function source(x) {
+    switch (x.kind) {
+      case "derived":   return "computed by ABW from verified fields";
+      case "narrative": return "prose: summarises the fields, needs no source";
+      case "inferred":  return "the agent's judgement over sourced fields";
+      case "unsourced": return "no tool can supply this field";
+      default:
+        return `${esc(x.grade)} <span class="can">strength ${esc(x.strength)}</span>`;
+    }
+  }
+
+  // What would settle it, only where something can.
+  function next(x) {
+    if (x.settleable_by) return `run <code>${esc(x.settleable_by)}</code>`;
+    if (x.kind === "unsourced" && x.observed === "stripped") return "a person, with a citation";
+    if (x.kind === "inferred") return "cannot be verified, only endorsed";
+    return `<span class="can">nothing to do</span>`;
+  }
+
   function fieldsTable(t) {
     const f = t.fields || [];
     if (!f.length) return `<div class="empty">No contracted fields. ${esc(t.owner ? "Owner: " + t.owner + "." : "")}</div>`;
-    return `<table><tr><th>field</th><th>claimed</th><th>source</th><th>state</th><th>next</th></tr>${
+    return `<table><tr><th>field</th><th>claimed</th><th>can come from</th><th>on this run</th><th>to settle</th></tr>${
       f.map(x => `<tr><td>${esc(x.name)}</td>
         <td class="v" title="${esc(JSON.stringify(x.value))}">${esc(JSON.stringify(x.value))}</td>
-        <td>${esc(x.grade)} <span class="can">strength ${esc(x.strength)}</span></td>
-        <td class="t-${esc(x.finding_tone)}">${esc(x.observed)} · ${esc(x.whose || "")}</td>
-        <td>${x.settleable_by ? `run <code>${esc(x.settleable_by)}</code>`
-              : x.not_checkable ? esc(x.not_checkable) : "a person, with a citation"}</td></tr>`).join("")
+        <td>${source(x)}</td>
+        <td class="t-${esc(x.finding_tone)}">${esc(STATE[x.observed] || x.observed)}</td>
+        <td>${next(x)}</td></tr>`).join("")
     }</table>`;
   }
 
