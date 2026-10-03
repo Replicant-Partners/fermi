@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Digital Product Passport</title>
+<!--
+  The public face of a released passport. Opened by scanning a code on a
+  product, usually on a phone, by someone with no Agent Bestiary account.
+
+  Three rules this page keeps:
+   1. It renders only the released snapshot. It never reads the workspace.
+   2. What produced each reading, and whether anyone verified it, is shown
+      BEFORE the reading — never in a footer. A clean public page is exactly
+      where an unverified agent output gets read as settled.
+   3. Absence is shown as absence. An unevaluated claim says "not evaluated";
+      a section released without a document says so.
+-->
+<style>
+:root{--bg:#0f1115;--s1:#161a20;--s2:#1c2128;--b1:#2a313a;--t1:#e8ecf1;--t2:#b4bdc8;--t3:#7d8794;
+      --grn:#22c55e;--amb:#f59e0b;--red:#ef4444;--blu:#60a5fa;--acc:#f5c518;
+      --mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--t1);font:15px/1.6 Inter,system-ui,sans-serif}
+.wrap{max-width:760px;margin:0 auto;padding:20px 16px 48px}
+.kicker{font:700 11px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--t3)}
+h1{font-size:24px;line-height:1.25;margin:8px 0 2px}
+.code{font-family:var(--mono);color:var(--t3);font-size:13px}
+.meta{font-size:12px;color:var(--t3);margin-top:8px}
+.notice{border-left:3px solid var(--amb);background:rgba(245,158,11,.07);padding:11px 13px;
+        border-radius:0 6px 6px 0;margin:18px 0;font-size:13px;color:var(--t2)}
+h2{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--t3);margin:28px 0 10px;
+   border-bottom:1px solid var(--b1);padding-bottom:6px}
+.card{background:var(--s1);border:1px solid var(--b1);border-radius:8px;padding:12px 13px;margin-bottom:10px}
+.claim{font-size:16px;font-weight:600}
+.verdict{border-top:1px solid var(--b1);margin-top:10px;padding-top:9px}
+.mkt{font:700 12px var(--mono);color:var(--t2)}
+.pill{display:inline-block;font:700 11px/1.6 var(--mono);padding:0 7px;border-radius:4px;margin-left:6px}
+.ok{background:rgba(34,197,94,.15);color:var(--grn)}
+.no{background:rgba(239,68,68,.15);color:var(--red)}
+.cond{background:rgba(245,158,11,.15);color:var(--amb)}
+.none{background:var(--s2);color:var(--t3)}
+.basis{font-size:13px;color:var(--t2);margin-top:5px}
+.prov{font:11px var(--mono);color:var(--t3);margin-top:6px}
+.flag{font-size:12px;color:var(--amb);margin-top:6px}
+.cites a{color:var(--blu);font-size:12px;word-break:break-word}
+.cites{margin-top:5px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+td,th{text-align:left;padding:6px 4px;border-bottom:1px solid var(--b1);vertical-align:top}
+th{color:var(--t3);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+.big{font:700 26px var(--mono)}
+.muted{color:var(--t3)}
+.err{padding:40px 0;text-align:center;color:var(--t2)}
+footer{margin-top:40px;font-size:12px;color:var(--t3);text-align:center}
+footer a{color:var(--t3)}
+</style>
+</head>
+<body>
+<div class="wrap" id="root"><div class="err">Loading passport…</div></div>
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// Only http(s) links are rendered as links; anything else from a document is
+// shown as text, so a released citation cannot become a javascript: URL.
+const safeUrl = u => /^https?:\/\//i.test(String(u ?? '')) ? String(u) : null;
+const when = iso => { try { return new Date(iso).toLocaleDateString(undefined,
+  { year:'numeric', month:'long', day:'numeric' }); } catch { return iso; } };
+
+const STATUS = {
+  allowed:        ['ok',   'Allowed'],
+  conditional:    ['cond', 'Conditional'],
+  not_allowed:    ['no',   'Not allowed'],
+  not_evaluated:  ['none', 'Not evaluated'],
+};
+const pill = s => { const [c, l] = STATUS[s] ?? ['none', s ?? 'unknown'];
+  return `<span class="pill ${c}">${esc(l)}</span>`; };
+
+function provLine(p) {
+  if (!p || typeof p !== 'object') return '';
+  const parts = Object.entries(p).map(([k, v]) => `${esc(k)}: ${esc(v)}`);
+  return parts.length ? `<div class="prov">how this was arrived at — ${parts.join(' · ')}</div>` : '';
+}
+
+function endorsement(e) {
+  return e ? `<div class="prov" style="color:var(--grn)">✓ endorsed: ${esc(typeof e === 'object' ? (e.by ?? JSON.stringify(e)) : e)}</div>` : '';
+}
+
+function claimsHTML(sec) {
+  if (sec == null) return `<h2>Label claims</h2><div class="card muted">Released without a claims document.</div>`;
+  const list = sec.claims ?? [];
+  if (!list.length) return `<h2>Label claims</h2><div class="card muted">No claims declared.</div>`;
+  return `<h2>Label claims, by market</h2>` + list.map(c => {
+    const evs = c.evaluations ?? [];
+    const body = evs.length ? evs.map(v => `
+      <div class="verdict">
+        <span class="mkt">${esc(v.market)}</span>${pill(v.status)}
+        ${v.basis ? `<div class="basis">${esc(v.basis)}</div>` : ''}
+        ${v.needs_expert ? `<div class="flag">⚠ A qualified reviewer must confirm this reading.</div>` : ''}
+        ${provLine(v.provenance)}
+        ${endorsement(v.endorsement)}
+        ${(v.citations ?? []).length ? `<div class="cites">${v.citations.map(ct => {
+          const u = safeUrl(ct.url);
+          const label = esc(ct.title || ct.url);
+          return `<div>${u ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${label}</a>` : label}${
+            ct.provision ? ` <span class="muted">— ${esc(ct.provision)}</span>` : ''}</div>`;
+        }).join('')}</div>` : ''}
+      </div>`).join('')
+      : `<div class="verdict muted">Not evaluated in any market — nobody has read this claim against the law yet.</div>`;
+    return `<div class="card"><div class="claim">“${esc(c.candidate_text)}”</div>${body}</div>`;
+  }).join('');
+}
+
+function carbonHTML(sec) {
+  if (sec == null) return `<h2>Carbon</h2><div class="card muted">Released without a carbon statement.</div>`;
+  const a = sec.assurance ?? {};
+  const total = sec.total_kg_co2e;
+  const cov = sec.coverage ?? 'unknown';
+  // Verification first, then the number.
+  const status = `
+    <div class="flag" style="color:${a.verification_status === 'unverified' || !a.verification_status ? 'var(--amb)' : 'var(--grn)'}">
+      Verification: <strong>${esc(a.verification_status ?? 'not stated')}</strong>.
+      ${a.verification_status === 'unverified' || !a.verification_status
+        ? 'Calculated by an AI agent from published factors; not checked by an accredited verifier.' : ''}
+    </div>
+    ${a.needs_expert ? `<div class="flag">⚠ The calculation flagged itself for expert review.</div>` : ''}`;
+  const headline = total != null
+    ? `<div class="big">${esc(total)} <span style="font-size:14px" class="muted">kg CO₂e per unit</span></div>`
+    : `<div class="big" style="color:var(--amb)">Not determined</div>
+       <div class="basis">No emission factor could be retrieved, so no figure is stated. That is not a claim of zero.</div>`;
+  const covNote = cov === 'partial'
+    ? `<div class="flag">Partial: this covers only some ingredients. Excluded: ${esc((sec.unpriced_items ?? []).join(', '))}.</div>`
+    : '';
+  const rows = (sec.items ?? []).map(i => {
+    const u = safeUrl(i.source_url);
+    return `<tr><td>${esc(i.material ?? i.item_id)}</td>
+      <td>${i.kg_co2e != null ? esc(i.kg_co2e) : '<span class="muted">—</span>'}</td>
+      <td class="muted">${[i.dataset, i.geography, i.reference_year].filter(Boolean).map(esc).join(' · ') || '—'}${
+        u ? ` · <a href="${esc(u)}" target="_blank" rel="noopener noreferrer" style="color:var(--blu)">source</a>` : ''}${
+        i.basis_refusal ? `<div style="color:var(--amb)">${esc(i.basis_refusal)}</div>` : ''}</td></tr>`;
+  }).join('');
+  return `<h2>Carbon footprint</h2>
+    <div class="card">${status}<div style="margin-top:10px">${headline}</div>
+      <div class="prov">coverage: ${esc(cov)}${sec.boundary?.declared ? ` · boundary: ${esc(sec.boundary.declared)}` : ''}${
+        sec.calculated_at ? ` · calculated ${esc(when(sec.calculated_at))}` : ''}</div>
+      ${covNote}
+      ${provLine(sec.provenance)}
+      ${endorsement(sec.endorsement)}
+      ${rows ? `<table style="margin-top:10px"><tr><th>Ingredient</th><th>kg CO₂e</th><th>Factor source</th></tr>${rows}</table>` : ''}
+    </div>`;
+}
+
+function compositionHTML(sec) {
+  if (sec == null) return `<h2>Composition</h2><div class="card muted">Released without a composition document.</div>`;
+  const rows = (sec.ingredients ?? []).map(i => `<tr><td>${esc(i.display_name ?? i.item_id)}</td>
+    <td class="muted">${esc(i.quantity ?? '')}</td><td class="muted">${esc(i.origin ?? '')}</td></tr>`).join('');
+  return `<h2>Composition</h2><div class="card">${rows
+    ? `<table><tr><th>Ingredient</th><th>Share</th><th>Origin</th></tr>${rows}</table>`
+    : '<span class="muted">No ingredients listed.</span>'}</div>`;
+}
+
+function render(d) {
+  const p = d.passport ?? {};
+  const id = p.identity ?? {};
+  const secs = p.sections ?? [];
+  document.title = `${id.display_name ?? 'Product'} — Digital Product Passport`;
+  document.getElementById('root').innerHTML = `
+    <div class="kicker">Digital Product Passport</div>
+    <h1>${esc(id.display_name ?? 'Unnamed product')}</h1>
+    ${id.part_number ? `<div class="code">${esc(id.part_number)}</div>` : ''}
+    <div class="meta">Release ${esc(d.release)} · published ${esc(when(d.published_at))}${
+      d.first_published_at && d.release > 1 ? ` · first published ${esc(when(d.first_published_at))}` : ''}</div>
+    <div class="notice">${esc(p.notice)}</div>
+    ${secs.includes('claims') ? claimsHTML(p.claims) : ''}
+    ${secs.includes('carbon') ? carbonHTML(p.carbon) : ''}
+    ${secs.includes('composition') ? compositionHTML(p.composition) : ''}
+    <footer>This is the release its publisher chose to make public, as of the date above.<br>
+      Published with <a href="https://agent-bestiary.world" rel="noopener">Agent Bestiary</a>.</footer>`;
+}
+
+(async () => {
+  const root = document.getElementById('root');
+  const t = new URLSearchParams(location.search).get('t') ?? '';
+  if (!/^[a-z0-9]{8,64}$/.test(t)) {
+    root.innerHTML = `<div class="err">This link does not point to a passport.</div>`;
+    return;
+  }
+  try {
+    const r = await fetch(`/api/dpp/p/${t}`);
+    if (r.status === 410) {
+      root.innerHTML = `<div class="err"><strong>This passport has been withdrawn.</strong><br>
+        It was published and later taken down by its publisher.</div>`;
+      return;
+    }
+    if (!r.ok) {
+      root.innerHTML = `<div class="err">No passport was found at this link.</div>`;
+      return;
+    }
+    render(await r.json());
+  } catch (e) {
+    root.innerHTML = `<div class="err">The passport could not be loaded. Check your connection and try again.</div>`;
+  }
+})();
+</script>
+</body>
+</html>

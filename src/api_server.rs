@@ -1457,6 +1457,9 @@ async fn run_migrations(db: &PgPool) {
         // service: an agent ABW does not host opens a run, calls ABW tools under
         // a run-scoped token, and submits its output to be graded.
         "migrations/242_ground_runs.sql",
+        // 243 — `dpp_publications` and its release history: a product passport
+        // released, as a snapshot, to readers with no ABW account.
+        "migrations/243_dpp_publications.sql",
     ];
 
     // Bootstrap the ledger before anything is recorded into it.
@@ -2753,6 +2756,15 @@ async fn main() {
     // Public routes (no auth required)
     let public_routes = Router::new()
         .route("/", get(handlers::pages::landing))
+        // A released product passport, readable with no ABW account. Only
+        // what an admin explicitly published, as a frozen snapshot; see
+        // handlers::workspace::dpp_publish for the allowlist.
+        .route("/dpp/:token", get(handlers::workspace::dpp_publish::public_dpp_redirect))
+        .route("/api/dpp/p/:token", get(handlers::workspace::dpp_publish::public_dpp_handler))
+        .route(
+            "/api/dpp/p/:token/qr",
+            get(handlers::workspace::dpp_publish::public_dpp_qr_handler),
+        )
         .route("/aspiration", get(handlers::pages::aspiration))
         .route("/catalogue", get(handlers::pages::catalogue))
         // Fermi Console installer — the URL you send to non-technical
@@ -4402,6 +4414,12 @@ async fn main() {
         .route(
             "/api/workspaces/:workspace_id/dpp/qr",
             get(handlers::qr_codes::dpp_passport_qr_handler),
+        )
+        .route(
+            "/api/workspaces/:workspace_id/dpp/publish",
+            get(handlers::workspace::dpp_publish::publication_status_handler)
+                .post(handlers::workspace::dpp_publish::publish_dpp_handler)
+                .delete(handlers::workspace::dpp_publish::unpublish_dpp_handler),
         )
         .route(
             "/api/workspaces/:workspace_id/files",

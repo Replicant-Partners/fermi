@@ -380,9 +380,12 @@ footer a{color:var(--t3);text-decoration:none}.footer a:hover{color:var(--t1)}
 @media (min-width:1500px){
   .shelf{position:static;transform:none;width:clamp(320px,24vw,420px);
          flex-shrink:0;z-index:auto;border-left:1px solid var(--b1)}
-  .shelf-handle{display:none}
-  .shelf-close{display:none}
-  body.shelf-open .shelf-handle{right:0}
+  /* Docked, but still closable: a column the operator cannot dismiss is a
+     column taking space from the twin whether or not it is being used. The
+     handle only exists while it is collapsed, as the way back. */
+  body:not(.shelf-collapsed) .shelf-handle{display:none}
+  body.shelf-collapsed .shelf{display:none}
+  body.shelf-collapsed .shelf-handle{right:0}
 }
 .shelf-handle{position:fixed;top:50%;right:0;transform:translateY(-50%);z-index:59;
   background:var(--s2);color:var(--tea);border:1px solid var(--b1);border-right:none;
@@ -427,7 +430,6 @@ body.shelf-open .shelf-handle{right:min(380px,42vw)}
       <span id="uiscale-label">115%</span>
       <button id="uiscale-inc" onclick="nudgeScale(0.10)" aria-label="Larger interface">+</button>
     </div>
-    <span>Food DPP not yet mandated — shows the architecture it will need.</span>
     <a class="dpp-link" href="https://single-market-economy.ec.europa.eu/single-market/digital-product-passport_en" target="_blank">🇪🇺 EU DPP →</a>
   </div>
 </div>
@@ -436,18 +438,6 @@ body.shelf-open .shelf-handle{right:min(380px,42vw)}
   <div class="cf" id="ws-id-field" style="display:none"><span class="cl">Workspace ID</span><input id="ws-id" class="ci" style="width:260px" placeholder="workspace UUID"/></div>
   <div id="auth-status" style="font-size:11px;color:var(--t3);display:flex;align-items:center;gap:8px">
     <span class="spinner"></span> Checking login…
-  </div>
-  <!-- Run comparison is three file reads. It is styled as the cheap thing it is;
-       the agent launch (btn-agent) is the one that spends credits. -->
-  <div id="run-group" style="display:none;align-items:center;gap:8px">
-    <div style="display:flex;flex-direction:column;gap:1px">
-      <button class="btn-cheap" id="run-btn" onclick="runLive()">Run comparison</button>
-      <span class="cost-note">reads stored evaluations · free · instant · no agent</span>
-    </div>
-    <label style="display:flex;align-items:center;gap:5px;font-size:10px;color:var(--t3);cursor:pointer" title="The three ruleset YAMLs are data_status: synthetic_representative — hand-authored sketches. Off by default.">
-      <input type="checkbox" id="seed-toggle" onchange="runLive()" style="accent-color:var(--amb);cursor:pointer">
-      include hand-authored seed rows
-    </label>
   </div>
   <!-- For third-party embedding: pass ?token=ferm_... to authenticate without cookies -->
 </div>
@@ -463,15 +453,15 @@ body.shelf-open .shelf-handle{right:min(380px,42vw)}
        does not scroll away. -->
   <div id="twin-strip" class="twin-strip"></div>
   <div class="sb-tabs">
-    <div class="sb-tab active" onclick="showTab('passport')">Passport</div>
-    <div class="sb-tab" onclick="showTab('products')">Products</div>
+    <div class="sb-tab active" onclick="showTab('products')">Products</div>
+    <div class="sb-tab" onclick="showTab('passport')">Passport</div>
     <div class="sb-tab" onclick="showTab('claims')">Claims</div>
     <div class="sb-tab" onclick="showTab('ingredients')">BOM</div>
     <div class="sb-tab" onclick="showTab('build')">Build</div>
   </div>
 
   <!-- Products -->
-  <div class="sb-panel hidden" id="tab-products">
+  <div class="sb-panel" id="tab-products">
     <div class="sh"><span class="sh-label">Product workspaces</span><span class="sh-rule"></span></div>
     <div id="ws-list-container">
       <div class="ws-empty">Enter your API token above — your product workspaces will appear here.<br><br>Each workspace <em>is</em> a product DPP. Select one to load its claims and run the regulatory comparison.</div>
@@ -489,7 +479,7 @@ body.shelf-open .shelf-handle{right:min(380px,42vw)}
        A passport's property is not that it looks official but that a reader
        can check it without trusting the bearer, so the verification status and
        the expert flag sit ABOVE the figures rather than in a footer. -->
-  <div class="sb-panel" id="tab-passport">
+  <div class="sb-panel hidden" id="tab-passport">
     <div class="sh"><span class="sh-label">Digital Product Passport</span><span class="sh-rule"></span></div>
     <div id="passport-body">
       <div class="ws-empty">Select a product workspace to see its passport.</div>
@@ -602,10 +592,25 @@ body.shelf-open .shelf-handle{right:min(380px,42vw)}
     <div class="juri-tabs" id="lens-tabs"></div>
 
     <div id="lens-regulatory" class="lens-panel">
+      <!-- Moved from the global header: "Run comparison" re-reads stored
+           regulatory evaluations, so it belongs to the Regulatory lens and
+           not above every lens as if it refreshed all of them. -->
+  <!-- Run comparison is three file reads. It is styled as the cheap thing it is;
+       the agent launch (btn-agent) is the one that spends credits. -->
+  <div id="run-group" style="display:none;align-items:center;gap:10px;margin-bottom:12px">
+    <div style="display:flex;flex-direction:column;gap:1px">
+      <button class="btn-cheap" id="run-btn" onclick="runLive()">Run comparison</button>
+      <span class="cost-note">reads stored evaluations · free · instant · no agent</span>
+    </div>
+    <label style="display:flex;align-items:center;gap:5px;font-size:10px;color:var(--t3);cursor:pointer" title="The three ruleset YAMLs are data_status: synthetic_representative — hand-authored sketches. Off by default.">
+      <input type="checkbox" id="seed-toggle" onchange="runLive()" style="accent-color:var(--amb);cursor:pointer">
+      include hand-authored seed rows
+    </label>
+  </div>
 
     <div class="sbar">
       <span class="sd sd-demo" id="sb-dot"></span>
-      <span id="sb-text">Demo mode</span>
+      <span id="sb-text">Not loaded</span>
       <span class="pill sy" id="sb-data">⚠ no data yet</span>
       <span class="pill ok" id="sb-gate">✓ gate clean · 0 violations</span>
       <span style="color:var(--t3);font-size:10px">row sources:</span>
@@ -649,7 +654,7 @@ body.shelf-open .shelf-handle{right:min(380px,42vw)}
       </table>
     </div>
 
-    <div class="sh"><span class="sh-label">★ Demo Beat</span><span class="sh-rule"></span></div>
+    <div class="sh"><span class="sh-label">One claim, three markets</span><span class="sh-rule"></span></div>
     <div class="beat-box" id="beat-box"></div>
 
     <div class="sh" style="margin-top:20px"><span class="sh-label">Ingredient-Status Divergence</span><span class="sh-rule"></span>
@@ -896,9 +901,10 @@ function confirmLogout() {
 // The left panel is the product's own record: what it IS, not what anyone
 // concluded about it. `carbon` left this list when the agent cards moved to the
 // centre — see LENSES.
-// Passport first, and the default. The twin is the subject of this App; the
-// product list is how you choose one, which is a different and rarer act.
-const DATA_TABS = ['passport', 'products', 'claims', 'ingredients', 'build'];
+// Products first and at rest, because with nothing chosen there is no twin to
+// show. Choosing one is what makes its passport the subject, so selectWorkspace
+// lands there; the order here follows that sequence.
+const DATA_TABS = ['products', 'passport', 'claims', 'ingredients', 'build'];
 
 function showTab(name) {
   DATA_TABS.forEach(t => {
@@ -928,7 +934,10 @@ function showTab(name) {
 // The persistent twin strip. Cheap and synchronous: it reports what this page
 // already knows, so it repaints on every workspace change without a fetch.
 // `loadPassport` fills in the parts that need the server.
+let lastTwinState = {};
+
 function renderTwinStrip(state) {
+  if (state) lastTwinState = state;
   const el = document.getElementById('twin-strip');
   if (!el) return;
   if (!wsId()) {
@@ -940,6 +949,7 @@ function renderTwinStrip(state) {
   const chip = (label, cls) => `<span class="twin-chip ${cls}">${esc(label)}</span>`;
   const s = state ?? {};
   const chips = [
+    s.published === true ? chip('\u25cf public', 'on') : '',
     s.claims == null ? chip('claims ?', '') : chip(`${s.claims} claims`, s.claims ? 'on' : ''),
     s.bom == null ? chip('BOM ?', '') : chip(`${s.bom} BOM lines`, s.bom ? 'on' : ''),
     s.carbon === true ? chip('carbon statement', 'on')
@@ -1065,20 +1075,143 @@ async function loadPassport() {
     <div style="font-size:10px;color:var(--t3);font-family:var(--mono);text-transform:uppercase;letter-spacing:.4px;margin:11px 0 3px">assessments</div>
     ${LENSES.map(lensRow).join('')}
 
-    <div style="font-size:10px;color:var(--t3);font-family:var(--mono);text-transform:uppercase;letter-spacing:.4px;margin:11px 0 5px">data carrier</div>
-    <div style="text-align:center;background:#fff;padding:8px;border-radius:6px">
-      <img src="${base()}/api/workspaces/${id}/dpp/qr" alt="Passport QR code"
-           style="width:100%;max-width:190px;image-rendering:pixelated"
-           onerror="this.parentElement.innerHTML='<div style=&quot;font-size:10px;color:#666;padding:12px&quot;>QR unavailable \u2014 the endpoint may not be deployed yet.</div>'">
-    </div>
-    <div style="font-size:10px;color:var(--t2);margin-top:6px;line-height:1.5">
-      A <strong>URL</strong>, not a GTIN. <code style="font-size:9px">${esc(currentProductSku || '')}</code> is an internal
-      supplier code; a retail barcode needs a GS1 prefix this product does not have, and encoding an
-      invented one would collide with somebody else\u2019s goods.
-      <div style="color:var(--t3);margin-top:4px">It resolves for a reader who can already open this
-      workspace. A passport a stranger can verify needs a public read surface, and which fields may be
-      public is an open decision \u2014 so this is not yet that.</div>
-    </div>`;
+    <div style="font-size:10px;color:var(--t3);font-family:var(--mono);text-transform:uppercase;letter-spacing:.4px;margin:11px 0 5px">public release</div>
+    <div id="release-box"><div style="font-size:10px;color:var(--t3)"><span class="spinner"></span> checking…</div></div>`;
+
+  loadRelease();
+}
+
+// ── Public release ──────────────────────────────────────────────────
+//
+// Releasing is what turns this record into a passport: a page a stranger with
+// no account can open from the code on the product. It publishes a SNAPSHOT —
+// later edits stay private until released again — and the link stays the same
+// across releases, so a code already printed on a label keeps working when a
+// claim is corrected.
+//
+// The panel states what will NOT be shared before the button, not after it.
+// "Release publicly" is a statement to people outside the workspace, and the
+// moment to learn that pricing stays private is before clicking.
+const RELEASE_SECTIONS = [
+  ['claims', 'Label claims and their regulatory readings, with citations and expert flags'],
+  ['carbon', 'Carbon statement, with verification status and factor sources'],
+  ['composition', 'Ingredients, shares and origins'],
+];
+let releaseState = null;
+
+async function loadRelease() {
+  const el = document.getElementById('release-box');
+  const id = wsId();
+  if (!el || !id) return;
+  try {
+    const r = await fetch(`${base()}/api/workspaces/${id}/dpp/publish`,
+      { credentials: 'include', headers: authHeaders() });
+    releaseState = r.ok ? await r.json() : null;
+    if (!r.ok) {
+      el.innerHTML = `<div style="font-size:10px;color:var(--amb)">Release status unavailable (HTTP ${r.status}) — the endpoint may not be deployed yet.</div>`;
+      return;
+    }
+  } catch (e) {
+    el.innerHTML = `<div style="font-size:10px;color:var(--red)">${esc(e.message)}</div>`;
+    return;
+  }
+  renderRelease();
+  renderTwinStrip(Object.assign({}, lastTwinState, { published: !!releaseState?.published }));
+}
+
+function renderRelease() {
+  const el = document.getElementById('release-box');
+  if (!el) return;
+  const s = releaseState ?? {};
+  const btn = 'font-size:10px;padding:4px 8px';
+
+  if (s.published) {
+    const chosen = (s.sections ?? []).join(', ');
+    el.innerHTML = `
+      <div style="border-left:3px solid var(--grn);background:var(--s1);padding:8px 9px;border-radius:0 4px 4px 0">
+        <div style="font-size:11px;font-weight:700;color:var(--grn)">\u25cf Public \u00b7 release ${esc(s.release)}</div>
+        <div style="font-size:10px;color:var(--t2);margin-top:2px">Anyone with the link or the code can read
+          what was released ${esc(relTime(s.published_at))}: ${esc(chosen)}. No account needed.</div>
+      </div>
+      <div style="text-align:center;background:#fff;padding:8px;border-radius:6px;margin-top:8px">
+        <img src="${esc(s.qr)}" alt="Public passport QR code" style="width:100%;max-width:190px;image-rendering:pixelated">
+      </div>
+      <div style="display:flex;gap:4px;margin-top:6px">
+        <input class="ci" readonly value="${esc(s.url)}" style="flex:1;font-size:10px;font-family:var(--mono)" onclick="this.select()">
+        <button class="btn-g btn-sm" style="${btn}" onclick="navigator.clipboard?.writeText('${esc(s.url)}');this.textContent='copied'">copy</button>
+      </div>
+      <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap">
+        <a class="btn-g btn-sm" style="${btn};text-decoration:none" href="${esc(s.url)}" target="_blank" rel="noopener">open as a stranger sees it \u2192</a>
+        <button class="btn-g btn-sm" style="${btn}" onclick="publishRelease(false)">release current state</button>
+      </div>
+      <div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap">
+        <button class="btn-g btn-sm" style="${btn};color:var(--amb)" onclick="publishRelease(true)"
+          title="Issue a new link. Links and printed codes already out will stop working.">new link</button>
+        <button class="btn-g btn-sm" style="${btn};color:var(--red)" onclick="unpublishRelease()">withdraw</button>
+      </div>
+      <div style="font-size:10px;color:var(--t3);margin-top:6px;line-height:1.5">Edits stay private until you release
+        again. The link stays the same across releases, so a printed code keeps working.</div>`;
+    return;
+  }
+
+  const was = s.revoked_at ? `<div style="font-size:10px;color:var(--amb);margin-bottom:6px">Withdrawn ${esc(relTime(s.revoked_at))}. Its link now tells readers it was withdrawn; releasing again reuses it.</div>` : '';
+  el.innerHTML = `
+    ${was}
+    <div style="font-size:10px;color:var(--t2);line-height:1.5;margin-bottom:6px">Not public. Release a snapshot that
+      anyone can open from a link or the code on the product \u2014 no account needed.</div>
+    ${RELEASE_SECTIONS.map(([k, label]) => `
+      <label style="display:flex;gap:6px;font-size:10px;color:var(--t2);margin:3px 0;cursor:pointer;line-height:1.4">
+        <input type="checkbox" class="rel-sec" value="${k}" checked> ${esc(label)}</label>`).join('')}
+    <div style="font-size:10px;color:var(--t3);margin:7px 0;line-height:1.5;border-left:2px solid var(--b2);padding-left:7px">
+      <strong style="color:var(--t2)">Never shared:</strong> pricing and BOM costs, ingredient supplier codes,
+      internal claim notes, the workspace, its members, agents and wallet.</div>
+    <button class="btn-agent btn-sm" style="width:100%;justify-content:center" onclick="publishRelease(false)">Release publicly \u2192</button>`;
+}
+
+async function publishRelease(rotate) {
+  const id = wsId();
+  if (!id) return;
+  const sections = releaseState?.published
+    ? (releaseState.sections ?? [])
+    : [...document.querySelectorAll('.rel-sec:checked')].map(i => i.value);
+  if (!sections.length) { alert('Choose at least one section to release.'); return; }
+  const msg = rotate
+    ? 'Issue a new public link?\n\nThe current link and every code already printed with it will stop working.'
+    : releaseState?.published
+      ? 'Release the current state publicly?\n\nThis replaces what the public link shows. The link itself does not change.'
+      : `Release this passport publicly?\n\nAnyone with the link can read: ${sections.join(', ')}.\nPricing, supplier codes and internal notes stay private.`;
+  if (!confirm(msg)) return;
+  const el = document.getElementById('release-box');
+  if (el) el.insertAdjacentHTML('beforeend', '<div style="font-size:10px;color:var(--t3);margin-top:5px"><span class="spinner"></span> releasing…</div>');
+  try {
+    const r = await fetch(`${base()}/api/workspaces/${id}/dpp/publish`,
+      fetchOpts('POST', { sections, rotate }));
+    if (!r.ok) throw new Error(`HTTP ${r.status}: ${(await r.text()).slice(0, 400)}`);
+    releaseState = await r.json();
+    activityPush({ severity: 'success', source: 'system', node: 'dpp_publish',
+      summary: `passport released publicly \u00b7 release ${releaseState.release}${rotate ? ' \u00b7 new link' : ''}` });
+    renderRelease();
+    renderTwinStrip(Object.assign({}, lastTwinState, { published: true }));
+  } catch (e) {
+    alert(`Release failed: ${e.message}`);
+    renderRelease();
+  }
+}
+
+async function unpublishRelease() {
+  const id = wsId();
+  if (!id) return;
+  if (!confirm('Withdraw the public passport?\n\nThe link will tell readers it was withdrawn. You can release again later on the same link.')) return;
+  try {
+    const r = await fetch(`${base()}/api/workspaces/${id}/dpp/publish`, fetchOpts('DELETE'));
+    if (!r.ok) throw new Error(`HTTP ${r.status}: ${(await r.text()).slice(0, 400)}`);
+    releaseState = await r.json();
+    activityPush({ severity: 'info', source: 'system', node: 'dpp_publish', summary: 'public passport withdrawn' });
+    renderRelease();
+    renderTwinStrip(Object.assign({}, lastTwinState, { published: false }));
+  } catch (e) {
+    alert(`Withdraw failed: ${e.message}`);
+  }
 }
 
 // ── jurisdiction filter ─────────────────────────────────────────────
@@ -2096,6 +2229,8 @@ async function runBOM() {
     }
 
     const data = await res.json();
+    await loadManualPrices();
+    lastBOM = { data: data.output ?? {}, meta: data };
     renderBOMResult(data.output ?? {}, data);
     const v = data.grounding_summary?.violation_count ?? 0;
     activityPush({
@@ -2130,6 +2265,84 @@ async function runBOM() {
 // verdict and where it was persisted. Rendered beside the prices because a
 // price whose provenance is `tool_no_match` is a gap, not a number — and the
 // old message path could not supply any of it.
+// ── Operator-declared prices ────────────────────────────────────────────────
+//
+// A line the oracle could not price used to read "null — manual entry
+// required" with nowhere to enter anything. It is now an input.
+//
+// The value goes to its OWN file, dpp/pricing/manual_prices.yaml, never into
+// the oracle's dpp/pricing/bom_pricing.yaml. That file's provenance says
+// web_search; a number a person typed, written into it, would inherit that
+// stamp — exactly the citation-lends-its-strength-to-a-verdict error this App
+// is built to refuse. Kept apart, each row says which kind it is.
+const MANUAL_PRICES_PATH = 'dpp/pricing/manual_prices.yaml';
+let manualPrices = {};   // name -> { unit_cost, source, entered_at }
+let lastBOM = null;
+
+async function loadManualPrices() {
+  manualPrices = {};
+  const id = wsId();
+  if (!id) return;
+  try {
+    const r = await fetch(`${base()}/api/workspaces/${id}/files/${MANUAL_PRICES_PATH}`,
+      { credentials: 'include', headers: authHeaders() });
+    if (!r.ok) return;                    // no file yet is the normal case
+    const b = await r.json();
+    const text = b?.content ?? b?.text ?? '';
+    // Line-based, matching the one shape this App writes below.
+    let cur = null;
+    for (const line of text.split('\n')) {
+      const n = line.match(/^\s*-\s*name:\s*(.*)$/);
+      if (n) { cur = { name: yamlUnquote(n[1].trim()) }; manualPrices[cur.name] = cur; continue; }
+      const kv = cur && line.match(/^\s+(unit_cost|source|entered_at):\s*(.*)$/);
+      if (kv) cur[kv[1]] = kv[1] === 'unit_cost' ? parseFloat(kv[2]) : yamlUnquote(kv[2].trim());
+    }
+  } catch { /* a missing manual file must not break pricing */ }
+}
+
+function manualPricesYaml() {
+  const rows = Object.values(manualPrices)
+    .filter(p => isFinite(p.unit_cost))
+    .map(p => `  - name: ${yamlQuote(p.name)}\n    unit_cost: ${p.unit_cost}\n    unit: "EUR/g"\n` +
+              `    source: ${yamlQuote(p.source || 'not stated')}\n    entered_at: ${yamlQuote(p.entered_at)}`)
+    .join('\n');
+  return '# Operator-declared unit prices \u2014 typed by a person, not retrieved.\n' +
+         '# Kept apart from bom_pricing.yaml so its web_search provenance is not\n' +
+         '# inherited by a number nobody searched for.\n' +
+         'provenance: operator_declared\nprices:\n' + (rows || '  []') + '\n';
+}
+
+async function saveManualPrice(idx) {
+  const id = wsId();
+  const item = (lastBOM?.data?.items ?? [])[idx];
+  if (!id || !item) return;
+  const cost = parseFloat(document.getElementById(`mp-cost-${idx}`)?.value);
+  const source = (document.getElementById(`mp-src-${idx}`)?.value ?? '').trim();
+  if (!isFinite(cost) || cost < 0) { alert('Enter a price per gram, in EUR, as a number \u2265 0.'); return; }
+  if (!source) { alert('Say where the price came from \u2014 a quote, an invoice, a supplier list. An unsourced price cannot be checked.'); return; }
+  manualPrices[item.name] = { name: item.name, unit_cost: cost, source, entered_at: new Date().toISOString() };
+  try {
+    const r = await fetch(`${base()}/api/workspaces/${id}/files/${MANUAL_PRICES_PATH}`,
+      { method: 'PUT', credentials: 'include', headers: authHeaders(),
+        body: JSON.stringify({ content: manualPricesYaml(),
+                               message: `DPP Studio: operator-declared price for ${item.name}` }) });
+    if (!r.ok) throw new Error(`HTTP ${r.status}: ${(await r.text()).slice(0, 300)}`);
+    activityPush({ severity: 'info', source: 'operator', node: 'manual_price',
+      summary: `${item.name}: \u20ac${cost}/g declared (${source})` });
+  } catch (e) {
+    delete manualPrices[item.name];
+    alert(`Could not save: ${e.message}`);
+  }
+  if (lastBOM) renderBOMResult(lastBOM.data, lastBOM.meta);
+}
+
+function editManualPrice(idx) {
+  const item = (lastBOM?.data?.items ?? [])[idx];
+  if (!item) return;
+  delete manualPrices[item.name];
+  if (lastBOM) renderBOMResult(lastBOM.data, lastBOM.meta);
+}
+
 function renderBOMResult(data, meta) {
   const items = data.items ?? [];
   const risks = data.risks ?? [];
@@ -2141,21 +2354,40 @@ function renderBOMResult(data, meta) {
   const risksByItem = {};
   risks.forEach(r => { (risksByItem[r.item] = risksByItem[r.item] ?? []).push(r); });
 
-  const rowsHtml = items.map(item => {
-    const price = item.unit_cost != null ? `€${item.unit_cost.toFixed(4)}/g` : 'null — manual entry required';
-    const flags = (item.risk_flags ?? []).map(f => `<span class="bom-flag">${f}</span>`).join(' ');
+  const rowsHtml = items.map((item, idx) => {
+    const flags = (item.risk_flags ?? []).map(f => `<span class="bom-flag">${esc(f)}</span>`).join(' ');
+    const manual = item.unit_cost == null ? manualPrices[item.name] : null;
+    let priceHtml;
+    if (item.unit_cost != null) {
+      priceHtml = `<div class="bom-price" style="color:var(--t1)">\u20ac${item.unit_cost.toFixed(4)}/g</div>`;
+    } else if (manual) {
+      priceHtml = `<div class="bom-price" style="color:var(--blu)">\u20ac${Number(manual.unit_cost).toFixed(4)}/g</div>
+        <div style="font-size:9px;font-family:var(--mono);color:var(--blu)">operator_declared \u00b7 ${esc(manual.source)}
+          <a style="color:var(--t3);cursor:pointer;margin-left:4px" onclick="editManualPrice(${idx})">edit</a></div>`;
+    } else {
+      priceHtml = `<div style="font-size:9px;color:var(--amb);margin-bottom:3px">no price retrieved \u2014 enter one</div>
+        <div style="display:flex;gap:3px;justify-content:flex-end">
+          <input id="mp-cost-${idx}" class="ci" type="number" step="0.0001" min="0" placeholder="\u20ac/g" style="width:72px;font-size:10px">
+          <input id="mp-src-${idx}" class="ci" placeholder="source (quote, invoice\u2026)" style="width:130px;font-size:10px">
+          <button class="btn-g btn-sm" style="font-size:10px" onclick="saveManualPrice(${idx})">save</button>
+        </div>`;
+    }
     return `<div class="bom-row">
       <span class="bom-name">${esc(item.name)}</span>
-      <div class="bom-right">
-        <div class="bom-price" style="color:${item.unit_cost!=null?'var(--t1)':'var(--amb)'}">${price}</div>
-        ${flags}
-      </div>
+      <div class="bom-right">${priceHtml}${flags}</div>
     </div>`;
   }).join('');
+  const manualCount = items.filter(i => i.unit_cost == null && manualPrices[i.name]).length;
 
   const totalHtml = summary.total_bom_cost != null
     ? `<div class="bom-total"><span>Total per 330ml unit</span><span style="color:var(--grn)">€${(summary.total_bom_cost/1000).toFixed(4)}</span></div>`
     : `<div class="bom-total"><span>Total</span><span style="color:var(--amb)">null — some prices unknown</span></div>`;
+  // Not folded into the total: the oracle's response carries a per-gram price
+  // but not each line's mass, so a manual-inclusive sum would need a quantity
+  // this page does not have. Saying so beats a total that looks complete.
+  const manualNote = manualCount
+    ? `<div style="font-size:10px;color:var(--blu);margin-top:4px">${manualCount} line(s) priced by hand (operator_declared) \u2014 shown, not included in the total above.</div>`
+    : '';
 
   const m = meta ?? {};
   const itemsProv = data.items_provenance ?? null;
@@ -2176,7 +2408,7 @@ function renderBOMResult(data, meta) {
       ${m.written_path ? `<div><b>written</b> ${esc(m.written_path)}</div>` : ''}
     </div>`;
   document.getElementById('sco-result').innerHTML = `
-    ${rowsHtml}${totalHtml}
+    ${rowsHtml}${totalHtml}${manualNote}
     <div class="bom-prov ${provClass}" style="margin-top:6px">${provLabel}</div>
     ${summary.oracle_note ? `<div class="oracle-note">🔍 ${esc(summary.oracle_note)}</div>` : ''}
     <div style="font-size:10px;color:var(--t3);margin-top:6px">risks: model_inference · summary: model_inference</div>
@@ -3756,12 +3988,29 @@ function shelfShow(which) {
   if (which === 'activity') { activityLoad(); activityLoadPulse(); }
 }
 
+const SHELF_DOCK_QUERY = '(min-width:1500px)';
+const SHELF_COLLAPSED_KEY = 'dpp_shelf_collapsed';
+
 function shelfToggle() {
   const el = document.getElementById('shelf');
   if (!el) return;
+  // Docked width: the shelf is a column, so closing it collapses the column
+  // and the choice is remembered. Below it, the drawer behaviour is unchanged.
+  if (window.matchMedia(SHELF_DOCK_QUERY).matches) {
+    const collapsed = document.body.classList.toggle('shelf-collapsed');
+    try { localStorage.setItem(SHELF_COLLAPSED_KEY, collapsed ? '1' : '0'); } catch {}
+    if (!collapsed && shelfTab === 'activity') { activityLoad(); activityLoadPulse(); }
+    return;
+  }
   const open = el.classList.toggle('open');
   document.body.classList.toggle('shelf-open', open);
   if (open && shelfTab === 'activity') { activityLoad(); activityLoadPulse(); }
+}
+
+function initShelf() {
+  let collapsed = false;
+  try { collapsed = localStorage.getItem(SHELF_COLLAPSED_KEY) === '1'; } catch {}
+  document.body.classList.toggle('shelf-collapsed', collapsed);
 }
 
 // ── the conversation ────────────────────────────────────────────────────────
@@ -4073,6 +4322,38 @@ function activityRender() {
 // "live:workspace"), so the platform cannot answer "how slow was this agent
 // for THIS product". The per-run rows below can, because the action log is
 // workspace-scoped.
+async function fundWorkspace() {
+  const id = wsId();
+  const msg = document.getElementById('fund-msg');
+  const amount = parseInt(document.getElementById('fund-amt')?.value, 10);
+  if (!id) return;
+  if (!Number.isInteger(amount) || amount <= 0) {
+    if (msg) { msg.style.color = 'var(--amb)'; msg.textContent = 'Enter a whole number of credits.'; }
+    return;
+  }
+  if (!confirm(`Move ${amount} credits from your wallet into this product's workspace?`)) return;
+  if (msg) { msg.style.color = 'var(--t3)'; msg.innerHTML = '<span class="spinner"></span> funding\u2026'; }
+  try {
+    const r = await fetch(`${base()}/api/workspaces/${id}/budget`, fetchOpts('POST', { amount }));
+    const text = await r.text();
+    if (!r.ok) {
+      // The common refusal is an empty or non-transferable personal balance.
+      // Say where to fix it rather than echo a status code.
+      if (msg) {
+        msg.style.color = 'var(--amb)';
+        msg.innerHTML = `Not funded: ${esc(text.slice(0, 240))}<br>
+          <a href="/settings" target="_blank" rel="noopener" style="color:var(--blu)">Top up your wallet \u2192</a>`;
+      }
+      return;
+    }
+    activityPush({ severity: 'success', source: 'operator', node: 'fund',
+                   summary: `${amount} credits moved into this workspace` });
+    activityLoadPulse();
+  } catch (e) {
+    if (msg) { msg.style.color = 'var(--red)'; msg.textContent = e.message; }
+  }
+}
+
 async function activityLoadPulse() {
   const el = document.getElementById('activity-pulse');
   if (!el) return;
@@ -4091,7 +4372,21 @@ async function activityLoadPulse() {
         const b = await r.json();
         const ef = b.execution_fees ?? {};
         const per = ef.count ? (ef.credits_spent / ef.count) : null;
+        // A workspace at zero cannot run any agent, and the panel used to
+        // report that with no way to act on it. Funding moves credits from
+        // your own wallet into this product's; the server decides which of
+        // your credits are transferable and says so if they are not.
+        const low = (b.balance ?? 0) < 10;
+        const fund = `
+          <div style="display:flex;gap:4px;align-items:center;margin:6px 0 8px;${low ? '' : 'opacity:.8'}">
+            ${low ? `<span style="font-size:10px;color:var(--amb);flex:1">${(b.balance ?? 0) <= 0
+                ? 'No credits \u2014 agents cannot run here.' : 'Running low.'}</span>` : '<span style="flex:1"></span>'}
+            <input id="fund-amt" class="ci" type="number" min="1" step="1" value="50" style="width:62px;font-size:10px">
+            <button class="btn-agent btn-sm" style="font-size:10px" onclick="fundWorkspace()">Fund \u2192</button>
+          </div>
+          <div id="fund-msg" style="font-size:10px"></div>`;
         spend = `
+          ${fund}
           <div class="pulse-grid">
             <div class="pulse-cell"><b>${b.balance ?? '—'}</b><span>credits left</span></div>
             <div class="pulse-cell"><b>${ef.credits_spent ?? 0}</b><span>spent here</span></div>
@@ -4521,21 +4816,29 @@ function renderBeat(data) {
 function renderIngredients(data) {
   const mts = (data.ingredient_divergence_beat ?? {}).markets ?? [];
   const sl = { conventional_food:'Conventional food ingredient', food_medicine_homologous:'药食同源 (Food-medicine homologous)', gras:'GRAS — Generally Recognized as Safe', gras_with_caveat:'GRAS (novel strains: notify)' };
-  const pt = { EU:'Pathway: pre-1997 EU use → no novel food review', US:'Pathway: GRAS self-affirmed → no pre-market authorization', CN:'Pathway: 药食同源 list → approved for food + TCM use' };
-  const fallback = [
-    { market:'EU', flag:'🇪🇺', status:'conventional_food', note:'Pre-1997 EU use. Not a novel food. No EFSA-authorized claims for hibiscus.' },
-    { market:'US', flag:'🇺🇸', status:'gras', note:'GRAS. Widely used in US beverages. No special status.' },
-    { market:'CN', flag:'🇨🇳', status:'food_medicine_homologous', note:'药食同源 list. Freely usable as food. CRITICAL: authorizes the ingredient, not health claims about it.' },
-  ];
-  const cards = mts.length ? mts : fallback;
+  // Pathway text comes from the data or not at all. It was a per-market
+  // constant appended to every card, so it asserted the same pathway for
+  // every product whatever its evaluation said.
+  // There was a hardcoded fallback here: three market cards with regulatory
+  // statements typed into the page ("Pre-1997 EU use. Not a novel food…"),
+  // rendered whenever the comparison carried no ingredient data. They looked
+  // exactly like evaluated readings and were not readings of anything. With
+  // no data the section now says so.
   const ib = document.getElementById('ing-beat');
   if (!ib) return;
+  if (!mts.length) {
+    ib.innerHTML = `<div class="ibc" style="flex:1"><div class="ib-note" style="color:var(--t3)">
+      No ingredient-status reading exists for this product yet. Nothing has been evaluated,
+      so nothing is shown \u2014 a gap, not a clearance.</div></div>`;
+    return;
+  }
+  const cards = mts;
   ib.innerHTML = `
     ${cards.map(m=>`<div class="ibc">
       <div class="ib-mkt">${m.flag??''} ${m.market}</div>
       <div class="ib-status">${sl[m.status]??m.status??''}</div>
       <div class="ib-note">${esc(m.note??(m.notes??'').split('\n')[0]??'')}</div>
-      <div class="ib-path">${pt[m.market]??''}</div>
+      ${m.pathway ? `<div class="ib-path">${esc(m.pathway)}</div>` : ''}
     </div>`).join('')}
     <div class="ibc" style="border-color:rgba(245,197,24,.3);background:rgba(245,197,24,.03)">
       <div class="ib-mkt" style="color:var(--acc)">⟷ The point</div>
@@ -4777,6 +5080,7 @@ window.addEventListener('DOMContentLoaded', () => {
   renderKB();
   renderLensTabs();
   renderTwinStrip();
+  initShelf();
   renderCompanion();
   checkAuth(); // reads abw_session cookie, populates auth-status, fetches workspaces if logged in
 });

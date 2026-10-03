@@ -19,6 +19,7 @@ pub mod carbon;
 pub mod claim_evaluation;
 mod coherence;
 mod core;
+pub mod dpp_publish;
 pub mod lens_actions;
 mod messages;
 pub mod outputs;

@@ -12,6 +12,29 @@ use sqlx::Row;
 
 use crate::AppState;
 
+/// Render `text` as a QR PNG at least `min_px` square.
+///
+/// One renderer for every passport carrier, so the member-only code and the
+/// public one cannot drift into different sizes or error-correction levels
+/// and leave a printed label that one scanner reads and another does not.
+pub fn qr_png(text: &str, min_px: u32) -> Result<Vec<u8>, String> {
+    let code = QrCode::new(text.as_bytes()).map_err(|e| format!("QR generation failed: {e}"))?;
+    let img = code
+        .render::<Luma<u8>>()
+        .min_dimensions(min_px, min_px)
+        .build();
+    let mut png: Vec<u8> = Vec::new();
+    image::ImageEncoder::write_image(
+        image::codecs::png::PngEncoder::new(&mut png),
+        img.as_raw(),
+        img.width(),
+        img.height(),
+        image::ExtendedColorType::L8,
+    )
+    .map_err(|e| format!("PNG encoding failed: {e}"))?;
+    Ok(png)
+}
+
 /// GET /api/workspaces/:workspace_id/dpp/qr — the data carrier for a product
 /// passport.
 ///
