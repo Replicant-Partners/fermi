@@ -955,6 +955,41 @@ async fn record_factors(
 
 /// The statement, as the workspace's carbon memory.
 ///
+/// Did a committed statement resolve at least one factor?
+///
+/// The default run is a cache read, and the reason given for that is sound:
+/// emission factors are expensive to retrieve and do not change between runs.
+/// But the check was `read_file_bytes(..).is_ok()` — existence only — so the
+/// cache held whatever was written first, including a statement that retrieved
+/// nothing.
+///
+/// That is exactly what production holds. The only completed run, on
+/// 2026-09-16, concluded nothing: coverage `none`, zero factors, every line
+/// excluded. Every default click since then has returned that statement as a
+/// free cache hit, reading "A statement already exists … nothing was spent",
+/// so the accountant could not be made to run without finding the ↻ button.
+/// From the operator's side that is indistinguishable from an agent that does
+/// not work.
+///
+/// A statement with `coverage: none` caches no factors, so the premise of the
+/// cache does not apply to it and it is re-run instead. `partial` IS kept:
+/// it holds real retrieved factors, and re-spending them to chase the missing
+/// lines is a decision for the operator (↻), not a default.
+///
+/// Unparseable or shapeless bytes are treated as nothing concluded. Serving an
+/// unreadable document as a valid cache hit is the worse of the two errors.
+fn statement_concluded_anything(bytes: &[u8]) -> bool {
+    serde_yaml::from_slice::<serde_yaml::Value>(bytes)
+        .ok()
+        .and_then(|v| {
+            v.get("inventory")?
+                .get("coverage")?
+                .as_str()
+                .map(str::to_owned)
+        })
+        .is_some_and(|c| c == "partial" || c == "complete")
+}
+
 /// Written by the platform after `enforce`, for the same reason the regulatory
 /// evaluations are: persisting the raw reply would persist fields the gate is
 /// about to strip, and every later read would serve them as though they had
@@ -1367,12 +1402,14 @@ pub async fn calculate_carbon_handler(
     if !req.force {
         let git = state.workspace_git.clone();
         let slug_s = slug.clone();
-        let exists = tokio::task::spawn_blocking(move || {
-            git.read_file_bytes(&slug_s, STATEMENT_PATH).is_ok()
-        })
-        .await
-        .unwrap_or(false);
-        if exists {
+        let cached =
+            tokio::task::spawn_blocking(move || git.read_file_bytes(&slug_s, STATEMENT_PATH).ok())
+                .await
+                .ok()
+                .flatten();
+        // The cache is only a cache of something. See
+        // `statement_concluded_anything` for why existence is not enough.
+        if cached.as_deref().is_some_and(statement_concluded_anything) {
             return Ok((
                 StatusCode::OK,
                 Json(json!({
@@ -1952,6 +1989,51 @@ async fn execute_carbon_run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A statement that resolved nothing must not satisfy the cache.
+    ///
+    /// Built through `statement_yaml` — the function that writes the file —
+    /// rather than from a hand-typed YAML string, so a change to the document's
+    /// shape breaks this test instead of quietly leaving the cache check reading
+    /// a key that no longer exists.
+    #[test]
+    fn a_statement_that_concluded_nothing_is_not_a_cache_hit() {
+        let audit = ArithmeticAudit {
+            attempted: 0,
+            disagreements: 0,
+            worst_relative_error: None,
+        };
+        let doc_with =
+            |coverage: &str| json!({ "inventory": { "coverage": coverage, "items": [] } });
+        let written =
+            |coverage: &str| statement_yaml(&doc_with(coverage), "p", Uuid::nil(), &audit);
+
+        // Production's only completed run. Every default click since returned
+        // it as a free cache hit, so the accountant could not be made to run.
+        assert!(
+            !statement_concluded_anything(written("none").as_bytes()),
+            "coverage: none caches no factors, so the reason for caching does \
+             not apply — serving it returns 'nothing was spent' forever"
+        );
+        assert!(
+            statement_concluded_anything(written("partial").as_bytes()),
+            "partial holds real retrieved factors; re-spending them is the \
+             operator's call, not a default"
+        );
+        assert!(statement_concluded_anything(written("complete").as_bytes()));
+    }
+
+    /// Unreadable bytes are not a valid cache hit. Serving an unparseable
+    /// document as "already calculated" is the worse of the two errors.
+    #[test]
+    fn an_unreadable_statement_is_treated_as_nothing_concluded() {
+        assert!(!statement_concluded_anything(b""));
+        assert!(!statement_concluded_anything(b"{ not: [ valid"));
+        assert!(!statement_concluded_anything(b"product_id: p\n"));
+        assert!(!statement_concluded_anything(
+            b"inventory:\n  coverage: null\n"
+        ));
+    }
 
     const COMPOSITION: &str = r#"# a comment that must survive
 item_type: bom:Item
