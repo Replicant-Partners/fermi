@@ -1086,9 +1086,10 @@ pub async fn fleet_agents_handler(
             // that is already published (the gate only runs going forward,
             // never retroactively) or stuck in draft precisely because it
             // fails it.
-            let checks = publish_pipeline::run_publish_checks(
+            let checks = publish_pipeline::run_publish_checks_with_tools(
                 a,
                 exec_stats.get(&a.agent_id).map(|m| m.executions),
+                Some(crate::effective_tool_names(&state, a)),
             );
             let can_publish = publish_pipeline::can_publish(&checks);
             let failing_checks: Vec<&str> = checks

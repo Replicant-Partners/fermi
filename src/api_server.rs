@@ -6931,6 +6931,19 @@ pub(crate) fn resolve_agent_card(state: &AppState, db_agent: &Agent) -> AgentCar
     card
 }
 
+/// Tool names as the executor will see them: [`resolve_agent_card`]'s
+/// precedence, not the raw `agents.mcp_tools` column. The publish gate must
+/// judge the same tool list the agent runs with, or a card-declared tool
+/// (column NULL) reads as "declares none".
+pub(crate) fn effective_tool_names(state: &AppState, db_agent: &Agent) -> Vec<String> {
+    resolve_agent_card(state, db_agent)
+        .capabilities
+        .mcp_tools
+        .into_iter()
+        .map(|t| t.name)
+        .collect()
+}
+
 /// Fold one live human↔agent exchange into the dyad's running relationship
 /// state, in the background.
 ///

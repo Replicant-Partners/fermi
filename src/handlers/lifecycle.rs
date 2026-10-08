@@ -181,7 +181,11 @@ pub async fn publish_checks_handler(
     // hundreds of real runs. See src/rollup_trust.rs.
     let measured =
         crate::agent_economics::measured_exec_stats_one(&state.db, db_agent.agent_id).await;
-    let checks = publish_pipeline::run_publish_checks(&db_agent, measured.map(|m| m.executions));
+    let checks = publish_pipeline::run_publish_checks_with_tools(
+        &db_agent,
+        measured.map(|m| m.executions),
+        Some(crate::effective_tool_names(&state, &db_agent)),
+    );
     let can_publish = publish_pipeline::can_publish(&checks);
 
     Ok(Json(json!({
@@ -243,8 +247,12 @@ pub async fn publish_agent_handler(
     // succeeded, was force-published, or was blocked by checks.
     let preflight_measured =
         crate::agent_economics::measured_exec_stats_one(&state.db, db_agent.agent_id).await;
-    let preflight_checks =
-        publish_pipeline::run_publish_checks(&db_agent, preflight_measured.map(|m| m.executions));
+    let effective_tools = crate::effective_tool_names(&state, &db_agent);
+    let preflight_checks = publish_pipeline::run_publish_checks_with_tools(
+        &db_agent,
+        preflight_measured.map(|m| m.executions),
+        Some(effective_tools.clone()),
+    );
     let will_bypass_checks = q.force && !publish_pipeline::can_publish(&preflight_checks);
 
     // When admin publishes on behalf of a third-party owner, charge the
@@ -258,6 +266,7 @@ pub async fn publish_agent_handler(
         &fee_payer_id,
         &state.gas_fees,
         q.force,
+        Some(effective_tools),
     )
     .await
     .map_err(|e| (StatusCode::BAD_REQUEST, e))?;

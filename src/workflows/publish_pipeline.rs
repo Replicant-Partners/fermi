@@ -35,7 +35,29 @@ use sqlx::PgPool;
 /// episodes. Passing the number in keeps the function pure and sync, which
 /// `observatory::fleet_agents_handler` relies on to run it fleet-wide.
 pub fn run_publish_checks(agent: &Agent, measured_executions: Option<i64>) -> Vec<PublishCheck> {
-    let view = ContractView::from(agent);
+    run_publish_checks_with_tools(agent, measured_executions, None)
+}
+
+/// [`run_publish_checks`], judging tool cross-references against the tools
+/// the agent is actually *executed* with.
+///
+/// `effective_tools` is `resolve_agent_card(..).capabilities.mcp_tools` —
+/// the DB `mcp_tools` column with its precedence applied (NULL inherits the
+/// filesystem card). Without it the gate reads the raw column, so every
+/// agent whose tools come from its `agent_card.json` (column NULL) was
+/// reported as declaring `(none)` and refused on
+/// `grounding_sourced_names_tool`, while the executor ran it with exactly
+/// the tools the grounding names. `None` keeps the raw-column behaviour for
+/// callers with no registry in hand.
+pub fn run_publish_checks_with_tools(
+    agent: &Agent,
+    measured_executions: Option<i64>,
+    effective_tools: Option<Vec<String>>,
+) -> Vec<PublishCheck> {
+    let mut view = ContractView::from(agent);
+    if let Some(tools) = effective_tools {
+        view.tool_names = tools;
+    }
     let mut checks = contract_checks(&view);
 
     // Typed tier: a schema, ports that reference it, and a field-to-tool
@@ -127,12 +149,14 @@ pub async fn publish_agent(
     user_id: &str,
     gas_fees: &GasFees,
     force: bool,
+    effective_tools: Option<Vec<String>>,
 ) -> Result<(TransitionResult, Vec<PublishCheck>), String> {
     let current = AgentLifecycleStatus::from_str(&agent.status)?;
     validate_transition(&current, &AgentLifecycleStatus::Published)?;
 
     let measured = crate::agent_economics::measured_exec_stats_one(pool, agent.agent_id).await;
-    let checks = run_publish_checks(agent, measured.map(|m| m.executions));
+    let checks =
+        run_publish_checks_with_tools(agent, measured.map(|m| m.executions), effective_tools);
     let blocked = !force && !can_publish(&checks);
 
     // Counted. Note the asymmetry this closes: the admin BYPASS of these checks
@@ -351,6 +375,35 @@ mod tests {
                 .map(|c| &c.name)
                 .collect::<Vec<_>>()
         );
+    }
+
+    /// A card-declared tool must count. `mcp_tools` NULL in the DB means
+    /// "inherit the card", and the executor does; the gate used to read the
+    /// raw column instead and refuse every such agent with "Declared tools:
+    /// (none)" — regulatory_lens_translator while it was citing web_search.
+    #[test]
+    fn a_tool_inherited_from_the_card_satisfies_a_sourced_field() {
+        let mut a = agent();
+        a.mcp_tools = None;
+        a.output_contract.as_mut().unwrap()["grounding"]["finding"] = json!({
+            "status": "sourced",
+            "tool": "web_search",
+            "response_field": "results[].url",
+            "why": "The cited page is what the search returned, not what the model recalls."
+        });
+
+        let failing = |checks: &[PublishCheck]| {
+            checks
+                .iter()
+                .any(|c| c.name == "grounding_sourced_names_tool" && !c.passed)
+        };
+
+        // Raw column only: still refused — the fallback must not invent tools.
+        assert!(failing(&run_publish_checks(&a, Some(0))));
+        // The executor's tool list: accepted.
+        let checks = run_publish_checks_with_tools(&a, Some(0), Some(vec!["web_search".into()]));
+        assert!(!failing(&checks), "{checks:?}");
+        assert!(can_publish(&checks));
     }
 
     /// The advisory checks are reported but must never block. A brand-new

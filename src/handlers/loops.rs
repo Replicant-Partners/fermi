@@ -122,8 +122,12 @@ pub async fn get_loop_handler(
 pub async fn agent_loops_handler(
     State(state): State<AppState>,
     _principal: AuthPrincipal,
-    Path(agent_id): Path<uuid::Uuid>,
+    Path(agent_ref): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    // Name or UUID. Every Observatory fetch addresses agents by name; a
+    // `Path<Uuid>` extractor 400'd on all of them before this body ran, which
+    // blanked both the Loops tab and the Development panel fleet-wide.
+    let agent_id = crate::resolve_agent(&state, &agent_ref).await?.agent_id;
     let states = fermi::loop_model::evaluate(&state.db).await;
 
     let mut loops = Vec::with_capacity(states.len());
