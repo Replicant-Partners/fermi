@@ -2359,9 +2359,16 @@ function renderBOMResult(data, meta) {
     const manual = item.unit_cost == null ? manualPrices[item.name] : null;
     let priceHtml;
     if (item.unit_cost != null) {
-      priceHtml = `<div class="bom-price" style="color:var(--t1)">\u20ac${item.unit_cost.toFixed(4)}/g</div>`;
+      // Quoted in the oracle's own unit, not relabelled as /g. The line cost
+      // and its arithmetic are the platform's (bom_pricing::derive_costs).
+      priceHtml = `<div class="bom-price" style="color:var(--t1)">\u20ac${Number(item.unit_cost).toFixed(4)}/${esc(item.unit ?? '?')}</div>
+        ${item.line_cost != null
+          ? `<div style="font-size:9px;font-family:var(--mono);color:var(--t3)" title="${esc(item.arithmetic ?? '')}">line \u20ac${Number(item.line_cost).toFixed(5)} \u00b7 platform_derived</div>`
+          : item.cost_refusal ? `<div style="font-size:9px;color:var(--amb)">not costed: ${esc(item.cost_refusal)}</div>` : ''}`;
     } else if (manual) {
+      const mLine = item.qty_g != null ? Number(manual.unit_cost) * Number(item.qty_g) : null;
       priceHtml = `<div class="bom-price" style="color:var(--blu)">\u20ac${Number(manual.unit_cost).toFixed(4)}/g</div>
+        ${mLine != null ? `<div style="font-size:9px;font-family:var(--mono);color:var(--blu)">line \u20ac${mLine.toFixed(5)} \u00b7 ${esc(item.qty_g)} g</div>` : ''}
         <div style="font-size:9px;font-family:var(--mono);color:var(--blu)">operator_declared \u00b7 ${esc(manual.source)}
           <a style="color:var(--t3);cursor:pointer;margin-left:4px" onclick="editManualPrice(${idx})">edit</a></div>`;
     } else {
@@ -2377,16 +2384,35 @@ function renderBOMResult(data, meta) {
       <div class="bom-right">${priceHtml}${flags}</div>
     </div>`;
   }).join('');
-  const manualCount = items.filter(i => i.unit_cost == null && manualPrices[i.name]).length;
 
-  const totalHtml = summary.total_bom_cost != null
-    ? `<div class="bom-total"><span>Total per 330ml unit</span><span style="color:var(--grn)">€${(summary.total_bom_cost/1000).toFixed(4)}</span></div>`
-    : `<div class="bom-total"><span>Total</span><span style="color:var(--amb)">null — some prices unknown</span></div>`;
-  // Not folded into the total: the oracle's response carries a per-gram price
-  // but not each line's mass, so a manual-inclusive sum would need a quantity
-  // this page does not have. Saying so beats a total that looks complete.
-  const manualNote = manualCount
-    ? `<div style="font-size:10px;color:var(--blu);margin-top:4px">${manualCount} line(s) priced by hand (operator_declared) \u2014 shown, not included in the total above.</div>`
+  // Three figures, never merged into one that looks better than it is:
+  //   retrieved  \u2014 the platform's sum over prices a tool returned
+  //   declared   \u2014 operator-typed \u20ac/g \u00d7 the line's grams
+  //   total      \u2014 only when every quantified line has one or the other
+  // The old line printed the MODEL's total divided by 1000, which was right
+  // only if the model had happened to price in kilograms.
+  const unpricedNames = summary.unpriced_items ?? items.filter(i => i.line_cost == null).map(i => i.name);
+  let declared = 0, declaredLines = 0, stillOpen = [];
+  for (const name of unpricedNames) {
+    const it = items.find(i => i.name === name);
+    const m = manualPrices[name];
+    if (m && it?.qty_g != null) { declared += Number(m.unit_cost) * Number(it.qty_g); declaredLines++; }
+    else stillOpen.push(name);
+  }
+  const retrieved = summary.priced_subtotal;
+  const fmt = v => `\u20ac${Number(v).toFixed(4)}`;
+  const totalHtml = `
+    <div class="bom-total"><span>Retrieved prices <span style="font-size:9px;color:var(--t3)">platform_derived</span></span>
+      <span>${retrieved != null ? fmt(retrieved) : '<span style="color:var(--amb)">none</span>'}</span></div>
+    ${declaredLines ? `<div class="bom-total"><span style="color:var(--blu)">Operator-declared (${declaredLines})</span>
+      <span style="color:var(--blu)">${fmt(declared)}</span></div>` : ''}
+    <div class="bom-total"><span>Total per ${esc(meta?.basis_ml ?? '?')} ml unit</span>
+      ${stillOpen.length
+        ? `<span style="color:var(--amb)" title="${esc(stillOpen.join(', '))}">null \u2014 ${stillOpen.length} line(s) unpriced</span>`
+        : `<span style="color:var(--grn)">${fmt((retrieved ?? 0) + declared)}</span>`}</div>
+    ${stillOpen.length ? `<div style="font-size:9px;color:var(--amb);text-align:right">unpriced: ${esc(stillOpen.join(', '))}</div>` : ''}`;
+  const manualNote = declaredLines
+    ? `<div style="font-size:10px;color:var(--blu);margin-top:4px">The total mixes retrieved and operator-declared prices; each line says which.</div>`
     : '';
 
   const m = meta ?? {};
@@ -3903,7 +3929,7 @@ const LENSES = [
     action: 'evaluate_claims',  spends: true,  available: true },
   { id: 'supply',     label: 'Supply chain', agent: 'supply_chain_oracle',
     action: 'price_bom',        spends: true,  available: true,
-    doc: 'dpp/bom_pricing.yaml',
+    doc: 'dpp/pricing/bom_pricing.yaml',
     ids: { badge: 'sco-badge', hire: 'sco-hire-btn', run: ['sco-run-btn'] } },
   { id: 'carbon',     label: 'Carbon',      agent: ACCOUNTANT,
     action: 'calculate_carbon', spends: true,  available: true,
