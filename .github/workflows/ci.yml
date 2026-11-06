@@ -11,6 +11,17 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  # Directive §5 Phase 0: integrity ratchet. Blocking. Fails if any count of
+  # direct `UPDATE`, swallowed `sqlx` write, `let _ =` in src/, or unwrap on a
+  # DB decode rises above scripts/ratchet_baseline.txt. Counts may only fall.
+  ratchet:
+    name: Integrity ratchet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check ratchet counts against baseline
+        run: python3 scripts/ratchet.py --check scripts/ratchet_baseline.txt
+
   test:
     name: Test Suite
     runs-on: ubuntu-latest
@@ -212,6 +223,16 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fermi_test
           TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fermi_test
         run: cargo test --test api_tests -- --test-threads=1
+
+      # SPEC 36 claim tests (tests/claims). Blocking. Each is the "done when"
+      # of a requirement; they read ABW_TEST_DATABASE_URL only.
+      - name: SPEC 36 claim tests
+        env:
+          ABW_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fermi_test
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d fermi_test -v ON_ERROR_STOP=1 -f migrations/244_platform_sponsor_wallet.sql
+          cargo test --test claims -- --test-threads=1
 
       # Contract hygiene tier: no DATABASE_URL, so the live checks self-skip.
       # Asserts the schema_trust contract is internally coherent — the class of

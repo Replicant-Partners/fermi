@@ -61,3 +61,9 @@ pub use credits::{
     get_balance as credit_get_balance, get_or_create_wallet,
     get_transactions as credit_get_transactions, grant as credit_grant, CreditTransaction, Wallet,
 };
+// SPEC 36 R1.1 — transactional primitives. Take `&mut PgConnection` inside a
+// caller-owned transaction.
+pub use credits::{
+    charge_tx as credit_charge_tx, deposit_tx as credit_deposit_tx,
+    ensure_wallet_tx as credit_ensure_wallet_tx, transfer_tx as credit_transfer_tx,
+};

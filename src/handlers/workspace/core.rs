@@ -1122,7 +1122,7 @@ mod strategist_assignment_tests {
         let checks = [
             (
                 "fermi-auth/src/teams.rs",
-                "assign_default_strategist(pool, team.id)",
+                "assign_default_strategist_tx(&mut *conn, team.id)",
             ),
             (
                 "src/handlers/forecast_git.rs",

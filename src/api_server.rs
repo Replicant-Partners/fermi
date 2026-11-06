@@ -1460,6 +1460,9 @@ async fn run_migrations(db: &PgPool) {
         // 243 — `dpp_publications` and its release history: a product passport
         // released, as a snapshot, to readers with no ABW account.
         "migrations/243_dpp_publications.sql",
+        // 244 — platform sponsor wallet for App template budgets (SPEC 36
+        // R0.1 / G01): spawn transfers from it instead of minting credits.
+        "migrations/244_platform_sponsor_wallet.sql",
     ];
 
     // Bootstrap the ledger before anything is recorded into it.
@@ -2759,8 +2762,14 @@ async fn main() {
         // A released product passport, readable with no ABW account. Only
         // what an admin explicitly published, as a frozen snapshot; see
         // handlers::workspace::dpp_publish for the allowlist.
-        .route("/dpp/:token", get(handlers::workspace::dpp_publish::public_dpp_redirect))
-        .route("/api/dpp/p/:token", get(handlers::workspace::dpp_publish::public_dpp_handler))
+        .route(
+            "/dpp/:token",
+            get(handlers::workspace::dpp_publish::public_dpp_redirect),
+        )
+        .route(
+            "/api/dpp/p/:token",
+            get(handlers::workspace::dpp_publish::public_dpp_handler),
+        )
         .route(
             "/api/dpp/p/:token/qr",
             get(handlers::workspace::dpp_publish::public_dpp_qr_handler),

@@ -1,0 +1,7 @@
+# Integrity ratchet baseline (Directive §5 Phase 0). CI fails if any count rises.
+# Lower a number in the same PR that lowers the count; never raise one.
+# Measured by scripts/ratchet.py. Origin/main a3cea516 was: 331 / 113 / 232 / 76.
+update_ident=329
+let_underscore_sqlx=108
+let_underscore_src=225
+db_decode_unwrap=58
