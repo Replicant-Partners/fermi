@@ -2762,14 +2762,8 @@ async fn main() {
         // A released product passport, readable with no ABW account. Only
         // what an admin explicitly published, as a frozen snapshot; see
         // handlers::workspace::dpp_publish for the allowlist.
-        .route(
-            "/dpp/:token",
-            get(handlers::workspace::dpp_publish::public_dpp_redirect),
-        )
-        .route(
-            "/api/dpp/p/:token",
-            get(handlers::workspace::dpp_publish::public_dpp_handler),
-        )
+        .route("/dpp/:token", get(handlers::workspace::dpp_publish::public_dpp_redirect))
+        .route("/api/dpp/p/:token", get(handlers::workspace::dpp_publish::public_dpp_handler))
         .route(
             "/api/dpp/p/:token/qr",
             get(handlers::workspace::dpp_publish::public_dpp_qr_handler),

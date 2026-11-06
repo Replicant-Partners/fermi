@@ -494,15 +494,13 @@ pub async fn spawn_workspace_handler(
 
     // 5-8. Create, fund (from the caller), wire and auto-hire in ONE transaction.
     //      SPEC 36 R0.1: this used to deposit the budget and debit nobody.
-    let caller_may_use_granted = principal.can_admin()
-        || app["owner_user_id"].as_str() == Some(caller_id.as_str());
     let depends_on = req.depends_on.clone().unwrap_or_default();
     let provisioned = fermi::apps::provision::provision_workspace(
         &state.db,
         &fermi::apps::provision::SpawnPlan {
+            sponsor_owner: fermi::apps::provision::SPONSOR_WALLET_OWNER,
             app_slug: &slug,
             caller_id: &caller_id,
-            caller_may_use_granted,
             ws_name: &ws_name,
             ws_slug: &ws_slug,
             description: req.description.as_deref(),
@@ -1158,8 +1156,6 @@ pub async fn batch_spawn_workspaces_handler(
     let base_budget = template_initial_budget(template);
     let default_auto_hire = template_auto_hire(template);
     let initial_files = template_initial_files(template);
-    let caller_may_use_granted = principal.can_admin()
-        || app["owner_user_id"].as_str() == Some(caller_id.as_str());
 
     let mut results: Vec<Value> = Vec::with_capacity(req.instances.len());
     let mut errors: Vec<Value> = Vec::new();
@@ -1180,10 +1176,10 @@ pub async fn batch_spawn_workspaces_handler(
         let provisioned = match fermi::apps::provision::provision_workspace(
             &state.db,
             &fermi::apps::provision::SpawnPlan {
+                sponsor_owner: fermi::apps::provision::SPONSOR_WALLET_OWNER,
                 app_slug: &slug,
                 caller_id: &caller_id,
-                caller_may_use_granted,
-                ws_name: &ws_name,
+                    ws_name: &ws_name,
                 ws_slug: &ws_slug,
                 description: instance.description.as_deref(),
                 initial_budget: base_budget,

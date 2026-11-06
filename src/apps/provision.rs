@@ -56,6 +56,9 @@ pub enum ProvisionError {
     },
     /// Workspace slug already exists.
     Conflict,
+    /// A `depends_on` entry is malformed or names a workspace the caller is
+    /// not a member of.
+    InvalidDependency(String),
     /// The platform sponsor wallet is missing or cannot cover the template
     /// budget. Nothing was created; an operator must top it up (ledgered grant).
     SponsorUnavailable,
@@ -68,6 +71,7 @@ impl ProvisionError {
             ProvisionError::InvalidBudget(_) => 422,
             ProvisionError::InsufficientCredits { .. } => 402,
             ProvisionError::Conflict => 409,
+            ProvisionError::InvalidDependency(_) => 422,
             ProvisionError::SponsorUnavailable => 402,
             ProvisionError::Db(_) => 500,
         }
@@ -79,6 +83,7 @@ impl ProvisionError {
                 format!("Insufficient balance to fund this workspace: have {have}, need {need}")
             }
             ProvisionError::Conflict => "Slug collision — please retry".into(),
+            ProvisionError::InvalidDependency(m) => m.clone(),
             ProvisionError::SponsorUnavailable => {
                 "App sponsorship budget is exhausted; the template budget cannot be funded".into()
             }
@@ -95,7 +100,9 @@ impl From<fermi_auth::AuthError> for ProvisionError {
             }
             other => {
                 let m = other.to_string();
-                if m.contains("unique") || m.contains("duplicate") {
+                // AuthError flattens the sqlx error to text; the constraint
+                // name is the only stable discriminator left in it.
+                if m.contains("teams_slug_key") {
                     ProvisionError::Conflict
                 } else {
                     ProvisionError::Db(m)
@@ -107,16 +114,22 @@ impl From<fermi_auth::AuthError> for ProvisionError {
 
 impl From<sqlx::Error> for ProvisionError {
     fn from(e: sqlx::Error) -> Self {
-        ProvisionError::Db(e.to_string())
+        match &e {
+            sqlx::Error::Database(d) if d.constraint() == Some("teams_slug_key") => {
+                ProvisionError::Conflict
+            }
+            _ => ProvisionError::Db(e.to_string()),
+        }
     }
 }
 
 pub struct SpawnPlan<'a> {
+    /// Wallet owner id that sponsors the template budget. Production passes
+    /// [`SPONSOR_WALLET_OWNER`]; tests pass their own so they never spend or
+    /// rewrite the shared sponsor wallet's history.
+    pub sponsor_owner: &'a str,
     pub app_slug: &'a str,
     pub caller_id: &'a str,
-    /// Caller may spend granted credits (owner of the App or platform admin).
-    /// Otherwise only purchased (transferable) credits fund the workspace.
-    pub caller_may_use_granted: bool,
     pub ws_name: &'a str,
     pub ws_slug: &'a str,
     pub description: Option<&'a str>,
@@ -175,6 +188,93 @@ pub async fn provision_workspace(
     let ws_id = team.id;
     let ws_id_str = ws_id.to_string();
 
+    if let Some(params) = plan.params {
+        sqlx::query(
+            "INSERT INTO workspace_outputs (workspace_id, key, value, version, updated_at, updated_by)
+             VALUES ($1, 'params', $2, 1, NOW(), $3)",
+        )
+        .bind(ws_id)
+        .bind(params)
+        .bind(plan.caller_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    let mut upstreams: Vec<Uuid> = Vec::with_capacity(plan.depends_on.len());
+    for raw in plan.depends_on {
+        let u: Uuid = raw.parse().map_err(|_| {
+            ProvisionError::InvalidDependency(format!("depends_on entry '{raw}' is not a UUID"))
+        })?;
+        if !upstreams.contains(&u) {
+            upstreams.push(u);
+        }
+    }
+    for upstream in &upstreams {
+        // The caller must be a member of the upstream workspace: wiring a
+        // dependency on someone else's workspace would expose its outputs.
+        // Stricter than `add_dependency_handler` (workspace/outputs.rs), which
+        // does not check upstream membership — tracked under G02's tenancy
+        // sweep (#38).
+        let member: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM team_members WHERE team_id = $1 AND member_id = $2)",
+        )
+        .bind(upstream)
+        .bind(plan.caller_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if !member {
+            return Err(ProvisionError::InvalidDependency(format!(
+                "depends_on workspace {upstream} is not one you are a member of"
+            )));
+        }
+        sqlx::query(
+            "INSERT INTO workspace_dependencies (upstream_id, downstream_id, dependency_type)
+             VALUES ($1, $2, 'output')",
+        )
+        .bind(upstream)
+        .bind(ws_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    let dependencies_wired = upstreams.len();
+
+    let mut agents_hired = Vec::new();
+    let mut skipped = Vec::new();
+    for name in plan.auto_hire {
+        let row: Option<(Uuid, Option<String>, Option<String>, String, String)> = sqlx::query_as(
+            "SELECT agent_id, user_id, visibility, tier, status FROM agents WHERE agent_name = $1",
+        )
+        .bind(name)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some((agent_id, owner, visibility, tier, status)) = row else {
+            skipped.push((name.clone(), "not_found"));
+            continue;
+        };
+        let facts = crate::apps::hire_policy::AgentFacts {
+            owner_id: owner.as_deref(),
+            visibility: visibility.as_deref(),
+            tier: &tier,
+            status: &status,
+        };
+        if let Err(r) = crate::apps::hire_policy::may_place(&facts, plan.caller_id) {
+            skipped.push((name.clone(), r.reason()));
+            continue;
+        }
+        sqlx::query(
+            "INSERT INTO workspace_agents (workspace_id, agent_id, added_by, relationship)
+             VALUES ($1, $2, $3, 'system') ON CONFLICT (workspace_id, agent_id) DO NOTHING",
+        )
+        .bind(ws_id)
+        .bind(agent_id)
+        .bind(plan.caller_id)
+        .execute(&mut *tx)
+        .await?;
+        agents_hired.push(name.clone());
+    }
+
+    // Funding last: the sponsor wallet row is shared by every spawn, so its
+    // row lock is taken as late as possible and held only until commit.
     if total > 0 {
         let ws_wallet =
             fermi_auth::credit_ensure_wallet_tx(&mut tx, "workspace", &ws_id_str).await?;
@@ -184,10 +284,7 @@ pub async fn provision_workspace(
         // an empty sponsor wallet yields 402, never minted credits.
         if plan.initial_budget > 0 {
             let sponsor: Option<Uuid> =
-                sqlx::query_scalar("SELECT wallet_id FROM wallets WHERE owner_id = $1")
-                    .bind(SPONSOR_WALLET_OWNER)
-                    .fetch_optional(&mut *tx)
-                    .await?;
+                fermi_auth::credits::wallet_id_tx(&mut tx, "platform", plan.sponsor_owner).await?;
             let Some(sponsor) = sponsor else {
                 return Err(ProvisionError::SponsorUnavailable);
             };
@@ -211,10 +308,7 @@ pub async fn provision_workspace(
         // Extra budget: paid by the caller.
         if plan.extra_budget > 0 {
             let caller_wallet: Option<Uuid> =
-                sqlx::query_scalar("SELECT wallet_id FROM wallets WHERE owner_id = $1")
-                    .bind(plan.caller_id)
-                    .fetch_optional(&mut *tx)
-                    .await?;
+                fermi_auth::credits::wallet_id_tx(&mut tx, "user", plan.caller_id).await?;
             let Some(caller_wallet) = caller_wallet else {
                 return Err(ProvisionError::InsufficientCredits {
                     have: 0,
@@ -228,7 +322,11 @@ pub async fn provision_workspace(
                 plan.extra_budget,
                 &format!("{memo} (extra budget)"),
                 Some(&ws_id_str),
-                !plan.caller_may_use_granted,
+                // The caller always owns the new workspace, and the transfer
+                // keeps granted credits granted, so granted may fund it — the
+                // same rule as `fund_workspace_handler` for owner self-funding
+                // (src/handlers/workspace/core.rs, `is_self_fund`).
+                false,
             )
             .await?;
         }
@@ -237,87 +335,6 @@ pub async fn provision_workspace(
             .bind(ws_id)
             .execute(&mut *tx)
             .await?;
-    }
-
-    if let Some(params) = plan.params {
-        sqlx::query(
-            "INSERT INTO workspace_outputs (workspace_id, key, value, version, updated_at, updated_by)
-             VALUES ($1, 'params', $2, 1, NOW(), $3)",
-        )
-        .bind(ws_id)
-        .bind(params)
-        .bind(plan.caller_id)
-        .execute(&mut *tx)
-        .await?;
-    }
-
-    let mut dependencies_wired = 0usize;
-    for upstream in plan.depends_on {
-        let upstream: Uuid = upstream.parse().map_err(|_| {
-            ProvisionError::InvalidBudget(format!("depends_on entry '{upstream}' is not a UUID"))
-        })?;
-        // The caller must be able to see the upstream workspace; wiring a
-        // dependency on someone else's workspace would leak its outputs.
-        let member: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM team_members WHERE team_id = $1 AND member_id = $2)",
-        )
-        .bind(upstream)
-        .bind(plan.caller_id)
-        .fetch_one(&mut *tx)
-        .await?;
-        if !member {
-            return Err(ProvisionError::InvalidBudget(format!(
-                "depends_on workspace {upstream} is not one you are a member of"
-            )));
-        }
-        sqlx::query(
-            "INSERT INTO workspace_dependencies (upstream_id, downstream_id, dependency_type)
-             VALUES ($1, $2, 'output') ON CONFLICT (upstream_id, downstream_id) DO NOTHING",
-        )
-        .bind(upstream)
-        .bind(ws_id)
-        .execute(&mut *tx)
-        .await?;
-        dependencies_wired += 1;
-    }
-
-    let mut agents_hired = Vec::new();
-    let mut skipped = Vec::new();
-    for name in plan.auto_hire {
-        let row: Option<(Uuid, Option<String>, Option<String>, String, String)> = sqlx::query_as(
-            "SELECT agent_id, user_id, visibility, tier, status FROM agents WHERE agent_name = $1",
-        )
-        .bind(name)
-        .fetch_optional(&mut *tx)
-        .await?;
-        let Some((agent_id, owner, visibility, tier, status)) = row else {
-            skipped.push((name.clone(), "not_found"));
-            continue;
-        };
-        if status == "archived" {
-            skipped.push((name.clone(), "archived"));
-            continue;
-        }
-        let owned = owner.as_deref() == Some(plan.caller_id);
-        let platform = tier == "curated" || tier == "system";
-        let public = visibility.as_deref() == Some("public");
-        // Same rule as `hire_agent_handler`, plus: a draft is only ever usable
-        // by its owner.
-        let allowed = owned || ((public || platform) && status != "draft");
-        if !allowed {
-            skipped.push((name.clone(), "not_visible_to_caller"));
-            continue;
-        }
-        sqlx::query(
-            "INSERT INTO workspace_agents (workspace_id, agent_id, added_by, relationship)
-             VALUES ($1, $2, $3, 'system') ON CONFLICT (workspace_id, agent_id) DO NOTHING",
-        )
-        .bind(ws_id)
-        .bind(agent_id)
-        .bind(plan.caller_id)
-        .execute(&mut *tx)
-        .await?;
-        agents_hired.push(name.clone());
     }
 
     tx.commit().await?;

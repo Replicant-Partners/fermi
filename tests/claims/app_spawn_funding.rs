@@ -1,128 +1,60 @@
-//! SPEC 36 R0.1 / LLD G01 (#37): App spawn must fund from the caller.
+//! SPEC 36 R0.1 / LLD G01 (#37): App spawn must not mint credits.
 //!
-//! Against `origin/main` these fail: spawn deposited `initial + extra` into the
-//! workspace wallet and debited no one (`src/handlers/apps.rs:484, 560-568` at
-//! a3cea516), so a zero-balance caller got a funded workspace and the ledger
-//! sum rose by the budget.
+//! The old-code failure is shown by `deployed.rs` (run against the deployed
+//! prototype at a3cea516: 201, workspace funded with 505, ledger +505). These
+//! tests exercise `fermi::apps::provision`, which does not exist on old code.
+//!
+//! Funding rule under test (owner decision 2026-11-06, option c; SPEC 36 R0.1
+//! as amended): the template budget is transferred from a platform sponsor
+//! wallet, `extra_budget` from the caller. Each test uses its **own** sponsor
+//! wallet, so the shared `platform:app_sponsorship` history is never touched.
 
-use crate::support;
+use crate::support::{self, Created};
 use fermi::apps::provision::{provision_workspace, total_budget, SpawnPlan};
-use sqlx::PgPool;
-use uuid::Uuid;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
-struct Fixture {
-    pool: PgPool,
+struct Env {
     user: String,
-    app: String,
-    teams: Vec<Uuid>,
-    agents: Vec<Uuid>,
-    others: Vec<String>,
+    sponsor: String,
 }
 
-impl Fixture {
-    async fn new(pool: PgPool) -> Self {
-        let fx = Fixture {
-            user: support::tag("user"),
-            app: support::tag("app"),
-            pool,
-            teams: vec![],
-            agents: vec![],
-            others: vec![],
-        };
-        support::make_user(&fx.pool, &fx.user).await;
-        fx
-    }
+async fn env(
+    pool: &sqlx::PgPool,
+    c: &Arc<Mutex<Created>>,
+    user_credits: i32,
+    sponsor_credits: i32,
+) -> Env {
+    let mut c = c.lock().await;
+    let user = support::make_user(pool, &mut c).await;
+    support::make_wallet(pool, &mut c, "user", &user, user_credits).await;
+    let sponsor = support::tag("platform:sponsor");
+    support::make_wallet(pool, &mut c, "platform", &sponsor, sponsor_credits).await;
+    Env { user, sponsor }
+}
 
-    /// A user wallet holding exactly `purchased` transferable credits.
-    async fn fund_user(&self, purchased: i32) -> Uuid {
-        let w: Uuid = sqlx::query_scalar(
-            "INSERT INTO wallets (owner_type, owner_id) VALUES ('user', $1) RETURNING wallet_id",
-        )
-        .bind(&self.user)
-        .fetch_one(&self.pool)
+fn plan<'a>(e: &'a Env, slug: &'a str, extra: i32, hire: &'a [String]) -> SpawnPlan<'a> {
+    SpawnPlan {
+        sponsor_owner: &e.sponsor,
+        app_slug: "spec36_test_app",
+        caller_id: &e.user,
+        ws_name: "spec36 test workspace",
+        ws_slug: slug,
+        description: None,
+        initial_budget: 100,
+        extra_budget: extra,
+        params: None,
+        depends_on: &[],
+        auto_hire: hire,
+    }
+}
+
+async fn team_exists(pool: &sqlx::PgPool, slug: &str) -> bool {
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM teams WHERE slug = $1)")
+        .bind(slug)
+        .fetch_one(pool)
         .await
-        .unwrap();
-        if purchased > 0 {
-            fermi_auth::credit_deposit(&self.pool, w, purchased, "spec36 test funding")
-                .await
-                .unwrap();
-        }
-        w
-    }
-
-    fn plan<'a>(&'a self, slug: &'a str, extra: i32, hire: &'a [String]) -> SpawnPlan<'a> {
-        SpawnPlan {
-            app_slug: &self.app,
-            caller_id: &self.user,
-            caller_may_use_granted: false,
-            ws_name: "spec36 test workspace",
-            ws_slug: slug,
-            description: None,
-            initial_budget: 100,
-            extra_budget: extra,
-            params: None,
-            depends_on: &[],
-            auto_hire: hire,
-        }
-    }
-
-    async fn ledger_sum(&self) -> i64 {
-        sqlx::query_scalar("SELECT COALESCE(SUM(amount),0)::bigint FROM credit_ledger")
-            .fetch_one(&self.pool)
-            .await
-            .unwrap()
-    }
-
-    async fn team_exists(&self, slug: &str) -> bool {
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM teams WHERE slug = $1)")
-            .bind(slug)
-            .fetch_one(&self.pool)
-            .await
-            .unwrap()
-    }
-
-    async fn cleanup(self) {
-        let p = &self.pool;
-        for t in &self.teams {
-            let ws = t.to_string();
-            for q in [
-                "DELETE FROM workspace_agents WHERE workspace_id = $1::uuid",
-                "DELETE FROM workspace_outputs WHERE workspace_id = $1::uuid",
-                "DELETE FROM team_members WHERE team_id = $1::uuid",
-            ] {
-                sqlx::query(q).bind(&ws).execute(p).await.unwrap();
-            }
-            sqlx::query("DELETE FROM credit_ledger WHERE wallet_id IN (SELECT wallet_id FROM wallets WHERE owner_id = $1)")
-                .bind(&ws).execute(p).await.unwrap();
-            sqlx::query("DELETE FROM wallets WHERE owner_id = $1")
-                .bind(&ws)
-                .execute(p)
-                .await
-                .unwrap();
-            sqlx::query("DELETE FROM teams WHERE id = $1")
-                .bind(t)
-                .execute(p)
-                .await
-                .unwrap();
-        }
-        sqlx::query("DELETE FROM credit_ledger WHERE wallet_id IN (SELECT wallet_id FROM wallets WHERE owner_id = $1)")
-            .bind(&self.user).execute(p).await.unwrap();
-        sqlx::query("DELETE FROM wallets WHERE owner_id = $1")
-            .bind(&self.user)
-            .execute(p)
-            .await
-            .unwrap();
-        for a in &self.agents {
-            sqlx::query("DELETE FROM agents WHERE agent_id = $1")
-                .bind(a)
-                .execute(p)
-                .await
-                .unwrap();
-        }
-        for u in self.others.iter().chain(std::iter::once(&self.user)) {
-            support::drop_user(p, u).await;
-        }
-    }
+        .unwrap()
 }
 
 #[tokio::test]
@@ -130,27 +62,50 @@ async fn zero_balance_caller_asking_for_extra_gets_402_and_nothing_is_created() 
     let Some(pool) = support::pool().await else {
         return;
     };
-    let fx = Fixture::new(pool).await;
-    fx.fund_user(0).await;
-    support::sponsor_wallet(&fx.pool, 100).await;
-    let slug = support::tag("ws");
-    let before = fx.ledger_sum().await;
+    support::with_cleanup(&pool, |pool, c| async move {
+        let e = env(&pool, &c, 0, 100).await;
+        let owners = vec![e.user.clone(), e.sponsor.clone()];
+        let slug = support::tag("ws");
+        let before = support::ledger_sum(&pool, &owners).await;
 
-    let err = provision_workspace(&fx.pool, &fx.plan(&slug, 25, &[]))
-        .await
-        .unwrap_err();
+        let err = provision_workspace(&pool, &plan(&e, &slug, 25, &[]))
+            .await
+            .unwrap_err();
 
-    assert_eq!(err.status(), 402, "{}", err.message());
-    assert!(
-        !fx.team_exists(&slug).await,
-        "a refused spawn must not leave a team row"
-    );
-    assert_eq!(
-        fx.ledger_sum().await,
-        before,
-        "a refused spawn must not move credits"
-    );
-    fx.cleanup().await;
+        assert_eq!(err.status(), 402, "{}", err.message());
+        assert!(
+            !team_exists(&pool, &slug).await,
+            "a refused spawn must not leave a team row"
+        );
+        assert_eq!(
+            support::ledger_sum(&pool, &owners).await,
+            before,
+            "a refused spawn moves no credits"
+        );
+        assert_eq!(
+            support::balances(&pool, &e.sponsor).await.0,
+            100,
+            "sponsor untouched on refusal"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn empty_sponsor_wallet_gets_402_never_mints() {
+    let Some(pool) = support::pool().await else {
+        return;
+    };
+    support::with_cleanup(&pool, |pool, c| async move {
+        let e = env(&pool, &c, 500, 0).await;
+        let slug = support::tag("ws");
+        let err = provision_workspace(&pool, &plan(&e, &slug, 0, &[]))
+            .await
+            .unwrap_err();
+        assert_eq!(err.status(), 402, "{}", err.message());
+        assert!(!team_exists(&pool, &slug).await);
+    })
+    .await;
 }
 
 #[tokio::test]
@@ -158,58 +113,100 @@ async fn spawn_is_funded_by_transfers_sponsor_pays_template_caller_pays_extra() 
     let Some(pool) = support::pool().await else {
         return;
     };
-    let mut fx = Fixture::new(pool).await;
-    let caller_wallet = fx.fund_user(300).await;
-    let sponsor = support::sponsor_wallet(&fx.pool, 100).await;
-    let sponsor_before = fermi_auth::credit_get_balance(&fx.pool, sponsor).await.unwrap();
-    let slug = support::tag("ws");
-    let before = fx.ledger_sum().await;
+    support::with_cleanup(&pool, |pool, c| async move {
+        let e = env(&pool, &c, 300, 100).await;
+        let slug = support::tag("ws");
+        let p = provision_workspace(&pool, &plan(&e, &slug, 50, &[]))
+            .await
+            .unwrap();
+        c.lock().await.teams.push(p.workspace_id);
+        let ws = p.workspace_id.to_string();
+        let owners = vec![e.user.clone(), e.sponsor.clone(), ws.clone()];
 
-    let p = provision_workspace(&fx.pool, &fx.plan(&slug, 50, &[]))
-        .await
-        .unwrap();
-    fx.teams.push(p.workspace_id);
+        assert_eq!(p.total_budget, 150);
+        assert_eq!(
+            support::balances(&pool, &e.user).await.0,
+            250,
+            "caller paid only the extra 50"
+        );
+        assert_eq!(
+            support::balances(&pool, &e.sponsor).await.0,
+            0,
+            "sponsor paid the template 100"
+        );
+        assert_eq!(
+            support::balances(&pool, &ws).await.0,
+            150,
+            "workspace got exactly what was paid"
+        );
+        // 300 + 100 deposited by the fixture; every spawn movement is a pair.
+        assert_eq!(
+            support::ledger_sum(&pool, &owners).await,
+            400,
+            "no credits minted"
+        );
+    })
+    .await;
+}
 
-    assert_eq!(p.total_budget, 150);
-    let caller_balance = fermi_auth::credit_get_balance(&fx.pool, caller_wallet)
-        .await
-        .unwrap();
-    assert_eq!(caller_balance, 250, "caller paid only the extra 50 of 300");
-    let sponsor_after = fermi_auth::credit_get_balance(&fx.pool, sponsor).await.unwrap();
-    assert_eq!(sponsor_before - sponsor_after, 100, "sponsor paid exactly the template budget");
-    let ws_balance: i32 = sqlx::query_scalar("SELECT balance FROM wallets WHERE owner_id = $1")
-        .bind(p.workspace_id.to_string())
-        .fetch_one(&fx.pool)
-        .await
-        .unwrap();
-    assert_eq!(
-        ws_balance, 150,
-        "workspace received exactly what sponsor and caller paid"
-    );
-    assert_eq!(
-        fx.ledger_sum().await,
-        before,
-        "a transfer nets to zero: no credits minted"
-    );
-    fx.cleanup().await;
+/// Review finding 3: a transfer must not launder granted credits into
+/// transferable ones.
+#[tokio::test]
+async fn granted_credits_stay_granted_across_a_transfer() {
+    let Some(pool) = support::pool().await else {
+        return;
+    };
+    support::with_cleanup(&pool, |pool, c| async move {
+        let e = env(&pool, &c, 0, 0).await;
+        let sponsor_wallet: uuid::Uuid =
+            sqlx::query_scalar("SELECT wallet_id FROM wallets WHERE owner_id = $1")
+                .bind(&e.sponsor)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        fermi_auth::credit_grant(&pool, sponsor_wallet, 100, "spec36 test grant")
+            .await
+            .unwrap();
+        let slug = support::tag("ws");
+        let p = provision_workspace(&pool, &plan(&e, &slug, 0, &[]))
+            .await
+            .unwrap();
+        c.lock().await.teams.push(p.workspace_id);
+        let (bal, granted, purchased) = support::balances(&pool, &p.workspace_id.to_string()).await;
+        assert_eq!(
+            (bal, granted, purchased),
+            (100, 100, 0),
+            "granted in, granted out"
+        );
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn huge_extra_budget_is_422_before_any_io() {
     assert_eq!(total_budget(100, 1_000_000_000).unwrap_err().status(), 422);
+    assert_eq!(total_budget(100, -1).unwrap_err().status(), 422);
+}
+
+#[tokio::test]
+async fn new_workspace_owner_has_role_default_capabilities() {
     let Some(pool) = support::pool().await else {
         return;
     };
-    let fx = Fixture::new(pool).await;
-    fx.fund_user(10_000).await;
-    support::sponsor_wallet(&fx.pool, 100).await;
-    let slug = support::tag("ws");
-    let err = provision_workspace(&fx.pool, &fx.plan(&slug, 1_000_000_000, &[]))
-        .await
-        .unwrap_err();
-    assert_eq!(err.status(), 422);
-    assert!(!fx.team_exists(&slug).await);
-    fx.cleanup().await;
+    support::with_cleanup(&pool, |pool, c| async move {
+        let e = env(&pool, &c, 0, 100).await;
+        let slug = support::tag("ws");
+        let p = provision_workspace(&pool, &plan(&e, &slug, 0, &[])).await.unwrap();
+        c.lock().await.teams.push(p.workspace_id);
+        // The AFTER INSERT trigger adds the owner with '{}'; create_team_tx
+        // must merge the owner's role defaults in (review finding 1).
+        let caps: Vec<String> = sqlx::query_scalar(
+            "SELECT capabilities FROM team_members WHERE team_id = $1 AND member_id = $2 AND role = 'owner'",
+        )
+        .bind(p.workspace_id).bind(&e.user).fetch_one(&pool).await.unwrap();
+        assert!(caps.iter().any(|c| c == "resolve"), "owner capabilities: {caps:?}");
+    })
+    .await;
 }
 
 #[tokio::test]
@@ -217,43 +214,62 @@ async fn another_users_draft_agent_is_skipped_not_hired() {
     let Some(pool) = support::pool().await else {
         return;
     };
-    let mut fx = Fixture::new(pool).await;
-    fx.fund_user(500).await;
-    support::sponsor_wallet(&fx.pool, 100).await;
-    let name = support::tag("agent");
-    let other = support::tag("someone_else");
-    support::make_user(&fx.pool, &other).await;
-    fx.others.push(other.clone());
-    let agent_id: Uuid = sqlx::query_scalar(
-        "INSERT INTO agents (agent_name, agent_type, version, tier, executor_type, model, temperature,
-                             author, status, visibility, user_id)
-         VALUES ($1, 'research', '1.0.0', 'community', 'llm', 'test', 0.5, 'spec36', 'draft', 'private', $2)
-         RETURNING agent_id",
-    )
-    .bind(&name)
-    .bind(&other)
-    .fetch_one(&fx.pool)
-    .await
-    .unwrap();
-    fx.agents.push(agent_id);
-    let slug = support::tag("ws");
-    let hire = vec![name.clone()];
+    support::with_cleanup(&pool, |pool, c| async move {
+        let e = env(&pool, &c, 0, 100).await;
+        let other = support::make_user(&pool, &mut *c.lock().await).await;
+        let name = support::tag("agent");
+        let agent_id: uuid::Uuid = sqlx::query_scalar(
+            "INSERT INTO agents (agent_name, agent_type, version, tier, executor_type, model, temperature,
+                                 author, status, visibility, user_id)
+             VALUES ($1, 'research', '1.0.0', 'community', 'llm', 'test', 0.5, 'spec36', 'draft', 'public', $2)
+             RETURNING agent_id",
+        )
+        .bind(&name).bind(&other).fetch_one(&pool).await.unwrap();
+        c.lock().await.agents.push(agent_id);
+        let slug = support::tag("ws");
+        let hire = vec![name.clone()];
 
-    let p = provision_workspace(&fx.pool, &fx.plan(&slug, 0, &hire))
+        let p = provision_workspace(&pool, &plan(&e, &slug, 0, &hire)).await.unwrap();
+        c.lock().await.teams.push(p.workspace_id);
+
+        assert!(p.agents_hired.is_empty());
+        assert_eq!(p.skipped, vec![(name, "draft_not_owned")]);
+        let hired: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM workspace_agents WHERE workspace_id = $1 AND agent_id = $2)",
+        )
+        .bind(p.workspace_id).bind(agent_id).fetch_one(&pool).await.unwrap();
+        assert!(!hired);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn depends_on_a_workspace_the_caller_is_not_in_is_refused() {
+    let Some(pool) = support::pool().await else {
+        return;
+    };
+    support::with_cleanup(&pool, |pool, c| async move {
+        let e = env(&pool, &c, 0, 200).await;
+        // Someone else's workspace, created by the same code path.
+        let other = support::make_user(&pool, &mut *c.lock().await).await;
+        let foreign = fermi_auth::teams::create_team(
+            &pool,
+            "spec36 foreign",
+            &support::tag("ws"),
+            None,
+            &other,
+            "spec36",
+        )
         .await
         .unwrap();
-    fx.teams.push(p.workspace_id);
-
-    assert!(p.agents_hired.is_empty());
-    assert_eq!(p.skipped, vec![(name, "not_visible_to_caller")]);
-    let hired: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM workspace_agents WHERE workspace_id = $1 AND agent_id = $2)",
-    )
-    .bind(p.workspace_id)
-    .bind(agent_id)
-    .fetch_one(&fx.pool)
-    .await
-    .unwrap();
-    assert!(!hired);
-    fx.cleanup().await;
+        c.lock().await.teams.push(foreign.id);
+        let deps = vec![foreign.id.to_string()];
+        let slug = support::tag("ws");
+        let mut pl = plan(&e, &slug, 0, &[]);
+        pl.depends_on = &deps;
+        let err = provision_workspace(&pool, &pl).await.unwrap_err();
+        assert_eq!(err.status(), 422, "{}", err.message());
+        assert!(!team_exists(&pool, &slug).await);
+    })
+    .await;
 }

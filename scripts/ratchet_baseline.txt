@@ -1,7 +1,11 @@
-# Integrity ratchet baseline (Directive §5 Phase 0). CI fails if any count rises.
-# Lower a number in the same PR that lowers the count; never raise one.
-# Measured by scripts/ratchet.py. Origin/main a3cea516 was: 331 / 113 / 232 / 76.
-update_ident=329
-let_underscore_sqlx=108
-let_underscore_src=225
+# Integrity ratchet baseline (Directive §5 Phase 0). `scripts/ratchet.py --check`
+# fails if any count differs: higher = regression; lower = lower this file in the
+# same change so the improvement is locked in.
+# origin/main a3cea516: update_ident=330 delete_from=63 let_underscore=290
+#   let_underscore_sqlx=115 row_get=707 db_decode_unwrap=76
+update_ident=325
+delete_from=63
+let_underscore=282
+let_underscore_sqlx=110
+row_get=707
 db_decode_unwrap=58

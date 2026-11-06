@@ -94,8 +94,8 @@ pub async fn create_team(
     owner_id: &str,
     origin: &str,
 ) -> Result<Team, AuthError> {
-    // One transaction: a team without its owner membership is unreachable by
-    // its own owner, so the two must not be separable.
+    // One transaction: the team row, its strategist and the owner's
+    // role-default capabilities commit together (see `create_team_tx`).
     let mut tx = pool
         .begin()
         .await
@@ -154,10 +154,20 @@ pub async fn create_team_tx(
         .iter()
         .map(|c| c.as_str().to_string())
         .collect();
+    // The AFTER INSERT trigger `trg_auto_add_team_owner`
+    // (migrations/009_add_teams_and_sharing.sql:90-102) has already inserted
+    // the owner row with empty capabilities, so this is an upsert that merges
+    // the owner's role defaults in — the same statement `add_team_member` uses
+    // (fermi-auth/src/teams.rs, `add_team_member`). `DO NOTHING` here left
+    // every new owner without `resolve`.
     sqlx::query(
         "INSERT INTO team_members (team_id, member_type, member_id, role, invited_by, capabilities)
          VALUES ($1, $2, $3, $4, $3, $5)
-         ON CONFLICT (team_id, member_id) DO NOTHING",
+         ON CONFLICT (team_id, member_id) DO UPDATE
+             SET role = $4,
+                 capabilities = (
+                     SELECT ARRAY(SELECT DISTINCT unnest(team_members.capabilities || $5::text[]))
+                 )",
     )
     .bind(team.id)
     .bind(MemberType::User.as_str())

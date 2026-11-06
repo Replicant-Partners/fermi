@@ -4,8 +4,8 @@
 
 | | |
 |---|---|
-| Status | **Draft for owner sign-off.** Normative once accepted. |
-| Date | 2026-11-05 |
+| Status | Target. **Subordinate to `docs/architecture/ABW_CODING_AGENT_DIRECTIVE.md`** (2026-11-06): where they conflict the directive wins, and the directive's §4 dispositions decide what is worked and when. Known conflicts: the in-process `CommandBus` (R2.4), the outbox outside the ledger crate (R2.7), the ladder rename targets (R7.1), and the R0.8 permit type are superseded by the directive. |
+| Date | 2026-11-05; amended 2026-11-06 (R0.1, owner decision) |
 | Baseline | `main` @ `a3cea516` plus the working tree described in `docs/ABW_LOW_LEVEL_DESIGN.md` (the "LLD") |
 | Supersedes | Nothing. It **implements** `docs/architecture/ABW Verification Lattice — Specification v0.1.md` (the "Lattice spec") and corrects the claims listed in LLD Appendix D |
 | Gap IDs | `G01`–`G33` refer to the LLD §9 gap register |
@@ -123,21 +123,26 @@ These are small, independent changes. Each one is a single PR with its regressio
 **Required behaviour:**
 
 1. `extra_budget` MUST be within `0..=APP_SPAWN_MAX_EXTRA_BUDGET`. The env default is `1000`; out-of-range requests get 422.
-2. The total MUST be moved by `credits::transfer_tx(tx, caller_wallet → workspace_wallet, total, "app_workspace_funding", related = workspace_id)`. That one transaction also covers:
+2. *(Amended 2026-11-06, owner decision option (c).)* Every credit the workspace receives MUST be a transfer: the template `initial_budget` from the platform sponsor wallet `platform:app_sponsorship` (migration 244), and `extra_budget` from the caller. Transfers preserve the granted/purchased split. That one transaction also covers:
    - `create_team`;
    - `UPDATE teams SET workspace_budget`;
    - `workspace_dependencies`;
    - the `workspace_outputs.params` row.
-3. If the caller's available balance (`balance − held`) is less than the total, the handler MUST return **402**. Nothing is created. This matches `docs/specs/01_APP_PRIMITIVE.md:285`.
+3. If the caller cannot cover `extra_budget`, or the sponsor wallet cannot cover the template budget, the handler MUST return **402**. Nothing is created. Sponsor exhaustion is an operator matter (top up by a ledgered grant); it MUST NOT fall back to minting.
 4. Git initial-file commits happen **after** the commit, are idempotent, and are retried from the outbox (R2.7). Until R2.7 lands they run after commit; a failure marks the workspace `provisioning_incomplete = true` and is visible in the response.
 5. Auto-hire MUST go through the same authorisation function as `hire_agent_handler`. That means visibility via `fermi_auth::visibility`, and `draft` agents only for their owner. Unauthorised entries are reported in `provisioned.skipped[]`, not inserted.
 6. Seeded Apps (`seed_apps_to_database`) MUST pass `abw_apps_core::validate_slug`. The `fermi_forecast` reserved-slug conflict MUST be resolved: either remove the slug from `RESERVED_SLUGS` with a recorded reason, or rename the App.
 
-**Done when** `tests/claims/app_spawn_funding.rs` proves all four of:
-- spawning with a balance of 0 returns 402 and creates no team row;
-- a successful spawn debits the caller by exactly the deposited amount (`Σ` over both ledgers is 0);
+**Done when** `tests/claims/app_spawn_funding.rs` proves all of:
+- a zero-balance caller requesting `extra_budget > 0` gets 402 and no team row; an empty sponsor wallet gets 402 and no team row;
+- a successful spawn moves exactly `initial_budget` from the sponsor and `extra_budget` from the caller (`Σ ledger` over the wallets involved unchanged by the spawn), and granted credits stay granted;
 - `extra_budget = 10^9` returns 422;
-- another user's draft agent in `auto_hire_override` is skipped.
+- another user's draft agent in `auto_hire_override` is skipped;
+- the new workspace's owner has the owner role's default capabilities;
+
+and `tests/claims/deployed.rs` fails against the pre-fix deployment and passes after deploy.
+
+Item 6 (seeded-App slug validation) is tracked separately; #37 stays open until it lands.
 
 ### R0.2: A2A task reads are tenant-scoped (G02)
 

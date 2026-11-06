@@ -2,17 +2,20 @@
 //!
 //! Integer-based credit system.
 //!
-//! Every wallet mutation is a `*_tx` function that writes the wallet row and its
-//! `credit_ledger` row on one connection inside one transaction [V: `charge_tx`,
-//! `credit_tx`, `insert_ledger_tx` below]; the pool-taking functions only open
-//! and commit that transaction. `wallets.balance` is canonical and the ledger's
-//! `balance_after` is a copy — nothing yet recomputes balance from the ledger,
-//! and the ledger is append-only by convention only (no trigger) [V: migration
-//! 012]. Both become ledger-derived in directive Phase 3 (SPEC 36 R1.2).
+//! Every wallet mutation is a `*_tx` function in this file (`debit_tx`,
+//! `credit_tx`, `transfer_tx`) that writes the wallet row and its
+//! `credit_ledger` row (`insert_ledger_tx`) on one connection inside one
+//! transaction; the pool-taking functions (`charge`, `deposit`, `grant`, …)
+//! only open and commit that transaction via `in_tx` [V]. `wallets.balance` is
+//! canonical and `credit_ledger.balance_after` is a copy: nothing recomputes
+//! balance from the ledger, and the ledger has no immutability trigger
+//! [V: migrations/012_credit_ledger.sql]. Both become ledger-derived in
+//! directive Phase 3 (SPEC 36 R1.2).
 //!
-//! Balance split: `granted_balance` (non-transferable) + `purchased_balance` (transferable).
-//! Grants (signup, admin) go to granted. Deposits/revenue go to purchased.
-//! Charges spend granted first. Transfers require purchased balance.
+//! Balance split: `granted_balance` (non-transferable) + `purchased_balance`
+//! (transferable). Grants go to granted; deposits and revenue go to purchased.
+//! Charges spend granted first. `transfer_tx` carries the split across, so a
+//! transfer never converts granted credits into transferable ones.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -162,8 +165,8 @@ pub async fn get_or_create_wallet(
 /// This replaces the claim "No BEGIN/COMMIT - PgBouncer transaction mode
 /// handles this", which was false: a transaction-mode pooler pins a server
 /// connection for an *explicit* transaction; it does not merge two autocommit
-/// statements into one [V: the previous `charge` issued UPDATE then INSERT on
-/// `pool` with no `begin()`].
+/// statements into one [V: fermi-auth/src/credits.rs:227-295 @ a3cea516 issued
+/// the wallet UPDATE and the ledger INSERT on `pool` with no `begin()`].
 async fn in_tx<T, F>(pool: &PgPool, f: F) -> Result<T, AuthError>
 where
     F: for<'c> FnOnce(
@@ -307,12 +310,39 @@ pub async fn charge_tx(
     related_id: Option<&str>,
     transferable_only: bool,
 ) -> Result<CreditTransaction, AuthError> {
+    debit_tx(
+        conn,
+        wallet_id,
+        amount,
+        tx_type,
+        description,
+        related_id,
+        transferable_only,
+    )
+    .await
+    .map(|(t, _)| t)
+}
+
+/// [`charge_tx`], also returning how much of `amount` came from
+/// `granted_balance` — so [`transfer_tx`] can credit that part as granted.
+async fn debit_tx(
+    conn: &mut sqlx::PgConnection,
+    wallet_id: Uuid,
+    amount: i32,
+    tx_type: &str,
+    description: &str,
+    related_id: Option<&str>,
+    transferable_only: bool,
+) -> Result<(CreditTransaction, i32), AuthError> {
     if amount <= 0 {
         return Err(AuthError::InvalidInput(
             "Charge amount must be positive".into(),
         ));
     }
-    // One statement for both modes, so the debit rule exists once.
+    // One statement for both modes, so the debit rule exists once. SET
+    // expressions read the pre-update row and RETURNING reads the new one, so
+    // the granted portion spent is `granted_before - granted_after`, with
+    // `granted_before` read under the row lock taken just below.
     let sql = "UPDATE wallets
          SET balance = balance - $1,
              total_spent = total_spent + $1,
@@ -322,7 +352,16 @@ pub async fn charge_tx(
                  - CASE WHEN $3 THEN $1 ELSE $1 - LEAST(granted_balance, $1) END
          WHERE wallet_id = $2
            AND CASE WHEN $3 THEN purchased_balance >= $1 ELSE balance >= $1 END
-         RETURNING balance";
+         RETURNING balance, granted_balance";
+    let before_granted: Option<i32> =
+        sqlx::query_scalar("SELECT granted_balance FROM wallets WHERE wallet_id = $1 FOR UPDATE")
+            .bind(wallet_id)
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(|e| AuthError::Internal(format!("Wallet lock failed: {}", e)))?;
+    let Some(before_granted) = before_granted else {
+        return Err(AuthError::NotFound(format!("wallet {wallet_id}")));
+    };
     let row = sqlx::query(sql)
         .bind(amount)
         .bind(wallet_id)
@@ -331,24 +370,20 @@ pub async fn charge_tx(
         .await
         .map_err(|e| AuthError::Internal(format!("Wallet update failed: {}", e)))?;
     let Some(row) = row else {
-        let have: Option<i32> = sqlx::query_scalar(if transferable_only {
+        let have: i32 = sqlx::query_scalar(if transferable_only {
             "SELECT purchased_balance FROM wallets WHERE wallet_id = $1"
         } else {
             "SELECT balance FROM wallets WHERE wallet_id = $1"
         })
         .bind(wallet_id)
-        .fetch_optional(&mut *conn)
+        .fetch_one(&mut *conn)
         .await
         .map_err(|e| AuthError::Internal(format!("Failed to check balance: {}", e)))?;
-        return Err(AuthError::InsufficientCredits {
-            have: have.unwrap_or(0),
-            need: amount,
-        });
+        return Err(AuthError::InsufficientCredits { have, need: amount });
     };
-    let new_balance: i32 = row
-        .try_get("balance")
-        .map_err(|e| AuthError::Internal(format!("Failed to get balance: {}", e)))?;
-    insert_ledger_tx(
+    let new_balance: i32 = row.try_get("balance").map_err(decode)?;
+    let after_granted: i32 = row.try_get("granted_balance").map_err(decode)?;
+    let t = insert_ledger_tx(
         conn,
         wallet_id,
         -amount,
@@ -357,7 +392,8 @@ pub async fn charge_tx(
         description,
         related_id,
     )
-    .await
+    .await?;
+    Ok((t, before_granted - after_granted))
 }
 
 /// Credit `amount` to `wallet_id`'s purchased balance inside the caller's transaction.
@@ -369,16 +405,7 @@ pub async fn deposit_tx(
     description: &str,
     related_id: Option<&str>,
 ) -> Result<CreditTransaction, AuthError> {
-    credit_tx(
-        conn,
-        wallet_id,
-        amount,
-        false,
-        tx_type,
-        description,
-        related_id,
-    )
-    .await
+    credit_tx(conn, wallet_id, amount, 0, tx_type, description, related_id).await
 }
 
 /// Credit `amount` to `wallet_id`'s granted (non-transferable) balance.
@@ -388,14 +415,21 @@ pub async fn grant_tx(
     amount: i32,
     description: &str,
 ) -> Result<CreditTransaction, AuthError> {
-    credit_tx(conn, wallet_id, amount, true, "grant", description, None).await
+    if amount <= 0 {
+        return Err(AuthError::InvalidInput(
+            "Grant amount must be positive".into(),
+        ));
+    }
+    credit_tx(conn, wallet_id, amount, amount, "grant", description, None).await
 }
 
+/// Credit `amount`, of which `granted_part` goes to `granted_balance` and the
+/// rest to `purchased_balance`. The single credit statement in this crate.
 async fn credit_tx(
     conn: &mut sqlx::PgConnection,
     wallet_id: Uuid,
     amount: i32,
-    granted: bool,
+    granted_part: i32,
     tx_type: &str,
     description: &str,
     related_id: Option<&str>,
@@ -405,25 +439,28 @@ async fn credit_tx(
             "Deposit amount must be positive".into(),
         ));
     }
+    if !(0..=amount).contains(&granted_part) {
+        return Err(AuthError::Internal(format!(
+            "granted_part {granted_part} outside 0..={amount}"
+        )));
+    }
     let row = sqlx::query(
         "UPDATE wallets
          SET balance = balance + $1,
-             granted_balance = granted_balance + CASE WHEN $3 THEN $1 ELSE 0 END,
-             purchased_balance = purchased_balance + CASE WHEN $3 THEN 0 ELSE $1 END,
+             granted_balance = granted_balance + $3,
+             purchased_balance = purchased_balance + ($1 - $3),
              total_deposited = total_deposited + $1
          WHERE wallet_id = $2
          RETURNING balance",
     )
     .bind(amount)
     .bind(wallet_id)
-    .bind(granted)
+    .bind(granted_part)
     .fetch_optional(&mut *conn)
     .await
     .map_err(|e| AuthError::Internal(format!("Wallet update failed: {}", e)))?
     .ok_or_else(|| AuthError::NotFound(format!("wallet {wallet_id}")))?;
-    let new_balance: i32 = row
-        .try_get("balance")
-        .map_err(|e| AuthError::Internal(format!("Failed to get balance: {}", e)))?;
+    let new_balance: i32 = row.try_get("balance").map_err(decode)?;
     insert_ledger_tx(
         conn,
         wallet_id,
@@ -438,9 +475,14 @@ async fn credit_tx(
 
 /// Move `amount` from one wallet to another inside the caller's transaction.
 ///
-/// Both wallet rows are locked in UUID order first, so two concurrent
-/// transfers in opposite directions cannot deadlock. Writes a `transfer_out`
-/// and a `transfer_in` ledger row sharing `related_id`; the pair sums to zero.
+/// Both wallet rows are locked first (`ORDER BY wallet_id`, so two concurrent
+/// transfers in opposite directions take the locks in the same order and
+/// cannot deadlock). Writes a `transfer_out` and a `transfer_in` ledger row
+/// sharing `related_id`; the pair sums to zero.
+///
+/// The split is preserved: whatever part of the debit came from the source's
+/// `granted_balance` is credited to the target's `granted_balance`, so a
+/// transfer can never turn non-transferable credits into transferable ones.
 pub async fn transfer_tx(
     conn: &mut sqlx::PgConnection,
     from: Uuid,
@@ -455,15 +497,18 @@ pub async fn transfer_tx(
             "Cannot transfer to the same wallet".into(),
         ));
     }
-    let (a, b) = if from < to { (from, to) } else { (to, from) };
-    sqlx::query(
+    let locked: Vec<Uuid> = sqlx::query_scalar(
         "SELECT wallet_id FROM wallets WHERE wallet_id = ANY($1) ORDER BY wallet_id FOR UPDATE",
     )
-    .bind(vec![a, b])
+    .bind(vec![from, to])
     .fetch_all(&mut *conn)
     .await
     .map_err(|e| AuthError::Internal(format!("Wallet lock failed: {}", e)))?;
-    let out = charge_tx(
+    if locked.len() != 2 {
+        let missing = if locked.contains(&from) { to } else { from };
+        return Err(AuthError::NotFound(format!("wallet {missing}")));
+    }
+    let (out, granted_part) = debit_tx(
         conn,
         from,
         amount,
@@ -473,7 +518,18 @@ pub async fn transfer_tx(
         transferable_only,
     )
     .await?;
-    let inn = deposit_tx(conn, to, amount, "transfer_in", description, related_id).await?;
+    // The ledger row records the whole amount once (`transfer_in`), so the
+    // pair still sums to zero; the bucket split follows the debit.
+    let inn = credit_tx(
+        conn,
+        to,
+        amount,
+        granted_part,
+        "transfer_in",
+        description,
+        related_id,
+    )
+    .await?;
     Ok((out, inn))
 }
 
@@ -505,22 +561,48 @@ async fn insert_ledger_tx(
 
 /// Get-or-create a wallet inside the caller's transaction, **without** the
 /// onboarding grant. For workspace and agent wallets created as part of a
-/// larger unit of work.
+/// larger unit of work. Refuses an existing wallet of a different
+/// `owner_type` (owner ids are globally unique across types).
 pub async fn ensure_wallet_tx(
     conn: &mut sqlx::PgConnection,
     owner_type: &str,
     owner_id: &str,
 ) -> Result<Uuid, AuthError> {
-    sqlx::query_scalar(
+    let inserted: Option<Uuid> = sqlx::query_scalar(
         "INSERT INTO wallets (owner_type, owner_id) VALUES ($1, $2)
-         ON CONFLICT (owner_id) DO UPDATE SET owner_id = EXCLUDED.owner_id
+         ON CONFLICT (owner_id) DO NOTHING
          RETURNING wallet_id",
     )
     .bind(owner_type)
     .bind(owner_id)
-    .fetch_one(&mut *conn)
+    .fetch_optional(&mut *conn)
     .await
-    .map_err(|e| AuthError::Internal(format!("Failed to ensure wallet: {}", e)))
+    .map_err(|e| AuthError::Internal(format!("Failed to ensure wallet: {}", e)))?;
+    if let Some(w) = inserted {
+        return Ok(w);
+    }
+    wallet_id_tx(conn, owner_type, owner_id)
+        .await?
+        .ok_or_else(|| {
+            AuthError::Internal(format!(
+                "wallet owner_id {owner_id} exists with an owner_type other than {owner_type}"
+            ))
+        })
+}
+
+/// The wallet for `(owner_type, owner_id)`, if any — typed, so a user id can
+/// never resolve to a platform or workspace wallet.
+pub async fn wallet_id_tx(
+    conn: &mut sqlx::PgConnection,
+    owner_type: &str,
+    owner_id: &str,
+) -> Result<Option<Uuid>, AuthError> {
+    sqlx::query_scalar("SELECT wallet_id FROM wallets WHERE owner_type = $1 AND owner_id = $2")
+        .bind(owner_type)
+        .bind(owner_id)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(|e| AuthError::Internal(format!("wallet lookup failed: {}", e)))
 }
 
 /// Get wallet balance

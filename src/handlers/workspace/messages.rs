@@ -1419,13 +1419,19 @@ pub async fn hire_agent_handler(
         ));
     }
 
-    // Agent must be public OR be a curated/system-tier agent. Curated
-    // agents are platform-blessed and hireable by anyone regardless of
-    // the visibility column (which historically defaults to 'private').
-    let curated_or_system = agent.tier == "curated" || agent.tier == "system";
-    if agent.visibility != "public" && !curated_or_system {
-        return Err((StatusCode::FORBIDDEN, "Agent is not public".to_string()));
-    }
+    // One rule for every path that places an agent in a workspace
+    // (fermi::apps::hire_policy). Curated/system agents are hireable regardless
+    // of the visibility column; drafts only by their owner; never archived.
+    fermi::apps::hire_policy::may_place(
+        &fermi::apps::hire_policy::AgentFacts {
+            owner_id: agent.owner_id.as_deref(),
+            visibility: Some(agent.visibility.as_str()),
+            tier: &agent.tier,
+            status: &agent.status,
+        },
+        &user_id,
+    )
+    .map_err(|r| (StatusCode::FORBIDDEN, format!("Agent cannot be hired: {}", r.reason())))?;
 
     // Check if agent is already in workspace
     let already =
