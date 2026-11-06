@@ -159,8 +159,10 @@ pub async fn agent_card_handler(
 /// or `a2a:invoke:<slug>`.
 ///
 /// Blocking (default): runs the agent, returns a COMPLETED Task.
-/// Non-blocking (`returnImmediately: true`): reserves an episode, returns
-/// a SUBMITTED Task, caller polls via `GET /a2a/:slug/tasks/:episode_id`.
+/// Non-blocking (`returnImmediately: true`): reserves an episode and returns
+/// a SUBMITTED Task. [V] The agent does not run on this path (G25), and the
+/// reservation carries no `source_ref`, so polling it returns 404 until the
+/// non-blocking path is built.
 /// Dispatch `POST /a2a/:slug/:method` to the right handler.
 ///
 /// ## Why this exists rather than two routes
@@ -322,9 +324,9 @@ pub async fn send_message_handler(
     let pulse = episode_boundary::Pulse::open(&state.memory_store, db_agent.agent_id, &query).await;
     let episode_id = pulse.episode_id;
 
-    // Non-blocking mode: return immediately with SUBMITTED Task.
-    // The caller must poll GET /a2a/:slug/tasks/:episode_id.
-    // (The agent will NOT run — this is a future Phase 2B feature.)
+    // Non-blocking mode: return immediately with a SUBMITTED Task. [V] The
+    // agent does NOT run here (G25), and the reserved row has no source_ref,
+    // so the task poll answers 404 for it.
     if req.configuration.return_immediately {
         return Ok(Json(fermi::a2a_task::submitted_task(
             episode_id, &caller_id,
@@ -652,6 +654,21 @@ pub async fn get_task_handler(
                     fermi::a2a_task::failed_task(episode_id, &caller_id, "Execution failed")
                 }
             };
+            // SPEC 36 R0.2.3 (interim until stored artifacts, R3.3): the
+            // document above was enforced NOW, against the agent's current
+            // contract, not the one in force when the task ran. Say so.
+            let mut task = task;
+            if let Some(t) = task.get_mut("task").and_then(|t| t.as_object_mut()) {
+                t.insert(
+                    "metadata".into(),
+                    json!({
+                        "enforced_at": "read_time",
+                        "contract_version_applied": db_agent
+                            .as_ref()
+                            .map(|a| a.persona_version),
+                    }),
+                );
+            }
             Ok(Json(task))
         }
         Err(_) => Err(task_not_found(&episode_id_str)),
@@ -669,7 +686,8 @@ fn task_not_found(id: &str) -> (StatusCode, Json<Value>) {
     )
 }
 
-/// [`fermi::a2a_task::task_belongs_to`], with the A2A error shape.
+/// [`fermi::a2a_task::task_belongs_to`], with the A2A error shape. Database
+/// detail is logged, never returned to the external client.
 async fn task_belongs_to(
     state: &AppState,
     episode_id: Uuid,
@@ -677,28 +695,16 @@ async fn task_belongs_to(
     caller_id: &str,
 ) -> Result<bool, (StatusCode, Json<Value>)> {
     let err = |e: sqlx::Error| {
+        tracing::error!(error = %e, task = %episode_id, "a2a task ownership lookup failed");
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(a2a_error_body(
-                500,
-                &format!("task lookup failed: {e}"),
-                "INTERNAL_ERROR",
-            )),
+            Json(a2a_error_body(500, "task lookup failed", "INTERNAL_ERROR")),
         )
     };
     let mut conn = state.db.acquire().await.map_err(err)?;
     fermi::a2a_task::task_belongs_to(&mut conn, episode_id, slug, caller_id)
         .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(a2a_error_body(
-                    500,
-                    &format!("task lookup failed: {e}"),
-                    "INTERNAL_ERROR",
-                )),
-            )
-        })
+        .map_err(err)
 }
 
 // ─── Phase 3: SSE streaming ─────────────────────────────────────────────────
@@ -856,8 +862,9 @@ pub async fn stream_message_handler(
         let start = Instant::now();
 
         // ── A2A event 1: Task WORKING ─────────────────────────────────
-        // Signals that execution has started. The caller can use the task id
-        // to subscribe or poll even if the connection drops.
+        // Signals that execution has started. [V] The task becomes pollable
+        // only after it completes (`close` writes the source_ref the poll
+        // authorises against); a dropped connection cannot poll it mid-run.
         yield Ok(Event::default().data(
             json!({
                 "task": {
@@ -1420,11 +1427,12 @@ pub async fn get_push_config_handler(
     let row = sqlx::query(
         "SELECT config_id, webhook_url, auth_scheme, token, created_at, delivered_at, delivery_attempts
          FROM a2a_push_configs
-         WHERE config_id = $1 AND task_id = $2 AND caller_user_id = $3",
+         WHERE config_id = $1 AND task_id = $2 AND caller_user_id = $3 AND agent_slug = $4",
     )
     .bind(config_id)
     .bind(task_id)
     .bind(&api_key.user_id)
+    .bind(&slug)
     .fetch_optional(&state.db)
     .await
     .map_err(|e| (
@@ -1479,12 +1487,13 @@ pub async fn delete_push_config_handler(
 
     let deleted = sqlx::query(
         "DELETE FROM a2a_push_configs
-         WHERE config_id = $1 AND task_id = $2 AND caller_user_id = $3
+         WHERE config_id = $1 AND task_id = $2 AND caller_user_id = $3 AND agent_slug = $4
          RETURNING config_id",
     )
     .bind(config_id)
     .bind(task_id)
     .bind(&api_key.user_id)
+    .bind(&slug)
     .fetch_optional(&state.db)
     .await
     .map_err(|e| {

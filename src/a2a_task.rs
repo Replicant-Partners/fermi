@@ -294,16 +294,20 @@ mod tests {
     }
 }
 
-/// The `episodes.source_ref.kind` values an A2A task episode carries. Both
-/// write paths in `src/handlers/a2a.rs` also set `agent_slug` and
-/// `caller_user_id`.
+/// The `episodes.source_ref.kind` values an A2A task episode carries.
+/// Written by `send_message_handler` and `stream_message_handler`
+/// (src/handlers/a2a.rs, the `source_ref` built before `episode_boundary::close`),
+/// each with `agent_slug` and `caller_user_id`. `artifact_trace` maps the same
+/// kinds to routes and must stay in step (its test enumerates them).
 pub const A2A_SOURCE_KINDS: &[&str] = &["a2a_handler", "a2a_stream_handler"];
 
 /// Does `episode_id` belong to `caller_id`, under the agent named `slug`?
 /// (SPEC 36 R0.2 / G02.)
 ///
-/// Authorises against `episodes.source_ref`, written in the same transaction
-/// as the episode row by `episode_boundary::close`. The agent is matched by the
+/// Authorises against `episodes.source_ref`, which `episode_boundary::close`
+/// writes in the episode's own transaction
+/// (agent-bestiary/memory/src/store.rs, `store_episode_inner`: `begin()`, then
+/// the upsert setting `source_ref = EXCLUDED.source_ref`). The agent is matched by the
 /// episode's `agent_id`, so naming a different slug the key has scope for does
 /// not reach the task. A reservation (`running`, no `source_ref`) is not yet a
 /// readable task.
