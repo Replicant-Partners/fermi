@@ -676,7 +676,18 @@ async fn task_belongs_to(
     slug: &str,
     caller_id: &str,
 ) -> Result<bool, (StatusCode, Json<Value>)> {
-    fermi::a2a_task::task_belongs_to(&state.db, episode_id, slug, caller_id)
+    let err = |e: sqlx::Error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(a2a_error_body(
+                500,
+                &format!("task lookup failed: {e}"),
+                "INTERNAL_ERROR",
+            )),
+        )
+    };
+    let mut conn = state.db.acquire().await.map_err(err)?;
+    fermi::a2a_task::task_belongs_to(&mut conn, episode_id, slug, caller_id)
         .await
         .map_err(|e| {
             (

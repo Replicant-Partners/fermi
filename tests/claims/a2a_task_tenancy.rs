@@ -112,44 +112,64 @@ async fn deployed_a2a_task_is_invisible_to_other_users() {
 }
 
 /// `task_belongs_to` against the DB: owner yes; other user no; right owner but
-/// wrong slug no; non-A2A episode no.
+/// wrong slug no; non-A2A episode no. Runs in a rolled-back transaction.
 #[tokio::test]
 async fn task_ownership_rule() {
     let Some(pool) = support::pool().await else {
         return;
     };
-    support::with_cleanup(&pool, |pool, c| async move {
-        let (agent, slug) = public_agent(&pool, &mut *c.lock().await).await;
-        let (_other_agent, other_slug) = public_agent(&pool, &mut *c.lock().await).await;
-        let owner = support::make_user(&pool, &mut *c.lock().await).await;
-        let ep = a2a_episode(&pool, agent, &owner, "a2a_stream_handler").await;
-        let not_a2a = a2a_episode(&pool, agent, &owner, "execute_handler").await;
+    let mut tx = pool.begin().await.unwrap();
+    let agent_sql =
+        "INSERT INTO agents (agent_name, agent_type, version, tier, executor_type, model,
+                                         temperature, author, status, visibility)
+                     VALUES ($1, 'research', '1.0.0', 'curated', 'llm', 'test', 0.5, 'spec36',
+                             'published', 'public')
+                     RETURNING agent_id";
+    let slug = support::tag("a2a_agent");
+    let other_slug = support::tag("a2a_agent");
+    let agent: uuid::Uuid = sqlx::query_scalar(agent_sql)
+        .bind(&slug)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query_scalar::<_, uuid::Uuid>(agent_sql)
+        .bind(&other_slug)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    let owner = support::tag("user");
+    let ep_sql = "INSERT INTO episodes (agent_id, timestamp_ref, query, context, execution_status,
+                                        execution_time_ms, source_ref)
+                  VALUES ($1, now(), 'spec36 a2a tenancy probe', '{}'::jsonb, 'success', 1, $2)
+                  RETURNING episode_id";
+    let ep: uuid::Uuid = sqlx::query_scalar(ep_sql)
+        .bind(agent)
+        .bind(serde_json::json!({"kind": "a2a_stream_handler", "caller_user_id": owner}))
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    let not_a2a: uuid::Uuid = sqlx::query_scalar(ep_sql)
+        .bind(agent)
+        .bind(serde_json::json!({"kind": "execute_handler", "caller_user_id": owner}))
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
 
-        let q = |e: uuid::Uuid, s: String, u: String| {
-            let pool = pool.clone();
-            async move {
-                fermi::a2a_task::task_belongs_to(&pool, e, &s, &u)
-                    .await
-                    .unwrap()
-            }
-        };
-        let owned = q(ep, slug.clone(), owner.clone()).await;
-        let other_user = q(ep, slug.clone(), "someone_else".into()).await;
-        let wrong_slug = q(ep, other_slug, owner.clone()).await;
-        let non_a2a = q(not_a2a, slug, owner).await;
-        sqlx::query("DELETE FROM episodes WHERE episode_id = ANY($1)")
-            .bind(vec![ep, not_a2a])
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        assert!(owned, "owner must see their task");
-        assert!(!other_user, "another user must not");
-        assert!(
-            !wrong_slug,
-            "the slug in the path must be the agent that ran it"
-        );
-        assert!(!non_a2a, "only A2A episodes are A2A tasks");
-    })
-    .await;
+    use fermi::a2a_task::task_belongs_to as owns;
+    assert!(
+        owns(&mut tx, ep, &slug, &owner).await.unwrap(),
+        "owner must see their task"
+    );
+    assert!(
+        !owns(&mut tx, ep, &slug, "someone_else").await.unwrap(),
+        "another user must not"
+    );
+    assert!(
+        !owns(&mut tx, ep, &other_slug, &owner).await.unwrap(),
+        "path slug must be the agent that ran it"
+    );
+    assert!(
+        !owns(&mut tx, not_a2a, &slug, &owner).await.unwrap(),
+        "only A2A episodes are A2A tasks"
+    );
 }

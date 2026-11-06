@@ -308,7 +308,7 @@ pub const A2A_SOURCE_KINDS: &[&str] = &["a2a_handler", "a2a_stream_handler"];
 /// not reach the task. A reservation (`running`, no `source_ref`) is not yet a
 /// readable task.
 pub async fn task_belongs_to(
-    pool: &sqlx::PgPool,
+    conn: &mut sqlx::PgConnection,
     episode_id: Uuid,
     slug: &str,
     caller_id: &str,
@@ -326,6 +326,6 @@ pub async fn task_belongs_to(
     .bind(slug)
     .bind(A2A_SOURCE_KINDS)
     .bind(caller_id)
-    .fetch_one(pool)
+    .fetch_one(&mut *conn)
     .await
 }
