@@ -123,19 +123,19 @@ These are small, independent changes. Each one is a single PR with its regressio
 **Required behaviour:**
 
 1. `extra_budget` MUST be within `0..=APP_SPAWN_MAX_EXTRA_BUDGET`. The env default is `1000`; out-of-range requests get 422.
-2. *(Amended 2026-11-06, owner decision option (c).)* Every credit the workspace receives MUST be a transfer: the template `initial_budget` from the platform sponsor wallet `platform:app_sponsorship` (migration 244), and `extra_budget` from the caller. Transfers preserve the granted/purchased split. That one transaction also covers:
+2. *(Amended 2026-11-06, owner decision: option (c) with a quota.)* Every credit the workspace receives MUST be a transfer. The template `initial_budget` comes from the platform sponsor wallet `platform:app_sponsorship` (migration 244) while the caller has had fewer than `APP_SPONSORED_SPAWNS_PER_30D` (default 3) sponsored spawns in 30 days **and** the sponsor can cover it; otherwise from the caller. `extra_budget` always comes from the caller. Transfers preserve the granted/purchased split. That one transaction also covers:
    - `create_team`;
    - `UPDATE teams SET workspace_budget`;
    - `workspace_dependencies`;
    - the `workspace_outputs.params` row.
-3. If the caller cannot cover `extra_budget`, or the sponsor wallet cannot cover the template budget, the handler MUST return **402**. Nothing is created. Sponsor exhaustion is an operator matter (top up by a ledgered grant); it MUST NOT fall back to minting.
+3. If the caller must pay and cannot, the handler MUST return **402**. Nothing is created. A sponsor shortfall falls back to the caller; it MUST NOT fall back to minting. The quota is counted from the sponsor's own `transfer_out` ledger rows under the sponsor row lock, so it needs no separate counter and cannot be raced.
 4. Git initial-file commits happen **after** the commit. A failure is reported in the response (`provisioned.files_failed[]`, `provisioning_incomplete: true`). *Open:* persisting the flag on the workspace, and retrying, belong to the ledger outbox (directive Phase 1); until then the response is the only record.
 5. Auto-hire MUST go through the same authorisation function as `hire_agent_handler`: `fermi::apps::hire_policy::may_place` (never archived; drafts only for their owner; otherwise public, curated/system, or owned). Unauthorised entries are reported in `provisioned.skipped[]`, not inserted.
-5b. *Open (owner decision needed):* a per-caller sponsorship quota. Without one, a caller can repeatedly spawn with `extra_budget = 0` and drain the sponsor wallet (batch spawn: up to 200 per request). Exhaustion yields 402 for everyone, never minting.
-6. Seeded Apps (`seed_apps_to_database`) MUST pass `abw_apps_core::validate_slug`. The `fermi_forecast` reserved-slug conflict MUST be resolved: either remove the slug from `RESERVED_SLUGS` with a recorded reason, or rename the App.
+6. Seeded Apps (`seed_apps_to_database`) MUST pass `abw_apps_core::validate_seeded_slug`: the normal slug rules, except that a seed may claim an origin in `PLATFORM_APP_RESERVED_SLUGS` (`fermi_forecast` — 137 workspaces on dev already carry that origin, so renaming the App would orphan them). User-created Apps may never claim a reserved slug.
 
 **Done when** `tests/claims/app_spawn_funding.rs` proves all of:
-- a zero-balance caller requesting `extra_budget > 0` gets 402 and no team row; an empty sponsor wallet gets 402 and no team row;
+- a zero-balance caller requesting `extra_budget > 0` gets 402 and no team row; with an empty sponsor the caller pays the template, and if the caller cannot either, 402 and no team row;
+- the caller's 4th spawn in 30 days is caller-paid (quota 3);
 - a successful spawn moves exactly `initial_budget` from the sponsor and `extra_budget` from the caller (`Σ ledger` over the wallets involved unchanged by the spawn), and granted credits stay granted;
 - `extra_budget = 10^9` returns 422;
 - another user's draft agent in `auto_hire_override` is skipped;
@@ -143,7 +143,7 @@ These are small, independent changes. Each one is a single PR with its regressio
 
 and `tests/claims/deployed.rs` fails against the pre-fix deployment and passes after deploy.
 
-Item 6 (seeded-App slug validation) is tracked separately; #37 stays open until it lands.
+and `abw-apps-core`'s `every_repo_app_manifest_slug_is_valid` passes for every manifest under `apps/`.
 
 ### R0.2: A2A task reads are tenant-scoped (G02)
 

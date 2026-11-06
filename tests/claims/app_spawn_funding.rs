@@ -92,18 +92,74 @@ async fn zero_balance_caller_asking_for_extra_gets_402_and_nothing_is_created() 
 }
 
 #[tokio::test]
-async fn empty_sponsor_wallet_gets_402_never_mints() {
+async fn empty_sponsor_falls_back_to_the_caller_and_never_mints() {
     let Some(pool) = support::pool().await else {
         return;
     };
     support::with_cleanup(&pool, |pool, c| async move {
+        // Sponsor empty, caller has 500: caller pays the template 100.
         let e = env(&pool, &c, 500, 0).await;
         let slug = support::tag("ws");
-        let err = provision_workspace(&pool, &plan(&e, &slug, 0, &[]))
+        let p = provision_workspace(&pool, &plan(&e, &slug, 0, &[]))
+            .await
+            .unwrap();
+        c.lock().await.teams.push(p.workspace_id);
+        assert_eq!(
+            support::balances(&pool, &e.user).await.0,
+            400,
+            "caller paid the template"
+        );
+        assert_eq!(support::balances(&pool, &e.sponsor).await.0, 0);
+
+        // Sponsor empty, caller empty: 402, nothing created.
+        let e2 = env(&pool, &c, 0, 0).await;
+        let slug2 = support::tag("ws");
+        let err = provision_workspace(&pool, &plan(&e2, &slug2, 0, &[]))
             .await
             .unwrap_err();
         assert_eq!(err.status(), 402, "{}", err.message());
-        assert!(!team_exists(&pool, &slug).await);
+        assert!(!team_exists(&pool, &slug2).await);
+    })
+    .await;
+}
+
+/// The per-caller quota (default 3 per 30 days): the 4th spawn is paid by the
+/// caller even though the sponsor could cover it.
+#[tokio::test]
+async fn sponsorship_quota_is_per_caller() {
+    let Some(pool) = support::pool().await else {
+        return;
+    };
+    support::with_cleanup(&pool, |pool, c| async move {
+        let quota = fermi::apps::provision::sponsored_spawn_quota();
+        let e = env(&pool, &c, 100, 100 * (quota as i32 + 2)).await;
+        for _ in 0..quota {
+            let slug = support::tag("ws");
+            let p = provision_workspace(&pool, &plan(&e, &slug, 0, &[]))
+                .await
+                .unwrap();
+            c.lock().await.teams.push(p.workspace_id);
+        }
+        assert_eq!(
+            support::balances(&pool, &e.user).await.0,
+            100,
+            "first {quota} were sponsored"
+        );
+        let slug = support::tag("ws");
+        let p = provision_workspace(&pool, &plan(&e, &slug, 0, &[]))
+            .await
+            .unwrap();
+        c.lock().await.teams.push(p.workspace_id);
+        assert_eq!(
+            support::balances(&pool, &e.user).await.0,
+            0,
+            "over quota: caller paid"
+        );
+        assert_eq!(
+            support::balances(&pool, &e.sponsor).await.0,
+            100 * 2,
+            "sponsor paid exactly {quota}"
+        );
     })
     .await;
 }

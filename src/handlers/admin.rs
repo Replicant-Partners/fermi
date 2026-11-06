@@ -2376,14 +2376,7 @@ fn sanitise_legacy_agent_name(input: &str) -> Option<String> {
     // become an agent name via rename. If the sanitised form
     // collides with one, return None and let the caller flag for
     // manual review.
-    const RESERVED: &[&str] = &[
-        "rabble_swarm",
-        "bestiary_workspace",
-        "personal_workspace",
-        "fermi_forecast",
-        "silat_workspace",
-    ];
-    if RESERVED.contains(&out.as_str()) {
+    if fermi::apps::builder::is_reserved(&out) {
         return None;
     }
     Some(out)

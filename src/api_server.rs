@@ -6235,6 +6235,12 @@ async fn seed_apps_to_database(db: &sqlx::PgPool) {
                 continue;
             }
         };
+        // SPEC 36 R0.1.6: seeded Apps obey the slug rules; only the
+        // allowlisted reserved origins may be claimed, and only by a seed.
+        if let Err(e) = abw_apps_core::validate_seeded_slug(&slug) {
+            eprintln!("Refusing to seed App {:?} ({:?}): {}", slug, path, e);
+            continue;
+        }
 
         let name = manifest["name"].as_str().unwrap_or(&slug).to_string();
         let tagline = manifest["tagline"].as_str().map(str::to_string);
