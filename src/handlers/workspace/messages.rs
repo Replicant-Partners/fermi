@@ -1419,13 +1419,26 @@ pub async fn hire_agent_handler(
         ));
     }
 
-    // Agent must be public OR be a curated/system-tier agent. Curated
-    // agents are platform-blessed and hireable by anyone regardless of
-    // the visibility column (which historically defaults to 'private').
-    let curated_or_system = agent.tier == "curated" || agent.tier == "system";
-    if agent.visibility != "public" && !curated_or_system {
-        return Err((StatusCode::FORBIDDEN, "Agent is not public".to_string()));
-    }
+    // The shared hire rule (fermi::apps::hire_policy), also applied to this
+    // handler's dependency auto-hire below, App spawn auto-hire
+    // (src/apps/provision.rs) and App sync-auto-hire (src/handlers/apps.rs).
+    // Curated/system agents are hireable regardless of the visibility column;
+    // drafts only by their owner; never archived.
+    fermi::apps::hire_policy::may_place(
+        &fermi::apps::hire_policy::AgentFacts {
+            owner_id: agent.owner_id.as_deref(),
+            visibility: Some(agent.visibility.as_str()),
+            tier: &agent.tier,
+            status: &agent.status,
+        },
+        &user_id,
+    )
+    .map_err(|r| {
+        (
+            StatusCode::FORBIDDEN,
+            format!("Agent cannot be hired: {}", r.reason()),
+        )
+    })?;
 
     // Check if agent is already in workspace
     let already =
@@ -1510,28 +1523,44 @@ pub async fn hire_agent_handler(
         dep_names.extend(deps.optional.clone());
     }
 
+    let mut deps_skipped: Vec<(String, &'static str)> = Vec::new();
     for dep_name in &dep_names {
-        // Resolve dep agent by name
         let dep_agent = match state.memory_store.get_agent_by_name(dep_name).await {
             Ok(a) => a,
-            Err(_) => continue, // Skip if not found in DB
+            Err(_) => {
+                deps_skipped.push((dep_name.clone(), "not_found"));
+                continue;
+            }
         };
-
-        // Check if already in workspace
-        let already =
-            sqlx::query("SELECT 1 FROM workspace_agents WHERE workspace_id = $1 AND agent_id = $2")
-                .bind(ws_uuid)
-                .bind(dep_agent.agent_id)
-                .fetch_optional(&state.db)
-                .await
-                .unwrap_or(None);
-
-        if already.is_some() {
-            continue; // Already hired
+        // Same rule as the primary hire (apps::hire_policy).
+        if let Err(r) = fermi::apps::hire_policy::may_place(
+            &fermi::apps::hire_policy::AgentFacts {
+                owner_id: dep_agent.owner_id.as_deref(),
+                visibility: Some(dep_agent.visibility.as_str()),
+                tier: &dep_agent.tier,
+                status: &dep_agent.status,
+            },
+            &user_id,
+        ) {
+            deps_skipped.push((dep_name.clone(), r.reason()));
+            continue;
         }
 
-        // Charge gas for dep hire
-        let _ = charge_workspace_gas(
+        let already: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM workspace_agents WHERE workspace_id = $1 AND agent_id = $2)",
+        )
+        .bind(ws_uuid)
+        .bind(dep_agent.agent_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        if already {
+            continue;
+        }
+
+        // Gas first: an unpaid dependency is not hired (was `let _ =`, so a
+        // failed charge still hired the agent for free).
+        if let Err((_, msg)) = charge_workspace_gas(
             &state.db,
             ws_uuid,
             &workspace_id,
@@ -1540,17 +1569,22 @@ pub async fn hire_agent_handler(
             &format!("Auto-hire dep {}", dep_name),
             None,
         )
-        .await;
+        .await
+        {
+            tracing::warn!(ws = %ws_uuid, dep = %dep_name, error = %msg, "dependency not hired: gas charge failed");
+            deps_skipped.push((dep_name.clone(), "gas_charge_failed"));
+            continue;
+        }
 
-        // Insert workspace_agents row
-        let _ = sqlx::query(
+        sqlx::query(
             "INSERT INTO workspace_agents (workspace_id, agent_id, added_by, relationship) VALUES ($1, $2, $3, 'hired') ON CONFLICT DO NOTHING",
         )
         .bind(ws_uuid)
         .bind(dep_agent.agent_id)
         .bind(&user_id)
         .execute(&state.db)
-        .await;
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
         deps_hired.push(dep_name.clone());
         deps_gas += state.gas_fees.agent_hire;
@@ -1584,15 +1618,22 @@ pub async fn hire_agent_handler(
                 "is_scaffold": true,
                 "generated_at": chrono::Utc::now().to_rfc3339(),
             });
-            let _ = sqlx::query(
+            // Reported as injected only if the write landed (was `let _ =`
+            // followed by an unconditional `true`).
+            match sqlx::query(
                 "UPDATE teams SET workflow_mermaid = $1, workflow_meta = $2 WHERE id = $3",
             )
             .bind(&tmpl.mermaid)
             .bind(&scaffold_meta)
             .bind(ws_uuid)
             .execute(&state.db)
-            .await;
-            scaffold_injected = true;
+            .await
+            {
+                Ok(_) => scaffold_injected = true,
+                Err(e) => {
+                    tracing::warn!(ws = %ws_uuid, error = %e, "workflow scaffold not injected")
+                }
+            }
         }
     }
 
@@ -1602,6 +1643,10 @@ pub async fn hire_agent_handler(
         "relationship": "hired",
         "gas_charged": state.gas_fees.agent_hire + deps_gas,
         "dependencies_hired": deps_hired,
+        "dependencies_skipped": deps_skipped
+            .iter()
+            .map(|(n, r)| json!({"agent": n, "reason": r}))
+            .collect::<Vec<_>>(),
         "scaffold_injected": scaffold_injected,
     })))
 }

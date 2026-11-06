@@ -26,7 +26,8 @@ use serde_json::{json, Value};
 //
 // These cannot be used as App slugs because existing workspaces already use
 // them as origin values. Kept in code, not the DB, so we can extend without
-// a migration. Mirrors `src/handlers/apps.rs::RESERVED_SLUGS`.
+// a migration. The single list: `src/handlers/apps.rs` and
+// `src/handlers/admin.rs` call `is_reserved` rather than copying it.
 
 pub const RESERVED_SLUGS: &[&str] = &[
     "bestiary_workspace",
@@ -38,6 +39,21 @@ pub const RESERVED_SLUGS: &[&str] = &[
 
 pub fn is_reserved(slug: &str) -> bool {
     RESERVED_SLUGS.contains(&slug)
+}
+
+/// Reserved origins that a **platform-seeded** App (repo `apps/`, owner `sys`)
+/// is the legitimate owner of. Existing workspaces already carry these
+/// origins, so the App that spawns them must use the same slug; renaming it
+/// would orphan them. User-created Apps may never claim one (SPEC 36 R0.1.6).
+pub const PLATFORM_APP_RESERVED_SLUGS: &[&str] = &["fermi_forecast"];
+
+/// Validate the slug of a platform-seeded App: the normal rules, except that
+/// the reserved origins in [`PLATFORM_APP_RESERVED_SLUGS`] are allowed.
+pub fn validate_seeded_slug(slug: &str) -> Result<(), String> {
+    if PLATFORM_APP_RESERVED_SLUGS.contains(&slug) {
+        return validate_slug_shape(slug);
+    }
+    validate_slug(slug)
 }
 
 // ─── Issue shape ─────────────────────────────────────────────────────────────
@@ -233,6 +249,17 @@ impl BuildResult {
 /// Mirrors the validation in `handlers::apps::create_app_handler`.
 /// Returns `Ok(())` if valid, `Err(message)` otherwise.
 pub fn validate_slug(slug: &str) -> Result<(), String> {
+    validate_slug_shape(slug)?;
+    if is_reserved(slug) {
+        return Err(format!(
+            "'{}' is a reserved platform origin tag and cannot be used as an App slug",
+            slug
+        ));
+    }
+    Ok(())
+}
+
+fn validate_slug_shape(slug: &str) -> Result<(), String> {
     if slug.is_empty() {
         return Err("slug is required".into());
     }
@@ -252,12 +279,6 @@ pub fn validate_slug(slug: &str) -> Result<(), String> {
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
     {
         return Err("slug must contain only lowercase letters, digits, and underscores".into());
-    }
-    if is_reserved(slug) {
-        return Err(format!(
-            "'{}' is a reserved platform origin tag and cannot be used as an App slug",
-            slug
-        ));
     }
     Ok(())
 }
@@ -784,5 +805,47 @@ mod tests {
             "kask_simops should validate clean: {:#?}",
             result.errors()
         );
+    }
+}
+
+#[cfg(test)]
+mod seeded_slug_tests {
+    use super::*;
+
+    #[test]
+    fn platform_apps_may_claim_their_reserved_origin_users_may_not() {
+        assert!(validate_slug("fermi_forecast").is_err());
+        assert!(validate_seeded_slug("fermi_forecast").is_ok());
+        assert!(
+            validate_seeded_slug("rabble_swarm").is_err(),
+            "only allowlisted origins"
+        );
+        assert!(validate_seeded_slug("Bad-Slug").is_err());
+        assert!(validate_seeded_slug("kask_simops").is_ok());
+    }
+
+    /// Every seeded manifest in the repo passes the seeded rule.
+    #[test]
+    fn every_repo_app_manifest_slug_is_valid() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps");
+        let mut seen = 0;
+        let mut stack = vec![root];
+        while let Some(d) = stack.pop() {
+            for e in std::fs::read_dir(&d).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.extension().and_then(|x| x.to_str()) == Some("json") {
+                    let v: serde_json::Value =
+                        serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+                    if let Some(slug) = v.get("slug").and_then(|s| s.as_str()) {
+                        validate_seeded_slug(slug)
+                            .unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+                        seen += 1;
+                    }
+                }
+            }
+        }
+        assert!(seen >= 4, "found {seen} manifests");
     }
 }

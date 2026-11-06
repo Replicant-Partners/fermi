@@ -181,6 +181,11 @@ async-stripe = { version = "0.41", features = ["runtime-tokio-hyper-rustls", "ch
 # For testing
 criterion = "0.5"
 
+# SPEC 36 claim tests — one directory, one binary; see tests/claims/main.rs.
+[[test]]
+name = "claims"
+path = "tests/claims/main.rs"
+
 [[bin]]
 name = "fermi"
 path = "src/main.rs"

@@ -1460,6 +1460,9 @@ async fn run_migrations(db: &PgPool) {
         // 243 — `dpp_publications` and its release history: a product passport
         // released, as a snapshot, to readers with no ABW account.
         "migrations/243_dpp_publications.sql",
+        // 244 — platform sponsor wallet for App template budgets (SPEC 36
+        // R0.1 / G01): spawn transfers from it instead of minting credits.
+        "migrations/244_platform_sponsor_wallet.sql",
     ];
 
     // Bootstrap the ledger before anything is recorded into it.
@@ -2759,8 +2762,14 @@ async fn main() {
         // A released product passport, readable with no ABW account. Only
         // what an admin explicitly published, as a frozen snapshot; see
         // handlers::workspace::dpp_publish for the allowlist.
-        .route("/dpp/:token", get(handlers::workspace::dpp_publish::public_dpp_redirect))
-        .route("/api/dpp/p/:token", get(handlers::workspace::dpp_publish::public_dpp_handler))
+        .route(
+            "/dpp/:token",
+            get(handlers::workspace::dpp_publish::public_dpp_redirect),
+        )
+        .route(
+            "/api/dpp/p/:token",
+            get(handlers::workspace::dpp_publish::public_dpp_handler),
+        )
         .route(
             "/api/dpp/p/:token/qr",
             get(handlers::workspace::dpp_publish::public_dpp_qr_handler),
@@ -6232,6 +6241,15 @@ async fn seed_apps_to_database(db: &sqlx::PgPool) {
                 continue;
             }
         };
+        // SPEC 36 R0.1.6: seeded Apps obey the slug rules; only the
+        // allowlisted reserved origins may be claimed, and only by a seed.
+        // Fatal, not skipped: manifests are repo-controlled and checked by
+        // abw-apps-core's `every_repo_app_manifest_slug_is_valid`, so a
+        // refusal here is a broken build, and skipping it would leave a
+        // previously seeded row live with only a boot-log line as the trace.
+        if let Err(e) = abw_apps_core::validate_seeded_slug(&slug) {
+            panic!("refusing to seed App {:?} ({:?}): {}", slug, path, e);
+        }
 
         let name = manifest["name"].as_str().unwrap_or(&slug).to_string();
         let tagline = manifest["tagline"].as_str().map(str::to_string);

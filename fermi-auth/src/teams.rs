@@ -38,37 +38,15 @@ pub const DEFAULT_COORDINATION_STRATEGIST: &str = "cohere_and_coordinate";
 /// is missing — a workspace with no strategist is degraded, one that could not
 /// be created is broken.
 pub async fn assign_default_strategist(pool: &PgPool, workspace_id: Uuid) -> Option<Uuid> {
-    let strategist: Option<Uuid> =
-        sqlx::query_scalar("SELECT agent_id FROM agents WHERE agent_name = $1")
-            .bind(DEFAULT_COORDINATION_STRATEGIST)
-            .fetch_optional(pool)
-            .await
-            .ok()
-            .flatten();
-
-    let Some(agent_id) = strategist else {
-        eprintln!(
-            "WARN: default coordination strategist '{DEFAULT_COORDINATION_STRATEGIST}' not \
-             found — workspace {workspace_id} created without one, so Loop 3 coordination \
-             and Loop 4 composition are unavailable for it"
-        );
-        return None;
+    let mut conn = match pool.acquire().await {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("WARN: could not assign coordination strategist to {workspace_id}: {e}");
+            return None;
+        }
     };
-
-    // Only when unset: an explicit assignment is more authoritative than this
-    // default, and re-running must not clobber it.
-    let res = sqlx::query(
-        "UPDATE teams
-            SET coordination_strategist_id = $2, strategist_assigned_at = NOW()
-          WHERE id = $1 AND coordination_strategist_id IS NULL",
-    )
-    .bind(workspace_id)
-    .bind(agent_id)
-    .execute(pool)
-    .await;
-
-    match res {
-        Ok(_) => Some(agent_id),
+    match assign_default_strategist_tx(&mut conn, workspace_id).await {
+        Ok(v) => v,
         Err(e) => {
             eprintln!("WARN: could not assign coordination strategist to {workspace_id}: {e}");
             None
@@ -76,10 +54,64 @@ pub async fn assign_default_strategist(pool: &PgPool, workspace_id: Uuid) -> Opt
     }
 }
 
+/// [`assign_default_strategist`] on a caller-held connection, so team
+/// creation can make it part of its transaction. Only assigns when unset: an
+/// explicit assignment is more authoritative than this default.
+pub async fn assign_default_strategist_tx(
+    conn: &mut sqlx::PgConnection,
+    workspace_id: Uuid,
+) -> Result<Option<Uuid>, AuthError> {
+    let assigned: Option<Uuid> = sqlx::query_scalar(
+        "UPDATE teams
+            SET coordination_strategist_id = a.agent_id, strategist_assigned_at = NOW()
+           FROM agents a
+          WHERE teams.id = $1 AND teams.coordination_strategist_id IS NULL
+            AND a.agent_name = $2
+         RETURNING a.agent_id",
+    )
+    .bind(workspace_id)
+    .bind(DEFAULT_COORDINATION_STRATEGIST)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(|e| AuthError::DatabaseError(e.to_string()))?;
+    if assigned.is_none() {
+        eprintln!(
+            "WARN: default coordination strategist '{DEFAULT_COORDINATION_STRATEGIST}' not \
+             assigned to workspace {workspace_id} (agent absent or already assigned), so Loop 3 \
+             coordination and Loop 4 composition may be unavailable for it"
+        );
+    }
+    Ok(assigned)
+}
+
 // ─── Team CRUD ─────────────────────────────────────────────────────
 
 pub async fn create_team(
     pool: &PgPool,
+    name: &str,
+    slug: &str,
+    description: Option<&str>,
+    owner_id: &str,
+    origin: &str,
+) -> Result<Team, AuthError> {
+    // One transaction: the team row, its strategist and the owner's
+    // role-default capabilities commit together (see `create_team_tx`).
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| AuthError::DatabaseError(e.to_string()))?;
+    let team = create_team_tx(&mut tx, name, slug, description, owner_id, origin).await?;
+    tx.commit()
+        .await
+        .map_err(|e| AuthError::DatabaseError(e.to_string()))?;
+    Ok(team)
+}
+
+/// [`create_team`] inside a caller-owned transaction (SPEC 36 R0.1): the team
+/// row, its default strategist and its owner membership, so a caller can make
+/// funding and provisioning part of the same unit.
+pub async fn create_team_tx(
+    conn: &mut sqlx::PgConnection,
     name: &str,
     slug: &str,
     description: Option<&str>,
@@ -98,7 +130,7 @@ pub async fn create_team(
     .bind(description)
     .bind(owner_id)
     .bind(origin)
-    .fetch_one(pool)
+    .fetch_one(&mut *conn)
     .await
     .map_err(|e| AuthError::DatabaseError(e.to_string()))?;
 
@@ -113,19 +145,38 @@ pub async fn create_team(
 
     // Every workspace gets a coordination strategist at creation. Without it
     // Loop 3's coordination half and Loop 4 are unreachable for that workspace
-    // — see `assign_default_strategist`.
-    assign_default_strategist(pool, team.id).await;
+    // — see `assign_default_strategist`. A missing strategist agent degrades
+    // the workspace; it does not fail creation.
+    assign_default_strategist_tx(&mut *conn, team.id).await?;
 
-    // Auto-add owner as team member with 'owner' role
-    add_team_member(
-        pool,
-        team.id,
-        MemberType::User,
-        owner_id,
-        TeamRole::Owner,
-        owner_id,
+    let caps: Vec<String> = TeamRole::Owner
+        .default_capabilities()
+        .iter()
+        .map(|c| c.as_str().to_string())
+        .collect();
+    // The AFTER INSERT trigger `trg_auto_add_team_owner`
+    // (migrations/009_add_teams_and_sharing.sql:90-102) has already inserted
+    // the owner row with empty capabilities, so this is an upsert that merges
+    // the owner's role defaults in — the same statement `add_team_member` uses
+    // (`add_team_member`, fermi-auth/src/teams.rs:269). `DO NOTHING` here left
+    // every new owner without `resolve`.
+    sqlx::query(
+        "INSERT INTO team_members (team_id, member_type, member_id, role, invited_by, capabilities)
+         VALUES ($1, $2, $3, $4, $3, $5)
+         ON CONFLICT (team_id, member_id) DO UPDATE
+             SET role = $4,
+                 capabilities = (
+                     SELECT ARRAY(SELECT DISTINCT unnest(team_members.capabilities || $5::text[]))
+                 )",
     )
-    .await?;
+    .bind(team.id)
+    .bind(MemberType::User.as_str())
+    .bind(owner_id)
+    .bind(TeamRole::Owner.as_str())
+    .bind(&caps)
+    .execute(&mut *conn)
+    .await
+    .map_err(|e| AuthError::DatabaseError(e.to_string()))?;
 
     Ok(team)
 }
@@ -186,30 +237,47 @@ pub async fn delete_team(
     team_id: Uuid,
     requester_id: &str,
 ) -> Result<(), AuthError> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| AuthError::DatabaseError(e.to_string()))?;
+    delete_team_tx(&mut tx, team_id, requester_id).await?;
+    tx.commit()
+        .await
+        .map_err(|e| AuthError::DatabaseError(e.to_string()))
+}
+
+/// [`delete_team`] on a caller-held transaction: the team, its memberships and
+/// its shares go together. Membership and share cleanup used to be `let _ =`
+/// after the delete, on separate autocommit statements, so a failure left
+/// orphan rows behind a deleted team.
+pub async fn delete_team_tx(
+    conn: &mut sqlx::PgConnection,
+    team_id: Uuid,
+    requester_id: &str,
+) -> Result<(), AuthError> {
     let result = sqlx::query("DELETE FROM teams WHERE id = $1 AND owner_id = $2")
         .bind(team_id)
         .bind(requester_id)
-        .execute(pool)
+        .execute(&mut *conn)
         .await
         .map_err(|e| AuthError::DatabaseError(e.to_string()))?;
-
     if result.rows_affected() == 0 {
         return Err(AuthError::Forbidden(
             "Only team owner can delete".to_string(),
         ));
     }
-
-    // Clean up membership and shares (no FK cascade)
-    let _ = sqlx::query("DELETE FROM team_members WHERE team_id = $1")
+    // No FK cascade on these.
+    sqlx::query("DELETE FROM team_members WHERE team_id = $1")
         .bind(team_id)
-        .execute(pool)
-        .await;
-    let _ =
-        sqlx::query("DELETE FROM object_shares WHERE share_type = 'team' AND share_target = $1")
-            .bind(team_id.to_string())
-            .execute(pool)
-            .await;
-
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| AuthError::DatabaseError(e.to_string()))?;
+    sqlx::query("DELETE FROM object_shares WHERE share_type = 'team' AND share_target = $1")
+        .bind(team_id.to_string())
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| AuthError::DatabaseError(e.to_string()))?;
     Ok(())
 }
 

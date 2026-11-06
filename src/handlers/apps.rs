@@ -26,9 +26,7 @@ use serde_json::{json, Value};
 use sqlx::Row;
 use uuid::Uuid;
 
-use fermi_auth::{
-    credit_deposit, get_or_create_wallet, rbac, teams, AuthPrincipal, ObjectType, Visibility,
-};
+use fermi_auth::{rbac, teams, AuthPrincipal, ObjectType, Visibility};
 
 use crate::{resolve_agent, AppState};
 
@@ -93,6 +91,10 @@ pub struct SpawnWorkspaceRequest {
     pub params: Option<Value>,
     /// Workspace IDs this workspace depends on (upstream).
     pub depends_on: Option<Vec<String>>,
+    /// Accept paying the template budget if this spawn is not sponsored.
+    /// Default false: an unsponsored spawn is refused (402, with the price).
+    #[serde(default)]
+    pub accept_template_charge: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -450,7 +452,39 @@ pub async fn spawn_workspace_handler(
     principal: AuthPrincipal,
     Path(slug): Path<String>,
     Json(req): Json<SpawnWorkspaceRequest>,
-) -> Result<(StatusCode, Json<Value>), (StatusCode, String)> {
+) -> Result<(StatusCode, Json<Value>), axum::response::Response> {
+    use axum::response::IntoResponse;
+    spawn_workspace_inner(state, principal, slug, req)
+        .await
+        .map_err(|e| match e {
+            SpawnError::Provision(p) => (
+                StatusCode::from_u16(p.status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                Json(p.body()),
+            )
+                .into_response(),
+            SpawnError::Http(s, m) => (s, m).into_response(),
+        })
+}
+
+/// Spawn failures: a provisioning refusal carries a JSON body with a stable
+/// `code` (and `price` / `have` / `need`); everything else stays text.
+enum SpawnError {
+    Provision(fermi::apps::provision::ProvisionError),
+    Http(StatusCode, String),
+}
+
+impl From<(StatusCode, String)> for SpawnError {
+    fn from((s, m): (StatusCode, String)) -> Self {
+        SpawnError::Http(s, m)
+    }
+}
+
+async fn spawn_workspace_inner(
+    state: AppState,
+    principal: AuthPrincipal,
+    slug: String,
+    req: SpawnWorkspaceRequest,
+) -> Result<(StatusCode, Json<Value>), SpawnError> {
     let caller_id = principal.user_id();
 
     // 1. Fetch the App.
@@ -461,7 +495,7 @@ pub async fn spawn_workspace_handler(
     if visibility == "private" {
         let owner_id = app["owner_user_id"].as_str().unwrap_or("");
         if caller_id != owner_id && !principal.can_admin() {
-            return Err((
+            return Err(SpawnError::Http(
                 StatusCode::FORBIDDEN,
                 "This App is private; only the owner can spawn workspaces from it".into(),
             ));
@@ -469,7 +503,7 @@ pub async fn spawn_workspace_handler(
     }
     // Archived apps cannot spawn new workspaces.
     if app["archived_at"].is_string() {
-        return Err((
+        return Err(SpawnError::Http(
             StatusCode::GONE,
             "This App has been archived and no longer accepts new workspaces".into(),
         ));
@@ -477,26 +511,88 @@ pub async fn spawn_workspace_handler(
 
     // 3. Parse workspace template.
     let template = &app["workspace_template"];
-    let initial_budget: i32 = template
+    let initial_budget = template_initial_budget(template);
+    let auto_hire: Vec<String> = req
+        .auto_hire_override
+        .clone()
+        .unwrap_or_else(|| template_auto_hire(template));
+    let initial_files = template_initial_files(template);
+
+    // 4. Generate workspace name and slug.
+    let ws_name = req
+        .name
+        .clone()
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or_else(|| default_workspace_name(template, &app, &slug, &caller_id));
+    let ws_slug = new_workspace_slug(&slug);
+
+    // 5-8. Create, fund (from the caller), wire and auto-hire in ONE transaction.
+    //      SPEC 36 R0.1: this used to deposit the budget and debit nobody.
+    let depends_on = req.depends_on.clone().unwrap_or_default();
+    let provisioned = fermi::apps::provision::provision_workspace(
+        &state.db,
+        &fermi::apps::provision::SpawnPlan {
+            sponsor_owner: fermi::apps::provision::SPONSOR_WALLET_OWNER,
+            sponsored_quota: fermi::apps::provision::sponsored_spawn_quota(),
+            accept_template_charge: req.accept_template_charge,
+            app_slug: &slug,
+            caller_id: &caller_id,
+            ws_name: &ws_name,
+            ws_slug: &ws_slug,
+            description: req.description.as_deref(),
+            initial_budget,
+            extra_budget: req.extra_budget.unwrap_or(0),
+            params: req.params.as_ref(),
+            depends_on: &depends_on,
+            auto_hire: &auto_hire,
+        },
+    )
+    .await
+    .map_err(SpawnError::Provision)?;
+    let ws_id = provisioned.workspace_id;
+
+    // 9. Git files after commit: git cannot join the transaction. Failures are
+    //    reported in the response, not swallowed.
+    let git =
+        write_initial_files(&state, ws_id, &ws_slug, &initial_files, req.params.as_ref()).await;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "workspace_id": ws_id,
+            "workspace_slug": ws_slug,
+            "name": ws_name,
+            "origin": slug,
+            "budget": provisioned.total_budget,
+            "provisioned": provisioned_json(&provisioned, &git, req.params.is_some()),
+        })),
+    ))
+}
+
+// ─── Spawn helpers (shared by single and batch spawn) ────────────────────────
+
+fn template_initial_budget(template: &Value) -> i32 {
+    template
         .get("initial_budget")
         .and_then(|v| v.as_i64())
-        .unwrap_or(100) as i32;
-    let extra_budget: i32 = req.extra_budget.unwrap_or(0).max(0);
-    let total_budget = initial_budget + extra_budget;
+        .map(|v| v.clamp(i32::MIN as i64, i32::MAX as i64) as i32)
+        .unwrap_or(100)
+}
 
-    let auto_hire: Vec<String> = req.auto_hire_override.unwrap_or_else(|| {
-        template
-            .get("auto_hire")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default()
-    });
+fn template_auto_hire(template: &Value) -> Vec<String> {
+    template
+        .get("auto_hire")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
 
-    let initial_files: Vec<(String, String)> = template
+fn template_initial_files(template: &Value) -> Vec<(String, String)> {
+    template
         .get("initial_files")
         .and_then(|v| v.as_array())
         .map(|arr| {
@@ -508,194 +604,95 @@ pub async fn spawn_workspace_handler(
                 })
                 .collect()
         })
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
 
-    // 4. Generate workspace name and slug.
-    let ws_name = req
-        .name
-        .filter(|n| !n.trim().is_empty())
-        .unwrap_or_else(|| {
-            let pattern = template
-                .get("default_name_pattern")
-                .and_then(|v| v.as_str())
-                .unwrap_or("{app} workspace");
-            pattern
-                .replace("{app}", app["name"].as_str().unwrap_or(&slug))
-                .replace("{user}", &caller_id)
-                .replace("{date}", &chrono::Utc::now().format("%Y-%m-%d").to_string())
-        });
+fn default_workspace_name(template: &Value, app: &Value, slug: &str, caller_id: &str) -> String {
+    template
+        .get("default_name_pattern")
+        .and_then(|v| v.as_str())
+        .unwrap_or("{app} workspace")
+        .replace("{app}", app["name"].as_str().unwrap_or(slug))
+        .replace("{user}", caller_id)
+        .replace("{date}", &chrono::Utc::now().format("%Y-%m-%d").to_string())
+}
 
-    let ws_slug = {
-        let base = slug
-            .chars()
-            .map(|c| if c.is_alphanumeric() { c } else { '-' })
-            .collect::<String>();
-        let suffix = &Uuid::new_v4().to_string()[..8];
-        format!("{}-{}", base, suffix)
+fn new_workspace_slug(app_slug: &str) -> String {
+    let base = app_slug
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect::<String>();
+    let suffix = &Uuid::new_v4().to_string()[..8];
+    format!("{}-{}", base, suffix)
+}
+
+struct GitProvisioning {
+    files_written: usize,
+    failed: Vec<String>,
+}
+
+async fn write_initial_files(
+    state: &AppState,
+    ws_id: Uuid,
+    ws_slug: &str,
+    initial_files: &[(String, String)],
+    params: Option<&Value>,
+) -> GitProvisioning {
+    let mut files: Vec<(String, String)> = initial_files.to_vec();
+    if let Some(params) = params {
+        files.push((
+            ".app/params.json".to_string(),
+            serde_json::to_string_pretty(params).unwrap_or_default(),
+        ));
+    }
+    let mut out = GitProvisioning {
+        files_written: 0,
+        failed: Vec::new(),
     };
-
-    // 5. Create the workspace (= team) with origin = app.slug.
-    let team = fermi_auth::teams::create_team(
-        &state.db,
-        &ws_name,
-        &ws_slug,
-        req.description.as_deref(),
-        &caller_id,
-        &slug, // <-- origin = app slug
-    )
-    .await
-    .map_err(|e| {
-        let msg = e.to_string();
-        if msg.contains("unique") || msg.contains("duplicate") {
-            (StatusCode::CONFLICT, "Slug collision — please retry".into())
-        } else {
-            (StatusCode::INTERNAL_SERVER_ERROR, msg)
-        }
-    })?;
-
-    let ws_id = team.id;
-    let ws_id_str = ws_id.to_string();
-
-    // 6. Seed workspace budget.
-    if total_budget > 0 {
-        if let Ok(ws_wallet) = get_or_create_wallet(&state.db, "workspace", &ws_id_str).await {
-            let _ = credit_deposit(
-                &state.db,
-                ws_wallet.wallet_id,
-                total_budget,
-                "App workspace initial budget",
-            )
-            .await;
-            let _ = sqlx::query("UPDATE teams SET workspace_budget = $1 WHERE id = $2")
-                .bind(total_budget)
-                .bind(ws_id)
-                .execute(&state.db)
-                .await;
-        }
-    }
-
-    // 7. Write initial files via the workspace git manager.
-    let slug_for_git = ws_slug.clone();
-    let mut files_written = 0usize;
-    for (path, content) in &initial_files {
-        let commit_msg = format!("App provisioning: {}", path);
-        match state
-            .workspace_git
-            .commit_file(&slug_for_git, path, content, &commit_msg)
-        {
-            Ok(_) => files_written += 1,
-            Err(e) => {
-                tracing::warn!(ws_id = %ws_id, path = %path, error = %e, "Failed to write initial file during App spawn")
-            }
-        }
-    }
-    if files_written > 0 {
-        let _ = sqlx::query("UPDATE teams SET git_commit_count = $1 WHERE id = $2")
-            .bind(files_written as i32)
-            .bind(ws_id)
-            .execute(&state.db)
-            .await;
-    }
-
-    // 7b. Write params.json if params were provided.
-    if let Some(ref params) = req.params {
-        let params_content = serde_json::to_string_pretty(params).unwrap_or_default();
-        let commit_msg = "App provisioning: params.json";
+    for (path, content) in &files {
         match state.workspace_git.commit_file(
-            &slug_for_git,
-            ".app/params.json",
-            &params_content,
-            commit_msg,
+            ws_slug,
+            path,
+            content,
+            &format!("App provisioning: {}", path),
         ) {
-            Ok(_) => files_written += 1,
+            Ok(_) => out.files_written += 1,
             Err(e) => {
-                tracing::warn!(ws_id = %ws_id, error = %e, "Failed to write params.json during App spawn")
+                tracing::warn!(ws_id = %ws_id, path = %path, error = %e, "initial file not written during App spawn");
+                out.failed.push(path.clone());
             }
         }
-        // Also store params as a workspace output for cross-workspace reads
-        let _ = sqlx::query(
-            "INSERT INTO workspace_outputs (workspace_id, key, value, version, updated_at, updated_by)
-             VALUES ($1, 'params', $2, 1, NOW(), $3)
-             ON CONFLICT (workspace_id, key) DO UPDATE SET value = $2, updated_at = NOW()"
-        )
-        .bind(ws_id)
-        .bind(params)
-        .bind(&caller_id)
-        .execute(&state.db)
-        .await;
     }
-
-    // 7c. Wire dependency edges if depends_on was specified.
-    let mut deps_wired = 0usize;
-    if let Some(ref depends_on) = req.depends_on {
-        for upstream_id_str in depends_on {
-            if let Ok(upstream_uuid) = upstream_id_str.parse::<Uuid>() {
-                let res = sqlx::query(
-                    "INSERT INTO workspace_dependencies (upstream_id, downstream_id, dependency_type)
-                     VALUES ($1, $2, 'output')
-                     ON CONFLICT (upstream_id, downstream_id) DO NOTHING"
-                )
-                .bind(upstream_uuid)
+    if out.files_written > 0 {
+        if let Err(e) =
+            sqlx::query("UPDATE teams SET git_commit_count = git_commit_count + $1 WHERE id = $2")
+                .bind(out.files_written as i32)
                 .bind(ws_id)
                 .execute(&state.db)
-                .await;
-                if res.is_ok() {
-                    deps_wired += 1;
-                }
-            }
+                .await
+        {
+            tracing::warn!(ws_id = %ws_id, error = %e, "git_commit_count not updated after App spawn");
         }
     }
+    out
+}
 
-    // 8. Auto-hire agents.
-    // We bypass hire_agent_handler (which has caller ownership/visibility checks)
-    // and do a direct INSERT — the App spawn itself is the authorization event.
-    let mut agents_hired = 0usize;
-    for agent_name in &auto_hire {
-        let agent_row = sqlx::query(
-            "SELECT agent_id FROM agents WHERE agent_name = $1 AND status IN ('active', 'published', 'draft')"
-        )
-        .bind(agent_name)
-        .fetch_optional(&state.db)
-        .await;
-
-        if let Ok(Some(row)) = agent_row {
-            if let Ok(agent_id) = row.try_get::<Uuid, _>("agent_id") {
-                let res = sqlx::query(
-                    "INSERT INTO workspace_agents (workspace_id, agent_id, added_by, relationship)
-                     VALUES ($1, $2, $3, 'system')
-                     ON CONFLICT (workspace_id, agent_id) DO NOTHING",
-                )
-                .bind(ws_id)
-                .bind(agent_id)
-                .bind(&caller_id)
-                .execute(&state.db)
-                .await;
-                if res.is_ok() {
-                    agents_hired += 1;
-                }
-            }
-        } else {
-            tracing::warn!(ws_id = %ws_id, agent = %agent_name, "Agent not found during App spawn auto-hire");
-        }
-    }
-
-    // 9. Return the provisioned workspace + provenance block.
-    Ok((
-        StatusCode::CREATED,
-        Json(json!({
-            "workspace_id": ws_id,
-            "workspace_slug": ws_slug,
-            "name": ws_name,
-            "origin": slug,
-            "budget": total_budget,
-            "provisioned": {
-                "files_written": files_written,
-                "agents_hired": agents_hired,
-                "dependencies_wired": deps_wired,
-                "has_params": req.params.is_some(),
-            }
-        })),
-    ))
+fn provisioned_json(
+    p: &fermi::apps::provision::Provisioned,
+    git: &GitProvisioning,
+    has_params: bool,
+) -> Value {
+    json!({
+        "files_written": git.files_written,
+        "files_failed": git.failed,
+        "provisioning_incomplete": !git.failed.is_empty(),
+        "agents_hired": p.agents_hired.len(),
+        "agents_hired_names": p.agents_hired,
+        "skipped": p.skipped.iter().map(|(n, r)| json!({"agent": n, "reason": r})).collect::<Vec<_>>(),
+        "dependencies_wired": p.dependencies_wired,
+        "template_paid_by": p.template_paid_by.map(|t| t.as_str()),
+        "has_params": has_params,
+    })
 }
 
 // ─── GET /api/apps/:slug/workspaces ──────────────────────────────────────────
@@ -894,24 +891,31 @@ pub async fn sync_auto_hire_handler(
 
     // Resolve all agent_name → agent_id in ONE query (instead of N).
     // Names not in the registry are reported but don't fail the batch.
-    let agent_rows = sqlx::query(
-        "SELECT agent_name, agent_id FROM agents
-         WHERE agent_name = ANY($1) AND status IN ('active','published','draft')",
-    )
-    .bind(&auto_hire)
-    .fetch_all(&state.db)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    // Every pushed agent must pass the one hire rule (apps::hire_policy) for
+    // the App's owner: this pushes into workspaces other users own, so the
+    // template may only carry agents its owner could place themselves.
+    let agent_rows: Vec<(String, Uuid, Option<String>, Option<String>, String, String)> =
+        sqlx::query_as(
+            "SELECT agent_name, agent_id, user_id, visibility, tier, status FROM agents
+         WHERE agent_name = ANY($1)",
+        )
+        .bind(&auto_hire)
+        .fetch_all(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let mut agent_ids: Vec<Uuid> = Vec::with_capacity(agent_rows.len());
     let mut found_names: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for r in &agent_rows {
-        if let (Ok(name), Ok(id)) = (
-            r.try_get::<String, _>("agent_name"),
-            r.try_get::<Uuid, _>("agent_id"),
-        ) {
-            agent_ids.push(id);
-            found_names.insert(name);
+    for (name, id, owner, visibility, tier, status) in &agent_rows {
+        let facts = fermi::apps::hire_policy::AgentFacts {
+            owner_id: owner.as_deref(),
+            visibility: visibility.as_deref(),
+            tier,
+            status,
+        };
+        if fermi::apps::hire_policy::may_place(&facts, owner_id).is_ok() {
+            agent_ids.push(*id);
+            found_names.insert(name.clone());
         }
     }
     let skipped_agents: Vec<String> = auto_hire
@@ -1197,194 +1201,76 @@ pub async fn batch_spawn_workspaces_handler(
 
     // Parse template once
     let template = &app["workspace_template"];
-    let base_budget: i32 = template
-        .get("initial_budget")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(100) as i32;
-    let default_auto_hire: Vec<String> = template
-        .get("auto_hire")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-    let initial_files: Vec<(String, String)> = template
-        .get("initial_files")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|f| {
-                    let path = f.get("path")?.as_str()?.to_string();
-                    let content = f.get("content")?.as_str()?.to_string();
-                    Some((path, content))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let name_pattern = template
-        .get("default_name_pattern")
-        .and_then(|v| v.as_str())
-        .unwrap_or("{app} workspace");
+    let base_budget = template_initial_budget(template);
+    let default_auto_hire = template_auto_hire(template);
+    let initial_files = template_initial_files(template);
 
     let mut results: Vec<Value> = Vec::with_capacity(req.instances.len());
     let mut errors: Vec<Value> = Vec::new();
 
     for (idx, instance) in req.instances.iter().enumerate() {
-        // Generate workspace name
         let ws_name = instance
             .name
-            .as_deref()
+            .clone()
             .filter(|n| !n.trim().is_empty())
-            .map(|n| n.to_string())
-            .unwrap_or_else(|| {
-                name_pattern
-                    .replace("{app}", app["name"].as_str().unwrap_or(&slug))
-                    .replace("{user}", &caller_id)
-                    .replace("{date}", &chrono::Utc::now().format("%Y-%m-%d").to_string())
-            });
+            .unwrap_or_else(|| default_workspace_name(template, &app, &slug, &caller_id));
+        let ws_slug = new_workspace_slug(&slug);
+        let auto_hire = instance
+            .auto_hire_override
+            .clone()
+            .unwrap_or_else(|| default_auto_hire.clone());
+        let depends_on = instance.depends_on.clone().unwrap_or_default();
 
-        let ws_slug = {
-            let base = slug
-                .chars()
-                .map(|c| if c.is_alphanumeric() { c } else { '-' })
-                .collect::<String>();
-            let suffix = &Uuid::new_v4().to_string()[..8];
-            format!("{}-{}", base, suffix)
-        };
-
-        // Create the workspace (team)
-        let team = match fermi_auth::teams::create_team(
+        // Each instance is its own transaction and its own debit (SPEC 36 R0.1):
+        // a batch the caller can only partly afford spawns the affordable prefix
+        // and reports the rest as 402s, never mints the difference.
+        let provisioned = match fermi::apps::provision::provision_workspace(
             &state.db,
-            &ws_name,
-            &ws_slug,
-            instance.description.as_deref(),
-            &caller_id,
-            &slug,
+            &fermi::apps::provision::SpawnPlan {
+                sponsor_owner: fermi::apps::provision::SPONSOR_WALLET_OWNER,
+                sponsored_quota: fermi::apps::provision::sponsored_spawn_quota(),
+                accept_template_charge: instance.accept_template_charge,
+                app_slug: &slug,
+                caller_id: &caller_id,
+                ws_name: &ws_name,
+                ws_slug: &ws_slug,
+                description: instance.description.as_deref(),
+                initial_budget: base_budget,
+                extra_budget: instance.extra_budget.unwrap_or(0),
+                params: instance.params.as_ref(),
+                depends_on: &depends_on,
+                auto_hire: &auto_hire,
+            },
         )
         .await
         {
-            Ok(t) => t,
+            Ok(p) => p,
             Err(e) => {
-                errors.push(json!({
-                    "index": idx,
-                    "name": ws_name,
-                    "error": format!("{}", e),
-                }));
+                let mut entry = e.body();
+                entry["index"] = idx.into();
+                entry["name"] = ws_name.clone().into();
+                entry["status"] = e.status().into();
+                errors.push(entry);
                 continue;
             }
         };
-
-        let ws_id = team.id;
-        let total_budget = base_budget + instance.extra_budget.unwrap_or(0).max(0);
-
-        // Budget
-        if total_budget > 0 {
-            if let Ok(ws_wallet) =
-                get_or_create_wallet(&state.db, "workspace", &ws_id.to_string()).await
-            {
-                let _ = credit_deposit(
-                    &state.db,
-                    ws_wallet.wallet_id,
-                    total_budget,
-                    "Batch spawn budget",
-                )
-                .await;
-                let _ = sqlx::query("UPDATE teams SET workspace_budget = $1 WHERE id = $2")
-                    .bind(total_budget)
-                    .bind(ws_id)
-                    .execute(&state.db)
-                    .await;
-            }
-        }
-
-        // Initial files
-        let mut files_written = 0usize;
-        for (path, content) in &initial_files {
-            if state
-                .workspace_git
-                .commit_file(
-                    &ws_slug,
-                    path,
-                    content,
-                    &format!("Batch provisioning: {}", path),
-                )
-                .is_ok()
-            {
-                files_written += 1;
-            }
-        }
-
-        // Params
-        if let Some(ref params) = instance.params {
-            let params_content = serde_json::to_string_pretty(params).unwrap_or_default();
-            if state
-                .workspace_git
-                .commit_file(
-                    &ws_slug,
-                    ".app/params.json",
-                    &params_content,
-                    "Batch provisioning: params.json",
-                )
-                .is_ok()
-            {
-                files_written += 1;
-            }
-            let _ = sqlx::query(
-                "INSERT INTO workspace_outputs (workspace_id, key, value, version, updated_at, updated_by)
-                 VALUES ($1, 'params', $2, 1, NOW(), $3)
-                 ON CONFLICT (workspace_id, key) DO UPDATE SET value = $2, updated_at = NOW()"
-            ).bind(ws_id).bind(params).bind(&caller_id).execute(&state.db).await;
-        }
-
-        // Dependencies
-        let mut deps_wired = 0usize;
-        if let Some(ref depends_on) = instance.depends_on {
-            for upstream_str in depends_on {
-                if let Ok(upstream_uuid) = upstream_str.parse::<Uuid>() {
-                    if sqlx::query(
-                        "INSERT INTO workspace_dependencies (upstream_id, downstream_id, dependency_type)
-                         VALUES ($1, $2, 'output') ON CONFLICT DO NOTHING"
-                    ).bind(upstream_uuid).bind(ws_id).execute(&state.db).await.is_ok() {
-                        deps_wired += 1;
-                    }
-                }
-            }
-        }
-
-        // Auto-hire agents
-        let auto_hire = instance
-            .auto_hire_override
-            .as_ref()
-            .unwrap_or(&default_auto_hire);
-        let mut agents_hired = 0usize;
-        for agent_name in auto_hire {
-            if let Ok(Some(row)) = sqlx::query(
-                "SELECT agent_id FROM agents WHERE agent_name = $1 AND status IN ('active', 'published', 'draft')"
-            ).bind(agent_name).fetch_optional(&state.db).await {
-                if let Ok(agent_id) = row.try_get::<Uuid, _>("agent_id") {
-                    if sqlx::query(
-                        "INSERT INTO workspace_agents (workspace_id, agent_id, added_by, relationship)
-                         VALUES ($1, $2, $3, 'system') ON CONFLICT DO NOTHING"
-                    ).bind(ws_id).bind(agent_id).bind(&caller_id).execute(&state.db).await.is_ok() {
-                        agents_hired += 1;
-                    }
-                }
-            }
-        }
+        let ws_id = provisioned.workspace_id;
+        let git = write_initial_files(
+            &state,
+            ws_id,
+            &ws_slug,
+            &initial_files,
+            instance.params.as_ref(),
+        )
+        .await;
 
         results.push(json!({
             "index": idx,
             "workspace_id": ws_id,
             "workspace_slug": ws_slug,
             "name": ws_name,
-            "provisioned": {
-                "files_written": files_written,
-                "agents_hired": agents_hired,
-                "dependencies_wired": deps_wired,
-                "has_params": instance.params.is_some(),
-            }
+            "budget": provisioned.total_budget,
+            "provisioned": provisioned_json(&provisioned, &git, instance.params.is_some()),
         }));
     }
 

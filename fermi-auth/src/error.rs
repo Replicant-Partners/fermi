@@ -76,6 +76,12 @@ pub enum AuthError {
 
     #[error("Secret not found: {0}")]
     SecretNotFound(String),
+
+    #[error("Insufficient balance: have {have}, need {need}")]
+    InsufficientCredits { have: i32, need: i32 },
+
+    #[error("Not found: {0}")]
+    NotFound(String),
 }
 
 impl IntoResponse for AuthError {
@@ -110,6 +116,10 @@ impl IntoResponse for AuthError {
             ),
             AuthError::SecretsNotConfigured => (StatusCode::SERVICE_UNAVAILABLE, self.to_string()),
             AuthError::SecretNotFound(_) => (StatusCode::NOT_FOUND, self.to_string()),
+            AuthError::InsufficientCredits { .. } => {
+                (StatusCode::PAYMENT_REQUIRED, self.to_string())
+            }
+            AuthError::NotFound(_) => (StatusCode::NOT_FOUND, self.to_string()),
         };
 
         let body = Json(json!({

@@ -11,6 +11,19 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  # Directive §5 Phase 0: integrity ratchet. Blocking. Fails unless every
+  # count in scripts/ratchet.py (in-place UPDATE/DELETE, discarded results,
+  # panicking row access, unwrap on DB decode) equals
+  # scripts/ratchet_baseline.txt: a rise is a regression, a fall must lower
+  # the baseline in the same change.
+  ratchet:
+    name: Integrity ratchet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check ratchet counts against baseline
+        run: python3 scripts/ratchet.py --check scripts/ratchet_baseline.txt
+
   test:
     name: Test Suite
     runs-on: ubuntu-latest
@@ -212,6 +225,17 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fermi_test
           TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fermi_test
         run: cargo test --test api_tests -- --test-threads=1
+
+      # SPEC 36 claim tests (tests/claims). Blocking. Each is the "done when"
+      # of a requirement; they read ABW_TEST_DATABASE_URL only. Migration 244
+      # is applied by the runner-order loop above. tests/claims/deployed.rs
+      # self-skips here (no ABW_TEST_BASE_URL): CI has no deployment.
+      - name: SPEC 36 claim tests
+        env:
+          ABW_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fermi_test
+          # A claim test that cannot reach its DB must fail, not report ok.
+          CLAIMS_REQUIRED: "1"
+        run: cargo test --test claims -- --test-threads=1
 
       # Contract hygiene tier: no DATABASE_URL, so the live checks self-skip.
       # Asserts the schema_trust contract is internally coherent — the class of
