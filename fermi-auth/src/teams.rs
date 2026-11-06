@@ -237,30 +237,47 @@ pub async fn delete_team(
     team_id: Uuid,
     requester_id: &str,
 ) -> Result<(), AuthError> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| AuthError::DatabaseError(e.to_string()))?;
+    delete_team_tx(&mut tx, team_id, requester_id).await?;
+    tx.commit()
+        .await
+        .map_err(|e| AuthError::DatabaseError(e.to_string()))
+}
+
+/// [`delete_team`] on a caller-held transaction: the team, its memberships and
+/// its shares go together. Membership and share cleanup used to be `let _ =`
+/// after the delete, on separate autocommit statements, so a failure left
+/// orphan rows behind a deleted team.
+pub async fn delete_team_tx(
+    conn: &mut sqlx::PgConnection,
+    team_id: Uuid,
+    requester_id: &str,
+) -> Result<(), AuthError> {
     let result = sqlx::query("DELETE FROM teams WHERE id = $1 AND owner_id = $2")
         .bind(team_id)
         .bind(requester_id)
-        .execute(pool)
+        .execute(&mut *conn)
         .await
         .map_err(|e| AuthError::DatabaseError(e.to_string()))?;
-
     if result.rows_affected() == 0 {
         return Err(AuthError::Forbidden(
             "Only team owner can delete".to_string(),
         ));
     }
-
-    // Clean up membership and shares (no FK cascade)
-    let _ = sqlx::query("DELETE FROM team_members WHERE team_id = $1")
+    // No FK cascade on these.
+    sqlx::query("DELETE FROM team_members WHERE team_id = $1")
         .bind(team_id)
-        .execute(pool)
-        .await;
-    let _ =
-        sqlx::query("DELETE FROM object_shares WHERE share_type = 'team' AND share_target = $1")
-            .bind(team_id.to_string())
-            .execute(pool)
-            .await;
-
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| AuthError::DatabaseError(e.to_string()))?;
+    sqlx::query("DELETE FROM object_shares WHERE share_type = 'team' AND share_target = $1")
+        .bind(team_id.to_string())
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| AuthError::DatabaseError(e.to_string()))?;
     Ok(())
 }
 

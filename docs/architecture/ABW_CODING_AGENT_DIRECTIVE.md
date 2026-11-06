@@ -58,7 +58,7 @@ Every LLD finding gets one disposition. **Do now** means fix in the current code
 
 | ID | Sev | Disposition | Instruction |
 | --- | --- | --- | --- |
-| G01 | P0 | Do now | Every credit a spawn moves is a transfer in one transaction: the template budget from the platform sponsor wallet within a per-caller quota (else from the caller), `extra_budget` from the caller; cap `extra_budget`. Never mint. *(Amended 2026-11-06 by the owner; was "Debit the caller".)* |
+| G01 | P0 | Do now | Every credit a spawn moves is a transfer in one transaction: the template budget from the platform sponsor wallet while the caller is within a per-caller quota and the sponsor can cover it; otherwise from the caller, only with the caller's explicit acceptance. `extra_budget` from the caller; cap `extra_budget`. Never mint. *(Amended 2026-11-06 by the owner, decision recorded on PR #132; was "Debit the caller in the same transaction as the deposit".)* |
 | G02 | P0 | Do now | Filter by caller and agent slug; return 404 otherwise. |
 | G03 | P0 | Do now | Resolve, deny private, loopback and link-local ranges, pin the IP. |
 | G04 | P0 | Do now | One transaction per charge; reserve before work, settle after. Moves into the ledger in Phase 3. |

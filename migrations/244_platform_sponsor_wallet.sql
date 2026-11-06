@@ -61,4 +61,11 @@ BEGIN
     CREATE TRIGGER trg_app_sponsorships_immutable
         BEFORE UPDATE OR DELETE ON app_sponsorships
         FOR EACH ROW EXECUTE FUNCTION app_sponsorships_immutable();
+    DROP TRIGGER IF EXISTS trg_app_sponsorships_no_truncate ON app_sponsorships;
+    CREATE TRIGGER trg_app_sponsorships_no_truncate
+        BEFORE TRUNCATE ON app_sponsorships
+        FOR EACH STATEMENT EXECUTE FUNCTION app_sponsorships_immutable();
+    -- Interim: the app role owns this table and could drop these triggers
+    -- until database roles are separated (G15 / SPEC 36 R2.8, directive
+    -- Phase 1). In Phase 1/3 this table becomes a projection of ledger events.
 END $$;

@@ -75,27 +75,22 @@ impl Created {
         let mut owners = self.wallet_owners.clone();
         owners.extend(teams.iter().cloned());
         owners.extend(self.users.iter().cloned());
-        // `app_sponsorships` is append-only by trigger (migration 244), and
-        // cleanup does not weaken that. Rows it pins — the test sponsor
-        // wallet and the sponsor's transfer_out ledger rows — are kept;
-        // everything else this run created is deleted. Kept rows are all
-        // `spec36_`-tagged and belong to per-test sponsor wallets, never to
-        // `platform:app_sponsorship`.
-        let pinned = "SELECT ledger_tx_id FROM app_sponsorships s
-                        JOIN wallets w ON w.wallet_id = s.sponsor_wallet
-                       WHERE w.owner_id = ANY($1)";
-        sqlx::query(&format!(
-            "DELETE FROM credit_ledger WHERE wallet_id IN (SELECT wallet_id FROM wallets WHERE owner_id = ANY($1))
-               AND tx_id NOT IN ({pinned})"
-        ))
+        // A wallet pinned by an append-only `app_sponsorships` row (it
+        // sponsored a spawn) keeps its whole ledger, so balance = Σ ledger
+        // still holds for it; nothing pinned is half-deleted. Only the
+        // deployed (HTTP) tests use this path; in-process tests roll back.
+        sqlx::query(
+            "DELETE FROM credit_ledger WHERE wallet_id IN (
+                 SELECT wallet_id FROM wallets WHERE owner_id = ANY($1)
+                  AND wallet_id NOT IN (SELECT sponsor_wallet FROM app_sponsorships))",
+        )
         .bind(&owners)
         .execute(pool)
         .await
         .expect("ledger cleanup");
         sqlx::query(
-            "DELETE FROM wallets w WHERE owner_id = ANY($1)
-               AND NOT EXISTS (SELECT 1 FROM app_sponsorships s WHERE s.sponsor_wallet = w.wallet_id)
-               AND NOT EXISTS (SELECT 1 FROM credit_ledger l WHERE l.wallet_id = w.wallet_id)",
+            "DELETE FROM wallets WHERE owner_id = ANY($1)
+               AND wallet_id NOT IN (SELECT sponsor_wallet FROM app_sponsorships)",
         )
         .bind(&owners)
         .execute(pool)

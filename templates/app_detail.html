@@ -629,7 +629,7 @@
         }
       }
 
-      async function spawnWorkspace() {
+      async function spawnWorkspace(acceptTemplateCharge = false) {
         const btn = document.getElementById("spawn-btn");
         btn.disabled = true;
         btn.textContent = "Spawning…";
@@ -639,12 +639,36 @@
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({}),
+              body: JSON.stringify({
+                accept_template_charge: acceptTemplateCharge,
+              }),
             },
           );
           if (!res.ok) {
-            const err = await res.text();
-            alert("Failed to spawn: " + err);
+            const raw = await res.text();
+            let err = null;
+            try {
+              err = JSON.parse(raw);
+            } catch (_) {}
+            // Not sponsored this time: ask before charging (SPEC 36 R0.1).
+            if (
+              res.status === 402 &&
+              err &&
+              err.code === "template_charge_not_accepted" &&
+              !acceptTemplateCharge
+            ) {
+              if (
+                confirm(
+                  `This workspace is not sponsored (free spawns used or the sponsor pool is empty). ` +
+                    `Its starting budget of ${err.price} credits will be charged to you. Continue?`,
+                )
+              ) {
+                btn.disabled = false;
+                return spawnWorkspace(true);
+              }
+              return;
+            }
+            alert("Failed to spawn: " + ((err && err.error) || raw));
             return;
           }
           const data = await res.json();

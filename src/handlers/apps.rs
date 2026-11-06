@@ -452,7 +452,39 @@ pub async fn spawn_workspace_handler(
     principal: AuthPrincipal,
     Path(slug): Path<String>,
     Json(req): Json<SpawnWorkspaceRequest>,
-) -> Result<(StatusCode, Json<Value>), (StatusCode, String)> {
+) -> Result<(StatusCode, Json<Value>), axum::response::Response> {
+    use axum::response::IntoResponse;
+    spawn_workspace_inner(state, principal, slug, req)
+        .await
+        .map_err(|e| match e {
+            SpawnError::Provision(p) => (
+                StatusCode::from_u16(p.status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                Json(p.body()),
+            )
+                .into_response(),
+            SpawnError::Http(s, m) => (s, m).into_response(),
+        })
+}
+
+/// Spawn failures: a provisioning refusal carries a JSON body with a stable
+/// `code` (and `price` / `have` / `need`); everything else stays text.
+enum SpawnError {
+    Provision(fermi::apps::provision::ProvisionError),
+    Http(StatusCode, String),
+}
+
+impl From<(StatusCode, String)> for SpawnError {
+    fn from((s, m): (StatusCode, String)) -> Self {
+        SpawnError::Http(s, m)
+    }
+}
+
+async fn spawn_workspace_inner(
+    state: AppState,
+    principal: AuthPrincipal,
+    slug: String,
+    req: SpawnWorkspaceRequest,
+) -> Result<(StatusCode, Json<Value>), SpawnError> {
     let caller_id = principal.user_id();
 
     // 1. Fetch the App.
@@ -463,7 +495,7 @@ pub async fn spawn_workspace_handler(
     if visibility == "private" {
         let owner_id = app["owner_user_id"].as_str().unwrap_or("");
         if caller_id != owner_id && !principal.can_admin() {
-            return Err((
+            return Err(SpawnError::Http(
                 StatusCode::FORBIDDEN,
                 "This App is private; only the owner can spawn workspaces from it".into(),
             ));
@@ -471,7 +503,7 @@ pub async fn spawn_workspace_handler(
     }
     // Archived apps cannot spawn new workspaces.
     if app["archived_at"].is_string() {
-        return Err((
+        return Err(SpawnError::Http(
             StatusCode::GONE,
             "This App has been archived and no longer accepts new workspaces".into(),
         ));
@@ -516,7 +548,7 @@ pub async fn spawn_workspace_handler(
         },
     )
     .await
-    .map_err(provision_error)?;
+    .map_err(SpawnError::Provision)?;
     let ws_id = provisioned.workspace_id;
 
     // 9. Git files after commit: git cannot join the transaction. Failures are
@@ -592,13 +624,6 @@ fn new_workspace_slug(app_slug: &str) -> String {
         .collect::<String>();
     let suffix = &Uuid::new_v4().to_string()[..8];
     format!("{}-{}", base, suffix)
-}
-
-fn provision_error(e: fermi::apps::provision::ProvisionError) -> (StatusCode, String) {
-    (
-        StatusCode::from_u16(e.status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-        e.message(),
-    )
 }
 
 struct GitProvisioning {
@@ -1221,12 +1246,11 @@ pub async fn batch_spawn_workspaces_handler(
         {
             Ok(p) => p,
             Err(e) => {
-                errors.push(json!({
-                    "index": idx,
-                    "name": ws_name,
-                    "status": e.status(),
-                    "error": e.message(),
-                }));
+                let mut entry = e.body();
+                entry["index"] = idx.into();
+                entry["name"] = ws_name.clone().into();
+                entry["status"] = e.status().into();
+                errors.push(entry);
                 continue;
             }
         };

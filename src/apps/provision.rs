@@ -70,6 +70,33 @@ pub enum ProvisionError {
 }
 
 impl ProvisionError {
+    /// Stable machine-readable code, so clients can tell the two 402s apart
+    /// (`insufficient_credits` vs `template_charge_not_accepted`).
+    pub fn code(&self) -> &'static str {
+        match self {
+            ProvisionError::InvalidBudget(_) => "invalid_budget",
+            ProvisionError::InsufficientCredits { .. } => "insufficient_credits",
+            ProvisionError::Conflict => "slug_conflict",
+            ProvisionError::InvalidDependency(_) => "invalid_dependency",
+            ProvisionError::TemplateChargeNotAccepted { .. } => "template_charge_not_accepted",
+            ProvisionError::Db(_) => "internal",
+        }
+    }
+
+    /// JSON error body: `{error, code, price?, have?, need?}`.
+    pub fn body(&self) -> Value {
+        let mut b = serde_json::json!({"error": self.message(), "code": self.code()});
+        match self {
+            ProvisionError::TemplateChargeNotAccepted { price } => b["price"] = (*price).into(),
+            ProvisionError::InsufficientCredits { have, need } => {
+                b["have"] = (*have).into();
+                b["need"] = (*need).into();
+            }
+            _ => {}
+        }
+        b
+    }
+
     pub fn status(&self) -> u16 {
         match self {
             ProvisionError::InvalidBudget(_) => 422,
@@ -277,9 +304,20 @@ pub async fn provision_workspace(
 ) -> Result<Provisioned, ProvisionError> {
     let total = total_budget(plan.initial_budget, plan.extra_budget)?;
     let mut tx = pool.begin().await?;
+    let out = provision_workspace_tx(&mut tx, plan, total).await?;
+    tx.commit().await?;
+    Ok(out)
+}
 
+/// [`provision_workspace`] on a caller-held transaction. The caller commits
+/// (production) or rolls back (claim tests, so nothing they create persists).
+pub async fn provision_workspace_tx(
+    tx: &mut sqlx::PgConnection,
+    plan: &SpawnPlan<'_>,
+    total: i32,
+) -> Result<Provisioned, ProvisionError> {
     let team = fermi_auth::teams::create_team_tx(
-        &mut tx,
+        &mut *tx,
         plan.ws_name,
         plan.ws_slug,
         plan.description,
@@ -380,20 +418,20 @@ pub async fn provision_workspace(
     let mut template_paid_by = None;
     if total > 0 {
         let ws_wallet =
-            fermi_auth::credit_ensure_wallet_tx(&mut tx, "workspace", &ws_id_str).await?;
+            fermi_auth::credit_ensure_wallet_tx(&mut *tx, "workspace", &ws_id_str).await?;
         let memo = format!("App {} workspace funding", plan.app_slug);
         // Template budget: sponsored by the platform wallet, within the
         // caller's sponsorship quota (owner decision 2026-11-06, option c +
         // quota; directive §4 G01 as amended). Over quota, or with the sponsor
         // short, the caller pays it. Never minted.
         if plan.initial_budget > 0 {
-            let (payer, from) = template_payer(&mut tx, plan).await?;
+            let (payer, from) = template_payer(&mut *tx, plan).await?;
             let note = match payer {
                 TemplatePayer::Sponsor => "platform-sponsored template budget",
                 TemplatePayer::Caller => "template budget, paid by caller",
             };
             let (out, _) = fermi_auth::credit_transfer_tx(
-                &mut tx,
+                &mut *tx,
                 from,
                 ws_wallet,
                 plan.initial_budget,
@@ -422,7 +460,7 @@ pub async fn provision_workspace(
         // Extra budget: paid by the caller.
         if plan.extra_budget > 0 {
             let caller_wallet: Option<Uuid> =
-                fermi_auth::credits::wallet_id_tx(&mut tx, "user", plan.caller_id).await?;
+                fermi_auth::credits::wallet_id_tx(&mut *tx, "user", plan.caller_id).await?;
             let Some(caller_wallet) = caller_wallet else {
                 return Err(ProvisionError::InsufficientCredits {
                     have: 0,
@@ -430,7 +468,7 @@ pub async fn provision_workspace(
                 });
             };
             fermi_auth::credit_transfer_tx(
-                &mut tx,
+                &mut *tx,
                 caller_wallet,
                 ws_wallet,
                 plan.extra_budget,
@@ -451,7 +489,6 @@ pub async fn provision_workspace(
             .await?;
     }
 
-    tx.commit().await?;
     Ok(Provisioned {
         workspace_id: ws_id,
         total_budget: total,
