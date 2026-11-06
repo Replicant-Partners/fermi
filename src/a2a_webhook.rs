@@ -54,11 +54,17 @@ pub async fn deliver(config: &PushConfig, payload: &Value) -> Result<(), String>
 }
 
 /// Load all push configs registered for a given task_id.
+///
+/// Only configs registered by the task's owner are returned (SPEC 36 R0.2):
+/// a config another user attached to the task id before the ownership check
+/// existed must never receive this task's result.
 pub async fn configs_for_task(pool: &PgPool, task_id: Uuid) -> Vec<PushConfig> {
     sqlx::query(
-        "SELECT config_id, webhook_url, auth_scheme, auth_credentials
-         FROM a2a_push_configs
-         WHERE task_id = $1 AND delivered_at IS NULL",
+        "SELECT c.config_id, c.webhook_url, c.auth_scheme, c.auth_credentials
+         FROM a2a_push_configs c
+         JOIN episodes e ON e.episode_id = c.task_id
+         WHERE c.task_id = $1 AND c.delivered_at IS NULL
+           AND e.source_ref->>'caller_user_id' = c.caller_user_id",
     )
     .bind(task_id)
     .fetch_all(pool)

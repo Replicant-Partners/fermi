@@ -1088,6 +1088,18 @@ mod tests {
     /// tempting shortcut: both delegation tools write `delegated_execution`,
     /// and resolving it to either would draw checkpoints the other never had.
     #[test]
+    fn every_a2a_task_kind_maps_to_an_a2a_route() {
+        // The A2A ownership rule (a2a_task::A2A_SOURCE_KINDS) and this route
+        // map must name the same kinds, or a renamed kind silently drops out
+        // of one of them.
+        for kind in crate::a2a_task::A2A_SOURCE_KINDS {
+            let route = command_for_source_kind(kind)
+                .unwrap_or_else(|| panic!("A2A kind {kind} has no route"));
+            assert!(route.starts_with("a2a."), "{kind} -> {route}");
+        }
+    }
+
+    #[test]
     fn a_recovered_route_is_a_declared_command_and_delegation_is_not_guessed() {
         for kind in [
             "execute_handler",

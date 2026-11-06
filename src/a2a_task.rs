@@ -1,7 +1,8 @@
 //! # A2A Task JSON builders
 //!
 //! Converts ABW execution results (AgentOutput + episode_id) to A2A v1.0
-//! Task objects. Pure logic — no async, no AppState.
+//! Task objects. Pure logic — no AppState — except [`task_belongs_to`], the
+//! one ownership query, kept here so the handler and its test share it.
 //!
 //! Design: `docs/DESIGN_a2a_provider.md §5`
 
@@ -291,4 +292,44 @@ mod tests {
         let t = failed_task(id, "user_123", "Something went wrong");
         assert_eq!(t["task"]["status"]["state"], json!(state::FAILED));
     }
+}
+
+/// The `episodes.source_ref.kind` values an A2A task episode carries.
+/// Written by `send_message_handler` and `stream_message_handler`
+/// (src/handlers/a2a.rs, the `source_ref` built before `episode_boundary::close`),
+/// each with `agent_slug` and `caller_user_id`. `artifact_trace` maps the same
+/// kinds to routes and must stay in step (its test enumerates them).
+pub const A2A_SOURCE_KINDS: &[&str] = &["a2a_handler", "a2a_stream_handler"];
+
+/// Does `episode_id` belong to `caller_id`, under the agent named `slug`?
+/// (SPEC 36 R0.2 / G02.)
+///
+/// Authorises against `episodes.source_ref`, which `episode_boundary::close`
+/// writes in the episode's own transaction
+/// (agent-bestiary/memory/src/store.rs, `store_episode_inner`: `begin()`, then
+/// the upsert setting `source_ref = EXCLUDED.source_ref`). The agent is matched by the
+/// episode's `agent_id`, so naming a different slug the key has scope for does
+/// not reach the task. A reservation (`running`, no `source_ref`) is not yet a
+/// readable task.
+pub async fn task_belongs_to(
+    conn: &mut sqlx::PgConnection,
+    episode_id: Uuid,
+    slug: &str,
+    caller_id: &str,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (
+            SELECT 1 FROM episodes e JOIN agents a ON a.agent_id = e.agent_id
+             WHERE e.episode_id = $1
+               AND a.agent_name = $2
+               AND e.source_ref->>'kind' = ANY($3)
+               AND e.source_ref->>'caller_user_id' = $4
+         )",
+    )
+    .bind(episode_id)
+    .bind(slug)
+    .bind(A2A_SOURCE_KINDS)
+    .bind(caller_id)
+    .fetch_one(&mut *conn)
+    .await
 }

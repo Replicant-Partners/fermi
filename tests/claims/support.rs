@@ -58,10 +58,16 @@ pub struct Created {
     pub teams: Vec<uuid::Uuid>,
     pub agents: Vec<uuid::Uuid>,
     pub api_keys: Vec<uuid::Uuid>,
+    pub episodes: Vec<uuid::Uuid>,
 }
 
 impl Created {
     pub async fn cleanup(&mut self, pool: &PgPool) {
+        sqlx::query("DELETE FROM episodes WHERE episode_id = ANY($1)")
+            .bind(&self.episodes)
+            .execute(pool)
+            .await
+            .expect("episode cleanup");
         let teams: Vec<String> = self.teams.iter().map(|t| t.to_string()).collect();
         for q in [
             "DELETE FROM workspace_agents WHERE workspace_id::text = ANY($1)",

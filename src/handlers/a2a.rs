@@ -159,8 +159,10 @@ pub async fn agent_card_handler(
 /// or `a2a:invoke:<slug>`.
 ///
 /// Blocking (default): runs the agent, returns a COMPLETED Task.
-/// Non-blocking (`returnImmediately: true`): reserves an episode, returns
-/// a SUBMITTED Task, caller polls via `GET /a2a/:slug/tasks/:episode_id`.
+/// Non-blocking (`returnImmediately: true`): reserves an episode and returns
+/// a SUBMITTED Task. [V] The agent does not run on this path (G25), and the
+/// reservation carries no `source_ref`, so polling it returns 404 until the
+/// non-blocking path is built.
 /// Dispatch `POST /a2a/:slug/:method` to the right handler.
 ///
 /// ## Why this exists rather than two routes
@@ -322,9 +324,9 @@ pub async fn send_message_handler(
     let pulse = episode_boundary::Pulse::open(&state.memory_store, db_agent.agent_id, &query).await;
     let episode_id = pulse.episode_id;
 
-    // Non-blocking mode: return immediately with SUBMITTED Task.
-    // The caller must poll GET /a2a/:slug/tasks/:episode_id.
-    // (The agent will NOT run — this is a future Phase 2B feature.)
+    // Non-blocking mode: return immediately with a SUBMITTED Task. [V] The
+    // agent does NOT run here (G25), and the reserved row has no source_ref,
+    // so the task poll answers 404 for it.
     if req.configuration.return_immediately {
         return Ok(Json(fermi::a2a_task::submitted_task(
             episode_id, &caller_id,
@@ -601,6 +603,15 @@ pub async fn get_task_handler(
         )
     })?;
 
+    // SPEC 36 R0.2 / G02: a task is readable only by the API key's user that
+    // created it, and only under the slug of the agent that ran it. Anything
+    // else is 404 — not 403, which would confirm the id exists. Previously
+    // any key with `a2a:invoke:*` could read any episode by UUID
+    // [V: src/handlers/a2a.rs:583-656 @ a3cea516].
+    if !task_belongs_to(&state, episode_id, &slug, &caller_id).await? {
+        return Err(task_not_found(&episode_id_str));
+    }
+
     match state.memory_store.get_episode(episode_id).await {
         Ok(episode) => {
             use agent_bestiary_memory::ExecutionStatus;
@@ -643,17 +654,57 @@ pub async fn get_task_handler(
                     fermi::a2a_task::failed_task(episode_id, &caller_id, "Execution failed")
                 }
             };
+            // SPEC 36 R0.2.3 (interim until stored artifacts, R3.3): the
+            // document above was enforced NOW, against the agent's current
+            // contract, not the one in force when the task ran. Say so.
+            let mut task = task;
+            if let Some(t) = task.get_mut("task").and_then(|t| t.as_object_mut()) {
+                t.insert(
+                    "metadata".into(),
+                    json!({
+                        "enforced_at": "read_time",
+                        "contract_version_applied": db_agent
+                            .as_ref()
+                            .map(|a| a.persona_version),
+                    }),
+                );
+            }
             Ok(Json(task))
         }
-        Err(_) => Err((
-            StatusCode::NOT_FOUND,
-            Json(a2a_error_body(
-                404,
-                &format!("Task '{}' not found.", episode_id_str),
-                "TASK_NOT_FOUND",
-            )),
-        )),
+        Err(_) => Err(task_not_found(&episode_id_str)),
     }
+}
+
+fn task_not_found(id: &str) -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::NOT_FOUND,
+        Json(a2a_error_body(
+            404,
+            &format!("Task '{}' not found.", id),
+            "TASK_NOT_FOUND",
+        )),
+    )
+}
+
+/// [`fermi::a2a_task::task_belongs_to`], with the A2A error shape. Database
+/// detail is logged, never returned to the external client.
+async fn task_belongs_to(
+    state: &AppState,
+    episode_id: Uuid,
+    slug: &str,
+    caller_id: &str,
+) -> Result<bool, (StatusCode, Json<Value>)> {
+    let err = |e: sqlx::Error| {
+        tracing::error!(error = %e, task = %episode_id, "a2a task ownership lookup failed");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(a2a_error_body(500, "task lookup failed", "INTERNAL_ERROR")),
+        )
+    };
+    let mut conn = state.db.acquire().await.map_err(err)?;
+    fermi::a2a_task::task_belongs_to(&mut conn, episode_id, slug, caller_id)
+        .await
+        .map_err(err)
 }
 
 // ─── Phase 3: SSE streaming ─────────────────────────────────────────────────
@@ -811,8 +862,9 @@ pub async fn stream_message_handler(
         let start = Instant::now();
 
         // ── A2A event 1: Task WORKING ─────────────────────────────────
-        // Signals that execution has started. The caller can use the task id
-        // to subscribe or poll even if the connection drops.
+        // Signals that execution has started. [V] The task becomes pollable
+        // only after it completes (`close` writes the source_ref the poll
+        // authorises against); a dropped connection cannot poll it mid-run.
         yield Ok(Event::default().data(
             json!({
                 "task": {
@@ -883,7 +935,13 @@ pub async fn stream_message_handler(
 
                 let embed_text = format!("{} {}", query, output.metadata.reasoning.as_deref().unwrap_or(""));
                 let provenance = state_clone.embedder.generate_provenanced(&embed_text).await.ok();
-                let source_ref = json!({ "kind": "a2a_stream_handler", "agent_slug": slug_clone });
+                // Who this task belongs to. The task poll and the push-config
+                // routes authorise against these two fields (SPEC 36 R0.2).
+                let source_ref = json!({
+                    "kind": "a2a_stream_handler",
+                    "agent_slug": slug_clone,
+                    "caller_user_id": caller_clone,
+                });
 
                 let episode_for_obs = episode.clone();
 
@@ -1239,6 +1297,12 @@ pub async fn create_push_config_handler(
         )
     })?;
 
+    // A webhook may only be registered on a task the caller owns (SPEC 36
+    // R0.2): otherwise any key could subscribe to another user's task results.
+    if !task_belongs_to(&state, task_id, &slug, &caller_id).await? {
+        return Err(task_not_found(&episode_id_str));
+    }
+
     let auth_scheme = body.authentication.as_ref().map(|a| a.scheme.as_str());
     let auth_creds = body
         .authentication
@@ -1293,6 +1357,10 @@ pub async fn list_push_configs_handler(
             )),
         )
     })?;
+
+    if !task_belongs_to(&state, task_id, &slug, &api_key.user_id).await? {
+        return Err(task_not_found(&episode_id_str));
+    }
 
     use sqlx::Row;
     let rows = sqlx::query(
@@ -1359,11 +1427,12 @@ pub async fn get_push_config_handler(
     let row = sqlx::query(
         "SELECT config_id, webhook_url, auth_scheme, token, created_at, delivered_at, delivery_attempts
          FROM a2a_push_configs
-         WHERE config_id = $1 AND task_id = $2 AND caller_user_id = $3",
+         WHERE config_id = $1 AND task_id = $2 AND caller_user_id = $3 AND agent_slug = $4",
     )
     .bind(config_id)
     .bind(task_id)
     .bind(&api_key.user_id)
+    .bind(&slug)
     .fetch_optional(&state.db)
     .await
     .map_err(|e| (
@@ -1418,12 +1487,13 @@ pub async fn delete_push_config_handler(
 
     let deleted = sqlx::query(
         "DELETE FROM a2a_push_configs
-         WHERE config_id = $1 AND task_id = $2 AND caller_user_id = $3
+         WHERE config_id = $1 AND task_id = $2 AND caller_user_id = $3 AND agent_slug = $4
          RETURNING config_id",
     )
     .bind(config_id)
     .bind(task_id)
     .bind(&api_key.user_id)
+    .bind(&slug)
     .fetch_optional(&state.db)
     .await
     .map_err(|e| {
