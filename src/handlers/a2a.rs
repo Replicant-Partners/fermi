@@ -601,6 +601,15 @@ pub async fn get_task_handler(
         )
     })?;
 
+    // SPEC 36 R0.2 / G02: a task is readable only by the API key's user that
+    // created it, and only under the slug of the agent that ran it. Anything
+    // else is 404 — not 403, which would confirm the id exists. Previously
+    // any key with `a2a:invoke:*` could read any episode by UUID
+    // [V: src/handlers/a2a.rs:583-656 @ a3cea516].
+    if !task_belongs_to(&state, episode_id, &slug, &caller_id).await? {
+        return Err(task_not_found(&episode_id_str));
+    }
+
     match state.memory_store.get_episode(episode_id).await {
         Ok(episode) => {
             use agent_bestiary_memory::ExecutionStatus;
@@ -645,15 +654,40 @@ pub async fn get_task_handler(
             };
             Ok(Json(task))
         }
-        Err(_) => Err((
-            StatusCode::NOT_FOUND,
-            Json(a2a_error_body(
-                404,
-                &format!("Task '{}' not found.", episode_id_str),
-                "TASK_NOT_FOUND",
-            )),
-        )),
+        Err(_) => Err(task_not_found(&episode_id_str)),
     }
+}
+
+fn task_not_found(id: &str) -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::NOT_FOUND,
+        Json(a2a_error_body(
+            404,
+            &format!("Task '{}' not found.", id),
+            "TASK_NOT_FOUND",
+        )),
+    )
+}
+
+/// [`fermi::a2a_task::task_belongs_to`], with the A2A error shape.
+async fn task_belongs_to(
+    state: &AppState,
+    episode_id: Uuid,
+    slug: &str,
+    caller_id: &str,
+) -> Result<bool, (StatusCode, Json<Value>)> {
+    fermi::a2a_task::task_belongs_to(&state.db, episode_id, slug, caller_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(a2a_error_body(
+                    500,
+                    &format!("task lookup failed: {e}"),
+                    "INTERNAL_ERROR",
+                )),
+            )
+        })
 }
 
 // ─── Phase 3: SSE streaming ─────────────────────────────────────────────────
@@ -883,7 +917,13 @@ pub async fn stream_message_handler(
 
                 let embed_text = format!("{} {}", query, output.metadata.reasoning.as_deref().unwrap_or(""));
                 let provenance = state_clone.embedder.generate_provenanced(&embed_text).await.ok();
-                let source_ref = json!({ "kind": "a2a_stream_handler", "agent_slug": slug_clone });
+                // Who this task belongs to. The task poll and the push-config
+                // routes authorise against these two fields (SPEC 36 R0.2).
+                let source_ref = json!({
+                    "kind": "a2a_stream_handler",
+                    "agent_slug": slug_clone,
+                    "caller_user_id": caller_clone,
+                });
 
                 let episode_for_obs = episode.clone();
 
@@ -1239,6 +1279,12 @@ pub async fn create_push_config_handler(
         )
     })?;
 
+    // A webhook may only be registered on a task the caller owns (SPEC 36
+    // R0.2): otherwise any key could subscribe to another user's task results.
+    if !task_belongs_to(&state, task_id, &slug, &caller_id).await? {
+        return Err(task_not_found(&episode_id_str));
+    }
+
     let auth_scheme = body.authentication.as_ref().map(|a| a.scheme.as_str());
     let auth_creds = body
         .authentication
@@ -1293,6 +1339,10 @@ pub async fn list_push_configs_handler(
             )),
         )
     })?;
+
+    if !task_belongs_to(&state, task_id, &slug, &api_key.user_id).await? {
+        return Err(task_not_found(&episode_id_str));
+    }
 
     use sqlx::Row;
     let rows = sqlx::query(
