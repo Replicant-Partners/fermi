@@ -147,11 +147,11 @@ and `abw-apps-core`'s `every_repo_app_manifest_slug_is_valid` passes for every m
 
 ### R0.2: A2A task reads are tenant-scoped (G02)
 
-1. `message:send` and `message:stream` MUST stamp the episode with `user_id = caller_id` and `source_ref.kind = "a2a"`. A test MUST assert this for both paths.
+1. *(Amended 2026-11-06, owner decision on PR #134.)* `message:send` and `message:stream` MUST record the caller in the episode's `source_ref.caller_user_id`, with `source_ref.kind` one of `fermi::a2a_task::A2A_SOURCE_KINDS` (`a2a_handler`, `a2a_stream_handler`), written in the episode's own transaction. `episodes.user_id` is not used: it means "agent owner" to its other readers (`migrations/007_add_user_id_to_memory.sql:53`).
 2. `get_task_handler` MUST return **404** (not 403, which would be an existence oracle) unless all three hold:
-   - `episode.user_id = caller_id`;
+   - `episode.source_ref.caller_user_id = caller_id`;
    - `episode.agent_id = resolve_agent(slug).agent_id`;
-   - `episode.source_ref.kind = "a2a"`.
+   - `episode.source_ref.kind` is an A2A kind.
 3. The poll MUST serve the **stored** enforced document (R3.3). It MUST NOT re-apply the current contract. Re-enforcing on read means an old task's content changes when a contract changes. Until R3.3 lands, the poll MAY re-enforce, but the response MUST include `contract_version_applied` and `enforced_at = "read_time"`.
 4. The same 404 rule MUST be applied to every handler that takes an episode, workspace, forecast, artifact or task ID from the path. `tests/claims/idor_matrix.rs` enumerates `GET` routes with `:…id` parameters from the route table (`tests/route_table.rs` already parses it) and asserts that a second user gets 404 for each one.
 
