@@ -4,8 +4,8 @@
 
 | | |
 |---|---|
-| Status | Target. **Subordinate to `docs/architecture/ABW_CODING_AGENT_DIRECTIVE.md`** (2026-11-06): where they conflict the directive wins, and the directive's §4 dispositions decide what is worked and when. Known conflicts: the in-process `CommandBus` (R2.4), the outbox outside the ledger crate (R2.7), the ladder rename targets (R7.1), and the R0.8 permit type are superseded by the directive. |
-| Date | 2026-11-05; amended 2026-11-06 (R0.1, owner decision) |
+| Status | **Draft for owner sign-off.** Normative once accepted. R0.1 amended 2026-11-06 to the owner's funding decision (option c, recorded in PR #132). Relationship to `docs/architecture/ABW_CODING_AGENT_DIRECTIVE.md` is settled in a separate change. |
+| Date | 2026-11-05 |
 | Baseline | `main` @ `a3cea516` plus the working tree described in `docs/ABW_LOW_LEVEL_DESIGN.md` (the "LLD") |
 | Supersedes | Nothing. It **implements** `docs/architecture/ABW Verification Lattice — Specification v0.1.md` (the "Lattice spec") and corrects the claims listed in LLD Appendix D |
 | Gap IDs | `G01`–`G33` refer to the LLD §9 gap register |
@@ -129,8 +129,9 @@ These are small, independent changes. Each one is a single PR with its regressio
    - `workspace_dependencies`;
    - the `workspace_outputs.params` row.
 3. If the caller cannot cover `extra_budget`, or the sponsor wallet cannot cover the template budget, the handler MUST return **402**. Nothing is created. Sponsor exhaustion is an operator matter (top up by a ledgered grant); it MUST NOT fall back to minting.
-4. Git initial-file commits happen **after** the commit, are idempotent, and are retried from the outbox (R2.7). Until R2.7 lands they run after commit; a failure marks the workspace `provisioning_incomplete = true` and is visible in the response.
-5. Auto-hire MUST go through the same authorisation function as `hire_agent_handler`. That means visibility via `fermi_auth::visibility`, and `draft` agents only for their owner. Unauthorised entries are reported in `provisioned.skipped[]`, not inserted.
+4. Git initial-file commits happen **after** the commit. A failure is reported in the response (`provisioned.files_failed[]`, `provisioning_incomplete: true`). *Open:* persisting the flag on the workspace, and retrying, belong to the ledger outbox (directive Phase 1); until then the response is the only record.
+5. Auto-hire MUST go through the same authorisation function as `hire_agent_handler`: `fermi::apps::hire_policy::may_place` (never archived; drafts only for their owner; otherwise public, curated/system, or owned). Unauthorised entries are reported in `provisioned.skipped[]`, not inserted.
+5b. *Open (owner decision needed):* a per-caller sponsorship quota. Without one, a caller can repeatedly spawn with `extra_budget = 0` and drain the sponsor wallet (batch spawn: up to 200 per request). Exhaustion yields 402 for everyone, never minting.
 6. Seeded Apps (`seed_apps_to_database`) MUST pass `abw_apps_core::validate_slug`. The `fermi_forecast` reserved-slug conflict MUST be resolved: either remove the slug from `RESERVED_SLUGS` with a recorded reason, or rename the App.
 
 **Done when** `tests/claims/app_spawn_funding.rs` proves all of:

@@ -20,9 +20,10 @@
 //! * A caller who cannot afford the extra budget, or an exhausted sponsor
 //!   wallet, yields 402 and nothing is created.
 //! * `extra_budget` is bounded by [`max_extra_budget`].
-//! * Auto-hire applies the same visibility rule as `hire_agent_handler`
-//!   (public, curated/system tier, or owned by the caller); anything else is
-//!   reported in `skipped`, never silently inserted.
+//! * Auto-hire applies the shared hire rule `apps::hire_policy::may_place`
+//!   (never archived; drafts only for their owner; otherwise public,
+//!   curated/system tier, or owned by the caller); anything else is reported
+//!   in `skipped`, never silently inserted.
 //!
 //! Git initial files are written by the caller **after** commit, because a git
 //! commit cannot join a Postgres transaction. Their failure is reported, not
@@ -322,10 +323,10 @@ pub async fn provision_workspace(
                 plan.extra_budget,
                 &format!("{memo} (extra budget)"),
                 Some(&ws_id_str),
-                // The caller always owns the new workspace, and the transfer
-                // keeps granted credits granted, so granted may fund it — the
-                // same rule as `fund_workspace_handler` for owner self-funding
-                // (src/handlers/workspace/core.rs, `is_self_fund`).
+                // The caller always owns the new workspace, so granted credits
+                // may fund it — the same *who-may* rule as owner self-funding
+                // in `fund_workspace_handler` (src/handlers/workspace/core.rs:710).
+                // Unlike that handler, the transfer keeps granted credits granted.
                 false,
             )
             .await?;

@@ -26,9 +26,7 @@ use serde_json::{json, Value};
 use sqlx::Row;
 use uuid::Uuid;
 
-use fermi_auth::{
-    rbac, teams, AuthPrincipal, ObjectType, Visibility,
-};
+use fermi_auth::{rbac, teams, AuthPrincipal, ObjectType, Visibility};
 
 use crate::{resolve_agent, AppState};
 
@@ -517,7 +515,8 @@ pub async fn spawn_workspace_handler(
 
     // 9. Git files after commit: git cannot join the transaction. Failures are
     //    reported in the response, not swallowed.
-    let git = write_initial_files(&state, ws_id, &ws_slug, &initial_files, req.params.as_ref()).await;
+    let git =
+        write_initial_files(&state, ws_id, &ws_slug, &initial_files, req.params.as_ref()).await;
 
     Ok((
         StatusCode::CREATED,
@@ -546,7 +545,11 @@ fn template_auto_hire(template: &Value) -> Vec<String> {
     template
         .get("auto_hire")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -611,12 +614,17 @@ async fn write_initial_files(
             serde_json::to_string_pretty(params).unwrap_or_default(),
         ));
     }
-    let mut out = GitProvisioning { files_written: 0, failed: Vec::new() };
+    let mut out = GitProvisioning {
+        files_written: 0,
+        failed: Vec::new(),
+    };
     for (path, content) in &files {
-        match state
-            .workspace_git
-            .commit_file(ws_slug, path, content, &format!("App provisioning: {}", path))
-        {
+        match state.workspace_git.commit_file(
+            ws_slug,
+            path,
+            content,
+            &format!("App provisioning: {}", path),
+        ) {
             Ok(_) => out.files_written += 1,
             Err(e) => {
                 tracing::warn!(ws_id = %ws_id, path = %path, error = %e, "initial file not written during App spawn");
@@ -625,11 +633,12 @@ async fn write_initial_files(
         }
     }
     if out.files_written > 0 {
-        if let Err(e) = sqlx::query("UPDATE teams SET git_commit_count = git_commit_count + $1 WHERE id = $2")
-            .bind(out.files_written as i32)
-            .bind(ws_id)
-            .execute(&state.db)
-            .await
+        if let Err(e) =
+            sqlx::query("UPDATE teams SET git_commit_count = git_commit_count + $1 WHERE id = $2")
+                .bind(out.files_written as i32)
+                .bind(ws_id)
+                .execute(&state.db)
+                .await
         {
             tracing::warn!(ws_id = %ws_id, error = %e, "git_commit_count not updated after App spawn");
         }
@@ -850,24 +859,31 @@ pub async fn sync_auto_hire_handler(
 
     // Resolve all agent_name → agent_id in ONE query (instead of N).
     // Names not in the registry are reported but don't fail the batch.
-    let agent_rows = sqlx::query(
-        "SELECT agent_name, agent_id FROM agents
-         WHERE agent_name = ANY($1) AND status IN ('active','published','draft')",
-    )
-    .bind(&auto_hire)
-    .fetch_all(&state.db)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    // Every pushed agent must pass the one hire rule (apps::hire_policy) for
+    // the App's owner: this pushes into workspaces other users own, so the
+    // template may only carry agents its owner could place themselves.
+    let agent_rows: Vec<(String, Uuid, Option<String>, Option<String>, String, String)> =
+        sqlx::query_as(
+            "SELECT agent_name, agent_id, user_id, visibility, tier, status FROM agents
+         WHERE agent_name = ANY($1)",
+        )
+        .bind(&auto_hire)
+        .fetch_all(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let mut agent_ids: Vec<Uuid> = Vec::with_capacity(agent_rows.len());
     let mut found_names: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for r in &agent_rows {
-        if let (Ok(name), Ok(id)) = (
-            r.try_get::<String, _>("agent_name"),
-            r.try_get::<Uuid, _>("agent_id"),
-        ) {
-            agent_ids.push(id);
-            found_names.insert(name);
+    for (name, id, owner, visibility, tier, status) in &agent_rows {
+        let facts = fermi::apps::hire_policy::AgentFacts {
+            owner_id: owner.as_deref(),
+            visibility: visibility.as_deref(),
+            tier,
+            status,
+        };
+        if fermi::apps::hire_policy::may_place(&facts, owner_id).is_ok() {
+            agent_ids.push(*id);
+            found_names.insert(name.clone());
         }
     }
     let skipped_agents: Vec<String> = auto_hire
@@ -1167,7 +1183,10 @@ pub async fn batch_spawn_workspaces_handler(
             .filter(|n| !n.trim().is_empty())
             .unwrap_or_else(|| default_workspace_name(template, &app, &slug, &caller_id));
         let ws_slug = new_workspace_slug(&slug);
-        let auto_hire = instance.auto_hire_override.clone().unwrap_or_else(|| default_auto_hire.clone());
+        let auto_hire = instance
+            .auto_hire_override
+            .clone()
+            .unwrap_or_else(|| default_auto_hire.clone());
         let depends_on = instance.depends_on.clone().unwrap_or_default();
 
         // Each instance is its own transaction and its own debit (SPEC 36 R0.1):
@@ -1179,7 +1198,7 @@ pub async fn batch_spawn_workspaces_handler(
                 sponsor_owner: fermi::apps::provision::SPONSOR_WALLET_OWNER,
                 app_slug: &slug,
                 caller_id: &caller_id,
-                    ws_name: &ws_name,
+                ws_name: &ws_name,
                 ws_slug: &ws_slug,
                 description: instance.description.as_deref(),
                 initial_budget: base_budget,
@@ -1203,7 +1222,14 @@ pub async fn batch_spawn_workspaces_handler(
             }
         };
         let ws_id = provisioned.workspace_id;
-        let git = write_initial_files(&state, ws_id, &ws_slug, &initial_files, instance.params.as_ref()).await;
+        let git = write_initial_files(
+            &state,
+            ws_id,
+            &ws_slug,
+            &initial_files,
+            instance.params.as_ref(),
+        )
+        .await;
 
         results.push(json!({
             "index": idx,

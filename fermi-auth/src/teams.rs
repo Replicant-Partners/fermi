@@ -158,7 +158,7 @@ pub async fn create_team_tx(
     // (migrations/009_add_teams_and_sharing.sql:90-102) has already inserted
     // the owner row with empty capabilities, so this is an upsert that merges
     // the owner's role defaults in — the same statement `add_team_member` uses
-    // (fermi-auth/src/teams.rs, `add_team_member`). `DO NOTHING` here left
+    // (`add_team_member`, fermi-auth/src/teams.rs:269). `DO NOTHING` here left
     // every new owner without `resolve`.
     sqlx::query(
         "INSERT INTO team_members (team_id, member_type, member_id, role, invited_by, capabilities)

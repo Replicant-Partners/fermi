@@ -25,4 +25,11 @@ BEGIN
     INSERT INTO wallets (owner_type, owner_id)
     VALUES ('platform', 'platform:app_sponsorship')
     ON CONFLICT (owner_id) DO NOTHING;
+
+    -- owner_id is unique across owner types; refuse to adopt a same-named
+    -- wallet of another type as the sponsor.
+    IF EXISTS (SELECT 1 FROM wallets
+               WHERE owner_id = 'platform:app_sponsorship' AND owner_type <> 'platform') THEN
+        RAISE EXCEPTION 'wallet platform:app_sponsorship exists with owner_type <> platform';
+    END IF;
 END $$;

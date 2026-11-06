@@ -35,19 +35,21 @@ pub async fn caller(pool: &sqlx::PgPool, c: &mut Created, purchased: i32) -> (St
 /// Deliberately exercises the caller-pays leg only, so it never spends the
 /// shared `platform:app_sponsorship` wallet (asserted unchanged).
 #[tokio::test]
+#[ignore = "needs a deployment: ABW_TEST_BASE_URL + ABW_TEST_DATABASE_URL, run with --ignored"]
 async fn deployed_app_spawn_does_not_mint_credits() {
-    let Some(base) = base_url() else {
-        eprintln!("SKIP (reported as ok): ABW_TEST_BASE_URL not set");
-        return;
-    };
+    let base = base_url().expect("ABW_TEST_BASE_URL must be set for --ignored deployed tests");
     let Some(pool) = support::pool().await else {
         return;
     };
     support::with_cleanup(&pool, move |pool, c| async move {
-        let (_user, key) = caller(&pool, &mut *c.lock().await, 0).await;
-        let sponsor_before: Option<i32> =
-            sqlx::query_scalar("SELECT balance FROM wallets WHERE owner_id = 'platform:app_sponsorship'")
-                .fetch_optional(&pool).await.unwrap();
+        let (user, key) = caller(&pool, &mut *c.lock().await, 0).await;
+        let sponsor_before: Option<i32> = sqlx::query_scalar(
+            "SELECT balance FROM wallets WHERE owner_type = 'platform' AND owner_id = 'platform:app_sponsorship'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        let ledger_before = support::ledger_sum(&pool, &[user.clone()]).await;
 
         let resp = reqwest::Client::new()
             .post(format!("{base}/api/apps/fermi_forecast/workspaces"))
@@ -67,9 +69,17 @@ async fn deployed_app_spawn_does_not_mint_credits() {
                 .bind(w.to_string()).fetch_optional(&pool).await.unwrap(),
             None => None,
         };
-        let sponsor_after: Option<i32> =
-            sqlx::query_scalar("SELECT balance FROM wallets WHERE owner_id = 'platform:app_sponsorship'")
-                .fetch_optional(&pool).await.unwrap();
+        let sponsor_after: Option<i32> = sqlx::query_scalar(
+            "SELECT balance FROM wallets WHERE owner_type = 'platform' AND owner_id = 'platform:app_sponsorship'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        let mut owners = vec![user.clone()];
+        if let Some(w) = ws {
+            owners.push(w.to_string());
+        }
+        let ledger_moved = support::ledger_sum(&pool, &owners).await - ledger_before;
 
         assert_eq!(
             (status, ws.is_some()),
@@ -78,6 +88,7 @@ async fn deployed_app_spawn_does_not_mint_credits() {
              — credits minted with no debit"
         );
         assert_eq!(sponsor_before, sponsor_after, "a refused spawn must not touch the sponsor wallet");
+        assert_eq!(ledger_moved, 0, "G01: ledger over caller + workspace moved by {ledger_moved}");
     })
     .await;
 }

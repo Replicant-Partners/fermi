@@ -2,11 +2,11 @@
 //!
 //! Integer-based credit system.
 //!
-//! Every wallet mutation is a `*_tx` function in this file (`debit_tx`,
-//! `credit_tx`, `transfer_tx`) that writes the wallet row and its
-//! `credit_ledger` row (`insert_ledger_tx`) on one connection inside one
-//! transaction; the pool-taking functions (`charge`, `deposit`, `grant`, …)
-//! only open and commit that transaction via `in_tx` [V]. `wallets.balance` is
+//! Every wallet mutation is a `*_tx` function in this file (`debit_tx` :328,
+//! `credit_tx` :428, `transfer_tx` :486) that writes the wallet row and
+//! its `credit_ledger` row (`insert_ledger_tx` :536) on one connection inside
+//! one transaction; the pool-taking functions (`charge`, `deposit`, `grant`, …)
+//! only open and commit that transaction via `in_tx` :170 [V]. `wallets.balance` is
 //! canonical and `credit_ledger.balance_after` is a copy: nothing recomputes
 //! balance from the ledger, and the ledger has no immutability trigger
 //! [V: migrations/012_credit_ledger.sql]. Both become ledger-derived in

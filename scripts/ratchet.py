@@ -20,7 +20,9 @@ METRICS = {
     # SQL that mutates canonical state in place. Case-insensitive, any
     # whitespace, optional quoting. `ON CONFLICT ... DO UPDATE` is counted as
     # an UPDATE: it is one.
-    "update_ident": re.compile(r'(?i)\bUPDATE\s+"?[a-z_][a-z0-9_."]*\s+SET\b|\bDO\s+UPDATE\b'),
+    "update_ident": re.compile(
+        r'(?i)\bUPDATE\s+(?:ONLY\s+)?"?[a-z_][a-z0-9_."]*(?:\s+(?:AS\s+)?[a-z_][a-z0-9_]*)?\s+SET\b'
+        r'|\bDO\s+UPDATE\b'),
     "delete_from": re.compile(r'(?i)\bDELETE\s+FROM\b'),
     # Discarded results: `let _ =` (any spacing, across newlines) and bare `_ = expr;`.
     "let_underscore": re.compile(r'(?m)(?:\blet\s+_\s*=|^\s*_\s*=\s)'),
@@ -122,7 +124,8 @@ def count(ref):
     c = {k: 0 for k in METRICS}
     c["db_decode_unwrap"] = 0
     for f in files(ref):
-        t = strip_comments(strip_cfg_test(read(ref, f)))
+        # Comments first: otherwise `// #[cfg(test)]` would hide the next item.
+        t = strip_cfg_test(strip_comments(read(ref, f)))
         for k, rx in METRICS.items():
             c[k] += len(rx.findall(t))
         c["db_decode_unwrap"] += decode_unwraps(t)

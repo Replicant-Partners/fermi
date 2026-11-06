@@ -1,11 +1,11 @@
 # Integrity ratchet baseline (Directive §5 Phase 0). `scripts/ratchet.py --check`
 # fails if any count differs: higher = regression; lower = lower this file in the
 # same change so the improvement is locked in.
-# origin/main a3cea516: update_ident=330 delete_from=63 let_underscore=290
+# origin/main a3cea516: update_ident=335 delete_from=63 let_underscore=290
 #   let_underscore_sqlx=115 row_get=707 db_decode_unwrap=76
-update_ident=325
+update_ident=330
 delete_from=63
-let_underscore=282
-let_underscore_sqlx=110
+let_underscore=279
+let_underscore_sqlx=108
 row_get=707
 db_decode_unwrap=58
