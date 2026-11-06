@@ -739,9 +739,26 @@ const RESPONSE_CHARS: usize = 20_000;
 
 pub async fn episode_trace_handler(
     State(state): State<AppState>,
-    _principal: AuthPrincipal,
+    principal: AuthPrincipal,
     Path(episode_id): Path<uuid::Uuid>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    // SPEC 36 R0.2.4 / I9: 404 unless the caller may read this episode
+    // (src/episode_access.rs). Signed-out callers are already 401 from the
+    // AuthPrincipal extractor.
+    {
+        let reader = fermi::episode_access::Reader::from_principal(&principal);
+        let mut conn = state
+            .db
+            .acquire()
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        if !fermi::episode_access::may_read(&mut conn, episode_id, &reader)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        {
+            return Err((StatusCode::NOT_FOUND, "Episode not found".to_string()));
+        }
+    }
     let row = sqlx::query(
         "SELECT e.episode_id, e.parent_episode_id, e.agent_id, e.query, \
                 e.response_text, e.context, e.provenance, e.model_used, e.provider_used, \
@@ -1474,10 +1491,27 @@ pub async fn verification_queue_handler(
 /// surface says so rather than pretending to know.
 pub async fn probe_field_handler(
     State(state): State<AppState>,
-    _principal: AuthPrincipal,
+    principal: AuthPrincipal,
     Path(episode_id): Path<uuid::Uuid>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    // SPEC 36 R0.2.4 / I9: 404 unless the caller may read this episode
+    // (src/episode_access.rs). Signed-out callers are already 401 from the
+    // AuthPrincipal extractor.
+    {
+        let reader = fermi::episode_access::Reader::from_principal(&principal);
+        let mut conn = state
+            .db
+            .acquire()
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        if !fermi::episode_access::may_read(&mut conn, episode_id, &reader)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        {
+            return Err((StatusCode::NOT_FOUND, "Episode not found".to_string()));
+        }
+    }
     let path = body
         .get("path")
         .and_then(|v| v.as_str())
@@ -1623,6 +1657,23 @@ pub async fn contradict_field_handler(
     Path(episode_id): Path<uuid::Uuid>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    // SPEC 36 R0.2.4 / I9: 404 unless the caller may read this episode
+    // (src/episode_access.rs). Signed-out callers are already 401 from the
+    // AuthPrincipal extractor.
+    {
+        let reader = fermi::episode_access::Reader::from_principal(&principal);
+        let mut conn = state
+            .db
+            .acquire()
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        if !fermi::episode_access::may_read(&mut conn, episode_id, &reader)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        {
+            return Err((StatusCode::NOT_FOUND, "Episode not found".to_string()));
+        }
+    }
     let path_field = body
         .get("path")
         .and_then(|v| v.as_str())

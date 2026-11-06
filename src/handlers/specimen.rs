@@ -70,8 +70,11 @@ use crate::AppState;
 /// endpoint and is not repeated here.
 pub async fn recent_episodes_handler(
     State(state): State<AppState>,
+    principal: fermi_auth::AuthPrincipal,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let db = &state.db;
+    // SPEC 36 R0.2.4: only episodes this caller may read (src/episode_access.rs).
+    let reader = fermi::episode_access::Reader::from_principal(&principal);
 
     let contracted: std::collections::HashSet<&str> = fermi::grounding_trust::FIELD_CONTRACTS
         .iter()
@@ -94,10 +97,14 @@ pub async fn recent_episodes_handler(
                  FROM episodes e
                  JOIN agents a ON a.agent_id = e.agent_id
                 WHERE e.response_text IS NOT NULL
-                  AND a.agent_name NOT LIKE 'test\\_agent\\_%'";
+                  AND a.agent_name NOT LIKE 'test\\_agent\\_%'
+                  AND {access}";
 
+    let sql = sql.replace("{access}", &fermi::episode_access::predicate(2, 3));
     let recent_rows = sqlx::query(&format!("{sql} ORDER BY e.created_at DESC LIMIT 18"))
         .bind(&owned)
+        .bind(&reader.user_id)
+        .bind(reader.admin)
         .fetch_all(db)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("recent: {e}")))?;
@@ -106,6 +113,8 @@ pub async fn recent_episodes_handler(
         "{sql} AND a.agent_name = ANY($1) ORDER BY e.created_at DESC LIMIT 6"
     ))
     .bind(&owned)
+    .bind(&reader.user_id)
+    .bind(reader.admin)
     .fetch_all(db)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("graded: {e}")))?;
@@ -157,8 +166,26 @@ pub async fn recent_episodes_handler(
 /// the parent cannot show it.
 pub async fn episode_lineage_handler(
     State(state): State<AppState>,
+    principal: fermi_auth::AuthPrincipal,
     Path(episode_id): Path<uuid::Uuid>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    // SPEC 36 R0.2.4 / I9: 404 unless the caller may read this episode
+    // (src/episode_access.rs). Signed-out callers are already 401 from the
+    // AuthPrincipal extractor.
+    {
+        let reader = fermi::episode_access::Reader::from_principal(&principal);
+        let mut conn = state
+            .db
+            .acquire()
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        if !fermi::episode_access::may_read(&mut conn, episode_id, &reader)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        {
+            return Err((StatusCode::NOT_FOUND, "Episode not found".to_string()));
+        }
+    }
     let db = &state.db;
 
     // LEFT JOIN, not JOIN, and the difference is a finding.
@@ -608,8 +635,24 @@ pub async fn bestiary_cards_handler(
 /// state and the reason the column is worth one migration.
 pub async fn workspace_flow_handler(
     State(state): State<AppState>,
+    principal: fermi_auth::AuthPrincipal,
     Path(workspace_id): Path<uuid::Uuid>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    // SPEC 36 R0.2.4: members (and admins) only; 404 otherwise.
+    {
+        let reader = fermi::episode_access::Reader::from_principal(&principal);
+        let mut conn = state
+            .db
+            .acquire()
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        if !fermi::episode_access::may_read_workspace(&mut conn, workspace_id, &reader)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        {
+            return Err((StatusCode::NOT_FOUND, "Workspace not found".to_string()));
+        }
+    }
     let db = &state.db;
 
     // The typed hops only. `chat` is the human conversation around the work and

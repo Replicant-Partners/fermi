@@ -13,11 +13,29 @@ use crate::{resolve_agent, AppState};
 
 pub async fn get_episode_detail_handler(
     State(state): State<AppState>,
+    principal: fermi_auth::AuthPrincipal,
     Path(episode_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let ep_uuid: uuid::Uuid = episode_id
         .parse()
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid episode ID".to_string()))?;
+    // SPEC 36 R0.2.4 / I9: 404 unless the caller may read this episode
+    // (src/episode_access.rs). Signed-out callers are already 401 from the
+    // AuthPrincipal extractor.
+    {
+        let reader = fermi::episode_access::Reader::from_principal(&principal);
+        let mut conn = state
+            .db
+            .acquire()
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        if !fermi::episode_access::may_read(&mut conn, ep_uuid, &reader)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        {
+            return Err((StatusCode::NOT_FOUND, "Episode not found".to_string()));
+        }
+    }
 
     let episode = state
         .memory_store
