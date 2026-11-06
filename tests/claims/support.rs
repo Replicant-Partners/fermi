@@ -75,13 +75,32 @@ impl Created {
         let mut owners = self.wallet_owners.clone();
         owners.extend(teams.iter().cloned());
         owners.extend(self.users.iter().cloned());
-        sqlx::query("DELETE FROM credit_ledger WHERE wallet_id IN (SELECT wallet_id FROM wallets WHERE owner_id = ANY($1))")
-            .bind(&owners).execute(pool).await.expect("ledger cleanup");
-        sqlx::query("DELETE FROM wallets WHERE owner_id = ANY($1)")
-            .bind(&owners)
-            .execute(pool)
-            .await
-            .expect("wallet cleanup");
+        // `app_sponsorships` is append-only by trigger (migration 244), and
+        // cleanup does not weaken that. Rows it pins — the test sponsor
+        // wallet and the sponsor's transfer_out ledger rows — are kept;
+        // everything else this run created is deleted. Kept rows are all
+        // `spec36_`-tagged and belong to per-test sponsor wallets, never to
+        // `platform:app_sponsorship`.
+        let pinned = "SELECT ledger_tx_id FROM app_sponsorships s
+                        JOIN wallets w ON w.wallet_id = s.sponsor_wallet
+                       WHERE w.owner_id = ANY($1)";
+        sqlx::query(&format!(
+            "DELETE FROM credit_ledger WHERE wallet_id IN (SELECT wallet_id FROM wallets WHERE owner_id = ANY($1))
+               AND tx_id NOT IN ({pinned})"
+        ))
+        .bind(&owners)
+        .execute(pool)
+        .await
+        .expect("ledger cleanup");
+        sqlx::query(
+            "DELETE FROM wallets w WHERE owner_id = ANY($1)
+               AND NOT EXISTS (SELECT 1 FROM app_sponsorships s WHERE s.sponsor_wallet = w.wallet_id)
+               AND NOT EXISTS (SELECT 1 FROM credit_ledger l WHERE l.wallet_id = w.wallet_id)",
+        )
+        .bind(&owners)
+        .execute(pool)
+        .await
+        .expect("wallet cleanup");
         sqlx::query("DELETE FROM teams WHERE id::text = ANY($1)")
             .bind(&teams)
             .execute(pool)

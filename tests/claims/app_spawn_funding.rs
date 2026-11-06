@@ -10,7 +10,7 @@
 //! wallet, so the shared `platform:app_sponsorship` history is never touched.
 
 use crate::support::{self, Created};
-use fermi::apps::provision::{provision_workspace, total_budget, SpawnPlan};
+use fermi::apps::provision::{provision_workspace, total_budget, SpawnPlan, TemplatePayer};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -36,6 +36,8 @@ async fn env(
 fn plan<'a>(e: &'a Env, slug: &'a str, extra: i32, hire: &'a [String]) -> SpawnPlan<'a> {
     SpawnPlan {
         sponsor_owner: &e.sponsor,
+        sponsored_quota: 3,
+        accept_template_charge: true,
         app_slug: "spec36_test_app",
         caller_id: &e.user,
         ws_name: "spec36 test workspace",
@@ -123,27 +125,27 @@ async fn empty_sponsor_falls_back_to_the_caller_and_never_mints() {
     .await;
 }
 
-/// The per-caller quota (default 3 per 30 days): the 4th spawn is paid by the
-/// caller even though the sponsor could cover it.
+/// The per-caller quota (3 here, passed in the plan): the caller's 4th
+/// spawn is caller-paid while a second caller is still sponsored.
 #[tokio::test]
 async fn sponsorship_quota_is_per_caller() {
     let Some(pool) = support::pool().await else {
         return;
     };
     support::with_cleanup(&pool, |pool, c| async move {
-        let quota = fermi::apps::provision::sponsored_spawn_quota();
-        let e = env(&pool, &c, 100, 100 * (quota as i32 + 2)).await;
-        for _ in 0..quota {
+        let e = env(&pool, &c, 100, 100 * 5).await;
+        for _ in 0..3 {
             let slug = support::tag("ws");
             let p = provision_workspace(&pool, &plan(&e, &slug, 0, &[]))
                 .await
                 .unwrap();
+            assert_eq!(p.template_paid_by, Some(TemplatePayer::Sponsor));
             c.lock().await.teams.push(p.workspace_id);
         }
         assert_eq!(
             support::balances(&pool, &e.user).await.0,
             100,
-            "first {quota} were sponsored"
+            "first 3 were sponsored"
         );
         let slug = support::tag("ws");
         let p = provision_workspace(&pool, &plan(&e, &slug, 0, &[]))
@@ -151,15 +153,95 @@ async fn sponsorship_quota_is_per_caller() {
             .unwrap();
         c.lock().await.teams.push(p.workspace_id);
         assert_eq!(
-            support::balances(&pool, &e.user).await.0,
-            0,
-            "over quota: caller paid"
+            p.template_paid_by,
+            Some(TemplatePayer::Caller),
+            "4th is caller-paid"
+        );
+        assert_eq!(support::balances(&pool, &e.user).await.0, 0);
+
+        // A different caller on the same sponsor is still sponsored.
+        let other = Env {
+            user: support::make_user(&pool, &mut *c.lock().await).await,
+            sponsor: e.sponsor.clone(),
+        };
+        support::make_wallet(&pool, &mut *c.lock().await, "user", &other.user, 0).await;
+        let slug = support::tag("ws");
+        let p = provision_workspace(&pool, &plan(&other, &slug, 0, &[]))
+            .await
+            .unwrap();
+        c.lock().await.teams.push(p.workspace_id);
+        assert_eq!(
+            p.template_paid_by,
+            Some(TemplatePayer::Sponsor),
+            "quota is per caller"
         );
         assert_eq!(
             support::balances(&pool, &e.sponsor).await.0,
-            100 * 2,
-            "sponsor paid exactly {quota}"
+            100,
+            "sponsor paid exactly 4"
         );
+    })
+    .await;
+}
+
+/// Review finding: deleting a sponsored workspace must not refund the slot.
+/// Fails on 7f46c0ea, whose count joined `teams`.
+#[tokio::test]
+async fn deleting_a_sponsored_workspace_does_not_refund_the_quota() {
+    let Some(pool) = support::pool().await else {
+        return;
+    };
+    support::with_cleanup(&pool, |pool, c| async move {
+        let e = env(&pool, &c, 0, 100 * 5).await;
+        for _ in 0..3 {
+            let slug = support::tag("ws");
+            let p = provision_workspace(&pool, &plan(&e, &slug, 0, &[]))
+                .await
+                .unwrap();
+            // Delete through the real path users have.
+            fermi_auth::teams::delete_team(&pool, p.workspace_id, &e.user)
+                .await
+                .unwrap();
+            c.lock()
+                .await
+                .wallet_owners
+                .push(p.workspace_id.to_string());
+        }
+        let slug = support::tag("ws");
+        let err = provision_workspace(&pool, &plan(&e, &slug, 0, &[]))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err.status(),
+            402,
+            "quota spent even though the workspaces were deleted: {}",
+            err.message()
+        );
+    })
+    .await;
+}
+
+/// An unsponsored spawn without `accept_template_charge` is refused with the
+/// price, and nothing is charged.
+#[tokio::test]
+async fn unsponsored_spawn_requires_accepting_the_charge() {
+    let Some(pool) = support::pool().await else {
+        return;
+    };
+    support::with_cleanup(&pool, |pool, c| async move {
+        let e = env(&pool, &c, 500, 0).await;
+        let slug = support::tag("ws");
+        let mut pl = plan(&e, &slug, 0, &[]);
+        pl.accept_template_charge = false;
+        let err = provision_workspace(&pool, &pl).await.unwrap_err();
+        assert_eq!(err.status(), 402);
+        assert!(err.message().contains("100"), "{}", err.message());
+        assert_eq!(
+            support::balances(&pool, &e.user).await.0,
+            500,
+            "nothing charged"
+        );
+        assert!(!team_exists(&pool, &slug).await);
     })
     .await;
 }

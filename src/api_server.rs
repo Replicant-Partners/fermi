@@ -2762,8 +2762,14 @@ async fn main() {
         // A released product passport, readable with no ABW account. Only
         // what an admin explicitly published, as a frozen snapshot; see
         // handlers::workspace::dpp_publish for the allowlist.
-        .route("/dpp/:token", get(handlers::workspace::dpp_publish::public_dpp_redirect))
-        .route("/api/dpp/p/:token", get(handlers::workspace::dpp_publish::public_dpp_handler))
+        .route(
+            "/dpp/:token",
+            get(handlers::workspace::dpp_publish::public_dpp_redirect),
+        )
+        .route(
+            "/api/dpp/p/:token",
+            get(handlers::workspace::dpp_publish::public_dpp_handler),
+        )
         .route(
             "/api/dpp/p/:token/qr",
             get(handlers::workspace::dpp_publish::public_dpp_qr_handler),
@@ -6237,9 +6243,12 @@ async fn seed_apps_to_database(db: &sqlx::PgPool) {
         };
         // SPEC 36 R0.1.6: seeded Apps obey the slug rules; only the
         // allowlisted reserved origins may be claimed, and only by a seed.
+        // Fatal, not skipped: manifests are repo-controlled and checked by
+        // abw-apps-core's `every_repo_app_manifest_slug_is_valid`, so a
+        // refusal here is a broken build, and skipping it would leave a
+        // previously seeded row live with only a boot-log line as the trace.
         if let Err(e) = abw_apps_core::validate_seeded_slug(&slug) {
-            eprintln!("Refusing to seed App {:?} ({:?}): {}", slug, path, e);
-            continue;
+            panic!("refusing to seed App {:?} ({:?}): {}", slug, path, e);
         }
 
         let name = manifest["name"].as_str().unwrap_or(&slug).to_string();

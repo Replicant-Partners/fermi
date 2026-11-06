@@ -61,6 +61,11 @@ pub enum ProvisionError {
     /// A `depends_on` entry is malformed or names a workspace the caller is
     /// not a member of.
     InvalidDependency(String),
+    /// The template budget is not sponsored for this spawn and the caller did
+    /// not set `accept_template_charge`. Nothing was created or charged.
+    TemplateChargeNotAccepted {
+        price: i32,
+    },
     Db(String),
 }
 
@@ -71,6 +76,7 @@ impl ProvisionError {
             ProvisionError::InsufficientCredits { .. } => 402,
             ProvisionError::Conflict => 409,
             ProvisionError::InvalidDependency(_) => 422,
+            ProvisionError::TemplateChargeNotAccepted { .. } => 402,
             ProvisionError::Db(_) => 500,
         }
     }
@@ -82,6 +88,11 @@ impl ProvisionError {
             }
             ProvisionError::Conflict => "Slug collision — please retry".into(),
             ProvisionError::InvalidDependency(m) => m.clone(),
+            ProvisionError::TemplateChargeNotAccepted { price } => format!(
+                "This spawn is not sponsored (quota used or sponsor short); its template \
+                 budget of {price} credits would be charged to you. Retry with \
+                 \"accept_template_charge\": true to accept."
+            ),
             ProvisionError::Db(m) => m.clone(),
         }
     }
@@ -123,6 +134,14 @@ pub struct SpawnPlan<'a> {
     /// [`SPONSOR_WALLET_OWNER`]; tests pass their own so they never spend or
     /// rewrite the shared sponsor wallet's history.
     pub sponsor_owner: &'a str,
+    /// Sponsored spawns allowed per caller per 30 days. Production passes
+    /// [`sponsored_spawn_quota`]; tests pass their own.
+    pub sponsored_quota: i64,
+    /// The caller agreed to pay the template budget if it is not sponsored.
+    /// Without it, an unsponsored spawn is refused with
+    /// [`ProvisionError::TemplateChargeNotAccepted`] (402, with the price)
+    /// rather than charging the caller unasked.
+    pub accept_template_charge: bool,
     pub app_slug: &'a str,
     pub caller_id: &'a str,
     pub ws_name: &'a str,
@@ -143,12 +162,25 @@ pub struct Provisioned {
     /// `(agent_name, reason)` for every auto-hire entry not inserted.
     pub skipped: Vec<(String, &'static str)>,
     pub dependencies_wired: usize,
+    /// Who paid the template budget (`None` when it was 0). Returned to the
+    /// caller so a caller-paid spawn is never a silent charge.
+    pub template_paid_by: Option<TemplatePayer>,
 }
 
 /// Who pays a spawn's template budget.
-enum Payer {
-    Sponsor(Uuid),
-    Caller(Uuid),
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TemplatePayer {
+    Sponsor,
+    Caller,
+}
+
+impl TemplatePayer {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TemplatePayer::Sponsor => "sponsor",
+            TemplatePayer::Caller => "caller",
+        }
+    }
 }
 
 /// Sponsored spawns allowed per caller per rolling 30 days. Override with
@@ -163,55 +195,57 @@ pub fn sponsored_spawn_quota() -> i64 {
         .unwrap_or(DEFAULT_SPONSORED_SPAWNS_PER_30D)
 }
 
-/// Memo marker on the sponsor's `transfer_out` ledger rows. The quota is
-/// counted from these rows, so it needs no counter of its own: the ledger is
-/// the record of what was sponsored.
-const SPONSOR_MEMO_MARK: &str = "platform-sponsored template budget";
-
 /// Choose the payer for the template budget.
 ///
-/// The sponsor pays if the caller is within quota **and** the sponsor can
-/// cover it; otherwise the caller pays. The sponsor row is locked
-/// (`FOR UPDATE`) and the caller's quota is counted under that lock, so two
-/// concurrent spawns by one caller cannot both take the last sponsored slot.
+/// The sponsor pays if the caller has had fewer than `plan.sponsored_quota`
+/// sponsorships in 30 days **and** the sponsor can cover it; otherwise the
+/// caller pays. Usage is counted from `app_sponsorships` (migration 244),
+/// which is append-only (trigger) and not tied to `teams`, so deleting a
+/// workspace does not refund a slot.
+///
+/// Race safety: the sponsor row is locked `FOR UPDATE` before counting, and
+/// under READ COMMITTED (the Postgres default; this code sets no other
+/// isolation level) the count is a new statement that sees any concurrent
+/// spawn's committed `app_sponsorships` row. So two spawns by one caller
+/// cannot both take the last slot. Lock order: sponsor row, then
+/// `transfer_tx`'s wallets; no other path locks the sponsor row first.
 async fn template_payer(
     tx: &mut sqlx::PgConnection,
     plan: &SpawnPlan<'_>,
-) -> Result<Payer, ProvisionError> {
-    let quota = sponsored_spawn_quota();
-    let sponsor: Option<(Uuid, i32)> = sqlx::query_as(
-        "SELECT wallet_id, balance FROM wallets
-          WHERE owner_type = 'platform' AND owner_id = $1 FOR UPDATE",
-    )
-    .bind(plan.sponsor_owner)
-    .fetch_optional(&mut *tx)
-    .await?;
-    if let Some((sponsor_wallet, balance)) = sponsor {
-        if quota > 0 && balance >= plan.initial_budget {
-            // Sponsored spawns this caller already received: sponsor debits
-            // whose paired workspace credit landed in a workspace the caller
-            // owns. Both rows share `related_id` = workspace id.
-            let used: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM credit_ledger l
-                   JOIN teams t ON t.id::text = l.related_id
-                  WHERE l.wallet_id = $1 AND l.tx_type = 'transfer_out'
-                    AND l.description LIKE '%' || $2 || '%'
-                    AND t.owner_id = $3
-                    AND l.created_at > now() - interval '30 days'",
-            )
-            .bind(sponsor_wallet)
-            .bind(SPONSOR_MEMO_MARK)
-            .bind(plan.caller_id)
-            .fetch_one(&mut *tx)
-            .await?;
-            if used < quota {
-                return Ok(Payer::Sponsor(sponsor_wallet));
+) -> Result<(TemplatePayer, Uuid), ProvisionError> {
+    if plan.sponsored_quota > 0 {
+        let sponsor: Option<(Uuid, i32)> = sqlx::query_as(
+            "SELECT wallet_id, balance FROM wallets
+              WHERE owner_type = 'platform' AND owner_id = $1 FOR UPDATE",
+        )
+        .bind(plan.sponsor_owner)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if let Some((sponsor_wallet, balance)) = sponsor {
+            if balance >= plan.initial_budget {
+                let used: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM app_sponsorships
+                      WHERE sponsor_wallet = $1 AND beneficiary_id = $2
+                        AND created_at > now() - interval '30 days'",
+                )
+                .bind(sponsor_wallet)
+                .bind(plan.caller_id)
+                .fetch_one(&mut *tx)
+                .await?;
+                if used < plan.sponsored_quota {
+                    return Ok((TemplatePayer::Sponsor, sponsor_wallet));
+                }
             }
         }
     }
+    if !plan.accept_template_charge {
+        return Err(ProvisionError::TemplateChargeNotAccepted {
+            price: plan.initial_budget,
+        });
+    }
     let caller = fermi_auth::credits::wallet_id_tx(&mut *tx, "user", plan.caller_id).await?;
     caller
-        .map(Payer::Caller)
+        .map(|w| (TemplatePayer::Caller, w))
         .ok_or(ProvisionError::InsufficientCredits {
             have: 0,
             need: plan.initial_budget,
@@ -343,6 +377,7 @@ pub async fn provision_workspace(
 
     // Funding last: the sponsor wallet row is shared by every spawn, so its
     // row lock is taken as late as possible and held only until commit.
+    let mut template_paid_by = None;
     if total > 0 {
         let ws_wallet =
             fermi_auth::credit_ensure_wallet_tx(&mut tx, "workspace", &ws_id_str).await?;
@@ -352,21 +387,37 @@ pub async fn provision_workspace(
         // quota; directive §4 G01 as amended). Over quota, or with the sponsor
         // short, the caller pays it. Never minted.
         if plan.initial_budget > 0 {
-            let payer = template_payer(&mut tx, plan).await?;
-            let (from, transferable_only, note) = match payer {
-                Payer::Sponsor(w) => (w, false, "platform-sponsored template budget"),
-                Payer::Caller(w) => (w, false, "template budget, paid by caller"),
+            let (payer, from) = template_payer(&mut tx, plan).await?;
+            let note = match payer {
+                TemplatePayer::Sponsor => "platform-sponsored template budget",
+                TemplatePayer::Caller => "template budget, paid by caller",
             };
-            fermi_auth::credit_transfer_tx(
+            let (out, _) = fermi_auth::credit_transfer_tx(
                 &mut tx,
                 from,
                 ws_wallet,
                 plan.initial_budget,
                 &format!("{memo} ({note})"),
                 Some(&ws_id_str),
-                transferable_only,
+                false,
             )
             .await?;
+            if payer == TemplatePayer::Sponsor {
+                sqlx::query(
+                    "INSERT INTO app_sponsorships
+                       (sponsor_wallet, beneficiary_id, app_slug, workspace_id, amount, ledger_tx_id)
+                     VALUES ($1, $2, $3, $4, $5, $6)",
+                )
+                .bind(from)
+                .bind(plan.caller_id)
+                .bind(plan.app_slug)
+                .bind(ws_id)
+                .bind(plan.initial_budget)
+                .bind(out.tx_id)
+                .execute(&mut *tx)
+                .await?;
+            }
+            template_paid_by = Some(payer);
         }
         // Extra budget: paid by the caller.
         if plan.extra_budget > 0 {
@@ -407,6 +458,7 @@ pub async fn provision_workspace(
         agents_hired,
         skipped,
         dependencies_wired,
+        template_paid_by,
     })
 }
 

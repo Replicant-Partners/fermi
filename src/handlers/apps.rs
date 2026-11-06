@@ -91,6 +91,10 @@ pub struct SpawnWorkspaceRequest {
     pub params: Option<Value>,
     /// Workspace IDs this workspace depends on (upstream).
     pub depends_on: Option<Vec<String>>,
+    /// Accept paying the template budget if this spawn is not sponsored.
+    /// Default false: an unsponsored spawn is refused (402, with the price).
+    #[serde(default)]
+    pub accept_template_charge: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -497,6 +501,8 @@ pub async fn spawn_workspace_handler(
         &state.db,
         &fermi::apps::provision::SpawnPlan {
             sponsor_owner: fermi::apps::provision::SPONSOR_WALLET_OWNER,
+            sponsored_quota: fermi::apps::provision::sponsored_spawn_quota(),
+            accept_template_charge: req.accept_template_charge,
             app_slug: &slug,
             caller_id: &caller_id,
             ws_name: &ws_name,
@@ -659,6 +665,7 @@ fn provisioned_json(
         "agents_hired_names": p.agents_hired,
         "skipped": p.skipped.iter().map(|(n, r)| json!({"agent": n, "reason": r})).collect::<Vec<_>>(),
         "dependencies_wired": p.dependencies_wired,
+        "template_paid_by": p.template_paid_by.map(|t| t.as_str()),
         "has_params": has_params,
     })
 }
@@ -1196,6 +1203,8 @@ pub async fn batch_spawn_workspaces_handler(
             &state.db,
             &fermi::apps::provision::SpawnPlan {
                 sponsor_owner: fermi::apps::provision::SPONSOR_WALLET_OWNER,
+                sponsored_quota: fermi::apps::provision::sponsored_spawn_quota(),
+                accept_template_charge: instance.accept_template_charge,
                 app_slug: &slug,
                 caller_id: &caller_id,
                 ws_name: &ws_name,
