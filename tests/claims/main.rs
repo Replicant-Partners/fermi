@@ -15,3 +15,5 @@ mod support;
 mod app_spawn_funding;
 
 mod deployed;
+
+mod deployed_happy_path;
