@@ -101,9 +101,8 @@ async fn spawn(
     tx: &mut Transaction<'_, Postgres>,
     p: &SpawnPlan<'_>,
 ) -> Result<Provisioned, ProvisionError> {
-    let total = total_budget(p.initial_budget, p.extra_budget)?;
     let mut sp = sqlx::Acquire::begin(&mut **tx).await.unwrap();
-    match provision_workspace_tx(&mut sp, p, total).await {
+    match provision_workspace_tx(&mut sp, p).await {
         Ok(v) => {
             sp.commit().await.unwrap();
             Ok(v)

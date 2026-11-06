@@ -85,7 +85,16 @@ impl ProvisionError {
 
     /// JSON error body: `{error, code, price?, have?, need?}`.
     pub fn body(&self) -> Value {
-        let mut b = serde_json::json!({"error": self.message(), "code": self.code()});
+        // Internal errors carry raw database text; clients get a generic
+        // message and the detail is logged.
+        let error = match self {
+            ProvisionError::Db(m) => {
+                tracing::error!(error = %m, "workspace provisioning failed");
+                "internal error".to_string()
+            }
+            other => other.message(),
+        };
+        let mut b = serde_json::json!({"error": error, "code": self.code()});
         match self {
             ProvisionError::TemplateChargeNotAccepted { price } => b["price"] = (*price).into(),
             ProvisionError::InsufficientCredits { have, need } => {
@@ -302,9 +311,10 @@ pub async fn provision_workspace(
     pool: &sqlx::PgPool,
     plan: &SpawnPlan<'_>,
 ) -> Result<Provisioned, ProvisionError> {
-    let total = total_budget(plan.initial_budget, plan.extra_budget)?;
+    // Validated before any I/O; provision_workspace_tx validates again itself.
+    total_budget(plan.initial_budget, plan.extra_budget)?;
     let mut tx = pool.begin().await?;
-    let out = provision_workspace_tx(&mut tx, plan, total).await?;
+    let out = provision_workspace_tx(&mut tx, plan).await?;
     tx.commit().await?;
     Ok(out)
 }
@@ -314,8 +324,9 @@ pub async fn provision_workspace(
 pub async fn provision_workspace_tx(
     tx: &mut sqlx::PgConnection,
     plan: &SpawnPlan<'_>,
-    total: i32,
 ) -> Result<Provisioned, ProvisionError> {
+    // The budget rule is enforced here, not trusted from the caller.
+    let total = total_budget(plan.initial_budget, plan.extra_budget)?;
     let team = fermi_auth::teams::create_team_tx(
         &mut *tx,
         plan.ws_name,
