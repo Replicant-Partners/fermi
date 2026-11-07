@@ -1,10 +1,10 @@
 //! SPEC 36 R0.2 item 4 / I9 (#38): by-ID and bulk episode reads are tenant-scoped.
 //!
-//! Before: `/api/episodes/:id`, `/lineage`, `/api/episodes/recent` and
-//! `/api/workspaces/:id/flow` were on the public router and served episode
-//! content to anyone, signed in or not; `/api/agents/:id/eval/runs` served a
-//! private agent's evals. Observed on the dev prototype at 4c9bac67 (the
-//! deployed tests below).
+//! Before (deployed prototype, 4c9bac67): `/api/episodes/:id/lineage`,
+//! `/api/workspaces/:id/flow`, a private agent's `/eval/runs`,
+//! `/api/episodes/recent` and `/api/stream` answered signed-out callers with
+//! episode content; `/trace` answered any signed-in user. The deployed test
+//! below observed these.
 
 use crate::deployed::{base_url, caller};
 use crate::support;
@@ -17,50 +17,48 @@ fn reader(user: &str) -> Reader {
     }
 }
 
-/// The access rule, in a rolled-back transaction.
+/// The access rule, every branch, in a rolled-back transaction.
 #[tokio::test]
 async fn episode_access_rule() {
     let Some(pool) = support::pool().await else {
         return;
     };
     let mut tx = pool.begin().await.unwrap();
-    let mk_user = |id: String| {
-        sqlx::query(
-            "INSERT INTO users (email, password_hash, password_salt, user_id, auth_provider, display_name)
-             VALUES ($1, 'x', 'x', $2, 'legacy', 'spec36')",
-        )
-        .bind(format!("{id}@{}", support::TEST_EMAIL_DOMAIN))
-        .bind(id)
-    };
     let owner = support::tag("user");
     let human = support::tag("user");
     let member = support::tag("user");
     let stranger = support::tag("user");
     for u in [&owner, &human, &member, &stranger] {
-        mk_user(u.clone()).execute(&mut *tx).await.unwrap();
+        sqlx::query(
+            "INSERT INTO users (email, password_hash, password_salt, user_id, auth_provider, display_name)
+             VALUES ($1, 'x', 'x', $2, 'legacy', 'spec36')",
+        )
+        .bind(format!("{u}@{}", support::TEST_EMAIL_DOMAIN))
+        .bind(u)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
     }
-    let agent: uuid::Uuid = sqlx::query_scalar(
-        "INSERT INTO agents (agent_name, agent_type, version, tier, executor_type, model, temperature,
-                             author, status, visibility, user_id)
-         VALUES ($1, 'research', '1.0.0', 'community', 'llm', 'test', 0.5, 'spec36', 'published', 'public', $2)
-         RETURNING agent_id",
-    )
-    .bind(support::tag("agent"))
-    .bind(&owner)
-    .fetch_one(&mut *tx)
-    .await
-    .unwrap();
-    let private_agent: uuid::Uuid = sqlx::query_scalar(
-        "INSERT INTO agents (agent_name, agent_type, version, tier, executor_type, model, temperature,
-                             author, status, visibility, user_id)
-         VALUES ($1, 'research', '1.0.0', 'community', 'llm', 'test', 0.5, 'spec36', 'draft', 'private', $2)
-         RETURNING agent_id",
-    )
-    .bind(support::tag("agent"))
-    .bind(&owner)
-    .fetch_one(&mut *tx)
-    .await
-    .unwrap();
+    let new_agent = |status: &'static str, visibility: &'static str| {
+        sqlx::query_scalar::<_, uuid::Uuid>(
+            "INSERT INTO agents (agent_name, agent_type, version, tier, executor_type, model, temperature,
+                                 author, status, visibility, user_id)
+             VALUES ($1, 'research', '1.0.0', 'community', 'llm', 'test', 0.5, 'spec36', $2, $3, $4)
+             RETURNING agent_id",
+        )
+        .bind(support::tag("agent"))
+        .bind(status)
+        .bind(visibility)
+        .bind(owner.clone())
+    };
+    let agent = new_agent("published", "public")
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    let private_agent = new_agent("draft", "private")
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
     let ws = fermi_auth::teams::create_team_tx(
         &mut tx,
         "spec36 ws",
@@ -72,55 +70,119 @@ async fn episode_access_rule() {
     .await
     .unwrap();
 
-    let ep = |dyad: Option<String>, ws_id: Option<uuid::Uuid>| {
+    let ep = |dyad: Option<String>, ws_id: Option<uuid::Uuid>, src: Option<serde_json::Value>| {
         sqlx::query_scalar::<_, uuid::Uuid>(
             "INSERT INTO episodes (agent_id, timestamp_ref, query, context, execution_status,
-                                   execution_time_ms, dyad_id, workspace_id)
-             VALUES ($1, now(), 'spec36 private question', '{}'::jsonb, 'success', 1, $2, $3)
+                                   execution_time_ms, dyad_id, workspace_id, source_ref)
+             VALUES ($1, now(), 'spec36 private question', '{}'::jsonb, 'success', 1, $2, $3, $4)
              RETURNING episode_id",
         )
         .bind(agent)
         .bind(dyad)
         .bind(ws_id)
+        .bind(src)
     };
-    let talked = ep(Some(format!("dyad:{agent}:{human}")), None)
+    let talked = ep(Some(format!("dyad:{agent}:{human}")), None, None)
         .fetch_one(&mut *tx)
         .await
         .unwrap();
-    let in_ws = ep(None, Some(ws.id)).fetch_one(&mut *tx).await.unwrap();
-    let bare = ep(None, None).fetch_one(&mut *tx).await.unwrap();
+    let in_ws = ep(None, Some(ws.id), None)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    let bare = ep(None, None, None).fetch_one(&mut *tx).await.unwrap();
+    let a2a = ep(
+        None,
+        None,
+        Some(serde_json::json!({"kind": "a2a_handler", "caller_user_id": human})),
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    let src_ws = ep(
+        None,
+        None,
+        Some(serde_json::json!({"kind": "x", "workspace_id": ws.id.to_string()})),
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    let eval = ep(Some(format!("eval:{agent}:{human}")), None, None)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    let bad_ws = ep(
+        None,
+        None,
+        Some(serde_json::json!({"kind": "x", "workspace_id": "wild"})),
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    let all = [talked, in_ws, bare, a2a, src_ws, eval, bad_ws];
 
-    // Agent owner sees everything of their agent.
-    for e in [talked, in_ws, bare] {
+    for e in all {
         assert!(
             may_read(&mut tx, e, &reader(&owner)).await.unwrap(),
-            "owner reads {e}"
+            "agent owner reads {e}"
         );
-    }
-    // The human in the dyad sees their conversation, not others'.
-    assert!(may_read(&mut tx, talked, &reader(&human)).await.unwrap());
-    assert!(!may_read(&mut tx, bare, &reader(&human)).await.unwrap());
-    // A workspace member sees the workspace's episodes, not others'.
-    assert!(may_read(&mut tx, in_ws, &reader(&member)).await.unwrap());
-    assert!(!may_read(&mut tx, talked, &reader(&member)).await.unwrap());
-    // A stranger sees none, even though the agent is public.
-    for e in [talked, in_ws, bare] {
         assert!(
             !may_read(&mut tx, e, &reader(&stranger)).await.unwrap(),
             "stranger read {e}"
         );
+        let nobody = Reader {
+            user_id: String::new(),
+            admin: false,
+        };
+        assert!(
+            !may_read(&mut tx, e, &nobody).await.unwrap(),
+            "signed-out reader read {e}"
+        );
     }
-    // Admin sees all; a nonexistent id is false (404), not an error.
+    assert!(
+        may_read(&mut tx, talked, &reader(&human)).await.unwrap(),
+        "dyad human"
+    );
+    assert!(
+        may_read(&mut tx, eval, &reader(&human)).await.unwrap(),
+        "eval dyad human"
+    );
+    assert!(
+        may_read(&mut tx, a2a, &reader(&human)).await.unwrap(),
+        "A2A caller"
+    );
+    assert!(
+        !may_read(&mut tx, bare, &reader(&human)).await.unwrap(),
+        "not the human's"
+    );
+    assert!(
+        may_read(&mut tx, in_ws, &reader(&member)).await.unwrap(),
+        "workspace member"
+    );
+    assert!(
+        may_read(&mut tx, src_ws, &reader(&member)).await.unwrap(),
+        "workspace via source_ref"
+    );
+    assert!(
+        !may_read(&mut tx, bad_ws, &reader(&member)).await.unwrap(),
+        "non-uuid workspace id: no error, no match"
+    );
+    assert!(
+        !may_read(&mut tx, talked, &reader(&member)).await.unwrap(),
+        "member: not the workspace's"
+    );
     let admin = Reader {
         user_id: stranger.clone(),
         admin: true,
     };
-    assert!(may_read(&mut tx, bare, &admin).await.unwrap());
-    assert!(!may_read(&mut tx, uuid::Uuid::new_v4(), &admin)
-        .await
-        .unwrap());
+    assert!(may_read(&mut tx, bare, &admin).await.unwrap(), "admin");
+    assert!(
+        !may_read(&mut tx, uuid::Uuid::new_v4(), &admin)
+            .await
+            .unwrap(),
+        "missing id is false"
+    );
 
-    // Workspace flow: members only.
     assert!(may_read_workspace(&mut tx, ws.id, &reader(&member))
         .await
         .unwrap());
@@ -128,8 +190,10 @@ async fn episode_access_rule() {
         .await
         .unwrap());
 
-    // Evals: public published agent readable signed-out; private only by owner.
-    assert!(may_read_agent_evals(&mut tx, agent, None).await.unwrap());
+    assert!(
+        may_read_agent_evals(&mut tx, agent, None).await.unwrap(),
+        "public published agent: catalogue"
+    );
     assert!(!may_read_agent_evals(&mut tx, private_agent, None)
         .await
         .unwrap());
@@ -145,6 +209,75 @@ async fn episode_access_rule() {
     );
 }
 
+/// Every handler that serves episode content by id or in bulk carries the
+/// guard. A source check, because the handlers live in the api-server binary;
+/// deleting any guard fails this test.
+#[test]
+fn every_episode_reading_handler_is_guarded() {
+    let read = |f: &str| {
+        std::fs::read_to_string(format!("{}/src/handlers/{f}", env!("CARGO_MANIFEST_DIR"))).unwrap()
+    };
+    let body = |src: &str, name: &str| -> String {
+        let start = src
+            .find(&format!("pub async fn {name}("))
+            .unwrap_or_else(|| panic!("{name} missing"));
+        let rest = &src[start..];
+        let end = rest[1..]
+            .find("\npub async fn ")
+            .map(|i| i + 1)
+            .unwrap_or(rest.len());
+        rest[..end].to_string()
+    };
+    let checks: &[(&str, &str, &str)] = &[
+        (
+            "metrics.rs",
+            "get_episode_detail_handler",
+            "require_readable(",
+        ),
+        ("metrics.rs", "agent_metrics_handler", "predicate("),
+        ("loops.rs", "episode_trace_handler", "require_readable("),
+        ("loops.rs", "probe_field_handler", "require_readable("),
+        ("loops.rs", "contradict_field_handler", "require_readable("),
+        ("loops.rs", "agent_coordination_notes_handler", "predicate("),
+        ("loops.rs", "verification_queue_handler", "predicate("),
+        (
+            "specimen.rs",
+            "episode_lineage_handler",
+            "require_readable(",
+        ),
+        ("specimen.rs", "recent_episodes_handler", "predicate("),
+        ("specimen.rs", "stream_handler", "predicate("),
+        ("specimen.rs", "specimen_handler", "predicate("),
+        (
+            "specimen.rs",
+            "workspace_flow_handler",
+            "may_read_workspace(",
+        ),
+        (
+            "consolidation.rs",
+            "get_agent_episodes_handler",
+            "predicate(",
+        ),
+        ("eval.rs", "list_eval_runs_handler", "require_agent_evals("),
+        (
+            "eval.rs",
+            "list_eval_signals_handler",
+            "require_agent_evals(",
+        ),
+        (
+            "eval.rs",
+            "list_eval_test_cases_handler",
+            "require_agent_evals(",
+        ),
+    ];
+    for (file, handler, guard) in checks {
+        assert!(
+            body(&read(file), handler).contains(guard),
+            "{file}::{handler} must call {guard}..)"
+        );
+    }
+}
+
 async fn status(url: String, key: Option<&str>) -> (u16, String) {
     let mut r = reqwest::Client::new().get(url);
     if let Some(k) = key {
@@ -155,7 +288,7 @@ async fn status(url: String, key: Option<&str>) -> (u16, String) {
     (s, resp.text().await.unwrap_or_default())
 }
 
-/// Live routes, signed out and as a stranger. Fails on 4c9bac67 (200s).
+/// Live routes, signed out and as a stranger with no history.
 #[tokio::test]
 #[ignore = "needs a deployment: ABW_TEST_BASE_URL + ABW_TEST_DATABASE_URL, run with --ignored"]
 async fn deployed_episode_reads_are_tenant_scoped() {
@@ -163,20 +296,16 @@ async fn deployed_episode_reads_are_tenant_scoped() {
     let Some(pool) = support::pool().await else {
         return;
     };
-    // An existing episode of a private agent, and an existing workspace.
-    let private_ep: uuid::Uuid = sqlx::query_scalar(
-        "SELECT e.episode_id FROM episodes e JOIN agents a USING (agent_id)
-          WHERE a.visibility = 'private' ORDER BY e.created_at DESC LIMIT 1",
+    // A finished episode of a private agent (a `running` row 502s on old code
+    // through the G05 reader panic, which proves nothing either way).
+    let (private_ep, private_agent, private_name): (uuid::Uuid, uuid::Uuid, String) = sqlx::query_as(
+        "SELECT e.episode_id, a.agent_id, a.agent_name FROM episodes e JOIN agents a USING (agent_id)
+          WHERE a.visibility = 'private' AND e.execution_status <> 'running'
+          ORDER BY e.created_at DESC LIMIT 1",
     )
     .fetch_one(&pool)
     .await
-    .expect("dev DB has a private-agent episode");
-    let private_agent: uuid::Uuid =
-        sqlx::query_scalar("SELECT agent_id FROM episodes WHERE episode_id = $1")
-            .bind(private_ep)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    .expect("dev DB has a finished private-agent episode");
     let ws: uuid::Uuid = sqlx::query_scalar(
         "SELECT t.id FROM teams t WHERE EXISTS (SELECT 1 FROM workspace_messages m WHERE m.workspace_id = t.id)
           ORDER BY t.created_at DESC LIMIT 1",
@@ -186,34 +315,49 @@ async fn deployed_episode_reads_are_tenant_scoped() {
     .unwrap();
     support::with_cleanup(&pool, move |pool, c| async move {
         let (_stranger, key) = caller(&pool, &mut *c.lock().await, 0).await;
-        let urls = [
-            format!("{base}/api/episodes/{private_ep}"),
-            format!("{base}/api/episodes/{private_ep}/lineage"),
-            format!("{base}/api/episodes/{private_ep}/trace"),
-            format!("{base}/api/workspaces/{ws}/flow"),
-            format!("{base}/api/agents/{private_agent}/eval/runs"),
-        ];
         let mut leaks = Vec::new();
-        for u in &urls {
-            let (anon, _) = status(u.clone(), None).await;
-            let (strange, _) = status(u.clone(), Some(&key)).await;
+        for path in [
+            format!("/api/episodes/{private_ep}"),
+            format!("/api/episodes/{private_ep}/lineage"),
+            format!("/api/episodes/{private_ep}/trace"),
+            format!("/api/workspaces/{ws}/flow"),
+            format!("/api/agents/{private_agent}/eval/runs"),
+            format!("/api/agents/{private_agent}/eval/test-cases"),
+            format!("/api/specimen/{private_name}"),
+        ] {
+            let (anon, _) = status(format!("{base}{path}"), None).await;
+            let (strange, _) = status(format!("{base}{path}"), Some(&key)).await;
             if anon == 200 || strange == 200 {
-                leaks.push(format!("{u}: signed-out {anon}, stranger {strange}"));
+                leaks.push(format!("{path}: signed-out {anon}, stranger {strange}"));
             }
         }
-        let (anon_recent, _) = status(format!("{base}/api/episodes/recent"), None).await;
-        let (_, stranger_recent) = status(format!("{base}/api/episodes/recent"), Some(&key)).await;
-        if anon_recent == 200 {
-            leaks.push(format!("/api/episodes/recent signed-out {anon_recent}"));
-        }
-        let n: usize = serde_json::from_str::<serde_json::Value>(&stranger_recent)
-            .ok()
-            .and_then(|v| v["episodes"].as_array().map(|a| a.len()))
-            .unwrap_or(0);
-        if n > 0 {
-            leaks.push(format!(
-                "/api/episodes/recent returned {n} episodes to a stranger"
-            ));
+        for (path, field) in [
+            ("/api/episodes/recent".to_string(), "episodes"),
+            ("/api/stream".to_string(), "exchanges"),
+            (format!("/api/agents/{private_agent}/episodes"), "episodes"),
+            ("/api/verification-queue".to_string(), "items"),
+            (
+                format!("/api/agents/{private_agent}/metrics"),
+                "recent_failures",
+            ),
+        ] {
+            let (anon, anon_body) = status(format!("{base}{path}"), None).await;
+            let (_, body) = status(format!("{base}{path}"), Some(&key)).await;
+            let count = |b: &str| {
+                serde_json::from_str::<serde_json::Value>(b)
+                    .ok()
+                    .and_then(|v| v[field].as_array().map(|a| a.len()))
+                    .unwrap_or(0)
+            };
+            if anon == 200 && count(&anon_body) > 0 {
+                leaks.push(format!(
+                    "{path}: signed-out got {} {field}",
+                    count(&anon_body)
+                ));
+            }
+            if count(&body) > 0 {
+                leaks.push(format!("{path}: stranger got {} {field}", count(&body)));
+            }
         }
         assert!(leaks.is_empty(), "R0.2.4 leaks:\n{}", leaks.join("\n"));
     })

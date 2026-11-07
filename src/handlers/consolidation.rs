@@ -606,8 +606,7 @@ pub async fn get_agent_episodes_handler(
 
     let rows = sqlx::query(&format!(
         "SELECT e.episode_id, e.timestamp_ref, e.query, e.execution_status, e.error_details,
-                e.execution_time_ms, e.tokens_used, e.cost_usd, e.consolidated, e.tags,
-                COUNT(*) OVER () AS total
+                e.execution_time_ms, e.tokens_used, e.cost_usd, e.consolidated, e.tags
            FROM episodes e JOIN agents a ON a.agent_id = e.agent_id
           WHERE e.agent_id = $1 AND {access}
           ORDER BY e.timestamp_ref DESC
@@ -628,10 +627,8 @@ pub async fn get_agent_episodes_handler(
             format!("episode row: {e}"),
         )
     };
-    let mut total: i64 = 0;
     let mut episodes_json: Vec<Value> = Vec::with_capacity(rows.len());
     for r in &rows {
-        total = r.try_get("total").map_err(decode)?;
         episodes_json.push(json!({
             "episode_id": r.try_get::<uuid::Uuid, _>("episode_id").map_err(decode)?,
             "timestamp": r.try_get::<chrono::DateTime<chrono::Utc>, _>("timestamp_ref").map_err(decode)?,
@@ -645,6 +642,18 @@ pub async fn get_agent_episodes_handler(
             "tags": r.try_get::<Option<Vec<String>>, _>("tags").map_err(decode)?,
         }));
     }
+
+    // A separate filtered count, so `total` is right even past the last page.
+    let total: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM episodes e JOIN agents a ON a.agent_id = e.agent_id
+          WHERE e.agent_id = $1 AND {access}"
+    ))
+    .bind(db_agent.agent_id)
+    .bind(&reader.user_id)
+    .bind(reader.admin)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(json!({
         "episodes": episodes_json,

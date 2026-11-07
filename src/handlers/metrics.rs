@@ -19,23 +19,8 @@ pub async fn get_episode_detail_handler(
     let ep_uuid: uuid::Uuid = episode_id
         .parse()
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid episode ID".to_string()))?;
-    // SPEC 36 R0.2.4 / I9: 404 unless the caller may read this episode
-    // (src/episode_access.rs). Signed-out callers are already 401 from the
-    // AuthPrincipal extractor.
-    {
-        let reader = fermi::episode_access::Reader::from_principal(&principal);
-        let mut conn = state
-            .db
-            .acquire()
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-        if !fermi::episode_access::may_read(&mut conn, ep_uuid, &reader)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        {
-            return Err((StatusCode::NOT_FOUND, "Episode not found".to_string()));
-        }
-    }
+    // SPEC 36 R0.2.4 / I9 (src/episode_access.rs).
+    fermi::episode_access::require_readable(&state.db, &principal, ep_uuid).await?;
 
     let episode = state
         .memory_store
@@ -263,6 +248,7 @@ pub async fn platform_metrics_handler(
 
 pub async fn agent_metrics_handler(
     State(state): State<AppState>,
+    principal: Option<fermi_auth::AuthPrincipal>,
     Path(agent_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let db_agent = resolve_agent(&state, &agent_id).await?;
@@ -388,14 +374,20 @@ pub async fn agent_metrics_handler(
     let avg_loop_iterations: Option<f64> = iter_row.get("avg_iters");
 
     // 4. Recent failures
-    let fail_rows = sqlx::query(
-        "SELECT episode_id, timestamp_ref, query, error_details
-         FROM episodes
-         WHERE agent_id = $1 AND execution_status = 'failure'
-         ORDER BY timestamp_ref DESC
+    // SPEC 36 R0.2.4: aggregates above are catalogue data; the failures list
+    // carries queries and errors, so it holds only episodes this caller may read.
+    let metrics_reader = fermi::episode_access::reader_or_nobody(principal.as_ref());
+    let fail_rows = sqlx::query(&format!(
+        "SELECT e.episode_id, e.timestamp_ref, e.query, e.error_details
+         FROM episodes e JOIN agents a ON a.agent_id = e.agent_id
+         WHERE e.agent_id = $1 AND e.execution_status = 'failure' AND {}
+         ORDER BY e.timestamp_ref DESC
          LIMIT 5",
-    )
+        fermi::episode_access::predicate(2, 3)
+    ))
     .bind(aid)
+    .bind(&metrics_reader.user_id)
+    .bind(metrics_reader.admin)
     .fetch_all(pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;

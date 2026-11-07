@@ -102,9 +102,13 @@ pub struct TriggerEvalRunRequest {
 
 pub async fn list_eval_test_cases_handler(
     State(state): State<AppState>,
+    principal: Option<fermi_auth::AuthPrincipal>,
     Path(agent_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let db_agent = resolve_agent(&state, &agent_id).await?;
+    // Same rule as eval runs (SPEC 36 R0.2.4).
+    fermi::episode_access::require_agent_evals(&state.db, principal.as_ref(), db_agent.agent_id)
+        .await?;
     let cases = state
         .memory_store
         .list_eval_test_cases(db_agent.agent_id)
@@ -360,29 +364,10 @@ pub async fn list_eval_runs_handler(
     Path(agent_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let db_agent = resolve_agent(&state, &agent_id).await?;
-    // SPEC 36 R0.2.4: eval data of a private or unpublished agent is its
-    // owner's (and admins'). Public published agents' evals are catalogue
-    // data and stay readable without sign-in. 404 otherwise.
-    let reader = principal
-        .as_ref()
-        .map(fermi::episode_access::Reader::from_principal);
-    {
-        let mut conn = state
-            .db
-            .acquire()
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-        if !fermi::episode_access::may_read_agent_evals(
-            &mut conn,
-            db_agent.agent_id,
-            reader.as_ref(),
-        )
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        {
-            return Err((StatusCode::NOT_FOUND, "Agent not found".to_string()));
-        }
-    }
+    // SPEC 36 R0.2.4: public published agents' evals are catalogue data;
+    // a private or unpublished agent's are its owner's (src/episode_access.rs).
+    fermi::episode_access::require_agent_evals(&state.db, principal.as_ref(), db_agent.agent_id)
+        .await?;
 
     let runs = state
         .memory_store
@@ -409,27 +394,10 @@ pub async fn list_eval_signals_handler(
     Path((agent_id, run_id_str)): Path<(String, String)>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let db_agent = resolve_agent(&state, &agent_id).await?;
-    // Same rule as list_eval_runs_handler (SPEC 36 R0.2.4).
-    let reader = principal
-        .as_ref()
-        .map(fermi::episode_access::Reader::from_principal);
-    {
-        let mut conn = state
-            .db
-            .acquire()
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-        if !fermi::episode_access::may_read_agent_evals(
-            &mut conn,
-            db_agent.agent_id,
-            reader.as_ref(),
-        )
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        {
-            return Err((StatusCode::NOT_FOUND, "Agent not found".to_string()));
-        }
-    }
+    // SPEC 36 R0.2.4: public published agents' evals are catalogue data;
+    // a private or unpublished agent's are its owner's (src/episode_access.rs).
+    fermi::episode_access::require_agent_evals(&state.db, principal.as_ref(), db_agent.agent_id)
+        .await?;
 
     let run_id = uuid::Uuid::parse_str(&run_id_str)
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid run_id".into()))?;

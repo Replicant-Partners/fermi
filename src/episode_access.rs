@@ -1,10 +1,11 @@
 //! Who may read an episode (SPEC 36 R0.2 item 4, invariant I9).
 //!
-//! Before: `/api/episodes/:id`, `/lineage`, `/trace` and `/api/episodes/recent`
-//! sat on the public router and served any episode's query, tool calls and
-//! reasoning to any caller, signed in or not — including episodes of private
-//! agents [V: probed on the dev prototype at a3cea516; route table
-//! src/api_server.rs public_routes].
+//! Before: `/api/episodes/:id`, `/lineage`, `/api/episodes/recent`,
+//! `/api/stream`, `/api/specimen/:agent` and agent metrics sat on the public
+//! router and served episode queries, tool calls and errors to signed-out
+//! callers, including episodes of private agents; `/trace` served any episode to
+//! any signed-in user [V: probed on the dev prototype at a3cea516 and 4c9bac67,
+//! `tests/claims/episode_read_tenancy.rs`].
 //!
 //! The rule, in one place so every route agrees. A caller may read an episode
 //! when any of these hold:
@@ -27,7 +28,7 @@ use uuid::Uuid;
 
 /// The access predicate over `episodes e JOIN agents a`, with `$caller` and
 /// `$admin` placeholders substituted by [`predicate`].
-const PREDICATE: &str = "(
+const PREDICATE: &str = "({caller} <> '' AND (
     {admin}
     OR a.user_id = {caller}
     OR e.dyad_id IN ('dyad:' || e.agent_id || ':' || {caller}, 'eval:' || e.agent_id || ':' || {caller})
@@ -35,9 +36,14 @@ const PREDICATE: &str = "(
     OR EXISTS (
         SELECT 1 FROM team_members tm
          WHERE tm.member_id = {caller}
-           AND tm.team_id = COALESCE(e.workspace_id, NULLIF(e.source_ref->>'workspace_id', '')::uuid)
+           AND tm.member_type = 'user'
+           AND tm.team_id = COALESCE(
+                 e.workspace_id,
+                 CASE WHEN e.source_ref->>'workspace_id'
+                           ~* '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$'
+                      THEN (e.source_ref->>'workspace_id')::uuid END)
     )
-)";
+))";
 
 /// The predicate with the caller bound to placeholder `$n` (text) and admin to
 /// `$m` (bool). Use inside a query that aliases `episodes e JOIN agents a`.
@@ -124,4 +130,71 @@ pub async fn may_read_agent_evals(
     .bind(reader.map(|r| r.admin).unwrap_or(false))
     .fetch_one(&mut *conn)
     .await
+}
+
+/// The 404 every guarded by-ID route returns, so status and text cannot drift.
+pub fn not_found() -> (axum::http::StatusCode, String) {
+    (
+        axum::http::StatusCode::NOT_FOUND,
+        "Episode not found".to_string(),
+    )
+}
+
+fn internal(e: sqlx::Error) -> (axum::http::StatusCode, String) {
+    tracing::error!(error = %e, "episode access check failed");
+    (
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+        "access check failed".to_string(),
+    )
+}
+
+/// `Ok(())` iff the principal may read `episode_id`; otherwise the shared 404.
+/// Signed-out callers never reach this: the `AuthPrincipal` extractor answers
+/// 401 when no principal was set by the auth middleware
+/// (fermi-auth/src/middleware.rs, `impl FromRequestParts for AuthPrincipal`).
+pub async fn require_readable(
+    pool: &sqlx::PgPool,
+    principal: &fermi_auth::AuthPrincipal,
+    episode_id: Uuid,
+) -> Result<(), (axum::http::StatusCode, String)> {
+    let mut conn = pool.acquire().await.map_err(internal)?;
+    if may_read(&mut conn, episode_id, &Reader::from_principal(principal))
+        .await
+        .map_err(internal)?
+    {
+        Ok(())
+    } else {
+        Err(not_found())
+    }
+}
+
+/// `Ok(())` iff the reader (or a signed-out caller, `None`) may see the
+/// agent's eval data; otherwise 404.
+pub async fn require_agent_evals(
+    pool: &sqlx::PgPool,
+    principal: Option<&fermi_auth::AuthPrincipal>,
+    agent_id: Uuid,
+) -> Result<(), (axum::http::StatusCode, String)> {
+    let mut conn = pool.acquire().await.map_err(internal)?;
+    let reader = principal.map(Reader::from_principal);
+    if may_read_agent_evals(&mut conn, agent_id, reader.as_ref())
+        .await
+        .map_err(internal)?
+    {
+        Ok(())
+    } else {
+        Err((
+            axum::http::StatusCode::NOT_FOUND,
+            "Agent not found".to_string(),
+        ))
+    }
+}
+
+/// The reader for list filters: a signed-out caller reads nothing
+/// (`user_id` that matches no row, `admin = false`).
+pub fn reader_or_nobody(principal: Option<&fermi_auth::AuthPrincipal>) -> Reader {
+    principal.map(Reader::from_principal).unwrap_or(Reader {
+        user_id: String::new(),
+        admin: false,
+    })
 }

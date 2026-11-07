@@ -169,23 +169,8 @@ pub async fn episode_lineage_handler(
     principal: fermi_auth::AuthPrincipal,
     Path(episode_id): Path<uuid::Uuid>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    // SPEC 36 R0.2.4 / I9: 404 unless the caller may read this episode
-    // (src/episode_access.rs). Signed-out callers are already 401 from the
-    // AuthPrincipal extractor.
-    {
-        let reader = fermi::episode_access::Reader::from_principal(&principal);
-        let mut conn = state
-            .db
-            .acquire()
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-        if !fermi::episode_access::may_read(&mut conn, episode_id, &reader)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        {
-            return Err((StatusCode::NOT_FOUND, "Episode not found".to_string()));
-        }
-    }
+    // SPEC 36 R0.2.4 / I9 (src/episode_access.rs).
+    fermi::episode_access::require_readable(&state.db, &principal, episode_id).await?;
     let db = &state.db;
 
     // LEFT JOIN, not JOIN, and the difference is a finding.
@@ -235,14 +220,19 @@ pub async fn episode_lineage_handler(
 
     // The direction the trace never looked. An agent that hired another is only
     // visible from here.
-    let child_rows = sqlx::query(
+    // Children are other agents' episodes: each is filtered by the same rule.
+    let lineage_reader = fermi::episode_access::Reader::from_principal(&principal);
+    let child_rows = sqlx::query(&format!(
         "SELECT e.episode_id, a.agent_name, e.created_at, e.query, e.execution_status
            FROM episodes e
            JOIN agents a ON a.agent_id = e.agent_id
-          WHERE e.parent_episode_id = $1
+          WHERE e.parent_episode_id = $1 AND {}
           ORDER BY e.created_at ASC",
-    )
+        fermi::episode_access::predicate(2, 3)
+    ))
     .bind(episode_id)
+    .bind(&lineage_reader.user_id)
+    .bind(lineage_reader.admin)
     .fetch_all(db)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("children: {e}")))?;
@@ -408,15 +398,22 @@ fn pulse_row(r: &sqlx::postgres::PgRow) -> Value {
 
 pub async fn stream_handler(
     State(state): State<AppState>,
+    principal: fermi_auth::AuthPrincipal,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let db = &state.db;
+    // SPEC 36 R0.2.4: only exchanges this caller may read (src/episode_access.rs).
+    let reader = fermi::episode_access::Reader::from_principal(&principal);
 
     let rows = sqlx::query(&format!(
         "{PULSE_SELECT}
           WHERE a.agent_name NOT LIKE 'test\\_agent\\_%'
+            AND {}
           ORDER BY e.created_at DESC
-          LIMIT 200"
+          LIMIT 200",
+        fermi::episode_access::predicate(1, 2)
     ))
+    .bind(&reader.user_id)
+    .bind(reader.admin)
     .fetch_all(db)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("stream: {e}")))?;
@@ -819,6 +816,7 @@ pub async fn workspace_flow_handler(
 /// `GET /api/specimen/:agent_name`
 pub async fn specimen_handler(
     State(state): State<AppState>,
+    principal: Option<fermi_auth::AuthPrincipal>,
     Path(agent_name): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let db = &state.db;
@@ -849,7 +847,7 @@ pub async fn specimen_handler(
                 -- silently, which would have answered NO for every agent on
                 -- the question of whether its prompt names its own type.
                 a.output_contract,
-                a.status, a.visibility, a.tags, a.accepts, a.produces,
+                a.user_id, a.status, a.visibility, a.tags, a.accepts, a.produces,
                 a.taxonomy, a.fork_count, a.forked_from, a.persona_version,
                 a.system_prompt, a.sample_queries, a.mcp_tools, a.mcp_servers, a.skills,
                 -- What a fork of this agent costs, and what the credentials it
@@ -875,7 +873,28 @@ pub async fn specimen_handler(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("specimen: {e}")))?
     .ok_or((StatusCode::NOT_FOUND, format!("no specimen `{agent_name}`")))?;
 
-    let agent_id: uuid::Uuid = row.get("agent_id");
+    let agent_id: uuid::Uuid = row.try_get("agent_id").map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("specimen row: {e}"),
+        )
+    })?;
+
+    // SPEC 36 R0.2.4: a private agent's specimen (profile, system prompt, record)
+    // is its owner's and admins'; anyone else gets the same 404 as a missing
+    // agent. Its episode list below is filtered row by row with the episode rule.
+    let specimen_reader = fermi::episode_access::reader_or_nobody(principal.as_ref());
+    {
+        let owner: Option<String> = row.try_get("user_id").ok().flatten();
+        let visibility: Option<String> = row.try_get("visibility").ok().flatten();
+        let visible = visibility.as_deref() == Some("public")
+            || specimen_reader.admin
+            || (!specimen_reader.user_id.is_empty()
+                && owner.as_deref() == Some(specimen_reader.user_id.as_str()));
+        if !visible {
+            return Err((StatusCode::NOT_FOUND, format!("no specimen `{agent_name}`")));
+        }
+    }
 
     // ── Record: what it has done ─────────────────────────────────────────
     //
@@ -922,10 +941,13 @@ pub async fn specimen_handler(
     // an agent's owner actually opens.
     let episodes = sqlx::query(&format!(
         "{PULSE_SELECT}
-          WHERE e.agent_id = $1
-          ORDER BY e.created_at DESC LIMIT 15"
+          WHERE e.agent_id = $1 AND {}
+          ORDER BY e.created_at DESC LIMIT 15",
+        fermi::episode_access::predicate(2, 3)
     ))
     .bind(agent_id)
+    .bind(&specimen_reader.user_id)
+    .bind(specimen_reader.admin)
     .fetch_all(db)
     .await;
 
