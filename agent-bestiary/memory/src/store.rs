@@ -1714,7 +1714,8 @@ impl MemoryStore {
         let result = sqlx::query(
             "UPDATE episodes
              SET consolidated = true, consolidation_job_id = $1
-             WHERE episode_id = ANY($2)",
+             WHERE episode_id = ANY($2)
+               AND execution_status <> 'running'",
         )
         .bind(consolidation_job_id)
         .bind(episode_ids)

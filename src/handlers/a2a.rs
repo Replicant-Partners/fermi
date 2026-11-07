@@ -678,7 +678,13 @@ pub async fn get_task_handler(
             }
             Ok(Json(task))
         }
-        Err(_) => Err(task_not_found(&episode_id_str)),
+        Err(e) => {
+            // The task row exists (task_belongs_to passed), so a read failure
+            // here is corrupt or undecodable data, not absence. Still 404 to
+            // the caller; logged so it is not invisible.
+            tracing::warn!(episode_id = %episode_id, error = %e, "a2a task read failed");
+            Err(task_not_found(&episode_id_str))
+        }
     }
 }
 

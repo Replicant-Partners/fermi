@@ -110,7 +110,8 @@ fn no_unwrap_on_db_decode() {
     )
     .unwrap();
     let row_get_unwrap =
-        regex::Regex::new(r#"\b(row|r)\.(try_)?get\([^)]*\)\s*\.(unwrap|expect)\("#).unwrap();
+        regex::Regex::new(r#"\.(try_)?get(::<[^>]*>)?\("[a-z_0-9]+"\)\s*\.(unwrap|expect)\("#)
+            .unwrap();
     let mut hits = Vec::new();
     let mut stack: Vec<std::path::PathBuf> = ["agent-bestiary/memory/src", "src"]
         .iter()
