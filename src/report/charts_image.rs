@@ -111,7 +111,7 @@ fn generate_tornado_code(
     for (i, driver) in drivers.iter().enumerate() {
         let name = driver.display_name.as_ref().unwrap_or(&driver.name);
         let short_name = if name.len() > 20 {
-            format!("{}...", &name[..17])
+            format!("{}...", crate::text::truncate_at_char_boundary(name, 17))
         } else {
             name.clone()
         };
@@ -187,7 +187,10 @@ fn generate_mindmap_code(
 
     // Question branch
     let short_question = if question.len() > 40 {
-        format!("{}...", &question[..37])
+        format!(
+            "{}...",
+            crate::text::truncate_at_char_boundary(question, 37)
+        )
     } else {
         question.to_string()
     };
@@ -373,7 +376,7 @@ fn generate_sankey_code(
     for (i, driver) in drivers.iter().enumerate() {
         let name = driver.display_name.as_ref().unwrap_or(&driver.name);
         let short_name = if name.len() > 25 {
-            format!("{}...", &name[..22])
+            format!("{}...", crate::text::truncate_at_char_boundary(name, 22))
         } else {
             name.clone()
         };

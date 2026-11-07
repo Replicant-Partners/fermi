@@ -230,7 +230,11 @@ async fn execute_mint_creature(
     // Generate a specimen name if not provided
     let final_specimen_name = specimen_name.map(|s| s.to_string()).unwrap_or_else(|| {
         let base = common_name.unwrap_or(scientific_name);
-        format!("{} #{}", base, &creature_id.to_string()[..6])
+        format!(
+            "{} #{}",
+            base,
+            crate::text::truncate_at_char_boundary(&creature_id.to_string(), 6)
+        )
     });
 
     let pool = ctx.memory_store.pool();

@@ -217,7 +217,7 @@ pub async fn mint_creature_handler(
                     eprintln!(
                         "[rabble] Naturalist described {}: {}...",
                         spec_name,
-                        &desc[..desc.len().min(80)]
+                        fermi::text::truncate_at_char_boundary(&desc, 80)
                     );
                 }
                 Err(e) => eprintln!(

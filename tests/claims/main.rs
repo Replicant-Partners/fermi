@@ -29,3 +29,5 @@ mod ssrf_guard;
 mod ssrf_deployed;
 
 mod running_status;
+
+mod utf8_truncation;

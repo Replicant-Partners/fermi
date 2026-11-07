@@ -325,7 +325,10 @@ async fn main() -> Result<()> {
                 if let Some(ref synopsis) = result.dream_synopsis {
                     info!(
                         "  Dream synopsis: {}...",
-                        &synopsis[..synopsis.len().min(100)]
+                        synopsis
+                            .char_indices()
+                            .nth(100)
+                            .map_or(synopsis.as_str(), |(i, _)| &synopsis[..i])
                     );
                 }
             }

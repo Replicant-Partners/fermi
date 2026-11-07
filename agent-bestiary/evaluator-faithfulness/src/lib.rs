@@ -145,7 +145,7 @@ impl EvalModel for FaithfulnessEvaluator {
                 if claim_lower.contains(" not ") || claim_lower.contains("never ") {
                     // Check if source says the opposite without negation.
                     let positive = claim_lower.replace(" not ", " ").replace("never ", "");
-                    if source_text.contains(&positive[..positive.len().min(40)]) {
+                    if source_text.contains(prefix_at_char_boundary(&positive, 40)) {
                         any_contradicted = true;
                     }
                 }
@@ -347,4 +347,17 @@ mod tests {
         assert!(ngs.contains(&"the quick".to_string()));
         assert!(ngs.contains(&"quick brown".to_string()));
     }
+}
+
+/// At most `max` bytes of `s`, ending on a char boundary (SPEC 36 R0.6:
+/// byte slicing panics inside a multi-byte character).
+fn prefix_at_char_boundary(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut cut = max;
+    while !s.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    &s[..cut]
 }

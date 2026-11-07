@@ -72,7 +72,9 @@ pub async fn validate_api_key(pool: &PgPool, key: &str) -> Result<AuthPrincipal,
         return Err(AuthError::InvalidToken);
     }
 
-    let prefix = &key[..12];
+    // `get`, not `[..12]`: the key is caller-supplied, and a multi-byte
+    // character across byte 12 would panic the request (SPEC 36 R0.6).
+    let prefix = key.get(..12).ok_or(AuthError::InvalidToken)?;
 
     // Find candidate keys by prefix.
     //

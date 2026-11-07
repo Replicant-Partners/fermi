@@ -597,7 +597,7 @@ impl ServerHandler for AgentBestiaryHandler {
                     let category = categorize_agent(card);
                     categories.entry(category).or_default().push(json!({
                         "agent_id": card.agent_id,
-                        "description": &card.metadata.description[..card.metadata.description.len().min(100)],
+                        "description": fermi::text::truncate_at_char_boundary(&card.metadata.description, 100),
                         "tier": format!("{:?}", card.tier),
                         "model": card.capabilities.model,
                     }));

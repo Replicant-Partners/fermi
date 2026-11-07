@@ -172,7 +172,7 @@ async fn do_polymarket_event(input: &Value) -> Result<String, String> {
     output.push_str(&format!("# {}\n\n", event.title));
     output.push_str(&format!(
         "Description: {}\n\n",
-        &event.description[..event.description.len().min(500)]
+        crate::text::truncate_at_char_boundary(&event.description, 500)
     ));
     output.push_str(&format!(
         "Total volume: ${:.0} | 24h volume: ${:.0} | Liquidity: ${:.0}\n",
