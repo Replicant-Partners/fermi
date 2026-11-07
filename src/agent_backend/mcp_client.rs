@@ -175,8 +175,10 @@ impl RemoteMcpServer {
             .unwrap_or(DEFAULT_PROTOCOL_VERSION)
     }
 
+    /// Card-declared timeout, capped: a card must not hold a worker for
+    /// arbitrary time.
     fn timeout(&self) -> Duration {
-        Duration::from_secs(self.timeout_secs.unwrap_or(30))
+        Duration::from_secs(self.timeout_secs.unwrap_or(30).clamp(1, MAX_TIMEOUT_SECS))
     }
 
     /// Sanitised namespace, safe for a tool name.
@@ -513,6 +515,27 @@ impl RemoteMcpCatalogue {
     }
 }
 
+/// Upper bound on a card's `timeout_secs`.
+const MAX_TIMEOUT_SECS: u64 = 120;
+
+/// Process-environment keys a remote MCP server may receive as its credential.
+///
+/// Before (SPEC 36 R0.3 review): any card could name **any** environment
+/// variable (`auth.env = "ANTHROPIC_API_KEY"`, a Stripe secret, …) together
+/// with an endpoint it controls, and the platform sent that secret as a bearer
+/// token [V: `resolve_credential` fell back to `std::env::var(key)` for every
+/// card-declared key]. Now only keys listed here, provisioned for that purpose,
+/// can come from the environment; everything else must be in the agent owner's
+/// scoped secret store. Extend with `ABW_MCP_ENV_CREDENTIALS` (comma list).
+const MCP_ENV_CREDENTIAL_ALLOWLIST: &[&str] = &["BIOPORTAL_API_KEY"];
+
+fn env_credential_allowed(key: &str) -> bool {
+    MCP_ENV_CREDENTIAL_ALLOWLIST.contains(&key)
+        || std::env::var("ABW_MCP_ENV_CREDENTIALS")
+            .map(|v| v.split(',').any(|k| k.trim() == key))
+            .unwrap_or(false)
+}
+
 // ─── Credential resolution ──────────────────────────────────────────
 
 fn resolve_credential(
@@ -537,10 +560,12 @@ fn resolve_credential(
                 return Ok(Some(v.clone()));
             }
         }
-        // Process env second — platform-funded fallback.
-        if let Ok(v) = std::env::var(key) {
-            if !v.trim().is_empty() {
-                return Ok(Some(v));
+        // Process env second — platform-funded fallback, allowlisted keys only.
+        if env_credential_allowed(key) {
+            if let Ok(v) = std::env::var(key) {
+                if !v.trim().is_empty() {
+                    return Ok(Some(v));
+                }
             }
         }
     }
@@ -683,11 +708,12 @@ async fn rpc(
     method: &str,
     params: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    let client = reqwest::Client::builder()
-        .timeout(server.timeout())
-        .user_agent("AgentBestiary/1.0 (+https://agent-bestiary.world)")
-        .build()
-        .map_err(|e| format!("http client build failed: {e}"))?;
+    // SPEC 36 R0.3: the endpoint is card/owner-supplied, so it is checked,
+    // pinned to the approved address, and redirects are refused.
+    let (target, client) =
+        crate::net_guard::guarded_client(server.http_endpoint()?, server.timeout())
+            .await
+            .map_err(|e| format!("MCP server '{}' refused: {e}", server.name))?;
 
     let body = serde_json::json!({
         "jsonrpc": "2.0",
@@ -697,7 +723,7 @@ async fn rpc(
     });
 
     let req = client
-        .post(server.http_endpoint()?)
+        .post(target.as_str())
         .header("Content-Type", "application/json")
         // Streamable HTTP servers may answer either shape; accept both.
         .header("Accept", "application/json, text/event-stream")

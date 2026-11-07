@@ -538,7 +538,9 @@ pub async fn send_message_handler(
             .authentication
             .as_ref()
             .and_then(|a| a.credentials.as_deref());
-        if let Ok(cfg_id) = crate::a2a_webhook::register(
+        // A refused inline URL is not fatal to the task (the result is in
+        // this response); it is logged, and no webhook is registered.
+        let registered = crate::a2a_webhook::register(
             &pool,
             stored_id,
             &slug,
@@ -548,8 +550,11 @@ pub async fn send_message_handler(
             auth_creds,
             pc.token.as_deref(),
         )
-        .await
-        {
+        .await;
+        if let Err(e) = &registered {
+            tracing::warn!(task = %stored_id, error = %e, "inline push config not registered");
+        }
+        if let Ok(cfg_id) = registered {
             // Deliver the completed Task payload right away.
             let cfg = crate::a2a_webhook::PushConfig {
                 config_id: cfg_id,
@@ -1321,10 +1326,23 @@ pub async fn create_push_config_handler(
     )
     .await
     .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(a2a_error_body(500, &e, "INTERNAL_ERROR")),
-        )
+        // A refused URL is the caller's error (400), not ours.
+        if e.starts_with("webhook URL refused") {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(a2a_error_body(400, &e, "INVALID_ARGUMENT")),
+            )
+        } else {
+            tracing::error!(error = %e, "push config registration failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(a2a_error_body(
+                    500,
+                    "push config registration failed",
+                    "INTERNAL_ERROR",
+                )),
+            )
+        }
     })?;
 
     Ok(Json(json!({

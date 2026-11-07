@@ -26,13 +26,14 @@ pub struct PushConfig {
 ///
 /// Returns `Ok(())` on 2xx. Any other status or network error is an `Err`.
 pub async fn deliver(config: &PushConfig, payload: &Value) -> Result<(), String> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(20))
-        .build()
-        .map_err(|e| format!("HTTP client build failed: {}", e))?;
+    // SPEC 36 R0.3: the URL is caller-supplied; check at delivery too (DNS
+    // can change after registration), pin, no redirects.
+    let (target, client) =
+        fermi::net_guard::guarded_client(&config.webhook_url, std::time::Duration::from_secs(20))
+            .await?;
 
     let mut req = client
-        .post(&config.webhook_url)
+        .post(target.as_str())
         .header("Content-Type", "application/a2a+json")
         .json(payload);
 
@@ -144,6 +145,11 @@ pub async fn register(
     auth_credentials: Option<&str>,
     token: Option<&str>,
 ) -> Result<Uuid, String> {
+    // Refuse at registration as well as at delivery, so a caller learns now
+    // that a URL is unreachable from here rather than via a silent failure.
+    fermi::net_guard::check(webhook_url)
+        .await
+        .map_err(|e| format!("webhook URL refused: {e}"))?;
     let config_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO a2a_push_configs

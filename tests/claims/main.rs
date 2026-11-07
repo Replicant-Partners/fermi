@@ -21,3 +21,9 @@ mod deployed_happy_path;
 mod a2a_task_tenancy;
 
 mod episode_read_tenancy;
+
+mod episode_owner_read;
+
+mod ssrf_guard;
+
+mod ssrf_deployed;

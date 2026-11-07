@@ -256,10 +256,13 @@ async fn execute_edit_image(input: &Value) -> Result<String, String> {
         .and_then(|v| v.as_str())
         .ok_or("Missing required parameter: image_url")?;
 
-    // Fetch the source image and convert to base64
-    let client = reqwest::Client::new();
-    let img_response = client
-        .get(image_url)
+    // Fetch the source image and convert to base64. `image_url` is an LLM
+    // tool argument (prompt-injectable), so it goes through the outbound
+    // guard: public https only, pinned, no redirects (SPEC 36 R0.3).
+    let (target, guarded) =
+        crate::net_guard::guarded_client(image_url, std::time::Duration::from_secs(20)).await?;
+    let img_response = guarded
+        .get(target.as_str())
         .send()
         .await
         .map_err(|e| format!("Failed to fetch source image: {}", e))?;
@@ -276,12 +279,30 @@ async fn execute_edit_image(input: &Value) -> Result<String, String> {
         .headers()
         .get("content-type")
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("image/png")
+        .unwrap_or("")
         .to_string();
+    // Only images are forwarded: the fetched bytes go to a third party, so a
+    // non-image body (an HTML page, a JSON document) is refused, not relayed.
+    if !content_type.starts_with("image/") {
+        return Err(format!(
+            "source is not an image (content-type '{content_type}')"
+        ));
+    }
+    const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
+    if img_response
+        .content_length()
+        .is_some_and(|n| n as usize > MAX_IMAGE_BYTES)
+    {
+        return Err("source image is larger than 10 MiB".to_string());
+    }
     let img_bytes = img_response
         .bytes()
         .await
         .map_err(|e| format!("Failed to read image bytes: {}", e))?;
+    if img_bytes.len() > MAX_IMAGE_BYTES {
+        return Err("source image is larger than 10 MiB".to_string());
+    }
+    let client = reqwest::Client::new();
 
     use base64::Engine;
     let img_b64 = base64::engine::general_purpose::STANDARD.encode(&img_bytes);
