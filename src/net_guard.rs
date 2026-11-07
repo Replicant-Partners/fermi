@@ -84,12 +84,12 @@ impl std::fmt::Display for NetGuardError {
             NetGuardError::Userinfo => write!(f, "URLs with embedded credentials are not allowed"),
             NetGuardError::Port(p) => write!(f, "port {p} is not allowed"),
             NetGuardError::NoHost => write!(f, "URL has no host"),
-            NetGuardError::Unresolvable(h) => write!(f, "host '{h}' does not resolve"),
-            NetGuardError::Forbidden { addr, class } => {
-                write!(
-                    f,
-                    "destination {addr} is a {class} address and is not reachable from here"
-                )
+            // The two are deliberately indistinguishable to the caller: naming
+            // the address (or saying a name does not resolve) would let any
+            // signed-in user map internal DNS. Detail goes to the server log
+            // only (`check_with`).
+            NetGuardError::Unresolvable(_) | NetGuardError::Forbidden { .. } => {
+                write!(f, "destination is not a reachable public address")
             }
         }
     }
@@ -240,7 +240,7 @@ pub async fn check(raw: &str) -> Result<GuardedUrl, NetGuardError> {
 
 /// [`check`] with an injected resolver (`host, port -> addresses`), so the
 /// DNS cases — private answer, mixed answer, no answer — are testable.
-pub async fn check_with<F, Fut>(raw: &str, resolve: F) -> Result<GuardedUrl, NetGuardError>
+pub(crate) async fn check_with<F, Fut>(raw: &str, resolve: F) -> Result<GuardedUrl, NetGuardError>
 where
     F: FnOnce(String, u16) -> Fut,
     Fut: Future<Output = Vec<IpAddr>>,
@@ -268,10 +268,12 @@ where
         None => return Err(NetGuardError::NoHost),
     };
     if ips.is_empty() {
+        tracing::warn!(host = %host, "net_guard: refused, host does not resolve");
         return Err(NetGuardError::Unresolvable(host));
     }
     for a in &ips {
         if let Some(class) = forbidden_class(*a) {
+            tracing::warn!(host = %host, addr = %a, class, "net_guard: refused, non-public address");
             return Err(NetGuardError::Forbidden { addr: *a, class });
         }
     }
@@ -433,6 +435,17 @@ mod tests {
         assert!(
             matches!(none, Err(NetGuardError::Unresolvable(_))),
             "{none:?}"
+        );
+        // The caller-facing text names neither the address nor whether the
+        // name resolved: both refusals read the same.
+        let (p, n) = (
+            private.unwrap_err().to_string(),
+            none.unwrap_err().to_string(),
+        );
+        assert_eq!(p, n);
+        assert!(
+            !p.contains("127.0.0.1") && !p.contains("rebind.test"),
+            "{p}"
         );
         let ok = check_with(
             "https://ok.test/",

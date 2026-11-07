@@ -266,6 +266,25 @@ impl RemoteMcpServer {
     }
 }
 
+/// Validate every server's endpoint with the outbound guard before the config
+/// is stored (SPEC 36 R0.3: checked at write time as well as at call time).
+/// `Err` carries a caller-facing message naming the server and the reason.
+pub async fn check_server_endpoints(raw: &serde_json::Value) -> Result<(), String> {
+    let Some(servers) = interpret_db_column(raw) else {
+        return Ok(());
+    };
+    for s in &servers {
+        // Only servers that declare an http endpoint are fetched; a stdio-only
+        // entry is already unusable and reported elsewhere.
+        if let Ok(ep) = s.http_endpoint() {
+            crate::net_guard::check(ep)
+                .await
+                .map_err(|e| format!("MCP server '{}' endpoint refused: {e}", s.name))?;
+        }
+    }
+    Ok(())
+}
+
 /// Accept either the ecosystem-standard map form or a sequence.
 ///
 /// Map form (matches Claude Desktop / Cursor / `mcp.json`, and what cards
@@ -310,25 +329,6 @@ impl RemoteMcpServer {
 /// (or alias) or a stdio `command`. If nothing in the column qualifies
 /// while the column is non-empty, it is legacy tool data and we fall back
 /// to the file card.
-/// Validate every server's endpoint with the outbound guard before the config
-/// is stored (SPEC 36 R0.3: checked at write time as well as at call time).
-/// `Err` carries a caller-facing message naming the server and the reason.
-pub async fn check_server_endpoints(raw: &serde_json::Value) -> Result<(), String> {
-    let Some(servers) = interpret_db_column(raw) else {
-        return Ok(());
-    };
-    for s in &servers {
-        // Only servers that declare an http endpoint are fetched; a stdio-only
-        // entry is already unusable and reported elsewhere.
-        if let Ok(ep) = s.http_endpoint() {
-            crate::net_guard::check(ep)
-                .await
-                .map_err(|e| format!("MCP server '{}' endpoint refused: {e}", s.name))?;
-        }
-    }
-    Ok(())
-}
-
 pub fn interpret_db_column(raw: &serde_json::Value) -> Option<Vec<RemoteMcpServer>> {
     if raw.is_null() {
         return None;
@@ -545,7 +545,7 @@ const MAX_TIMEOUT_SECS: u64 = 120;
 /// token [V: `resolve_credential` fell back to `std::env::var(key)` for every
 /// card-declared key]. Now only keys listed here, provisioned for that purpose,
 /// can come from the environment; everything else must be in the agent owner's
-/// scoped secret store. Extend with `ABW_MCP_ENV_CREDENTIALS` (comma list).
+/// scoped secret store.
 ///
 /// Each entry binds a key to the **one host** it was provisioned for, so a
 /// card naming an allowlisted key with any other endpoint gets nothing from

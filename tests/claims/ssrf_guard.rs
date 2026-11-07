@@ -31,12 +31,13 @@ async fn loopback_and_metadata_are_refused_before_any_request() {
 /// Every outbound request in production code is either a known fixed-host
 /// call or goes through `net_guard`.
 ///
-/// Counted **per call**, not per file: each `.get(` / `.post(` / `.put(` /
-/// `.request(` / `.send()` on a reqwest builder is located, and the file is
-/// listed with the exact number of such calls it is allowed (fixed-host) or
-/// must guard. A new call in any file changes its count and fails the test,
-/// so it cannot slip into a file that is already listed. `#[cfg(test)] mod`
-/// blocks are stripped; comments are stripped; `crates/` is scanned.
+/// Counted **per call**, not per file: every `.send()` in a production file
+/// is counted, and each file is listed with the exact number it has. A new
+/// send in any file changes its count and fails the test, so it cannot slip
+/// into a file that is already listed. Comments and `#[cfg(test)] mod` blocks
+/// are stripped. A file holding guarded sends must contain at least as many
+/// `net_guard::guarded_client(` calls as it has guarded sends; which send
+/// uses which client is checked by review, not by this scan.
 #[test]
 fn every_outbound_call_site_is_fixed_host_or_guarded() {
     let root = env!("CARGO_MANIFEST_DIR");
@@ -124,27 +125,31 @@ fn every_outbound_call_site_is_fixed_host_or_guarded() {
     // Client-side binaries: the base URL is the operator's own server, not a
     // server-side fetch of a user-supplied URL. Not counted.
     let client_prefixes = ["crates/abw-cli/", "crates/fermi-console/"];
-    // Files whose sends take user-supplied URLs: every send must be preceded
-    // in the same function by a net_guard client.
-    let guarded: &[(&str, usize)] = &[
-        ("src/agent_backend/mcp_client.rs", 1),
-        ("src/a2a_webhook.rs", 1),
-        ("src/handlers/push.rs", 1),
-        ("src/agent_backend/tools/domains/media.rs", 3),
+    // Files with sends to user-supplied URLs: (file, guarded sends, fixed-host
+    // sends in the same file).
+    let guarded: &[(&str, usize, usize)] = &[
+        ("src/agent_backend/mcp_client.rs", 1, 0),
+        ("src/a2a_webhook.rs", 1, 0),
+        ("src/handlers/push.rs", 1, 0),
+        // edit_image's source fetch is guarded; both Gemini calls are fixed-host.
+        ("src/agent_backend/tools/domains/media.rs", 1, 2),
     ];
     let mut problems = Vec::new();
     for (file, n) in &counts {
         if client_prefixes.iter().any(|p| file.starts_with(p)) {
             continue;
         }
-        if let Some((_, want)) = guarded.iter().find(|(g, _)| g == file) {
-            if n != want {
-                problems.push(format!("{file}: {n} sends, expected {want} (all guarded)"));
+        if let Some((_, g, f)) = guarded.iter().find(|(p, _, _)| p == file) {
+            if *n != g + f {
+                problems.push(format!(
+                    "{file}: {n} sends, expected {g} guarded + {f} fixed-host"
+                ));
             }
             let src = strip(&std::fs::read_to_string(format!("{root}/{file}")).unwrap());
-            if !src.contains("net_guard::") {
+            let clients = src.matches("net_guard::guarded_client(").count();
+            if clients < *g {
                 problems.push(format!(
-                    "{file}: sends user-supplied URLs but never uses net_guard"
+                    "{file}: {g} guarded sends but {clients} net_guard::guarded_client calls"
                 ));
             }
         } else if let Some((_, want, _)) = fixed.iter().find(|(f, _, _)| f == file) {
@@ -187,7 +192,7 @@ fn outbound_send_counts(root: &str) -> std::collections::BTreeMap<String, usize>
             let rel = p.strip_prefix(root).unwrap().to_string_lossy().to_string();
             if p.is_dir() {
                 if !rel.ends_with("/tests")
-                    && !rel.contains("target")
+                    && !rel.ends_with("/target")
                     && !rel.starts_with("src/bin")
                 {
                     stack.push(p);

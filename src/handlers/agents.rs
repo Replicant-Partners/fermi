@@ -2302,14 +2302,6 @@ pub async fn update_agent_handler(
 
     let user_id = principal.user_id();
 
-    // SPEC 36 R0.3: remote MCP endpoints are checked when written, not only
-    // when called, so an unreachable or internal URL is a 400 now.
-    if let Some(raw) = updates.mcp_servers.as_ref().filter(|v| !v.is_null()) {
-        fermi::agent_backend::mcp_client::check_server_endpoints(raw)
-            .await
-            .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
-    }
-
     // v0.10.5: RBAC via substrate. Edit = owner, platform admin, or
     // holder of an edit/admin share (once agent shares land in
     // object_shares). Same semantics as the old hand-rolled check for
@@ -2328,6 +2320,14 @@ pub async fn update_agent_handler(
     // Authorize first, then validate: a caller with no edit rights should
     // learn that, not which fields happen to be editable.
     reject_lifecycle_fields(&updates, &agent_id).map_err(|m| (StatusCode::BAD_REQUEST, m))?;
+    // SPEC 36 R0.3: remote MCP endpoints are checked when written, not only
+    // when called. After `require_edit`, so a caller without edit rights
+    // cannot make the server resolve hostnames.
+    if let Some(raw) = updates.mcp_servers.as_ref().filter(|v| !v.is_null()) {
+        fermi::agent_backend::mcp_client::check_server_endpoints(raw)
+            .await
+            .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    }
     // Defensive: keep the values out of the SET clause even if the guard
     // above is ever relaxed to a warning.
     updates.status = None;
