@@ -592,36 +592,68 @@ pub struct EpisodesParams {
 
 pub async fn get_agent_episodes_handler(
     State(state): State<AppState>,
+    principal: fermi_auth::AuthPrincipal,
     Path(agent_id): Path<String>,
     Query(params): Query<EpisodesParams>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let db_agent = resolve_agent(&state, &agent_id).await?;
     let limit = params.limit.unwrap_or(20).min(100);
     let offset = params.offset.unwrap_or(0);
+    // SPEC 36 R0.2.4: only the episodes of this agent the caller may read
+    // (src/episode_access.rs). The agent's owner and admins see all of them.
+    let reader = fermi::episode_access::Reader::from_principal(&principal);
+    let access = fermi::episode_access::predicate(2, 3);
 
-    let (episodes, total) = state
-        .memory_store
-        .get_episodes_paginated(db_agent.agent_id, limit, offset)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let rows = sqlx::query(&format!(
+        "SELECT e.episode_id, e.timestamp_ref, e.query, e.execution_status, e.error_details,
+                e.execution_time_ms, e.tokens_used, e.cost_usd, e.consolidated, e.tags
+           FROM episodes e JOIN agents a ON a.agent_id = e.agent_id
+          WHERE e.agent_id = $1 AND {access}
+          ORDER BY e.timestamp_ref DESC
+          LIMIT $4 OFFSET $5"
+    ))
+    .bind(db_agent.agent_id)
+    .bind(&reader.user_id)
+    .bind(reader.admin)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let episodes_json: Vec<Value> = episodes
-        .iter()
-        .map(|ep| {
-            json!({
-                "episode_id": ep.episode_id,
-                "timestamp": ep.timestamp_ref,
-                "query": ep.query,
-                "status": ep.execution_status.to_string(),
-                "error_details": ep.error_details,
-                "execution_time_ms": ep.execution_time_ms,
-                "tokens_used": ep.tokens_used,
-                "cost_usd": ep.cost_usd,
-                "consolidated": ep.consolidated,
-                "tags": ep.tags,
-            })
-        })
-        .collect();
+    let decode = |e: sqlx::Error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("episode row: {e}"),
+        )
+    };
+    let mut episodes_json: Vec<Value> = Vec::with_capacity(rows.len());
+    for r in &rows {
+        episodes_json.push(json!({
+            "episode_id": r.try_get::<uuid::Uuid, _>("episode_id").map_err(decode)?,
+            "timestamp": r.try_get::<chrono::DateTime<chrono::Utc>, _>("timestamp_ref").map_err(decode)?,
+            "query": r.try_get::<String, _>("query").map_err(decode)?,
+            "status": r.try_get::<String, _>("execution_status").map_err(decode)?,
+            "error_details": r.try_get::<Option<String>, _>("error_details").map_err(decode)?,
+            "execution_time_ms": r.try_get::<i64, _>("execution_time_ms").map_err(decode)?,
+            "tokens_used": r.try_get::<Option<i32>, _>("tokens_used").map_err(decode)?,
+            "cost_usd": r.try_get::<Option<rust_decimal::Decimal>, _>("cost_usd").map_err(decode)?,
+            "consolidated": r.try_get::<bool, _>("consolidated").map_err(decode)?,
+            "tags": r.try_get::<Option<Vec<String>>, _>("tags").map_err(decode)?,
+        }));
+    }
+
+    // A separate filtered count, so `total` is right even past the last page.
+    let total: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM episodes e JOIN agents a ON a.agent_id = e.agent_id
+          WHERE e.agent_id = $1 AND {access}"
+    ))
+    .bind(db_agent.agent_id)
+    .bind(&reader.user_id)
+    .bind(reader.admin)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(json!({
         "episodes": episodes_json,

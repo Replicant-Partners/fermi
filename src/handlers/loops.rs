@@ -196,7 +196,7 @@ pub async fn agent_loops_handler(
 /// The endpoint says that rather than returning `[]`.
 pub async fn agent_coordination_notes_handler(
     State(state): State<AppState>,
-    _principal: AuthPrincipal,
+    principal: AuthPrincipal,
     Path(agent_id): Path<uuid::Uuid>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     // `consolidation_jobs` records a window over an agent's episodes rather than
@@ -204,21 +204,29 @@ pub async fn agent_coordination_notes_handler(
     // asking whether a completed job covered it in time. Stated because it is a
     // proxy: a job that ran after the note and processed zero episodes would
     // read as having consolidated it.
-    let rows = sqlx::query(
-        "SELECT e.episode_id, e.created_at, e.query, e.response, \
+    // SPEC 36 R0.2.4: only notes on episodes this caller may read. Also
+    // `e.response` -> `response_text`: the column never existed, so this query
+    // failed on every call [V: no `response` column on `episodes`].
+    let reader = fermi::episode_access::Reader::from_principal(&principal);
+    let rows = sqlx::query(&format!(
+        "SELECT e.episode_id, e.created_at, e.query, e.response_text AS response, \
                 EXISTS ( \
                     SELECT 1 FROM consolidation_jobs j \
                      WHERE j.agent_id = e.agent_id \
                        AND j.status = 'completed' \
                        AND j.completed_at > e.created_at \
                 ) AS consolidated \
-           FROM episodes e \
+           FROM episodes e JOIN agents a ON a.agent_id = e.agent_id \
           WHERE e.agent_id = $1 \
             AND e.provenance = 'coordinator_observation' \
+            AND {} \
           ORDER BY e.created_at DESC \
           LIMIT 100",
-    )
+        fermi::episode_access::predicate(2, 3)
+    ))
     .bind(agent_id)
+    .bind(&reader.user_id)
+    .bind(reader.admin)
     .fetch_all(&state.db)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -739,9 +747,11 @@ const RESPONSE_CHARS: usize = 20_000;
 
 pub async fn episode_trace_handler(
     State(state): State<AppState>,
-    _principal: AuthPrincipal,
+    principal: AuthPrincipal,
     Path(episode_id): Path<uuid::Uuid>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    // SPEC 36 R0.2.4 / I9 (src/episode_access.rs).
+    fermi::episode_access::require_readable(&state.db, &principal, episode_id).await?;
     let row = sqlx::query(
         "SELECT e.episode_id, e.parent_episode_id, e.agent_id, e.query, \
                 e.response_text, e.context, e.provenance, e.model_used, e.provider_used, \
@@ -1354,19 +1364,27 @@ pub async fn episode_trace_handler(
 /// settle below drain it.
 pub async fn verification_queue_handler(
     State(state): State<AppState>,
-    _principal: AuthPrincipal,
+    principal: AuthPrincipal,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    // SPEC 36 R0.2.4: only items on episodes this caller may read.
+    let reader = fermi::episode_access::Reader::from_principal(&principal);
     // Latest row per assertion, so a claim queued and then settled shows its
     // verdict rather than both events. `DISTINCT ON` over the append-only log is
     // the derived current state -- migration 205's pattern, and the reason the
     // earlier rows stay on file.
-    let rows = sqlx::query(
-        "SELECT DISTINCT ON (assertion_id) \
-                assertion_id, episode_id, verdict, source_citation, actor, \
-                actor_kind::text AS actor_kind, evidence, created_at \
-           FROM assertion_verifications \
-          ORDER BY assertion_id, created_at DESC",
-    )
+    let rows = sqlx::query(&format!(
+        "SELECT DISTINCT ON (v.assertion_id) \
+                    v.assertion_id, v.episode_id, v.verdict, v.source_citation, v.actor, \
+                    v.actor_kind::text AS actor_kind, v.evidence, v.created_at \
+               FROM assertion_verifications v \
+               JOIN episodes e ON e.episode_id = v.episode_id \
+               JOIN agents a ON a.agent_id = e.agent_id \
+              WHERE {} \
+              ORDER BY v.assertion_id, v.created_at DESC",
+        fermi::episode_access::predicate(1, 2)
+    ))
+    .bind(&reader.user_id)
+    .bind(reader.admin)
     .fetch_all(&state.db)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -1474,10 +1492,12 @@ pub async fn verification_queue_handler(
 /// surface says so rather than pretending to know.
 pub async fn probe_field_handler(
     State(state): State<AppState>,
-    _principal: AuthPrincipal,
+    principal: AuthPrincipal,
     Path(episode_id): Path<uuid::Uuid>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    // SPEC 36 R0.2.4 / I9 (src/episode_access.rs).
+    fermi::episode_access::require_readable(&state.db, &principal, episode_id).await?;
     let path = body
         .get("path")
         .and_then(|v| v.as_str())
@@ -1623,6 +1643,8 @@ pub async fn contradict_field_handler(
     Path(episode_id): Path<uuid::Uuid>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    // SPEC 36 R0.2.4 / I9 (src/episode_access.rs).
+    fermi::episode_access::require_readable(&state.db, &principal, episode_id).await?;
     let path_field = body
         .get("path")
         .and_then(|v| v.as_str())

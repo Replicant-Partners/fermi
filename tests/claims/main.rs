@@ -19,3 +19,5 @@ mod deployed;
 mod deployed_happy_path;
 
 mod a2a_task_tenancy;
+
+mod episode_read_tenancy;

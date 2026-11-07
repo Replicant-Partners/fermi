@@ -402,6 +402,7 @@ pub mod verification_queue;
 // not a longer list but a single entry point and a ratchet that bans the raw
 // write. A new handler cannot forget the boundary because there is nothing else
 // to call.
+pub mod episode_access;
 pub mod episode_boundary;
 
 // Running the tool a field contract names.

@@ -102,9 +102,13 @@ pub struct TriggerEvalRunRequest {
 
 pub async fn list_eval_test_cases_handler(
     State(state): State<AppState>,
+    principal: Option<fermi_auth::AuthPrincipal>,
     Path(agent_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let db_agent = resolve_agent(&state, &agent_id).await?;
+    // Same rule as eval runs (SPEC 36 R0.2.4).
+    fermi::episode_access::require_agent_evals(&state.db, principal.as_ref(), db_agent.agent_id)
+        .await?;
     let cases = state
         .memory_store
         .list_eval_test_cases(db_agent.agent_id)
@@ -356,9 +360,15 @@ impl fermi::agent_backend::tools::EvalTrigger for EvalTriggerImpl {
 
 pub async fn list_eval_runs_handler(
     State(state): State<AppState>,
+    principal: Option<fermi_auth::AuthPrincipal>,
     Path(agent_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let db_agent = resolve_agent(&state, &agent_id).await?;
+    // SPEC 36 R0.2.4: public published agents' evals are catalogue data;
+    // a private or unpublished agent's are its owner's (src/episode_access.rs).
+    fermi::episode_access::require_agent_evals(&state.db, principal.as_ref(), db_agent.agent_id)
+        .await?;
+
     let runs = state
         .memory_store
         .list_eval_runs(db_agent.agent_id, 20)
@@ -375,13 +385,19 @@ pub async fn list_eval_runs_handler(
 ///   - the eval_runner agent's `query_eval_signals` MCP tool
 ///   - the observability_coordinator's quick lookups
 ///
-/// Public — matches `list_eval_runs_handler`'s read model (the same
-/// data, just disaggregated).
+/// Readable without sign-in for public published agents; otherwise the
+/// owner's and admins' (SPEC 36 R0.2.4) — the same rule as
+/// `list_eval_runs_handler`.
 pub async fn list_eval_signals_handler(
     State(state): State<AppState>,
+    principal: Option<fermi_auth::AuthPrincipal>,
     Path((agent_id, run_id_str)): Path<(String, String)>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let db_agent = resolve_agent(&state, &agent_id).await?;
+    // SPEC 36 R0.2.4: public published agents' evals are catalogue data;
+    // a private or unpublished agent's are its owner's (src/episode_access.rs).
+    fermi::episode_access::require_agent_evals(&state.db, principal.as_ref(), db_agent.agent_id)
+        .await?;
 
     let run_id = uuid::Uuid::parse_str(&run_id_str)
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid run_id".into()))?;

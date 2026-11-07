@@ -7,5 +7,5 @@ update_ident=330
 delete_from=63
 let_underscore=277
 let_underscore_sqlx=106
-row_get=707
+row_get=706
 db_decode_unwrap=58
