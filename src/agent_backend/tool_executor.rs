@@ -332,7 +332,7 @@ impl ToolAwareExecutor {
                 let truncated_output = if output.len() > MAX_TOOL_RESULT_CHARS {
                     format!(
                         "{}... [truncated, {} chars total]",
-                        &output[..MAX_TOOL_RESULT_CHARS],
+                        crate::text::truncate_at_char_boundary(&output, MAX_TOOL_RESULT_CHARS),
                         output.len()
                     )
                 } else {
@@ -691,7 +691,7 @@ impl ToolAwareExecutor {
                 let truncated = if output.len() > MAX_TOOL_RESULT_CHARS_OAI {
                     format!(
                         "{}... [truncated, {} chars total]",
-                        &output[..MAX_TOOL_RESULT_CHARS_OAI],
+                        crate::text::truncate_at_char_boundary(&output, MAX_TOOL_RESULT_CHARS_OAI),
                         output.len()
                     )
                 } else {

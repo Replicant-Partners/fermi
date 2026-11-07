@@ -1555,7 +1555,10 @@ fn generate_workflow_from_messages(messages: &[WorkspaceMessage]) -> (String, Va
         if trimmed.len() <= max {
             trimmed.to_string()
         } else {
-            format!("{}...", &trimmed[..max])
+            format!(
+                "{}...",
+                fermi::text::truncate_at_char_boundary(trimmed, max)
+            )
         }
     }
 

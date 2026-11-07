@@ -323,10 +323,14 @@ async fn main() -> Result<()> {
                     info!("  Snapshot ID: {}", snapshot_id);
                 }
                 if let Some(ref synopsis) = result.dream_synopsis {
-                    info!(
-                        "  Dream synopsis: {}...",
-                        &synopsis[..synopsis.len().min(100)]
-                    );
+                    info!("  Dream synopsis: {}...", {
+                        // At most 100 bytes, ending on a char boundary.
+                        let mut cut = synopsis.len().min(100);
+                        while !synopsis.is_char_boundary(cut) {
+                            cut -= 1;
+                        }
+                        &synopsis[..cut]
+                    });
                 }
             }
             Err(e) => {

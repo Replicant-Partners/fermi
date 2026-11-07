@@ -79,7 +79,10 @@ pub fn generate_mindmap(
 
     // Question branch
     let short_question = if question.len() > 40 {
-        format!("{}...", &question[..37])
+        format!(
+            "{}...",
+            crate::text::truncate_at_char_boundary(question, 37)
+        )
     } else {
         question.to_string()
     };

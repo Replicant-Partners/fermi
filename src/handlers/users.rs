@@ -199,7 +199,7 @@ pub async fn search_users_handler(
             let bio: Option<String> = r.try_get("bio").unwrap_or(None);
             let bio_snippet = bio.as_deref().map(|b| {
                 if b.len() > 100 {
-                    format!("{}...", &b[..100])
+                    format!("{}...", fermi::text::truncate_at_char_boundary(b, 100))
                 } else {
                     b.to_string()
                 }
@@ -267,7 +267,7 @@ pub async fn get_collaborators_handler(
             let bio: Option<String> = r.try_get("bio").unwrap_or(None);
             let bio_snippet = bio.as_deref().map(|b| {
                 if b.len() > 100 {
-                    format!("{}...", &b[..100])
+                    format!("{}...", fermi::text::truncate_at_char_boundary(b, 100))
                 } else {
                     b.to_string()
                 }

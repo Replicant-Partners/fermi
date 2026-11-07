@@ -125,7 +125,7 @@ pub(crate) async fn execute_call_football_api(input: &Value) -> Result<String, S
     if result.len() > 16000 {
         Ok(format!(
             "{}... [truncated, {} total chars]",
-            &result[..16000],
+            crate::text::truncate_at_char_boundary(&result, 16000),
             result.len()
         ))
     } else {

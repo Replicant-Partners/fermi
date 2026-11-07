@@ -292,7 +292,10 @@ pub async fn post_rabble_message(
 
                 // Truncate message for notification body
                 let body_text = if msg_content.len() > 100 {
-                    format!("{}...", &msg_content[..100])
+                    format!(
+                        "{}...",
+                        fermi::text::truncate_at_char_boundary(&msg_content, 100)
+                    )
                 } else {
                     msg_content.clone()
                 };

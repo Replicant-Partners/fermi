@@ -1285,7 +1285,7 @@ pub(crate) async fn execute_web_search(input: &serde_json::Value) -> Result<Stri
 
     // Truncate to avoid context overflow
     if output.len() > 12_000 {
-        output.truncate(12_000);
+        crate::text::truncate_string_at_char_boundary(&mut output, 12_000);
         output.push_str("\n... [truncated]");
     }
 

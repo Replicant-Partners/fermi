@@ -16,6 +16,7 @@ pub mod executor;
 pub mod lexer;
 pub mod parser;
 pub mod report;
+pub mod text;
 pub mod semantic;
 pub mod sensitivity;
 pub mod symbol_table;

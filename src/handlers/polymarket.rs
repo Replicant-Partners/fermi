@@ -231,7 +231,10 @@ pub async fn search_handler(
         wallet.wallet_id,
         1, // 1 credit per search
         "polymarket_search",
-        &format!("Polymarket search: {}", &query[..query.len().min(80)]),
+        &format!(
+            "Polymarket search: {}",
+            fermi::text::truncate_at_char_boundary(&query, 80)
+        ),
         None,
     )
     .await?;
