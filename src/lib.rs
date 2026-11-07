@@ -403,6 +403,7 @@ pub mod verification_queue;
 // write. A new handler cannot forget the boundary because there is nothing else
 // to call.
 pub mod episode_access;
+pub mod net_guard;
 pub mod episode_boundary;
 
 // Running the tool a field contract names.

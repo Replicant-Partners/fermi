@@ -93,6 +93,15 @@ pub async fn subscribe_handler(
     let user_id = principal.user_id();
     let pool = state.memory_store.pool();
 
+    // SPEC 36 R0.3: the endpoint is client-supplied and the server later POSTs
+    // to it, so it must be a public https URL (a real push service is).
+    fermi::net_guard::check(&req.endpoint).await.map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("push endpoint refused: {e}"),
+        )
+    })?;
+
     let id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh_key, auth_key, user_agent)
@@ -258,24 +267,38 @@ pub async fn send_push_to_user(
         return;
     }
 
-    let client = reqwest::Client::new();
-
     for sub in &subs {
         let sub_id: Uuid = sub.get("id");
         let endpoint: String = sub.get("endpoint");
-
-        // Build VAPID Authorization header for this endpoint
-        let auth_header =
-            match build_vapid_auth(&vapid_private, &vapid_public, &vapid_subject, &endpoint) {
-                Ok(h) => h,
+        // Re-checked at send time (DNS can change; older rows predate the
+        // subscribe-time check), pinned, no redirects.
+        let (target, client) =
+            match fermi::net_guard::guarded_client(&endpoint, std::time::Duration::from_secs(15))
+                .await
+            {
+                Ok(v) => v,
                 Err(e) => {
-                    eprintln!("[push] VAPID auth failed for sub {}: {}", sub_id, e);
+                    eprintln!("[push] endpoint for sub {} refused: {}", sub_id, e);
                     continue;
                 }
             };
 
+        // Build VAPID Authorization header for this endpoint
+        let auth_header = match build_vapid_auth(
+            &vapid_private,
+            &vapid_public,
+            &vapid_subject,
+            target.as_str(),
+        ) {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("[push] VAPID auth failed for sub {}: {}", sub_id, e);
+                continue;
+            }
+        };
+
         let result = client
-            .post(&endpoint)
+            .post(target.as_str())
             .header("Authorization", &auth_header)
             .header("Content-Length", "0")
             .header("TTL", "86400")

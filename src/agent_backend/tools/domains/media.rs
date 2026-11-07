@@ -256,13 +256,17 @@ async fn execute_edit_image(input: &Value) -> Result<String, String> {
         .and_then(|v| v.as_str())
         .ok_or("Missing required parameter: image_url")?;
 
-    // Fetch the source image and convert to base64
-    let client = reqwest::Client::new();
-    let img_response = client
-        .get(image_url)
+    // Fetch the source image and convert to base64. `image_url` is an LLM
+    // tool argument (prompt-injectable), so it goes through the outbound
+    // guard: public https only, pinned, no redirects (SPEC 36 R0.3).
+    let (target, guarded) =
+        crate::net_guard::guarded_client(image_url, std::time::Duration::from_secs(20)).await?;
+    let img_response = guarded
+        .get(target.as_str())
         .send()
         .await
         .map_err(|e| format!("Failed to fetch source image: {}", e))?;
+    let mut img_response = crate::net_guard::refuse_redirect(img_response)?;
 
     if !img_response.status().is_success() {
         return Err(format!(
@@ -276,12 +280,46 @@ async fn execute_edit_image(input: &Value) -> Result<String, String> {
         .headers()
         .get("content-type")
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("image/png")
+        .unwrap_or("")
         .to_string();
-    let img_bytes = img_response
-        .bytes()
+    // Only images are forwarded: the fetched bytes go to a third party, so a
+    // non-image body (an HTML page, a JSON document) is refused, not relayed.
+    // The header is a first filter; the bytes decide (`sniff_image_type`).
+    if !content_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase()
+        .starts_with("image/")
+    {
+        return Err(format!(
+            "source is not an image (content-type '{content_type}')"
+        ));
+    }
+    const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
+    if img_response
+        .content_length()
+        .is_some_and(|n| n as usize > MAX_IMAGE_BYTES)
+    {
+        return Err("source image is larger than 10 MiB".to_string());
+    }
+    // Read in chunks and stop at the cap, so a chunked body with no
+    // Content-Length cannot exhaust memory.
+    let mut img_bytes: Vec<u8> = Vec::new();
+    while let Some(chunk) = img_response
+        .chunk()
         .await
-        .map_err(|e| format!("Failed to read image bytes: {}", e))?;
+        .map_err(|e| format!("Failed to read image bytes: {}", e))?
+    {
+        if img_bytes.len() + chunk.len() > MAX_IMAGE_BYTES {
+            return Err("source image is larger than 10 MiB".to_string());
+        }
+        img_bytes.extend_from_slice(&chunk);
+    }
+    let content_type = sniff_image_type(&img_bytes)
+        .ok_or_else(|| "source bytes are not a PNG, JPEG, GIF or WebP image".to_string())?;
+    let client = reqwest::Client::new();
 
     use base64::Engine;
     let img_b64 = base64::engine::general_purpose::STANDARD.encode(&img_bytes);
@@ -444,5 +482,46 @@ mod tests {
                 tool.name()
             );
         }
+    }
+}
+
+/// The image type the bytes actually are, from their signature. Only types
+/// Gemini accepts as inline image input are recognised.
+fn sniff_image_type(b: &[u8]) -> Option<&'static str> {
+    if b.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if b.starts_with(&[0xff, 0xd8, 0xff]) {
+        Some("image/jpeg")
+    } else if b.starts_with(b"GIF87a") || b.starts_with(b"GIF89a") {
+        Some("image/gif")
+    } else if b.len() >= 12 && &b[0..4] == b"RIFF" && &b[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod sniff_tests {
+    use super::sniff_image_type;
+
+    #[test]
+    fn image_type_comes_from_the_bytes() {
+        assert_eq!(
+            sniff_image_type(b"\x89PNG\r\n\x1a\nrest"),
+            Some("image/png")
+        );
+        assert_eq!(
+            sniff_image_type(&[0xff, 0xd8, 0xff, 0xe0]),
+            Some("image/jpeg")
+        );
+        assert_eq!(sniff_image_type(b"GIF89a.."), Some("image/gif"));
+        assert_eq!(
+            sniff_image_type(b"RIFF\0\0\0\0WEBPVP8 "),
+            Some("image/webp")
+        );
+        assert_eq!(sniff_image_type(b"<html><body>"), None);
+        assert_eq!(sniff_image_type(b"{\"a\":1}"), None);
+        assert_eq!(sniff_image_type(b""), None);
     }
 }

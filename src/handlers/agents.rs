@@ -1082,6 +1082,13 @@ pub async fn import_agent_handler(
     let user_id = principal.user_id();
     let card = &req.agent_card_json;
 
+    // SPEC 36 R0.3: an imported card's remote MCP endpoints are checked now.
+    if let Some(raw) = card.get("capabilities").and_then(|c| c.get("mcp_servers")) {
+        fermi::agent_backend::mcp_client::check_server_endpoints(raw)
+            .await
+            .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    }
+
     // Extract fields from agent_card.json format
     let agent_name = card
         .get("agent_id")
@@ -2313,6 +2320,14 @@ pub async fn update_agent_handler(
     // Authorize first, then validate: a caller with no edit rights should
     // learn that, not which fields happen to be editable.
     reject_lifecycle_fields(&updates, &agent_id).map_err(|m| (StatusCode::BAD_REQUEST, m))?;
+    // SPEC 36 R0.3: remote MCP endpoints are checked when written, not only
+    // when called. After `require_edit`, so a caller without edit rights
+    // cannot make the server resolve hostnames.
+    if let Some(raw) = updates.mcp_servers.as_ref().filter(|v| !v.is_null()) {
+        fermi::agent_backend::mcp_client::check_server_endpoints(raw)
+            .await
+            .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    }
     // Defensive: keep the values out of the SET clause even if the guard
     // above is ever relaxed to a warning.
     updates.status = None;

@@ -175,8 +175,10 @@ impl RemoteMcpServer {
             .unwrap_or(DEFAULT_PROTOCOL_VERSION)
     }
 
+    /// Card-declared timeout, capped: a card must not hold a worker for
+    /// arbitrary time.
     fn timeout(&self) -> Duration {
-        Duration::from_secs(self.timeout_secs.unwrap_or(30))
+        Duration::from_secs(self.timeout_secs.unwrap_or(30).clamp(1, MAX_TIMEOUT_SECS))
     }
 
     /// Sanitised namespace, safe for a tool name.
@@ -262,6 +264,30 @@ impl RemoteMcpServer {
             })
             .collect()
     }
+}
+
+/// Validate every server's endpoint with the outbound guard before the config
+/// is stored (SPEC 36 R0.3: checked at write time as well as at call time).
+/// `Err` carries a caller-facing message naming the server and the reason.
+pub async fn check_server_endpoints(raw: &serde_json::Value) -> Result<(), String> {
+    let Some(servers) = interpret_db_column(raw) else {
+        return Ok(());
+    };
+    for s in &servers {
+        // A stdio-only entry (no endpoint) is never fetched and is reported
+        // elsewhere. A declared endpoint must be a usable http(s) URL that
+        // passes the guard; anything else is refused now, not stored.
+        if s.endpoint.is_none() {
+            continue;
+        }
+        let ep = s
+            .http_endpoint()
+            .map_err(|e| format!("MCP server '{}': {e}", s.name))?;
+        crate::net_guard::check(ep)
+            .await
+            .map_err(|e| format!("MCP server '{}' endpoint refused: {e}", s.name))?;
+    }
+    Ok(())
 }
 
 /// Accept either the ecosystem-standard map form or a sequence.
@@ -513,6 +539,48 @@ impl RemoteMcpCatalogue {
     }
 }
 
+/// Upper bound on a card's `timeout_secs`.
+const MAX_TIMEOUT_SECS: u64 = 120;
+
+/// Process-environment keys a remote MCP server may receive as its credential.
+///
+/// Before (SPEC 36 R0.3 review): any card could name **any** environment
+/// variable (`auth.env = "ANTHROPIC_API_KEY"`, a Stripe secret, …) together
+/// with an endpoint it controls, and the platform sent that secret as a bearer
+/// token [V: `resolve_credential` fell back to `std::env::var(key)` for every
+/// card-declared key]. Now only keys listed here, provisioned for that purpose,
+/// can come from the environment; everything else must be in the agent owner's
+/// scoped secret store.
+///
+/// Each entry binds a key to the **one host** it was provisioned for, so a
+/// card naming an allowlisted key with any other endpoint gets nothing from
+/// the environment. Extend with `ABW_MCP_ENV_CREDENTIALS` as `KEY@host` pairs
+/// (comma list).
+const MCP_ENV_CREDENTIAL_ALLOWLIST: &[(&str, &str)] =
+    &[("BIOPORTAL_API_KEY", "bioportal.fastmcp.app")];
+
+fn env_credential_allowed(key: &str, server: &RemoteMcpServer) -> bool {
+    let Some(host) = server
+        .http_endpoint()
+        .ok()
+        .and_then(|e| url::Url::parse(e).ok())
+        .and_then(|u| u.host_str().map(str::to_ascii_lowercase))
+    else {
+        return false;
+    };
+    let bound = |k: &str, h: &str| k == key && h.eq_ignore_ascii_case(&host);
+    MCP_ENV_CREDENTIAL_ALLOWLIST
+        .iter()
+        .any(|(k, h)| bound(k, h))
+        || std::env::var("ABW_MCP_ENV_CREDENTIALS")
+            .map(|v| {
+                v.split(',')
+                    .filter_map(|p| p.trim().split_once('@'))
+                    .any(|(k, h)| bound(k.trim(), h.trim()))
+            })
+            .unwrap_or(false)
+}
+
 // ─── Credential resolution ──────────────────────────────────────────
 
 fn resolve_credential(
@@ -537,10 +605,12 @@ fn resolve_credential(
                 return Ok(Some(v.clone()));
             }
         }
-        // Process env second — platform-funded fallback.
-        if let Ok(v) = std::env::var(key) {
-            if !v.trim().is_empty() {
-                return Ok(Some(v));
+        // Process env second — platform-funded fallback, allowlisted keys only.
+        if env_credential_allowed(key, server) {
+            if let Ok(v) = std::env::var(key) {
+                if !v.trim().is_empty() {
+                    return Ok(Some(v));
+                }
             }
         }
     }
@@ -683,11 +753,12 @@ async fn rpc(
     method: &str,
     params: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    let client = reqwest::Client::builder()
-        .timeout(server.timeout())
-        .user_agent("AgentBestiary/1.0 (+https://agent-bestiary.world)")
-        .build()
-        .map_err(|e| format!("http client build failed: {e}"))?;
+    // SPEC 36 R0.3: the endpoint is card/owner-supplied, so it is checked,
+    // pinned to the approved address, and redirects are refused.
+    let (target, client) =
+        crate::net_guard::guarded_client(server.http_endpoint()?, server.timeout())
+            .await
+            .map_err(|e| format!("MCP server '{}' refused: {e}", server.name))?;
 
     let body = serde_json::json!({
         "jsonrpc": "2.0",
@@ -697,7 +768,7 @@ async fn rpc(
     });
 
     let req = client
-        .post(server.http_endpoint()?)
+        .post(target.as_str())
         .header("Content-Type", "application/json")
         // Streamable HTTP servers may answer either shape; accept both.
         .header("Accept", "application/json, text/event-stream")
@@ -708,6 +779,8 @@ async fn rpc(
         .send()
         .await
         .map_err(|e| format!("MCP server '{}' unreachable: {e}", server.name))?;
+    let resp = crate::net_guard::refuse_redirect(resp)
+        .map_err(|e| format!("MCP server '{}': {e}", server.name))?;
 
     let status = resp.status();
     let raw = resp
@@ -1173,5 +1246,49 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(resolve_credential(&s, None).unwrap(), None);
+    }
+}
+
+#[cfg(test)]
+mod env_credential_tests {
+    use super::*;
+
+    /// A declared endpoint that is not usable http(s), or that the guard
+    /// refuses, fails the write; a stdio-only entry has nothing to fetch.
+    #[tokio::test]
+    async fn declared_endpoints_are_refused_at_write_time() {
+        for bad in [
+            "ftp://example.com/mcp",
+            "https://127.0.0.1/mcp",
+            "https://example.com:8443/mcp",
+        ] {
+            let raw = serde_json::json!([{ "name": "s", "endpoint": bad }]);
+            assert!(
+                check_server_endpoints(&raw).await.is_err(),
+                "{bad} must be refused"
+            );
+        }
+        let stdio = serde_json::json!([{ "name": "s", "command": "npx something" }]);
+        assert!(check_server_endpoints(&stdio).await.is_ok());
+    }
+
+    fn server(endpoint: &str) -> RemoteMcpServer {
+        serde_json::from_value(serde_json::json!({"name": "s", "endpoint": endpoint})).unwrap()
+    }
+
+    #[test]
+    fn env_credentials_are_bound_to_their_host() {
+        assert!(env_credential_allowed(
+            "BIOPORTAL_API_KEY",
+            &server("https://bioportal.fastmcp.app/mcp")
+        ));
+        assert!(!env_credential_allowed(
+            "BIOPORTAL_API_KEY",
+            &server("https://attacker.example/mcp")
+        ));
+        assert!(!env_credential_allowed(
+            "ANTHROPIC_API_KEY",
+            &server("https://bioportal.fastmcp.app/mcp")
+        ));
     }
 }
