@@ -45,8 +45,9 @@ pub async fn list_xaman_sessions_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let sessions: Vec<Value> = rows.iter().map(|r| json!({
-        "session_id":    r.try_get::<Uuid,_>("session_id").unwrap().to_string(),
+    let decode = |e: sqlx::Error| (StatusCode::INTERNAL_SERVER_ERROR, format!("decode: {e}"));
+    let sessions: Vec<Value> = rows.iter().map(|r| Ok(json!({
+        "session_id":    r.try_get::<Uuid,_>("session_id").map_err(decode)?.to_string(),
         "session_type":  r.try_get::<String,_>("session_type").unwrap_or_default(),
         "title":         r.try_get::<Option<String>,_>("title").unwrap_or(None),
         "status":        r.try_get::<String,_>("status").unwrap_or_default(),
@@ -54,7 +55,7 @@ pub async fn list_xaman_sessions_handler(
         "in_progress":   r.try_get::<Value,_>("in_progress").unwrap_or(json!({})),
         "created_at":    r.try_get::<chrono::DateTime<Utc>,_>("created_at").map(|t| t.to_rfc3339()).unwrap_or_default(),
         "last_active_at":r.try_get::<chrono::DateTime<Utc>,_>("last_active_at").map(|t| t.to_rfc3339()).unwrap_or_default(),
-    })).collect();
+    }))).collect::<Result<_, (StatusCode, String)>>()?;
 
     Ok(Json(json!({ "sessions": sessions })))
 }
@@ -126,7 +127,9 @@ pub async fn get_xaman_session_handler(
     .ok_or((StatusCode::NOT_FOUND, "Session not found".into()))?;
 
     Ok(Json(json!({
-        "session_id":    row.try_get::<Uuid,_>("session_id").unwrap().to_string(),
+        "session_id":    row.try_get::<Uuid,_>("session_id")
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("decode: {e}")))?
+            .to_string(),
         "session_type":  row.try_get::<String,_>("session_type").unwrap_or_default(),
         "title":         row.try_get::<Option<String>,_>("title").unwrap_or(None),
         "status":        row.try_get::<String,_>("status").unwrap_or_default(),

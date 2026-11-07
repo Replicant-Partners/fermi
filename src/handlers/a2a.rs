@@ -658,6 +658,8 @@ pub async fn get_task_handler(
                 ExecutionStatus::Failure => {
                     fermi::a2a_task::failed_task(episode_id, &caller_id, "Execution failed")
                 }
+                // Reserved, not finished: the task is still in progress.
+                ExecutionStatus::Running => fermi::a2a_task::working_task(episode_id, &caller_id),
             };
             // SPEC 36 R0.2.3 (interim until stored artifacts, R3.3): the
             // document above was enforced NOW, against the agent's current

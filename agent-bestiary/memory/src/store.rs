@@ -472,7 +472,7 @@ impl MemoryStore {
             execution_status: row
                 .try_get::<String, _>("execution_status")?
                 .parse()
-                .unwrap(),
+                .map_err(MemoryError::InvalidData)?,
             error_details: row.try_get("error_details")?,
             execution_time_ms: row.try_get("execution_time_ms")?,
             tokens_used: row.try_get("tokens_used")?,
@@ -533,6 +533,9 @@ impl MemoryStore {
                 parent_episode_id, response_text, assertions
             FROM episodes
             WHERE agent_id = $1 AND NOT consolidated
+              -- Outcomes only: a reserved row has no result to learn from yet,
+              -- and consolidating it would mark it consolidated while running
+              AND execution_status <> 'running'
             ORDER BY timestamp_ref DESC
             "#,
         )
@@ -562,7 +565,7 @@ impl MemoryStore {
                 execution_status: row
                     .try_get::<String, _>("execution_status")?
                     .parse()
-                    .unwrap(),
+                    .map_err(MemoryError::InvalidData)?,
                 error_details: row.try_get("error_details")?,
                 execution_time_ms: row.try_get("execution_time_ms")?,
                 tokens_used: row.try_get("tokens_used")?,
@@ -1401,6 +1404,7 @@ impl MemoryStore {
             FROM episodes
             WHERE agent_id = $2
               AND embedding IS NOT NULL
+              AND execution_status <> 'running'
             ORDER BY embedding <=> $1
             LIMIT $3
             "#,
@@ -1434,7 +1438,7 @@ impl MemoryStore {
                 execution_status: row
                     .try_get::<String, _>("execution_status")?
                     .parse()
-                    .unwrap(),
+                    .map_err(MemoryError::InvalidData)?,
                 error_details: row.try_get("error_details")?,
                 execution_time_ms: row.try_get("execution_time_ms")?,
                 tokens_used: row.try_get("tokens_used")?,
@@ -1546,7 +1550,7 @@ impl MemoryStore {
                 execution_status: row
                     .try_get::<String, _>("execution_status")?
                     .parse()
-                    .unwrap(),
+                    .map_err(MemoryError::InvalidData)?,
                 error_details: row.try_get("error_details")?,
                 execution_time_ms: row.try_get("execution_time_ms")?,
                 tokens_used: row.try_get("tokens_used")?,
@@ -1647,7 +1651,7 @@ impl MemoryStore {
                 execution_status: row
                     .try_get::<String, _>("execution_status")?
                     .parse()
-                    .unwrap(),
+                    .map_err(MemoryError::InvalidData)?,
                 error_details: row.try_get("error_details")?,
                 execution_time_ms: row.try_get("execution_time_ms")?,
                 tokens_used: row.try_get("tokens_used")?,
@@ -2209,7 +2213,7 @@ impl MemoryStore {
             verification_status: row
                 .try_get::<String, _>("verification_status")?
                 .parse()
-                .unwrap(),
+                .map_err(MemoryError::InvalidData)?,
             verification_method: row.try_get("verification_method")?,
             source_episode_cluster: row.try_get("source_episode_cluster")?,
             episode_count: row.try_get("episode_count")?,
@@ -2484,7 +2488,7 @@ impl MemoryStore {
             relation_cardinality: row
                 .try_get::<String, _>("relation_cardinality")?
                 .parse()
-                .unwrap(),
+                .map_err(MemoryError::InvalidData)?,
             confidence: row.try_get("confidence")?,
             reasoning: row.try_get("reasoning")?,
             t_valid: row.try_get("t_valid")?,
@@ -2518,7 +2522,7 @@ impl MemoryStore {
                 relation_cardinality: row
                     .try_get::<String, _>("relation_cardinality")?
                     .parse()
-                    .unwrap(),
+                    .map_err(MemoryError::InvalidData)?,
                 confidence: row.try_get("confidence")?,
                 reasoning: row.try_get("reasoning")?,
                 t_valid: row.try_get("t_valid")?,
@@ -2556,7 +2560,7 @@ impl MemoryStore {
                 relation_cardinality: row
                     .try_get::<String, _>("relation_cardinality")?
                     .parse()
-                    .unwrap(),
+                    .map_err(MemoryError::InvalidData)?,
                 confidence: row.try_get("confidence")?,
                 reasoning: row.try_get("reasoning")?,
                 t_valid: row.try_get("t_valid")?,
@@ -2640,7 +2644,7 @@ impl MemoryStore {
                 execution_status: row
                     .try_get::<String, _>("execution_status")?
                     .parse()
-                    .unwrap(),
+                    .map_err(MemoryError::InvalidData)?,
                 error_details: row.try_get("error_details")?,
                 execution_time_ms: row.try_get("execution_time_ms")?,
                 tokens_used: row.try_get("tokens_used")?,
@@ -2706,6 +2710,7 @@ impl MemoryStore {
                 parent_episode_id, response_text, assertions
             FROM episodes
             WHERE agent_id = $1 AND embedding IS NOT NULL
+              AND execution_status <> 'running'
             ORDER BY timestamp_ref ASC
             "#,
         )
@@ -2734,7 +2739,7 @@ impl MemoryStore {
                 execution_status: row
                     .try_get::<String, _>("execution_status")?
                     .parse()
-                    .unwrap(),
+                    .map_err(MemoryError::InvalidData)?,
                 error_details: row.try_get("error_details")?,
                 execution_time_ms: row.try_get("execution_time_ms")?,
                 tokens_used: row.try_get("tokens_used")?,
@@ -2980,7 +2985,7 @@ impl MemoryStore {
             .await?
         };
 
-        Ok(rows.iter().map(row_to_workspace_message).collect())
+        rows.iter().map(row_to_workspace_message).collect()
     }
 
     pub async fn get_workspace_messages_since(
@@ -3002,7 +3007,7 @@ impl MemoryStore {
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(rows.iter().map(row_to_workspace_message).collect())
+        rows.iter().map(row_to_workspace_message).collect()
     }
 
     // ─── Coherence evaluations ────────────────────────────────────────
@@ -3050,7 +3055,7 @@ impl MemoryStore {
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(row.as_ref().map(row_to_coherence_evaluation))
+        row.as_ref().map(row_to_coherence_evaluation).transpose()
     }
 
     pub async fn get_coherence_history(
@@ -3074,7 +3079,7 @@ impl MemoryStore {
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(rows.iter().map(row_to_coherence_evaluation).collect())
+        rows.iter().map(row_to_coherence_evaluation).collect()
     }
 
     pub async fn count_workspace_messages_since(
@@ -3466,20 +3471,21 @@ impl MemoryStore {
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(rows
-            .iter()
-            .map(|r| EvalTestCase {
-                test_case_id: r.try_get("test_case_id").unwrap(),
-                agent_id: r.try_get("agent_id").unwrap(),
-                query: r.try_get("query").unwrap(),
-                expected_output: r.try_get("expected_output").unwrap_or(None),
-                rubric: r.try_get("rubric").unwrap_or(None),
-                tags: r.try_get("tags").unwrap_or_default(),
-                is_active: r.try_get("is_active").unwrap(),
-                created_at: r.try_get("created_at").unwrap(),
-                updated_at: r.try_get("updated_at").unwrap(),
+        rows.iter()
+            .map(|r| {
+                Ok(EvalTestCase {
+                    test_case_id: r.try_get("test_case_id")?,
+                    agent_id: r.try_get("agent_id")?,
+                    query: r.try_get("query")?,
+                    expected_output: r.try_get("expected_output").unwrap_or(None),
+                    rubric: r.try_get("rubric").unwrap_or(None),
+                    tags: r.try_get("tags").unwrap_or_default(),
+                    is_active: r.try_get("is_active")?,
+                    created_at: r.try_get("created_at")?,
+                    updated_at: r.try_get("updated_at")?,
+                })
             })
-            .collect())
+            .collect()
     }
 
     pub async fn update_eval_test_case(&self, tc: &EvalTestCase) -> Result<()> {
@@ -3578,36 +3584,37 @@ impl MemoryStore {
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(rows
-            .iter()
-            .map(|r| EvalRun {
-                run_id: r.try_get("run_id").unwrap(),
-                agent_id: r.try_get("agent_id").unwrap(),
-                triggered_by: r.try_get("triggered_by").unwrap(),
-                status: r.try_get("status").unwrap(),
-                judge_enabled: r.try_get("judge_enabled").unwrap(),
-                total_cases: r.try_get("total_cases").unwrap(),
-                passed: r.try_get("passed").unwrap(),
-                failed: r.try_get("failed").unwrap(),
-                avg_latency_ms: r.try_get("avg_latency_ms").unwrap_or(None),
-                avg_tokens: r.try_get("avg_tokens").unwrap_or(None),
-                avg_judge_score: r.try_get("avg_judge_score").unwrap_or(None),
-                total_cost_credits: r.try_get("total_cost_credits").unwrap(),
-                case_results: r
-                    .try_get::<serde_json::Value, _>("case_results")
-                    .unwrap_or(serde_json::json!([])),
-                regression_detected: r.try_get("regression_detected").unwrap(),
-                regression_details: r.try_get("regression_details").unwrap_or(None),
-                aggregated_signal: r.try_get("aggregated_signal").ok().flatten(),
-                conflict_flags: r
-                    .try_get::<serde_json::Value, _>("conflict_flags")
-                    .unwrap_or(serde_json::json!([])),
-                prefilter_blocked: r.try_get("prefilter_blocked").unwrap_or(false),
-                started_at: r.try_get("started_at").unwrap(),
-                completed_at: r.try_get("completed_at").unwrap_or(None),
-                duration_ms: r.try_get("duration_ms").unwrap_or(None),
+        rows.iter()
+            .map(|r| {
+                Ok(EvalRun {
+                    run_id: r.try_get("run_id")?,
+                    agent_id: r.try_get("agent_id")?,
+                    triggered_by: r.try_get("triggered_by")?,
+                    status: r.try_get("status")?,
+                    judge_enabled: r.try_get("judge_enabled")?,
+                    total_cases: r.try_get("total_cases")?,
+                    passed: r.try_get("passed")?,
+                    failed: r.try_get("failed")?,
+                    avg_latency_ms: r.try_get("avg_latency_ms").unwrap_or(None),
+                    avg_tokens: r.try_get("avg_tokens").unwrap_or(None),
+                    avg_judge_score: r.try_get("avg_judge_score").unwrap_or(None),
+                    total_cost_credits: r.try_get("total_cost_credits")?,
+                    case_results: r
+                        .try_get::<serde_json::Value, _>("case_results")
+                        .unwrap_or(serde_json::json!([])),
+                    regression_detected: r.try_get("regression_detected")?,
+                    regression_details: r.try_get("regression_details").unwrap_or(None),
+                    aggregated_signal: r.try_get("aggregated_signal").ok().flatten(),
+                    conflict_flags: r
+                        .try_get::<serde_json::Value, _>("conflict_flags")
+                        .unwrap_or(serde_json::json!([])),
+                    prefilter_blocked: r.try_get("prefilter_blocked").unwrap_or(false),
+                    started_at: r.try_get("started_at")?,
+                    completed_at: r.try_get("completed_at").unwrap_or(None),
+                    duration_ms: r.try_get("duration_ms").unwrap_or(None),
+                })
             })
-            .collect())
+            .collect()
     }
 
     pub async fn seed_eval_test_cases_from_samples(
@@ -3845,7 +3852,7 @@ impl MemoryStore {
         .bind(profile_name)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(|r| row_to_shopping_profile(&r)))
+        row.map(|r| row_to_shopping_profile(&r)).transpose()
     }
 
     pub async fn get_user_shopping_profiles(&self, user_id: &str) -> Result<Vec<ShoppingProfile>> {
@@ -3860,7 +3867,7 @@ impl MemoryStore {
         .bind(user_id)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.iter().map(row_to_shopping_profile).collect())
+        rows.iter().map(row_to_shopping_profile).collect()
     }
 
     pub async fn create_marketplace_listing(
@@ -3969,7 +3976,7 @@ impl MemoryStore {
             .fetch_all(&self.pool)
             .await?
         };
-        Ok(rows.iter().map(row_to_marketplace_listing).collect())
+        rows.iter().map(row_to_marketplace_listing).collect()
     }
 
     /// Core marketplace matching: cosine similarity against listed profiles
@@ -4030,7 +4037,7 @@ impl MemoryStore {
             if similarity < min_similarity {
                 continue;
             }
-            let listing = row_to_marketplace_listing(row);
+            let listing = row_to_marketplace_listing(row)?;
             let ps: Option<f64> = row.try_get("price_sensitivity").unwrap_or(None);
             let qb: Option<f64> = row.try_get("quality_bias").unwrap_or(None);
             results.push((listing, similarity, ps, qb));
@@ -4098,7 +4105,7 @@ impl MemoryStore {
         .bind(limit)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.iter().map(row_to_marketplace_transaction).collect())
+        rows.iter().map(row_to_marketplace_transaction).collect()
     }
 
     // ─── Phase 2 — eval_signals (per-evaluator scoring history) ─────
@@ -5112,12 +5119,12 @@ fn row_to_episode_correction(row: &sqlx::postgres::PgRow) -> Result<EpisodeCorre
     })
 }
 
-fn row_to_coherence_evaluation(row: &sqlx::postgres::PgRow) -> CoherenceEvaluation {
-    CoherenceEvaluation {
-        eval_id: row.try_get("eval_id").unwrap(),
-        workspace_id: row.try_get("workspace_id").unwrap(),
-        global_score: row.try_get("global_score").unwrap(),
-        quality_label: row.try_get("quality_label").unwrap(),
+fn row_to_coherence_evaluation(row: &sqlx::postgres::PgRow) -> Result<CoherenceEvaluation> {
+    Ok(CoherenceEvaluation {
+        eval_id: row.try_get("eval_id")?,
+        workspace_id: row.try_get("workspace_id")?,
+        global_score: row.try_get("global_score")?,
+        quality_label: row.try_get("quality_label")?,
         principle_scores: row
             .try_get::<serde_json::Value, _>("principle_scores")
             .unwrap_or(serde_json::json!({})),
@@ -5126,36 +5133,36 @@ fn row_to_coherence_evaluation(row: &sqlx::postgres::PgRow) -> CoherenceEvaluati
             .unwrap_or(serde_json::json!({})),
         utterance_count: row.try_get("utterance_count").unwrap_or(0),
         message_window: row.try_get("message_window").unwrap_or(None),
-        created_at: row.try_get("created_at").unwrap(),
-    }
+        created_at: row.try_get("created_at")?,
+    })
 }
 
-fn row_to_workspace_message(row: &sqlx::postgres::PgRow) -> WorkspaceMessage {
-    WorkspaceMessage {
-        message_id: row.try_get("message_id").unwrap(),
-        workspace_id: row.try_get("workspace_id").unwrap(),
-        sender_type: row.try_get("sender_type").unwrap(),
-        sender_id: row.try_get("sender_id").unwrap(),
+fn row_to_workspace_message(row: &sqlx::postgres::PgRow) -> Result<WorkspaceMessage> {
+    Ok(WorkspaceMessage {
+        message_id: row.try_get("message_id")?,
+        workspace_id: row.try_get("workspace_id")?,
+        sender_type: row.try_get("sender_type")?,
+        sender_id: row.try_get("sender_id")?,
         sender_name: row.try_get("sender_name").unwrap_or(None),
-        content: row.try_get("content").unwrap(),
-        message_type: row.try_get("message_type").unwrap(),
+        content: row.try_get("content")?,
+        message_type: row.try_get("message_type")?,
         metadata: row
             .try_get::<serde_json::Value, _>("metadata")
             .unwrap_or(serde_json::json!({})),
-        created_at: row.try_get("created_at").unwrap(),
+        created_at: row.try_get("created_at")?,
         // The join (migration 222). `unwrap_or(None)` rather than `unwrap()`:
         // this reader runs against rows written before the column existed, and
         // a decode failure here must not panic a workspace's whole history.
         episode_id: row.try_get("episode_id").unwrap_or(None),
-    }
+    })
 }
 
-fn row_to_shopping_profile(row: &sqlx::postgres::PgRow) -> ShoppingProfile {
-    ShoppingProfile {
-        profile_id: row.try_get("profile_id").unwrap(),
-        user_id: row.try_get("user_id").unwrap(),
-        agent_id: row.try_get("agent_id").unwrap(),
-        profile_name: row.try_get("profile_name").unwrap(),
+fn row_to_shopping_profile(row: &sqlx::postgres::PgRow) -> Result<ShoppingProfile> {
+    Ok(ShoppingProfile {
+        profile_id: row.try_get("profile_id")?,
+        user_id: row.try_get("user_id")?,
+        agent_id: row.try_get("agent_id")?,
+        profile_name: row.try_get("profile_name")?,
         composite_embedding: None, // Never expose raw embeddings in row helpers
         embedding_version: row.try_get("embedding_version").unwrap_or(0),
         episode_count: row.try_get("episode_count").unwrap_or(0),
@@ -5172,16 +5179,16 @@ fn row_to_shopping_profile(row: &sqlx::postgres::PgRow) -> ShoppingProfile {
             .try_get::<serde_json::Value, _>("metadata")
             .unwrap_or(serde_json::json!({})),
         is_listed: row.try_get("is_listed").unwrap_or(false),
-        created_at: row.try_get("created_at").unwrap(),
-        updated_at: row.try_get("updated_at").unwrap(),
-    }
+        created_at: row.try_get("created_at")?,
+        updated_at: row.try_get("updated_at")?,
+    })
 }
 
-fn row_to_marketplace_listing(row: &sqlx::postgres::PgRow) -> MarketplaceListing {
-    MarketplaceListing {
-        listing_id: row.try_get("listing_id").unwrap(),
-        profile_id: row.try_get("profile_id").unwrap(),
-        seller_id: row.try_get("seller_id").unwrap(),
+fn row_to_marketplace_listing(row: &sqlx::postgres::PgRow) -> Result<MarketplaceListing> {
+    Ok(MarketplaceListing {
+        listing_id: row.try_get("listing_id")?,
+        profile_id: row.try_get("profile_id")?,
+        seller_id: row.try_get("seller_id")?,
         price_credits: row.try_get("price_credits").unwrap_or(1),
         max_queries_per_buyer: row.try_get("max_queries_per_buyer").unwrap_or(None),
         total_queries: row.try_get("total_queries").unwrap_or(0),
@@ -5194,24 +5201,24 @@ fn row_to_marketplace_listing(row: &sqlx::postgres::PgRow) -> MarketplaceListing
             .unwrap_or(None)
             .unwrap_or_default(),
         description: row.try_get("description").unwrap_or(None),
-        created_at: row.try_get("created_at").unwrap(),
-        updated_at: row.try_get("updated_at").unwrap(),
-    }
+        created_at: row.try_get("created_at")?,
+        updated_at: row.try_get("updated_at")?,
+    })
 }
 
-fn row_to_marketplace_transaction(row: &sqlx::postgres::PgRow) -> MarketplaceTransaction {
-    MarketplaceTransaction {
-        tx_id: row.try_get("tx_id").unwrap(),
-        listing_id: row.try_get("listing_id").unwrap(),
-        buyer_id: row.try_get("buyer_id").unwrap(),
-        seller_id: row.try_get("seller_id").unwrap(),
+fn row_to_marketplace_transaction(row: &sqlx::postgres::PgRow) -> Result<MarketplaceTransaction> {
+    Ok(MarketplaceTransaction {
+        tx_id: row.try_get("tx_id")?,
+        listing_id: row.try_get("listing_id")?,
+        buyer_id: row.try_get("buyer_id")?,
+        seller_id: row.try_get("seller_id")?,
         similarity_score: row.try_get("similarity_score").unwrap_or(0.0),
         product_embedding_hash: row.try_get("product_embedding_hash").unwrap_or(None),
         credits_charged: row.try_get("credits_charged").unwrap_or(0),
         credits_to_seller: row.try_get("credits_to_seller").unwrap_or(0),
         platform_fee: row.try_get("platform_fee").unwrap_or(0),
-        created_at: row.try_get("created_at").unwrap(),
-    }
+        created_at: row.try_get("created_at")?,
+    })
 }
 
 #[cfg(test)]
