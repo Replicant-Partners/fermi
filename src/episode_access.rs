@@ -101,7 +101,8 @@ pub async fn may_read_workspace(
         return Ok(true);
     }
     sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM team_members WHERE team_id = $1 AND member_id = $2)",
+        "SELECT EXISTS (SELECT 1 FROM team_members
+                         WHERE team_id = $1 AND member_id = $2 AND member_type = 'user')",
     )
     .bind(workspace_id)
     .bind(&reader.user_id)

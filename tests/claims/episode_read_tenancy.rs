@@ -1,10 +1,10 @@
 //! SPEC 36 R0.2 item 4 / I9 (#38): by-ID and bulk episode reads are tenant-scoped.
 //!
-//! Before (deployed prototype, 4c9bac67): `/api/episodes/:id/lineage`,
-//! `/api/workspaces/:id/flow`, a private agent's `/eval/runs`,
-//! `/api/episodes/recent` and `/api/stream` answered signed-out callers with
-//! episode content; `/trace` answered any signed-in user. The deployed test
-//! below observed these.
+//! Before (deployed prototype, 4c9bac67) the deployed test below recorded 14
+//! exposures: by-ID episode, lineage, flow, private-agent eval runs and test
+//! cases, and private specimens answered signed-out callers; `/trace` answered
+//! any signed-in user; `/api/episodes/recent`, `/api/stream`, agent metrics'
+//! failures and the verification queue returned other users' episodes.
 
 use crate::deployed::{base_url, caller};
 use crate::support;

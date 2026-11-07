@@ -887,7 +887,11 @@ pub async fn specimen_handler(
     {
         let owner: Option<String> = row.try_get("user_id").ok().flatten();
         let visibility: Option<String> = row.try_get("visibility").ok().flatten();
-        let visible = visibility.as_deref() == Some("public")
+        let status: Option<String> = row.try_get("status").ok().flatten();
+        // Same rule as eval data (episode_access::may_read_agent_evals):
+        // public AND published is catalogue; anything else is the owner's.
+        let visible = (visibility.as_deref() == Some("public")
+            && status.as_deref() == Some("published"))
             || specimen_reader.admin
             || (!specimen_reader.user_id.is_empty()
                 && owner.as_deref() == Some(specimen_reader.user_id.as_str()));
