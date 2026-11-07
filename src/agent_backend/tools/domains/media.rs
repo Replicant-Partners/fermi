@@ -284,7 +284,15 @@ async fn execute_edit_image(input: &Value) -> Result<String, String> {
         .to_string();
     // Only images are forwarded: the fetched bytes go to a third party, so a
     // non-image body (an HTML page, a JSON document) is refused, not relayed.
-    if !content_type.starts_with("image/") {
+    // The header is a first filter; the bytes decide (`sniff_image_type`).
+    if !content_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase()
+        .starts_with("image/")
+    {
         return Err(format!(
             "source is not an image (content-type '{content_type}')"
         ));
@@ -309,6 +317,8 @@ async fn execute_edit_image(input: &Value) -> Result<String, String> {
         }
         img_bytes.extend_from_slice(&chunk);
     }
+    let content_type = sniff_image_type(&img_bytes)
+        .ok_or_else(|| "source bytes are not a PNG, JPEG, GIF or WebP image".to_string())?;
     let client = reqwest::Client::new();
 
     use base64::Engine;
@@ -472,5 +482,46 @@ mod tests {
                 tool.name()
             );
         }
+    }
+}
+
+/// The image type the bytes actually are, from their signature. Only types
+/// Gemini accepts as inline image input are recognised.
+fn sniff_image_type(b: &[u8]) -> Option<&'static str> {
+    if b.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if b.starts_with(&[0xff, 0xd8, 0xff]) {
+        Some("image/jpeg")
+    } else if b.starts_with(b"GIF87a") || b.starts_with(b"GIF89a") {
+        Some("image/gif")
+    } else if b.len() >= 12 && &b[0..4] == b"RIFF" && &b[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod sniff_tests {
+    use super::sniff_image_type;
+
+    #[test]
+    fn image_type_comes_from_the_bytes() {
+        assert_eq!(
+            sniff_image_type(b"\x89PNG\r\n\x1a\nrest"),
+            Some("image/png")
+        );
+        assert_eq!(
+            sniff_image_type(&[0xff, 0xd8, 0xff, 0xe0]),
+            Some("image/jpeg")
+        );
+        assert_eq!(sniff_image_type(b"GIF89a.."), Some("image/gif"));
+        assert_eq!(
+            sniff_image_type(b"RIFF\0\0\0\0WEBPVP8 "),
+            Some("image/webp")
+        );
+        assert_eq!(sniff_image_type(b"<html><body>"), None);
+        assert_eq!(sniff_image_type(b"{\"a\":1}"), None);
+        assert_eq!(sniff_image_type(b""), None);
     }
 }

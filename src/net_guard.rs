@@ -13,11 +13,9 @@
 //! `tests/claims/ssrf_deployed.rs`.]
 //!
 //! What [`check`] enforces:
-//! * scheme `https`; plain `http` only with `ABW_ALLOW_HTTP_OUTBOUND=1`
-//!   (SPEC 36 names it `ABW_ALLOW_HTTP`; this is the deployed name);
+//! * scheme `https` on port 443; plain `http` on port 80 only when the
+//!   [`OutboundPolicy`] allows it (`ABW_ALLOW_HTTP=1`). No other ports;
 //! * no userinfo in the URL;
-//! * port 443, or 80 only with http allowed, or one listed in
-//!   `ABW_OUTBOUND_EXTRA_PORTS` (comma list);
 //! * every address the host resolves to is public — see [`forbidden_class`].
 //!   A name with any non-public answer is refused, not trusted to pick the
 //!   public one.
@@ -29,6 +27,10 @@
 //! * redirects are refused; [`refuse_redirect`] turns a 3xx into an error that
 //!   carries its `Location`;
 //! * `no_proxy()`, because a proxy would resolve the host itself.
+//!
+//! There is no off switch. SPEC 36 R0.3 permits `ABW_NET_GUARD=off` in dev
+//! only; this build has no such mode, and [`refuse_disabled_guard_at_boot`]
+//! fails boot if the variable is set to anything but `on`.
 //!
 //! IP-literal hosts never reach a DNS resolver — hyper parses them directly
 //! (hyper 0.14 `client/connect/http.rs`, `HttpConnector::call_async`) — which
@@ -187,6 +189,11 @@ fn v6_class(ip: Ipv6Addr) -> Option<&'static str> {
     if s[0] == 0x2001 && s[1] == 0x0000 {
         return Some("Teredo");
     }
+    // Rest of 2001::/23, IETF protocol assignments: benchmarking 2001:2::/48,
+    // ORCHID, AMT, AS112 and friends. Nothing a user endpoint lives on.
+    if s[0] == 0x2001 && s[1] < 0x0200 {
+        return Some("IETF protocol assignment");
+    }
     if s[0] == 0x0100 && s[1..4] == [0, 0, 0] {
         return Some("discard-only");
     }
@@ -208,55 +215,87 @@ fn v6_class(ip: Ipv6Addr) -> Option<&'static str> {
     None
 }
 
-fn allow_http() -> bool {
-    std::env::var("ABW_ALLOW_HTTP_OUTBOUND").as_deref() == Ok("1")
+/// What the guard permits beyond the fixed rules. The address rules are not
+/// configurable.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct OutboundPolicy {
+    /// Plain `http` on port 80 (`ABW_ALLOW_HTTP=1`). Off by default.
+    pub allow_http: bool,
 }
 
-fn port_allowed(scheme: &str, port: u16) -> bool {
-    if port == 443 || (port == 80 && scheme == "http") {
-        return true;
+impl OutboundPolicy {
+    pub fn from_env() -> Self {
+        OutboundPolicy {
+            allow_http: std::env::var("ABW_ALLOW_HTTP").as_deref() == Ok("1"),
+        }
     }
-    std::env::var("ABW_OUTBOUND_EXTRA_PORTS")
-        .ok()
-        .map(|v| {
-            v.split(',')
-                .filter_map(|p| p.trim().parse::<u16>().ok())
-                .any(|p| p == port)
-        })
-        .unwrap_or(false)
 }
+
+/// Boot refuses a request to disable the guard (SPEC 36 R0.3 "Dev
+/// override"): this build has no off mode, so any value but `on` is an
+/// operator error, not something to ignore.
+pub fn refuse_disabled_guard_at_boot() -> Result<(), String> {
+    guard_setting(std::env::var("ABW_NET_GUARD").ok().as_deref())
+}
+
+fn guard_setting(v: Option<&str>) -> Result<(), String> {
+    match v {
+        None | Some("on") => Ok(()),
+        Some(v) => Err(format!(
+            "ABW_NET_GUARD={v} is not supported: the outbound URL guard cannot be disabled"
+        )),
+    }
+}
+
+/// Upper bound on a DNS lookup inside [`check`]; a stalled resolver must not
+/// hold a request handler past it.
+const DNS_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Parse and validate a URL, resolve its host with the system resolver, and
-/// return it pinned to the approved addresses.
+/// return it pinned to the approved addresses. Policy from the environment.
 pub async fn check(raw: &str) -> Result<GuardedUrl, NetGuardError> {
-    check_with(raw, |host, port| async move {
-        tokio::net::lookup_host((host.as_str(), port))
+    check_with(raw, &OutboundPolicy::from_env(), |host, port| async move {
+        match tokio::time::timeout(DNS_TIMEOUT, tokio::net::lookup_host((host.as_str(), port)))
             .await
-            .map(|it| it.map(|sa| sa.ip()).collect::<Vec<_>>())
-            .unwrap_or_default()
+        {
+            Ok(Ok(it)) => it.map(|sa| sa.ip()).collect::<Vec<_>>(),
+            Ok(Err(_)) => Vec::new(),
+            Err(_) => {
+                tracing::warn!(host = %host, "net_guard: DNS lookup timed out");
+                Vec::new()
+            }
+        }
     })
     .await
 }
 
-/// [`check`] with an injected resolver (`host, port -> addresses`), so the
-/// DNS cases — private answer, mixed answer, no answer — are testable.
-pub(crate) async fn check_with<F, Fut>(raw: &str, resolve: F) -> Result<GuardedUrl, NetGuardError>
+/// [`check`] with an explicit policy and an injected resolver
+/// (`host, port -> addresses`), so the DNS cases (private answer, mixed
+/// answer, no answer) are testable. Whatever the resolver returns is still
+/// classified, and the client pins to exactly those addresses, so a caller
+/// cannot use this to reach a forbidden address.
+#[doc(hidden)]
+pub async fn check_with<F, Fut>(
+    raw: &str,
+    policy: &OutboundPolicy,
+    resolve: F,
+) -> Result<GuardedUrl, NetGuardError>
 where
     F: FnOnce(String, u16) -> Fut,
     Fut: Future<Output = Vec<IpAddr>>,
 {
     let url = url::Url::parse(raw.trim()).map_err(|e| NetGuardError::Parse(e.to_string()))?;
     let scheme = url.scheme().to_string();
-    match scheme.as_str() {
-        "https" => {}
-        "http" if allow_http() => {}
+    let allowed_port = match scheme.as_str() {
+        "https" => 443,
+        "http" if policy.allow_http => 80,
         other => return Err(NetGuardError::Scheme(other.to_string())),
-    }
+    };
     if !url.username().is_empty() || url.password().is_some() {
         return Err(NetGuardError::Userinfo);
     }
     let port = url.port_or_known_default().ok_or(NetGuardError::Port(0))?;
-    if !port_allowed(&scheme, port) {
+    if port != allowed_port {
         return Err(NetGuardError::Port(port));
     }
     let host = url.host_str().ok_or(NetGuardError::NoHost)?.to_string();
@@ -365,6 +404,8 @@ mod tests {
             ("2002:7f00:1::", true),
             ("2002:a00:1::", true),
             ("2001:0:4136:e378::1", true),
+            ("2001:2::1", true),
+            ("2001:1ff::1", true),
             ("100::1", true),
             ("2001:db8::1", true),
             ("3fff::1", true),
@@ -376,6 +417,7 @@ mod tests {
             ("::ffff:8.8.8.8", false),
             ("2002:808:808::", false),
             ("64:ff9b::808:808", false),
+            ("2001:200::1", false),
         ] {
             let addr: IpAddr = ip.parse().unwrap();
             assert_eq!(
@@ -404,7 +446,10 @@ mod tests {
             "file:///etc/passwd",
             "not a url",
         ] {
-            let r = check_with(u, |_, _| async { vec!["8.8.8.8".parse().unwrap()] }).await;
+            let r = check_with(u, &OutboundPolicy::default(), |_, _| async {
+                vec!["8.8.8.8".parse().unwrap()]
+            })
+            .await;
             assert!(r.is_err(), "{u} must be rejected, got {r:?}");
         }
     }
@@ -421,17 +466,27 @@ mod tests {
                     .collect::<Vec<_>>()
             }
         };
-        let private = check_with("https://rebind.test/", to(&["127.0.0.1"])).await;
+        let private = check_with(
+            "https://rebind.test/",
+            &OutboundPolicy::default(),
+            to(&["127.0.0.1"]),
+        )
+        .await;
         assert!(
             matches!(private, Err(NetGuardError::Forbidden { .. })),
             "{private:?}"
         );
-        let mixed = check_with("https://mixed.test/", to(&["93.184.216.34", "10.0.0.5"])).await;
+        let mixed = check_with(
+            "https://mixed.test/",
+            &OutboundPolicy::default(),
+            to(&["93.184.216.34", "10.0.0.5"]),
+        )
+        .await;
         assert!(
             matches!(mixed, Err(NetGuardError::Forbidden { .. })),
             "{mixed:?}"
         );
-        let none = check_with("https://nx.test/", to(&[])).await;
+        let none = check_with("https://nx.test/", &OutboundPolicy::default(), to(&[])).await;
         assert!(
             matches!(none, Err(NetGuardError::Unresolvable(_))),
             "{none:?}"
@@ -449,6 +504,7 @@ mod tests {
         );
         let ok = check_with(
             "https://ok.test/",
+            &OutboundPolicy::default(),
             to(&["93.184.216.34", "2606:2800:220:1::1"]),
         )
         .await
@@ -456,11 +512,43 @@ mod tests {
         assert_eq!(ok.addrs().len(), 2, "pinned to every approved address");
     }
 
-    #[test]
-    fn plain_http_is_refused_by_default() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let r = rt.block_on(check_with("http://example.com/", |_, _| async { vec![] }));
+    #[tokio::test]
+    async fn scheme_and_port_policy() {
+        let public = |_: String, _: u16| async { vec!["93.184.216.34".parse::<IpAddr>().unwrap()] };
+        let off = OutboundPolicy::default();
+        let on = OutboundPolicy { allow_http: true };
+        let r = check_with("http://example.com/", &off, public).await;
         assert_eq!(r.unwrap_err(), NetGuardError::Scheme("http".into()));
+        assert!(check_with("http://example.com/", &on, public).await.is_ok());
+        // http is allowed on 80 only: never on 443 or any other port, so a
+        // credential is never sent in cleartext to a TLS-looking port.
+        for (u, p) in [
+            ("http://example.com:443/", 443),
+            ("http://example.com:8080/", 8080),
+        ] {
+            assert_eq!(
+                check_with(u, &on, public).await.unwrap_err(),
+                NetGuardError::Port(p)
+            );
+        }
+        for (u, p) in [
+            ("https://example.com:80/", 80),
+            ("https://example.com:8443/", 8443),
+        ] {
+            assert_eq!(
+                check_with(u, &on, public).await.unwrap_err(),
+                NetGuardError::Port(p)
+            );
+        }
+    }
+
+    #[test]
+    fn only_on_or_unset_passes_boot() {
+        assert!(guard_setting(None).is_ok());
+        assert!(guard_setting(Some("on")).is_ok());
+        for v in ["off", "OFF", "0", ""] {
+            assert!(guard_setting(Some(v)).is_err(), "{v:?} must fail boot");
+        }
     }
 
     /// `client_for` end to end: it connects to the pinned address (not
@@ -478,7 +566,7 @@ mod tests {
             let mut buf = [0u8; 1024];
             let _read = s.read(&mut buf).await;
             let _write = s
-                .write_all(b"HTTP/1.1 302 Found\r\nLocation: http://169.254.169.254/x\r\nContent-Length: 0\r\n\r\n")
+                .write_all(b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1/x\r\nContent-Length: 0\r\n\r\n")
                 .await;
         });
         // Built directly (the test listener is on loopback, which `check`
@@ -501,6 +589,6 @@ mod tests {
             "redirect returned, not followed"
         );
         let err = refuse_redirect(resp).unwrap_err();
-        assert!(err.contains("169.254.169.254"), "{err}");
+        assert!(err.contains("127.0.0.1"), "{err}");
     }
 }

@@ -2360,6 +2360,13 @@ async fn main() {
     // whether the columns are present.
     ensure_critical_schema(&db).await;
 
+    // SPEC 36 R0.3: the outbound URL guard has no off mode; refuse to boot
+    // rather than run with an operator believing it is disabled.
+    if let Err(e) = fermi::net_guard::refuse_disabled_guard_at_boot() {
+        eprintln!("[main] {e}");
+        std::process::exit(2);
+    }
+
     // v0.11.0: schema trust contract check. Runs AFTER migrations and
     // ensure_critical_schema so any drift caught here is a genuine
     // contract violation, not just "migration hasn't run yet." Default

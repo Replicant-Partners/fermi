@@ -1,8 +1,10 @@
 //! SPEC 36 R0.3 / LLD G03 (#39): no user-supplied URL reaches a private address.
 //!
-//! Two kinds of check:
-//! * the guard refuses internal targets before any request (the pin and
-//!   redirect refusal are unit-tested in `src/net_guard.rs`);
+//! Three kinds of check, the SPEC 36 R0.3 done-when list:
+//! * the guard refuses each internal target before any request, including
+//!   names that a stub resolver answers with a private address;
+//! * a guarded client returns a 302 to 127.0.0.1 unfollowed, and
+//!   `refuse_redirect` turns it into an error;
 //! * a source inventory: every outbound `reqwest` call site in production code
 //!   is either listed as fixed-host here or goes through `net_guard`. A new
 //!   call site that does neither fails this test.
@@ -11,6 +13,22 @@ use fermi::net_guard;
 
 #[tokio::test]
 async fn loopback_and_metadata_are_refused_before_any_request() {
+    // The spec's list is http; with http allowed, the address rule still
+    // refuses each one.
+    let http_on = net_guard::OutboundPolicy { allow_http: true };
+    for u in [
+        "http://127.0.0.1",
+        "http://[::1]",
+        "http://169.254.169.254",
+        "http://10.0.0.1",
+        "http://[::ffff:10.0.0.1]",
+    ] {
+        let r = net_guard::check_with(u, &http_on, |_, _| async { vec![] }).await;
+        assert!(
+            matches!(r, Err(net_guard::NetGuardError::Forbidden { .. })),
+            "{u}: {r:?}"
+        );
+    }
     for u in [
         "https://127.0.0.1/",
         "https://[::1]/",
@@ -24,9 +42,63 @@ async fn loopback_and_metadata_are_refused_before_any_request() {
     }
 }
 
-// The pin and the redirect refusal are exercised end to end against a local
-// listener by `net_guard::tests::client_for_pins_and_refuses_redirects`
-// (src/net_guard.rs), which builds the production `client_for` client.
+/// A hostname whose DNS answer is loopback (or private, or mixed) is refused.
+#[tokio::test]
+async fn names_resolving_to_internal_addresses_are_refused() {
+    let p = net_guard::OutboundPolicy::default();
+    for answer in [
+        vec!["127.0.0.1"],
+        vec!["10.0.0.5"],
+        vec!["93.184.216.34", "169.254.169.254"],
+    ] {
+        let ips: Vec<std::net::IpAddr> = answer.iter().map(|a| a.parse().unwrap()).collect();
+        let r =
+            net_guard::check_with("https://rebind.example/", &p, |_, _| async move { ips }).await;
+        assert!(
+            matches!(r, Err(net_guard::NetGuardError::Forbidden { .. })),
+            "{answer:?}: {r:?}"
+        );
+    }
+}
+
+/// A 302 pointing at 127.0.0.1 is returned unfollowed and `refuse_redirect`
+/// turns it into an error. The server is a local listener, which `check`
+/// itself would refuse, so this uses a client with the guard's redirect and
+/// proxy policy; `client_for` itself (pinning included) is driven against a
+/// local listener by the unit test named below.
+#[tokio::test]
+async fn a_302_to_loopback_is_refused() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = l.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((mut s, _)) = l.accept().await {
+            let mut buf = [0u8; 1024];
+            let _read = s.read(&mut buf).await;
+            let _write = s
+                .write_all(
+                    b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1/admin\r\nContent-Length: 0\r\n\r\n",
+                )
+                .await;
+        }
+    });
+    let c = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+        .build()
+        .unwrap();
+    let resp = c
+        .get(format!("http://127.0.0.1:{port}/"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 302, "returned, not followed");
+    let err = net_guard::refuse_redirect(resp).unwrap_err();
+    assert!(err.contains("127.0.0.1/admin"), "{err}");
+    // The production client uses the same policy (unit test
+    // `net_guard::tests::client_for_pins_and_refuses_redirects` drives
+    // `client_for` itself against a pinned local listener).
+}
 
 /// Every outbound request in production code is either a known fixed-host
 /// call or goes through `net_guard`.
@@ -42,17 +114,19 @@ async fn loopback_and_metadata_are_refused_before_any_request() {
 fn every_outbound_call_site_is_fixed_host_or_guarded() {
     let root = env!("CARGO_MANIFEST_DIR");
     let counts = outbound_send_counts(root);
-    // (file or crate prefix, `.send()` calls, host). Hosts are constants or operator env.
+    // (file, `.send()` calls, host). Each host is a compile-time constant, or
+    // an operator-set env var marked "operator env": deployment config, never
+    // a value a user, card or tool argument can supply.
     let fixed: &[(&str, usize, &str)] = &[
         (
             "src/agent_backend/tool_executor.rs",
             2,
-            "anthropic; provider_base_url constants/env",
+            "api.anthropic.com; provider_base_url: constants or operator env *_BASE_URL",
         ),
         (
             "src/agent_backend/multi_model_executor.rs",
             1,
-            "provider_base_url constants/env",
+            "provider_base_url: constants or operator env *_BASE_URL",
         ),
         ("src/agent_backend/llm_executor.rs", 1, "api.anthropic.com"),
         (
@@ -76,7 +150,7 @@ fn every_outbound_call_site_is_fixed_host_or_guarded() {
         (
             "src/agent_backend/tools/domains/video.rs",
             3,
-            "REDUCT_BASE_URL operator env",
+            "const REDUCT_BASE_URL (video.rs:255)",
         ),
         (
             "src/agent_backend/tools/domains/platform.rs",
@@ -113,7 +187,7 @@ fn every_outbound_call_site_is_fixed_host_or_guarded() {
         (
             "agent-bestiary/memory/src/embeddings.rs",
             5,
-            "provider constants / NOMIC_BASE_URL env",
+            "provider constants; NOMIC_BASE_URL operator env",
         ),
         (
             "agent-bestiary/memory/src/llm.rs",

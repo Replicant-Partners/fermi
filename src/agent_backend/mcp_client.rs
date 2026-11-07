@@ -274,13 +274,18 @@ pub async fn check_server_endpoints(raw: &serde_json::Value) -> Result<(), Strin
         return Ok(());
     };
     for s in &servers {
-        // Only servers that declare an http endpoint are fetched; a stdio-only
-        // entry is already unusable and reported elsewhere.
-        if let Ok(ep) = s.http_endpoint() {
-            crate::net_guard::check(ep)
-                .await
-                .map_err(|e| format!("MCP server '{}' endpoint refused: {e}", s.name))?;
+        // A stdio-only entry (no endpoint) is never fetched and is reported
+        // elsewhere. A declared endpoint must be a usable http(s) URL that
+        // passes the guard; anything else is refused now, not stored.
+        if s.endpoint.is_none() {
+            continue;
         }
+        let ep = s
+            .http_endpoint()
+            .map_err(|e| format!("MCP server '{}': {e}", s.name))?;
+        crate::net_guard::check(ep)
+            .await
+            .map_err(|e| format!("MCP server '{}' endpoint refused: {e}", s.name))?;
     }
     Ok(())
 }
@@ -1247,6 +1252,25 @@ mod tests {
 #[cfg(test)]
 mod env_credential_tests {
     use super::*;
+
+    /// A declared endpoint that is not usable http(s), or that the guard
+    /// refuses, fails the write; a stdio-only entry has nothing to fetch.
+    #[tokio::test]
+    async fn declared_endpoints_are_refused_at_write_time() {
+        for bad in [
+            "ftp://example.com/mcp",
+            "https://127.0.0.1/mcp",
+            "https://example.com:8443/mcp",
+        ] {
+            let raw = serde_json::json!([{ "name": "s", "endpoint": bad }]);
+            assert!(
+                check_server_endpoints(&raw).await.is_err(),
+                "{bad} must be refused"
+            );
+        }
+        let stdio = serde_json::json!([{ "name": "s", "command": "npx something" }]);
+        assert!(check_server_endpoints(&stdio).await.is_ok());
+    }
 
     fn server(endpoint: &str) -> RemoteMcpServer {
         serde_json::from_value(serde_json::json!({"name": "s", "endpoint": endpoint})).unwrap()
