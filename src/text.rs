@@ -20,9 +20,23 @@ pub fn truncate_at_char_boundary(s: &str, max_bytes: usize) -> &str {
     &s[..cut]
 }
 
+/// [`truncate_at_char_boundary`] in place: `String::truncate` panics on a
+/// non-boundary exactly as `&s[..n]` does.
+pub fn truncate_string_at_char_boundary(s: &mut String, max_bytes: usize) {
+    let keep = truncate_at_char_boundary(s, max_bytes).len();
+    s.truncate(keep);
+}
+
 #[cfg(test)]
 mod tests {
     use super::truncate_at_char_boundary as t;
+
+    #[test]
+    fn in_place_form_matches() {
+        let mut s = String::from("ab\u{1F600}cd");
+        super::truncate_string_at_char_boundary(&mut s, 4);
+        assert_eq!(s, "ab");
+    }
 
     #[test]
     fn never_splits_a_character() {

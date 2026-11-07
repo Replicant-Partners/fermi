@@ -9,34 +9,109 @@
 use crate::deployed::base_url;
 use crate::support;
 
-/// R0.6 done-when: no fixed-width byte slice on a string in
-/// `src/agent_backend`, and no `[..s.len().min(N)]` cut anywhere in the
-/// server or auth crate. Comments and `#[cfg(test)] mod` blocks are ignored.
+/// R0.6 done-when, widened: no byte-offset cut of a string in server code
+/// (`src/`, `fermi-auth/src`, `agent-bestiary/*/src`). Denied forms:
+/// `[..CONST]` / `[..123]`, `[..x.len().min(`, `[..x - n]`, and
+/// `.truncate(<number>)`. Each surviving site must be listed below with the
+/// reason its input is ASCII (or not a string) and its exact count, so a new
+/// site in a listed file still fails. Comments and `#[cfg(test)] mod` blocks
+/// are ignored.
 #[test]
 fn no_byte_slice_truncation_on_strings() {
     let root = env!("CARGO_MANIFEST_DIR");
-    let fixed = regex::Regex::new(r"\[\.\.[A-Z_0-9]+\]").unwrap();
-    let len_min = regex::Regex::new(r"\[\.\.[A-Za-z_.]+\.len\(\)\.min\(").unwrap();
-    let mut hits = Vec::new();
-    for (dir, rxs) in [
-        ("src/agent_backend", vec![&fixed, &len_min]),
-        ("src", vec![&len_min]),
-        ("fermi-auth/src", vec![&len_min]),
-    ] {
+    let rxs = [
+        regex::Regex::new(r"\[\.\.[A-Z_0-9]+\]").unwrap(),
+        regex::Regex::new(r"\[\.\.[A-Za-z_.]+\.len\(\)\.min\(").unwrap(),
+        regex::Regex::new(r"\[\.\.[a-z_]+ - [0-9]+\]").unwrap(),
+        regex::Regex::new(r"\.truncate\([0-9][0-9_]*\)").unwrap(),
+    ];
+    // (file, hits, why the input is ASCII or not a string)
+    let allowed: &[(&str, usize, &str)] = &[
+        ("src/handlers/rabble_workspace.rs", 1, "UUID string prefix"),
+        ("src/handlers/apps.rs", 1, "UUID string prefix"),
+        (
+            "src/handlers/auth.rs",
+            1,
+            "hex address: fermi-auth/src/siwe.rs:161 formats a 20-byte address",
+        ),
+        ("src/calibration.rs", 1, "Vec slice, not a string"),
+        (
+            "fermi-auth/src/api_keys.rs",
+            1,
+            "create_api_key: platform-generated ASCII key",
+        ),
+        (
+            "agent-bestiary/memory/src/seed.rs",
+            3,
+            "Vec slices, not strings",
+        ),
+        ("agent-bestiary/ontology/src/git.rs", 1, "git SHA hex"),
+        (
+            "agent-bestiary/ontology/src/workspace_git.rs",
+            2,
+            "git SHA hex",
+        ),
+        (
+            "src/apps/workspace_fork.rs",
+            1,
+            "slug built from [a-z0-9_] only",
+        ),
+        ("src/handlers/admin.rs", 1, "slug built from [a-z0-9_] only"),
+        ("src/agent_backend/kg_context.rs", 2, "Vec::truncate"),
+        (
+            "src/agent_backend/tools/domains/biology.rs",
+            1,
+            "Vec::truncate",
+        ),
+    ];
+    let mut dirs = vec!["src".to_string(), "fermi-auth/src".to_string()];
+    for e in std::fs::read_dir(format!("{root}/agent-bestiary"))
+        .unwrap()
+        .flatten()
+    {
+        if e.path().join("src").is_dir() {
+            dirs.push(format!(
+                "agent-bestiary/{}/src",
+                e.file_name().to_string_lossy()
+            ));
+        }
+    }
+    let mut counts: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    for dir in &dirs {
         for (rel, src) in rust_files(root, dir) {
+            if rel.starts_with("src/bin/") && rel != "src/bin/agent-mcp-server.rs" {
+                continue;
+            }
             for rx in &rxs {
                 for m in rx.find_iter(&src) {
-                    hits.push(format!("{rel}: {}", m.as_str()));
+                    counts
+                        .entry(rel.clone())
+                        .or_default()
+                        .push(m.as_str().to_string());
                 }
             }
         }
     }
-    hits.sort();
-    hits.dedup();
+    let mut problems = Vec::new();
+    for (file, hits) in &counts {
+        match allowed.iter().find(|(f, _, _)| f == file) {
+            Some((_, n, _)) if *n == hits.len() => {}
+            Some((_, n, why)) => problems.push(format!(
+                "{file}: {} cut(s), {n} allowed ({why}): {hits:?}",
+                hits.len()
+            )),
+            None => problems.push(format!("{file}: {hits:?}")),
+        }
+    }
+    for (f, _, _) in allowed {
+        if !counts.contains_key(*f) {
+            problems.push(format!("{f}: allowlisted but has no cut; remove it"));
+        }
+    }
     assert!(
-        hits.is_empty(),
-        "use fermi::text::truncate_at_char_boundary:\n{}",
-        hits.join("\n")
+        problems.is_empty(),
+        "use fermi::text::truncate_at_char_boundary (or list the site with its reason):\n{}",
+        problems.join("\n")
     );
 }
 

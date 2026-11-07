@@ -149,7 +149,7 @@ async fn do_polymarket_search(input: &Value) -> Result<String, String> {
 
     // Truncate if very large
     if output.len() > 24_000 {
-        output.truncate(24_000);
+        crate::text::truncate_string_at_char_boundary(&mut output, 24_000);
         output.push_str("\n... [truncated]");
     }
 
