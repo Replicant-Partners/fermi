@@ -13,6 +13,7 @@
 
 use agent_bestiary_memory::{ExecutionStatus, MemoryStore};
 
+use crate::deployed::base_url;
 use crate::support;
 
 #[tokio::test]
@@ -183,4 +184,56 @@ fn production_only(src: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// Live: the owner reads their own reserved (`running`) episode through
+/// `GET /api/episodes/:id`, which decodes it with `MemoryStore::get_episode`.
+/// Before R0.4 the decode panicked, so the request never got a 200.
+#[tokio::test]
+#[ignore = "needs a deployment: ABW_TEST_BASE_URL + ABW_TEST_DATABASE_URL, run with --ignored"]
+async fn deployed_running_episode_is_readable() {
+    let base = base_url().expect("ABW_TEST_BASE_URL must be set");
+    let Some(pool) = support::pool().await else {
+        return;
+    };
+    support::with_cleanup(&pool, move |pool, c| async move {
+        let owner = support::make_user(&pool, &mut *c.lock().await).await;
+        let agent: uuid::Uuid = sqlx::query_scalar(
+            "INSERT INTO agents (agent_name, agent_type, version, tier, executor_type, model,
+                                 temperature, author, status, visibility, user_id)
+             VALUES ($1, 'research', '1.0.0', 'community', 'llm', 'test', 0.5, 'spec36',
+                     'draft', 'private', $2)
+             RETURNING agent_id",
+        )
+        .bind(support::tag("agent"))
+        .bind(&owner)
+        .fetch_one(&pool)
+        .await
+        .expect("insert agent");
+        c.lock().await.agents.push(agent);
+        let ep = uuid::Uuid::new_v4();
+        c.lock().await.episodes.push(ep);
+        MemoryStore::from_pool(pool.clone())
+            .reserve_episode(ep, agent, "spec36 running probe")
+            .await
+            .expect("reserve");
+        let (key, info) = fermi_auth::api_keys::create_api_key(
+            &pool,
+            &owner,
+            "spec36 claims",
+            &["write".to_string()],
+        )
+        .await
+        .expect("api key");
+        c.lock().await.api_keys.push(info.key_id);
+
+        let r = reqwest::Client::new()
+            .get(format!("{base}/api/episodes/{ep}"))
+            .bearer_auth(&key)
+            .send()
+            .await;
+        let status = r.as_ref().map(|r| r.status().as_u16());
+        assert_eq!(status.ok(), Some(200), "running episode read: {r:?}");
+    })
+    .await;
 }
