@@ -342,12 +342,17 @@ impl std::str::FromStr for CorrectionClassification {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// `episodes.execution_status`. `Running` is a row reserved before its run
+/// finished (`MemoryStore::reserve_episode`, store.rs) and completed by the
+/// upsert guarded by `WHERE episodes.execution_status = 'running'`. It is not
+/// an outcome: readers that want outcomes filter it out in SQL.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ExecutionStatus {
     Success,
     Failure,
     Partial,
+    Running,
 }
 
 impl std::fmt::Display for ExecutionStatus {
@@ -356,6 +361,7 @@ impl std::fmt::Display for ExecutionStatus {
             ExecutionStatus::Success => write!(f, "success"),
             ExecutionStatus::Failure => write!(f, "failure"),
             ExecutionStatus::Partial => write!(f, "partial"),
+            ExecutionStatus::Running => write!(f, "running"),
         }
     }
 }
@@ -368,6 +374,7 @@ impl std::str::FromStr for ExecutionStatus {
             "success" => Ok(ExecutionStatus::Success),
             "failure" => Ok(ExecutionStatus::Failure),
             "partial" => Ok(ExecutionStatus::Partial),
+            "running" => Ok(ExecutionStatus::Running),
             _ => Err(format!("Invalid execution status: {}", s)),
         }
     }
