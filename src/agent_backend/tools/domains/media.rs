@@ -266,6 +266,7 @@ async fn execute_edit_image(input: &Value) -> Result<String, String> {
         .send()
         .await
         .map_err(|e| format!("Failed to fetch source image: {}", e))?;
+    let mut img_response = crate::net_guard::refuse_redirect(img_response)?;
 
     if !img_response.status().is_success() {
         return Err(format!(
@@ -295,12 +296,18 @@ async fn execute_edit_image(input: &Value) -> Result<String, String> {
     {
         return Err("source image is larger than 10 MiB".to_string());
     }
-    let img_bytes = img_response
-        .bytes()
+    // Read in chunks and stop at the cap, so a chunked body with no
+    // Content-Length cannot exhaust memory.
+    let mut img_bytes: Vec<u8> = Vec::new();
+    while let Some(chunk) = img_response
+        .chunk()
         .await
-        .map_err(|e| format!("Failed to read image bytes: {}", e))?;
-    if img_bytes.len() > MAX_IMAGE_BYTES {
-        return Err("source image is larger than 10 MiB".to_string());
+        .map_err(|e| format!("Failed to read image bytes: {}", e))?
+    {
+        if img_bytes.len() + chunk.len() > MAX_IMAGE_BYTES {
+            return Err("source image is larger than 10 MiB".to_string());
+        }
+        img_bytes.extend_from_slice(&chunk);
     }
     let client = reqwest::Client::new();
 

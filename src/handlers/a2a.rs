@@ -1327,10 +1327,10 @@ pub async fn create_push_config_handler(
     .await
     .map_err(|e| {
         // A refused URL is the caller's error (400), not ours.
-        if e.starts_with("webhook URL refused") {
+        if matches!(e, crate::a2a_webhook::RegisterError::UrlRefused(_)) {
             (
                 StatusCode::BAD_REQUEST,
-                Json(a2a_error_body(400, &e, "INVALID_ARGUMENT")),
+                Json(a2a_error_body(400, &e.to_string(), "INVALID_ARGUMENT")),
             )
         } else {
             tracing::error!(error = %e, "push config registration failed");

@@ -8,7 +8,9 @@ use crate::support;
 #[ignore = "needs a deployment: ABW_TEST_BASE_URL + ABW_TEST_DATABASE_URL, run with --ignored"]
 async fn deployed_internal_urls_are_refused() {
     let base = base_url().expect("ABW_TEST_BASE_URL must be set");
-    let Some(pool) = support::pool().await else { return };
+    let Some(pool) = support::pool().await else {
+        return;
+    };
     support::with_cleanup(&pool, move |pool, c| async move {
         let (owner, _key) = caller(&pool, &mut *c.lock().await, 0).await;
         // An A2A key and a finished task the caller owns, so registration

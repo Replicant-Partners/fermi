@@ -272,11 +272,11 @@ pub async fn send_push_to_user(
         let endpoint: String = sub.get("endpoint");
         // Re-checked at send time (DNS can change; older rows predate the
         // subscribe-time check), pinned, no redirects.
-        let client =
+        let (target, client) =
             match fermi::net_guard::guarded_client(&endpoint, std::time::Duration::from_secs(15))
                 .await
             {
-                Ok((_, c)) => c,
+                Ok(v) => v,
                 Err(e) => {
                     eprintln!("[push] endpoint for sub {} refused: {}", sub_id, e);
                     continue;
@@ -284,17 +284,21 @@ pub async fn send_push_to_user(
             };
 
         // Build VAPID Authorization header for this endpoint
-        let auth_header =
-            match build_vapid_auth(&vapid_private, &vapid_public, &vapid_subject, &endpoint) {
-                Ok(h) => h,
-                Err(e) => {
-                    eprintln!("[push] VAPID auth failed for sub {}: {}", sub_id, e);
-                    continue;
-                }
-            };
+        let auth_header = match build_vapid_auth(
+            &vapid_private,
+            &vapid_public,
+            &vapid_subject,
+            target.as_str(),
+        ) {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("[push] VAPID auth failed for sub {}: {}", sub_id, e);
+                continue;
+            }
+        };
 
         let result = client
-            .post(&endpoint)
+            .post(target.as_str())
             .header("Authorization", &auth_header)
             .header("Content-Length", "0")
             .header("TTL", "86400")

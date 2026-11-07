@@ -46,6 +46,7 @@ pub async fn deliver(config: &PushConfig, payload: &Value) -> Result<(), String>
         .send()
         .await
         .map_err(|e| format!("HTTP send failed: {}", e))?;
+    let resp = fermi::net_guard::refuse_redirect(resp)?;
 
     if resp.status().is_success() {
         Ok(())
@@ -144,12 +145,12 @@ pub async fn register(
     auth_scheme: Option<&str>,
     auth_credentials: Option<&str>,
     token: Option<&str>,
-) -> Result<Uuid, String> {
+) -> Result<Uuid, RegisterError> {
     // Refuse at registration as well as at delivery, so a caller learns now
     // that a URL is unreachable from here rather than via a silent failure.
     fermi::net_guard::check(webhook_url)
         .await
-        .map_err(|e| format!("webhook URL refused: {e}"))?;
+        .map_err(|e| RegisterError::UrlRefused(e.to_string()))?;
     let config_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO a2a_push_configs
@@ -167,6 +168,23 @@ pub async fn register(
     .bind(token)
     .execute(pool)
     .await
-    .map_err(|e| format!("DB insert failed: {}", e))?;
+    .map_err(|e| RegisterError::Db(e.to_string()))?;
     Ok(config_id)
+}
+
+/// Why a push config was not registered.
+#[derive(Debug)]
+pub enum RegisterError {
+    /// The URL failed the outbound guard: the caller's error (400).
+    UrlRefused(String),
+    Db(String),
+}
+
+impl std::fmt::Display for RegisterError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RegisterError::UrlRefused(e) => write!(f, "webhook URL refused: {e}"),
+            RegisterError::Db(e) => write!(f, "push config not stored: {e}"),
+        }
+    }
 }

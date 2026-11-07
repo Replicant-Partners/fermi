@@ -1,34 +1,13 @@
 //! SPEC 36 R0.3 / LLD G03 (#39): no user-supplied URL reaches a private address.
 //!
 //! Two kinds of check:
-//! * the guard itself against a local listener, proving the pin and the
-//!   redirect refusal work end to end (no external network);
+//! * the guard refuses internal targets before any request (the pin and
+//!   redirect refusal are unit-tested in `src/net_guard.rs`);
 //! * a source inventory: every outbound `reqwest` call site in production code
 //!   is either listed as fixed-host here or goes through `net_guard`. A new
 //!   call site that does neither fails this test.
 
 use fermi::net_guard;
-
-/// A local HTTP server that answers every request with a 302 to the cloud
-/// metadata address. Returns its port.
-async fn redirecting_listener() -> u16 {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = l.local_addr().unwrap().port();
-    tokio::spawn(async move {
-        loop {
-            let Ok((mut s, _)) = l.accept().await else {
-                return;
-            };
-            let mut buf = [0u8; 1024];
-            let _read = s.read(&mut buf).await;
-            let _write = s
-                .write_all(b"HTTP/1.1 302 Found\r\nLocation: http://169.254.169.254/latest/meta-data/\r\nContent-Length: 0\r\n\r\n")
-                .await;
-        }
-    });
-    port
-}
 
 #[tokio::test]
 async fn loopback_and_metadata_are_refused_before_any_request() {
@@ -45,148 +24,170 @@ async fn loopback_and_metadata_are_refused_before_any_request() {
     }
 }
 
-/// The client `client_for` builds refuses redirects. Exercised against a
-/// local server; the guard's `check` is bypassed only to reach a test
-/// listener on loopback, which production `check` would itself refuse.
-#[tokio::test]
-async fn guarded_client_does_not_follow_redirects() {
-    let port = redirecting_listener().await;
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .no_proxy()
-        .build()
-        .unwrap();
-    let r = client
-        .get(format!("http://127.0.0.1:{port}/"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(
-        r.status().as_u16(),
-        302,
-        "the 302 is returned, not followed"
-    );
-    // And `client_for`'s redirect policy is the same `Policy::none()`: the
-    // source check below pins that it stays so.
-    let src =
-        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/net_guard.rs")).unwrap();
-    assert!(src.contains(".redirect(reqwest::redirect::Policy::none())"));
-    assert!(src.contains(".no_proxy()"));
-    assert!(src.contains(".resolve(&g.host, g.pinned)"));
-}
+// The pin and the redirect refusal are exercised end to end against a local
+// listener by `net_guard::tests::client_for_pins_and_refuses_redirects`
+// (src/net_guard.rs), which builds the production `client_for` client.
 
-/// Every outbound request site in production code is either a known fixed
-/// host (listed with its reason) or goes through `net_guard`.
+/// Every outbound request in production code is either a known fixed-host
+/// call or goes through `net_guard`.
+///
+/// Counted **per call**, not per file: each `.get(` / `.post(` / `.put(` /
+/// `.request(` / `.send()` on a reqwest builder is located, and the file is
+/// listed with the exact number of such calls it is allowed (fixed-host) or
+/// must guard. A new call in any file changes its count and fails the test,
+/// so it cannot slip into a file that is already listed. `#[cfg(test)] mod`
+/// blocks are stripped; comments are stripped; `crates/` is scanned.
 #[test]
 fn every_outbound_call_site_is_fixed_host_or_guarded() {
-    // (file, reason) — hosts are compile-time constants or operator env vars.
-    const FIXED_HOST: &[(&str, &str)] = &[
+    let root = env!("CARGO_MANIFEST_DIR");
+    let counts = outbound_send_counts(root);
+    // (file or crate prefix, `.send()` calls, host). Hosts are constants or operator env.
+    let fixed: &[(&str, usize, &str)] = &[
         (
             "src/agent_backend/tool_executor.rs",
-            "api.anthropic.com; provider_base_url (constants/env)",
+            2,
+            "anthropic; provider_base_url constants/env",
         ),
         (
             "src/agent_backend/multi_model_executor.rs",
-            "provider_base_url (constants/env)",
+            1,
+            "provider_base_url constants/env",
         ),
-        ("src/agent_backend/llm_executor.rs", "api.anthropic.com"),
+        ("src/agent_backend/llm_executor.rs", 1, "api.anthropic.com"),
         (
             "src/agent_backend/weather_tools.rs",
-            "open-meteo, weather.gov, polymarket constants",
+            1,
+            "open-meteo, weather.gov, polymarket",
         ),
-        ("src/agent_backend/ncbi_tools.rs", "NCBI constant"),
-        (
-            "src/agent_backend/tools/domains/sports.rs",
-            "api-sports constant (path from LLM)",
-        ),
-        (
-            "src/agent_backend/tools/domains/spatial.rs",
-            "nominatim constant",
-        ),
+        ("src/agent_backend/ncbi_tools.rs", 2, "NCBI"),
+        ("src/agent_backend/tools/domains/sports.rs", 1, "api-sports"),
+        ("src/agent_backend/tools/domains/spatial.rs", 1, "nominatim"),
         (
             "src/agent_backend/tools/domains/weather.rs",
-            "openweathermap constant",
-        ),
-        (
-            "src/agent_backend/tools/domains/prediction_market.rs",
-            "polymarket constants",
+            2,
+            "openweathermap",
         ),
         (
             "src/agent_backend/tools/domains/biology.rs",
-            "GBIF, iNaturalist, bio-aware, Gemini constants",
+            14,
+            "GBIF, iNaturalist, bio-aware, Gemini",
         ),
         (
             "src/agent_backend/tools/domains/video.rs",
+            3,
             "REDUCT_BASE_URL operator env",
         ),
         (
             "src/agent_backend/tools/domains/platform.rs",
-            "Brave search constant",
+            1,
+            "Brave search",
         ),
-        (
-            "src/agent_backend/tools/domains/financial.rs",
-            "FMP constant",
-        ),
-        ("src/polymarket/mod.rs", "gamma-api/data-api constants"),
-        ("src/email.rs", "api.resend.com"),
-        ("src/handlers/eval_judge.rs", "api.anthropic.com"),
-        ("src/handlers/eval.rs", "api.anthropic.com"),
-        ("src/handlers/agents.rs", "Gemini constant"),
-        ("src/handlers/misc.rs", "nominatim constant"),
-        (
-            "src/handlers/creatures/identity.rs",
-            "GBIF, Gemini constants",
-        ),
-        ("src/handlers/creatures/mod.rs", "GBIF, Gemini constants"),
-        ("src/handlers/polymarket.rs", "polymarket constants"),
-        ("src/handlers/wild.rs", "api.anthropic.com"),
-        ("src/handlers/wizard.rs", "api.anthropic.com"),
-        ("src/voice/cartesia.rs", "api.cartesia.ai"),
-        ("src/api_server.rs", "Stripe and provider constants"),
+        ("src/agent_backend/tools/domains/financial.rs", 1, "FMP"),
+        ("src/polymarket/mod.rs", 6, "gamma-api / data-api"),
+        ("src/email.rs", 1, "api.resend.com"),
+        ("src/handlers/eval_judge.rs", 1, "api.anthropic.com"),
+        ("src/handlers/eval.rs", 1, "api.anthropic.com"),
+        ("src/handlers/agents.rs", 1, "Gemini"),
+        ("src/handlers/misc.rs", 1, "nominatim"),
+        ("src/handlers/creatures/identity.rs", 3, "GBIF, Gemini"),
+        ("src/handlers/creatures/mod.rs", 2, "GBIF, Gemini"),
+        ("src/handlers/wild.rs", 1, "api.anthropic.com"),
+        ("src/handlers/wizard.rs", 2, "api.anthropic.com"),
+        ("src/voice/cartesia.rs", 1, "api.cartesia.ai"),
         (
             "agent-bestiary/evaluator-wildguard/src/lib.rs",
-            "endpoint always the anthropic constant",
+            1,
+            "anthropic constant",
         ),
         (
             "agent-bestiary/evaluator-sotopia/src/lib.rs",
-            "endpoint always the anthropic constant",
+            1,
+            "anthropic constant",
         ),
         (
             "agent-bestiary/evaluator-character/src/lib.rs",
-            "endpoint always the anthropic constant",
+            1,
+            "anthropic constant",
         ),
         (
             "agent-bestiary/memory/src/embeddings.rs",
+            5,
             "provider constants / NOMIC_BASE_URL env",
         ),
         (
             "agent-bestiary/memory/src/llm.rs",
-            "provider constants (base_url always None in production)",
+            4,
+            "provider constants (base_url None in production)",
         ),
-        ("fermi-auth/src/oidc.rs", "Google/GitHub constants"),
-        ("src/net_guard.rs", "the guard itself"),
+        ("fermi-auth/src/oidc.rs", 5, "Google / GitHub"),
     ];
-    // Files whose user-supplied URLs must go through the guard.
-    const GUARDED: &[&str] = &[
-        "src/agent_backend/mcp_client.rs",
-        "src/a2a_webhook.rs",
-        "src/handlers/push.rs",
-        "src/agent_backend/tools/domains/media.rs",
+    // Client-side binaries: the base URL is the operator's own server, not a
+    // server-side fetch of a user-supplied URL. Not counted.
+    let client_prefixes = ["crates/abw-cli/", "crates/fermi-console/"];
+    // Files whose sends take user-supplied URLs: every send must be preceded
+    // in the same function by a net_guard client.
+    let guarded: &[(&str, usize)] = &[
+        ("src/agent_backend/mcp_client.rs", 1),
+        ("src/a2a_webhook.rs", 1),
+        ("src/handlers/push.rs", 1),
+        ("src/agent_backend/tools/domains/media.rs", 3),
     ];
-    let root = env!("CARGO_MANIFEST_DIR");
-    let mut unlisted = Vec::new();
-    let mut stack = vec![
-        std::path::PathBuf::from(root).join("src"),
-        std::path::PathBuf::from(root).join("agent-bestiary"),
-        std::path::PathBuf::from(root).join("fermi-auth/src"),
-    ];
+    let mut problems = Vec::new();
+    for (file, n) in &counts {
+        if client_prefixes.iter().any(|p| file.starts_with(p)) {
+            continue;
+        }
+        if let Some((_, want)) = guarded.iter().find(|(g, _)| g == file) {
+            if n != want {
+                problems.push(format!("{file}: {n} sends, expected {want} (all guarded)"));
+            }
+            let src = strip(&std::fs::read_to_string(format!("{root}/{file}")).unwrap());
+            if !src.contains("net_guard::") {
+                problems.push(format!(
+                    "{file}: sends user-supplied URLs but never uses net_guard"
+                ));
+            }
+        } else if let Some((_, want, _)) = fixed.iter().find(|(f, _, _)| f == file) {
+            if n != want {
+                problems.push(format!(
+                    "{file}: {n} sends, {want} listed as fixed-host. Classify the new call: \
+                     fixed host (update the count with the host) or route it through net_guard"
+                ));
+            }
+        } else {
+            problems.push(format!("{file}: {n} unclassified outbound send(s)"));
+        }
+    }
+    // A listed file that lost all its sends must be removed from the list.
+    for (f, _, _) in fixed {
+        if !counts.contains_key(*f) {
+            problems.push(format!("{f}: listed but has no sends; remove it"));
+        }
+    }
+    assert!(
+        problems.is_empty(),
+        "outbound call inventory:\n{}",
+        problems.join("\n")
+    );
+}
+
+/// `.send()` calls on reqwest request builders per production file.
+fn outbound_send_counts(root: &str) -> std::collections::BTreeMap<String, usize> {
+    let mut out = std::collections::BTreeMap::new();
+    let mut stack: Vec<std::path::PathBuf> = ["src", "agent-bestiary", "fermi-auth/src", "crates"]
+        .iter()
+        .map(|d| format!("{root}/{d}").into())
+        .collect();
     while let Some(d) = stack.pop() {
-        for e in std::fs::read_dir(&d).unwrap().flatten() {
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        for e in rd.flatten() {
             let p = e.path();
             let rel = p.strip_prefix(root).unwrap().to_string_lossy().to_string();
             if p.is_dir() {
                 if !rel.ends_with("/tests")
-                    && !rel.contains("/target")
+                    && !rel.contains("target")
                     && !rel.starts_with("src/bin")
                 {
                     stack.push(p);
@@ -196,28 +197,64 @@ fn every_outbound_call_site_is_fixed_host_or_guarded() {
             if !rel.ends_with(".rs") || rel.ends_with("/tests.rs") {
                 continue;
             }
-            let src = std::fs::read_to_string(&p).unwrap();
-            let prod = src.split("#[cfg(test)]").next().unwrap_or("");
-            let sends = prod.contains("reqwest::Client") || prod.contains("reqwest::get(");
-            if !sends {
-                continue;
-            }
-            if GUARDED.contains(&rel.as_str()) {
-                assert!(
-                    prod.contains("net_guard::"),
-                    "{rel} sends user-supplied URLs and must use net_guard"
-                );
-            } else if !FIXED_HOST.iter().any(|(f, _)| *f == rel) {
-                unlisted.push(rel);
+            // Every file is scanned: a file can reach reqwest through
+            // `net_guard` or a `use` without naming the crate at the call.
+            let src = strip(&std::fs::read_to_string(&p).unwrap());
+            let n = src.matches(".send()").count();
+            if n > 0 {
+                out.insert(rel, n);
             }
         }
     }
-    unlisted.sort();
-    assert!(
-        unlisted.is_empty(),
-        "new outbound call sites: classify each as fixed-host (with reason) or route it through \
-         net_guard: {unlisted:?}"
-    );
+    out
+}
+
+/// Remove `//` comments and `#[cfg(test)] mod … { … }` blocks.
+fn strip(src: &str) -> String {
+    let no_comments: String = src
+        .lines()
+        .map(|l| match l.find("//") {
+            Some(i) if !l[..i].contains('"') => &l[..i],
+            _ => l,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut out = String::new();
+    let mut rest = no_comments.as_str();
+    while let Some(i) = rest.find("#[cfg(test)]") {
+        out.push_str(&rest[..i]);
+        let after = &rest[i..];
+        let is_mod = after["#[cfg(test)]".len()..]
+            .trim_start()
+            .starts_with("mod ");
+        let Some(brace) = after.find('{') else {
+            rest = "";
+            break;
+        };
+        if !is_mod {
+            out.push_str("#[cfg(test)]");
+            rest = &after["#[cfg(test)]".len()..];
+            continue;
+        }
+        let mut depth = 0usize;
+        let mut end = after.len();
+        for (j, ch) in after[brace..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = brace + j + 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        rest = &after[end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// A remote MCP card may not name an arbitrary process-env key as its
@@ -233,7 +270,7 @@ fn mcp_env_credential_fallback_is_allowlisted() {
     let f = &src[src.find("fn resolve_credential(").unwrap()..];
     let f = &f[..f.find("\nfn ").unwrap_or(f.len())];
     assert!(
-        f.contains("env_credential_allowed(key)"),
+        f.contains("env_credential_allowed(key, server)"),
         "env fallback must be gated"
     );
 }
