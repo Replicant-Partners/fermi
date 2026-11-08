@@ -517,15 +517,16 @@ pub async fn post_workspace_message_handler(
                             PlatformToolRegistry::all(),
                             tool_context,
                         );
-                        let output = tool_executor
-                            .execute(&agent_stmt, &context)
-                            .await
-                            .map_err(|e| {
-                                (
+                        let output = match tool_executor.execute(&agent_stmt, &context).await {
+                            Ok(o) => o,
+                            Err(e) => {
+                                pulse.abandon(&format!("executor_error: {e}")).await;
+                                return Err((
                                     StatusCode::INTERNAL_SERVER_ERROR,
                                     format!("Execution failed: {}", e),
-                                )
-                            })?;
+                                ));
+                            }
+                        };
 
                         // Record stats
                         let _ = state2.registry.record_execution(&agent_name2, &output);

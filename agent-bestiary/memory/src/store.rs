@@ -125,6 +125,10 @@ impl CompositionOutcome {
     }
 }
 
+/// Upper bound on the duration [`MemoryStore::abandon_running`] records:
+/// 30 min, the reaper's default `EPISODE_MAX_RUNTIME`.
+pub const ABANDON_DURATION_CAP_MS: i64 = 30 * 60 * 1000;
+
 pub struct MemoryStore {
     pool: PgPool,
 }
@@ -217,6 +221,74 @@ impl MemoryStore {
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    /// Mark reserved episodes as failed. Only rows still `running` change:
+    /// the same guard the completing upsert uses, so this can never
+    /// overwrite an episode something else finished (SPEC 36 R0.5).
+    ///
+    /// `reason` goes to `error_details` and starts with its class
+    /// (`executor_error:`, `abandoned_unclosed:`, `abandoned_timeout:`).
+    /// The duration is the wall time since the reservation, capped at
+    /// [`ABANDON_DURATION_CAP_MS`]: a row reaped weeks late must not enter
+    /// latency averages (`agent_execution_rollup`) as a weeks-long run.
+    ///
+    /// Returns the ids that changed.
+    pub async fn abandon_running(&self, episode_ids: &[Uuid], reason: &str) -> Result<Vec<Uuid>> {
+        if episode_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows = sqlx::query(
+            r#"
+            UPDATE episodes
+               SET execution_status = 'failure',
+                   error_details = $1,
+                   execution_time_ms = LEAST(
+                       GREATEST(
+                           execution_time_ms,
+                           (EXTRACT(EPOCH FROM (now() - timestamp_ref)) * 1000)::bigint),
+                       $3)
+             WHERE episode_id = ANY($2) AND execution_status = 'running'
+            RETURNING episode_id
+            "#,
+        )
+        .bind(reason)
+        .bind(episode_ids)
+        .bind(ABANDON_DURATION_CAP_MS)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter()
+            .map(|r| r.try_get("episode_id").map_err(Into::into))
+            .collect()
+    }
+
+    /// Episodes reserved longer ago than `max_age` and still `running`,
+    /// excluding reservations an open grounding run still owns
+    /// (`ground_runs.closed_at IS NULL AND expires_at > now()`): that run is
+    /// closed by its own submit, or becomes stale when it expires.
+    pub async fn stale_running_episodes(&self, max_age: std::time::Duration) -> Result<Vec<Uuid>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT e.episode_id
+              FROM episodes e
+             WHERE e.execution_status = 'running'
+               AND e.timestamp_ref < now() - make_interval(secs => $1)
+               AND NOT EXISTS (
+                   SELECT 1 FROM ground_runs g
+                    WHERE g.run_id = e.episode_id
+                      AND ((g.closed_at IS NULL AND g.expires_at > now())
+                           -- a submit closes the run just before it stores
+                           OR g.closed_at > now() - interval '5 minutes'))
+             ORDER BY e.timestamp_ref
+             LIMIT 500
+            "#,
+        )
+        .bind(max_age.as_secs_f64())
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter()
+            .map(|r| r.try_get("episode_id").map_err(Into::into))
+            .collect()
     }
 
     #[deprecated(

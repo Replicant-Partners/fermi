@@ -309,15 +309,16 @@ pub async fn execute_agent_handler(
         PlatformToolRegistry::standard(),
         tool_context,
     );
-    let output = tool_executor
-        .execute(&agent_stmt, &context)
-        .await
-        .map_err(|e| {
-            (
+    let output = match tool_executor.execute(&agent_stmt, &context).await {
+        Ok(o) => o,
+        Err(e) => {
+            pulse.abandon(&format!("executor_error: {e}")).await;
+            return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Execution failed: {}", e),
-            )
-        })?;
+            ));
+        }
+    };
 
     // 3.5 Post-agent hook: retain the agent's quantified judgement, and — when
     // there is a workspace — apply it to that workspace's params and refit.

@@ -740,6 +740,7 @@ pub async fn evaluate_coherence_handler(
                         output.metadata.reasoning
                     }
                     Err(e) => {
+                        pulse.abandon(&format!("executor_error: {e}")).await;
                         eprintln!("cohere_and_coordinate failed: {:?}", e);
                         Some(format!("Strategist unavailable: {:?}", e))
                     }

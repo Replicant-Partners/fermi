@@ -328,6 +328,11 @@ pub async fn send_message_handler(
     // agent does NOT run here (G25), and the reserved row has no source_ref,
     // so the task poll answers 404 for it.
     if req.configuration.return_immediately {
+        // Nothing runs this reservation (G25), so end it now rather than
+        // leave it `running` or to the drop guard.
+        pulse
+            .abandon("not_executed: return_immediately has no background runner (G25)")
+            .await;
         return Ok(Json(fermi::a2a_task::submitted_task(
             episode_id, &caller_id,
         )));
@@ -385,16 +390,20 @@ pub async fn send_message_handler(
         PlatformToolRegistry::standard(),
         tool_context,
     );
-    let output = executor.execute(&agent_stmt, &context).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(a2a_error_body(
-                500,
-                &format!("Execution failed: {}", e),
-                "INTERNAL_ERROR",
-            )),
-        )
-    })?;
+    let output = match executor.execute(&agent_stmt, &context).await {
+        Ok(o) => o,
+        Err(e) => {
+            pulse.abandon(&format!("executor_error: {e}")).await;
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(a2a_error_body(
+                    500,
+                    &format!("Execution failed: {}", e),
+                    "INTERNAL_ERROR",
+                )),
+            ));
+        }
+    };
 
     // ── 10. Grade + validate ──────────────────────────────────────────────
     let graded = pulse.grade(
@@ -1076,6 +1085,7 @@ pub async fn stream_message_handler(
                 ));
             }
             Err(e) => {
+                pulse.abandon(&format!("executor_error: {e}")).await;
                 // ── A2A event: FAILED ─────────────────────────────────
                 yield Ok(Event::default().data(
                     json!({

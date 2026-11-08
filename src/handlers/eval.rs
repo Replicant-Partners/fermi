@@ -697,6 +697,7 @@ pub async fn run_eval_cases(
                 )
             }
             Err(e) => {
+                pulse.abandon(&format!("executor_error: {e}")).await;
                 eprintln!("Eval case execution failed: {}", e);
                 (false, 0i64, 0i64, None, None, None)
             }

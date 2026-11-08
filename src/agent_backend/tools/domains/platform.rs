@@ -420,7 +420,7 @@ pub(crate) async fn execute_execute_agent(
         attachments: Vec::new(),
     };
 
-    let output = if let Some(ws_id) = target_workspace_id {
+    let executed: Result<_, String> = if let Some(ws_id) = target_workspace_id {
         // ── Cross-workspace delegation ────────────────────────────────
         // Build a full ToolContext for the target workspace so the
         // delegated agent has access to its workspace git, tools, and KG.
@@ -481,13 +481,13 @@ pub(crate) async fn execute_execute_agent(
             tool_executor
                 .execute(&stmt, &context)
                 .await
-                .map_err(|e| format!("Cross-workspace agent execution failed: {}", e))?
+                .map_err(|e| format!("Cross-workspace agent execution failed: {}", e))
         } else {
             // No DB — fall back to base executor
             ctx.registry
                 .execute_agent(&stmt, &context)
                 .await
-                .map_err(|e| format!("Agent execution failed: {}", e))?
+                .map_err(|e| format!("Agent execution failed: {}", e))
         }
     } else {
         // ── Standard (same-workspace or global) execution ────────────
@@ -496,7 +496,14 @@ pub(crate) async fn execute_execute_agent(
         ctx.registry
             .execute_agent(&stmt, &context)
             .await
-            .map_err(|e| format!("Agent execution failed: {}", e))?
+            .map_err(|e| format!("Agent execution failed: {}", e))
+    };
+    let output = match executed {
+        Ok(o) => o,
+        Err(e) => {
+            child_pulse.abandon(&format!("executor_error: {e}")).await;
+            return Err(e);
+        }
     };
 
     // mig-198: record the child's own cost. Needs the target's DB uuid, which
@@ -774,10 +781,13 @@ async fn execute_delegate_to_agent(
         tool_context,
     );
 
-    let output = tool_executor
-        .execute(&stmt, &context)
-        .await
-        .map_err(|e| format!("Delegation failed: {}", e))?;
+    let output = match tool_executor.execute(&stmt, &context).await {
+        Ok(o) => o,
+        Err(e) => {
+            child_pulse.abandon(&format!("executor_error: {e}")).await;
+            return Err(format!("Delegation failed: {}", e));
+        }
+    };
 
     // mig-198: record the child's own cost before its output is reduced to
     // prose. Everything below this line throws the token accounting away.

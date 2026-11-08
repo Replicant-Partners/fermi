@@ -819,6 +819,7 @@ pub async fn execute_agent_stream_handler(
                 }
             }
             Err(e) => {
+                pulse.abandon(&format!("executor_error: {e}")).await;
                 // ── Event: error ───────────────────────────────────
                 yield Ok(Event::default().event("error").data(
                     json!({

@@ -150,7 +150,13 @@ async fn load_run(state: &AppState, headers: &HeaderMap, run_id: Uuid) -> Result
     .fetch_optional(&state.db)
     .await
     .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", e.to_string()))?
-    .ok_or_else(|| err(StatusCode::UNAUTHORIZED, "INVALID_RUN_TOKEN", "Unknown run token."))?;
+    .ok_or_else(|| {
+        err(
+            StatusCode::UNAUTHORIZED,
+            "INVALID_RUN_TOKEN",
+            "Unknown run token.",
+        )
+    })?;
 
     let found: Uuid = row.get("run_id");
     if found != run_id {
@@ -239,7 +245,11 @@ pub async fn open_run_handler(
         .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", e.to_string()))?;
     if wallet.balance <= 0 {
-        gate_trust::decided(Gate::Credit, Decision::Refused, Some("ground.open: balance <= 0"));
+        gate_trust::decided(
+            Gate::Credit,
+            Decision::Refused,
+            Some("ground.open: balance <= 0"),
+        );
         return Err(err(
             StatusCode::PAYMENT_REQUIRED,
             "INSUFFICIENT_CREDITS",
@@ -268,7 +278,7 @@ pub async fn open_run_handler(
     let token = mint_token();
     let expires_at = chrono::Utc::now() + chrono::Duration::minutes(RUN_TTL_MINUTES);
 
-    sqlx::query(
+    let opened = sqlx::query(
         "INSERT INTO ground_runs (run_id, agent_id, user_id, token_hash, allowed_tools, query, expires_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7)",
     )
@@ -280,8 +290,21 @@ pub async fn open_run_handler(
     .bind(&req.query)
     .bind(expires_at)
     .execute(&state.db)
-    .await
-    .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", e.to_string()))?;
+    .await;
+    if let Err(e) = opened {
+        pulse
+            .abandon(&format!("open_failed: ground run could not be opened: {e}"))
+            .await;
+        return Err(err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            e.to_string(),
+        ));
+    }
+    // The reservation now belongs to the ground run: its submit closes it
+    // (`Pulse::reserved_upstream`), or `episode_reaper` fails it after
+    // `expires_at`. Dropping the armed pulse here would fail a live run.
+    pulse.hand_off();
 
     Ok(Json(json!({
         "run_id": run_id,
@@ -323,7 +346,11 @@ pub async fn run_tool_handler(
         ));
     }
 
-    if let Err(retry) = state.rate_limits.llm.check(&format!("user:{}", run.user_id)) {
+    if let Err(retry) = state
+        .rate_limits
+        .llm
+        .check(&format!("user:{}", run.user_id))
+    {
         gate_trust::decided(Gate::RateLimit, Decision::Refused, Some("ground.tool"));
         return Err(err(
             StatusCode::TOO_MANY_REQUESTS,
@@ -338,7 +365,11 @@ pub async fn run_tool_handler(
         .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", e.to_string()))?;
     if wallet.balance < price {
-        gate_trust::decided(Gate::Credit, Decision::Refused, Some("ground.tool: balance < price"));
+        gate_trust::decided(
+            Gate::Credit,
+            Decision::Refused,
+            Some("ground.tool: balance < price"),
+        );
         return Err(err(
             StatusCode::PAYMENT_REQUIRED,
             "INSUFFICIENT_CREDITS",
@@ -476,7 +507,11 @@ pub async fn submit_output_handler(
     .await
     .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", e.to_string()))?;
     if closed.rows_affected() == 0 {
-        return Err(err(StatusCode::CONFLICT, "RUN_CLOSED", "Output already submitted."));
+        return Err(err(
+            StatusCode::CONFLICT,
+            "RUN_CLOSED",
+            "Output already submitted.",
+        ));
     }
 
     // The run record: every tool call ABW made for this run, in order.
@@ -513,7 +548,10 @@ pub async fn submit_output_handler(
         status: AgentStatus::Success,
         evidence: vec![],
         confidence: 0.0,
-        sources_consulted: tool_invocations.iter().map(|t| t.tool_name.clone()).collect(),
+        sources_consulted: tool_invocations
+            .iter()
+            .map(|t| t.tool_name.clone())
+            .collect(),
         execution_time_ms: 0,
         tokens_used: None,
         input_tokens: None,

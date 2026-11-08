@@ -55,7 +55,7 @@ use fermi::write_accounting::SINKS;
 ///
 /// The 1 that remains is a live-database probe in `episode_boundary`'s own
 /// tests, whose `UPDATE … AND false` writes nothing by construction.
-const BASELINE: &[(&str, usize)] = &[("episodes", 1), ("semantic_rules", 1)];
+const BASELINE: &[(&str, usize)] = &[("episodes", 1), ("semantic_rules", 0)];
 
 fn rust_sources(root: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(root) else {
