@@ -3483,6 +3483,13 @@
                 const regFlag = r.regression_detected
                   ? '<span style="color:var(--red);font-weight:bold;margin-left:6px">REGRESSION</span>'
                   : "";
+                // SPEC 36 R0.7: a pre-filter that could not decide is not a pass.
+                const undetermined =
+                  r.aggregated_signal &&
+                  r.aggregated_signal.status === "undetermined";
+                const undFlag = undetermined
+                  ? '<span style="color:var(--yellow);font-weight:bold;margin-left:6px" title="A safety pre-filter could not decide on at least one case; those cases were not scored.">UNDETERMINED</span>'
+                  : "";
                 const judgeStr =
                   r.avg_judge_score != null
                     ? ` | Judge: ${r.avg_judge_score.toFixed(1)}/5`
@@ -3541,7 +3548,7 @@
                     <span style="color:var(--fg4)">${new Date(r.started_at).toLocaleDateString()}</span>
                   </div>
                   <div style="color:var(--fg1)">
-                    Pass: ${r.passed}/${r.total_cases} (${passRate}%)${judgeStr}${regFlag}${signalsToggle}
+                    Pass: ${r.passed}/${r.total_cases} (${passRate}%)${judgeStr}${regFlag}${undFlag}${signalsToggle}
                   </div>${signalHtml}
                   <div style="color:var(--fg4);font-size:0.85em">
                     Cost: ${r.total_cost_credits} credits${durStr}
@@ -3809,9 +3816,18 @@
             if (run && run.status !== "running") {
               clearInterval(interval);
               loadEvalData(agentId);
+              const undetermined =
+                run.aggregated_signal &&
+                run.aggregated_signal.status === "undetermined";
               Toast.show(
-                `Eval run complete: ${run.passed}/${run.total_cases} passed`,
-                run.regression_detected ? "error" : "success",
+                undetermined
+                  ? `Eval run complete: ${run.passed}/${run.total_cases} passed; safety pre-filter undetermined on some cases`
+                  : `Eval run complete: ${run.passed}/${run.total_cases} passed`,
+                run.regression_detected
+                  ? "error"
+                  : undetermined
+                    ? "info"
+                    : "success",
               );
             }
           } catch {}

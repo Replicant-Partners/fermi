@@ -93,6 +93,50 @@ impl EvalModel for AlwaysFail {
     }
 }
 
+/// A pre-filter whose provider is down.
+struct FailingPreFilter;
+
+#[async_trait]
+impl EvalModel for FailingPreFilter {
+    fn name(&self) -> &'static str {
+        "failing_guard"
+    }
+    fn version(&self) -> &'static str {
+        "test"
+    }
+    fn tier(&self) -> EvalTier {
+        EvalTier::PreFilter
+    }
+    fn dimensions(&self) -> Vec<Dimension> {
+        vec![Dimension::new("safety")]
+    }
+    async fn evaluate(&self, _bundle: &EpisodeBundle) -> Result<EvalResult, EvalError> {
+        Err(EvalError::Provider("provider outage".into()))
+    }
+}
+
+/// A pre-filter that does not apply to this bundle.
+struct InapplicablePreFilter;
+
+#[async_trait]
+impl EvalModel for InapplicablePreFilter {
+    fn name(&self) -> &'static str {
+        "inapplicable_guard"
+    }
+    fn version(&self) -> &'static str {
+        "test"
+    }
+    fn tier(&self) -> EvalTier {
+        EvalTier::PreFilter
+    }
+    fn dimensions(&self) -> Vec<Dimension> {
+        vec![Dimension::new("safety")]
+    }
+    async fn evaluate(&self, _bundle: &EpisodeBundle) -> Result<EvalResult, EvalError> {
+        Err(EvalError::Inapplicable("not a chat bundle".into()))
+    }
+}
+
 struct AlwaysInapplicable(&'static str);
 
 #[async_trait]
@@ -300,4 +344,110 @@ async fn reference_impls_run_through_registry() {
 
     // No conflicts because each dimension has only one contributor.
     assert!(outcome.signal.conflicts.is_empty());
+}
+
+/// SPEC 36 R0.7 done-when: a pre-filter that returns `Err` causes zero
+/// dimensional evaluators to run, and the signal is `Undetermined`, naming
+/// the failed filter. Before, the error read as "not below block" and every
+/// dimensional evaluator scored the unfiltered content.
+#[tokio::test]
+async fn prefilter_error_is_undetermined_and_runs_no_dimensional() {
+    use crate::SignalStatus;
+    let bundle = bundle_for(Uuid::new_v4());
+    let mut reg = EvaluatorRegistry::new().with_prefilter_block_threshold(Some(0.5));
+    reg.register(Arc::new(FailingPreFilter));
+    reg.register(Arc::new(FixedScorer {
+        name: "dim",
+        tier: EvalTier::Dimensional,
+        dim: Dimension::new("rapport"),
+        score: 0.90,
+    }));
+
+    let outcome = reg.run(&bundle).await;
+    assert_eq!(outcome.results.len(), 1, "no dimensional evaluator may run");
+    assert_eq!(outcome.results[0].evaluator_name, "failing_guard");
+    assert_eq!(outcome.signal.status, SignalStatus::Undetermined);
+    assert_eq!(
+        outcome.signal.failed_evaluators,
+        vec!["failing_guard".to_string()]
+    );
+    assert!(
+        outcome.signal.per_dimension.is_empty(),
+        "nothing was scored"
+    );
+    assert!(
+        !outcome.prefilter_blocked,
+        "undetermined is not a block verdict"
+    );
+}
+
+#[tokio::test]
+async fn inapplicable_prefilter_lets_scoring_proceed() {
+    use crate::SignalStatus;
+    let bundle = bundle_for(Uuid::new_v4());
+    let mut reg = EvaluatorRegistry::new().with_prefilter_block_threshold(Some(0.5));
+    reg.register(Arc::new(InapplicablePreFilter));
+    reg.register(Arc::new(FixedScorer {
+        name: "dim",
+        tier: EvalTier::Dimensional,
+        dim: Dimension::new("rapport"),
+        score: 0.90,
+    }));
+    let outcome = reg.run(&bundle).await;
+    assert_eq!(outcome.results.len(), 2);
+    assert_eq!(outcome.signal.status, SignalStatus::Scored);
+}
+
+#[tokio::test]
+async fn status_reports_block_and_scored() {
+    use crate::SignalStatus;
+    let bundle = bundle_for(Uuid::new_v4());
+    let mut blocked = EvaluatorRegistry::new().with_prefilter_block_threshold(Some(0.5));
+    blocked.register(Arc::new(FixedScorer {
+        name: "guard",
+        tier: EvalTier::PreFilter,
+        dim: Dimension::new("safety"),
+        score: 0.10,
+    }));
+    assert_eq!(
+        blocked.run(&bundle).await.signal.status,
+        SignalStatus::Blocked
+    );
+    let mut fine = EvaluatorRegistry::new();
+    fine.register(Arc::new(FixedScorer {
+        name: "dim",
+        tier: EvalTier::Dimensional,
+        dim: Dimension::new("rapport"),
+        score: 0.9,
+    }));
+    assert_eq!(fine.run(&bundle).await.signal.status, SignalStatus::Scored);
+}
+
+/// A stored payload from before the field existed is not read as scored.
+#[test]
+fn legacy_payload_without_status_is_undetermined() {
+    let legacy = serde_json::json!({
+        "per_dimension": [], "conflicts": [], "flags": [],
+        "active_evaluators": [], "inapplicable_evaluators": [], "failed_evaluators": []
+    });
+    let s: crate::AggregatedSignal = serde_json::from_value(legacy).unwrap();
+    assert_eq!(s.status, crate::SignalStatus::Undetermined);
+}
+
+/// A registry that scored nothing (none registered, or all inapplicable)
+/// has no verdict to call `Scored`.
+#[tokio::test]
+async fn nothing_scored_is_undetermined() {
+    use crate::SignalStatus;
+    let bundle = bundle_for(Uuid::new_v4());
+    assert_eq!(
+        EvaluatorRegistry::new().run(&bundle).await.signal.status,
+        SignalStatus::Undetermined
+    );
+    let mut only_inapplicable = EvaluatorRegistry::new();
+    only_inapplicable.register(Arc::new(AlwaysInapplicable("na")));
+    assert_eq!(
+        only_inapplicable.run(&bundle).await.signal.status,
+        SignalStatus::Undetermined
+    );
 }

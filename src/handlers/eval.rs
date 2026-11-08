@@ -719,6 +719,9 @@ pub async fn run_eval_cases(
         // Skip the registry on cases with no episode (executor failure
         // before storage). We still record the case in case_results
         // with a null signal.
+        // This case's judge score only; `judge_scores.last()` showed the
+        // previous case's score on a case that produced none.
+        let mut case_judge: Option<f64> = None;
         let signal_payload: Option<Value> = if let Some(episode) = stored_episode.as_ref() {
             // Build the bundle. Transcript synthesises (user, query) +
             // (agent, reasoning) from what's available.
@@ -806,6 +809,7 @@ pub async fn run_eval_cases(
                 if !judge_means.is_empty() {
                     let unit_mean = judge_means.iter().sum::<f64>() / judge_means.len() as f64;
                     judge_scores.push(unit_mean * 4.0 + 1.0);
+                    case_judge = Some(unit_mean * 4.0 + 1.0);
                 }
             }
 
@@ -827,7 +831,7 @@ pub async fn run_eval_cases(
             // Q2.a — additive: keep the legacy `judge_scores` for
             // backward-compat callers, add the richer `signal` from
             // the registry alongside.
-            "judge_scores": judge_scores.last().map(|s| json!({"overall": s})),
+            "judge_scores": case_judge.map(|s| json!({"overall": s})),
             "signal": signal_payload,
         }));
     }
@@ -844,7 +848,12 @@ pub async fn run_eval_cases(
     // conflict dimensions. `any_prefilter_blocked` is tracked in the
     // loop above (true if any case had its dimensional evaluators
     // skipped by a pre-filter short-circuit).
-    let run_aggregate = aggregate_run_signals(&per_case_signals);
+    let mut run_aggregate = aggregate_run_signals(&per_case_signals);
+    // A case with no signal (its execution failed before an episode was
+    // stored) was not evaluated, so means over the rest are partial.
+    if per_case_signals.len() < cases.len() {
+        run_aggregate.status = agent_bestiary_evaluators::SignalStatus::Undetermined;
+    }
     let aggregated_signal_json = serde_json::to_value(&run_aggregate).ok();
     let conflict_flags_json =
         serde_json::to_value(&run_aggregate.conflicts).unwrap_or_else(|_| json!([]));
@@ -1137,6 +1146,8 @@ fn tier_label(tier: agent_bestiary_evaluators::EvalTier) -> fermi::seam_vocabula
 fn aggregate_run_signals(signals: &[AggregatedSignal]) -> AggregatedSignal {
     if signals.is_empty() {
         return AggregatedSignal {
+            // No case produced a signal: nothing was decided.
+            status: agent_bestiary_evaluators::SignalStatus::Undetermined,
             per_dimension: vec![],
             conflicts: vec![],
             flags: vec![],
@@ -1218,7 +1229,25 @@ fn aggregate_run_signals(signals: &[AggregatedSignal]) -> AggregatedSignal {
     let mut conflicts: Vec<ConflictFlag> = conflict_dims.into_values().collect();
     conflicts.sort_by(|a, b| a.dimension.as_str().cmp(b.dimension.as_str()));
 
+    // The run is only as determined as its least determined case: one case
+    // whose pre-filter could not decide makes the run undetermined
+    // [V: case status from `EvaluatorRegistry::run`,
+    // agent-bestiary/evaluators/src/registry.rs], and `detect_regression`
+    // below records such a run as undetermined rather than as no regression.
+    use agent_bestiary_evaluators::SignalStatus;
+    let status = if signals
+        .iter()
+        .any(|s| s.status == SignalStatus::Undetermined)
+    {
+        SignalStatus::Undetermined
+    } else if signals.iter().any(|s| s.status == SignalStatus::Blocked) {
+        SignalStatus::Blocked
+    } else {
+        SignalStatus::Scored
+    };
+
     AggregatedSignal {
+        status,
         per_dimension,
         conflicts,
         flags: all_flags,
@@ -1263,11 +1292,50 @@ pub async fn detect_regression(
     // also flagged as regressions.
     current_run_aggregate: Option<&AggregatedSignal>,
 ) -> (bool, Option<Value>) {
-    let prev_runs = state.memory_store.list_eval_runs(agent_id, 2).await.ok();
-    let prev = prev_runs.and_then(|runs| runs.into_iter().find(|r| r.status == "completed"));
+    // Pass rate and latency do not depend on evaluators and are always
+    // checked. Judge and per-dimension comparisons need a verdict: on an
+    // undetermined run (a pre-filter could not decide on some case,
+    // [V] `EvaluatorRegistry::run`, agent-bestiary/evaluators/src/registry.rs:132)
+    // they are not "no regression", they are not evaluated, and the details
+    // say so under `undetermined`. `regression_detected` is a bool column; it
+    // is true only when a check that could decide found a drop.
+    let undetermined = current_run_aggregate
+        .filter(|a| a.status == agent_bestiary_evaluators::SignalStatus::Undetermined);
 
+    // The baseline is the latest completed run that is not undetermined: its
+    // judge and dimension means cover only the cases that decided, so using
+    // it as the baseline would hide the next run's drops. Runs stored before
+    // `status` existed carry no field and stay eligible.
+    let prev_runs = state.memory_store.list_eval_runs(agent_id, 10).await.ok();
+    let prev = prev_runs.and_then(|runs| {
+        runs.into_iter().find(|r| {
+            r.status == "completed"
+                && !matches!(
+                    r.aggregated_signal
+                        .as_ref()
+                        .and_then(|a| a.get("status"))
+                        .and_then(|s| s.as_str()),
+                    Some("undetermined")
+                )
+        })
+    });
+
+    let undetermined_note = undetermined.map(|a| {
+        json!({
+            "reason_class": if a.failed_evaluators.is_empty() {
+                "cases_unscored"
+            } else {
+                "prefilter_undetermined"
+            },
+            "failed_evaluators": a.failed_evaluators,
+            "not_evaluated": ["judge_score", "dimensions"],
+        })
+    });
     let Some(prev) = prev else {
-        return (false, None);
+        return (
+            false,
+            undetermined_note.map(|u| json!({ "regressions": [], "undetermined": u })),
+        );
     };
 
     let mut regressions = Vec::new();
@@ -1289,6 +1357,7 @@ pub async fn detect_regression(
     }
 
     // Judge score regression (>0.5 drop on 5-point scale)
+    let current_judge = current_judge.filter(|_| undetermined.is_none());
     if let (Some(prev_j), Some(curr_j)) = (prev.avg_judge_score, current_judge) {
         if prev_j - curr_j > 0.5 {
             regressions.push(json!({
@@ -1316,9 +1385,10 @@ pub async fn detect_regression(
     // Compares the current run's per-dimension means against the
     // previous run's `aggregated_signal.per_dimension`. A drop > 0.10
     // on any dimension flags a regression for that dimension.
-    if let (Some(curr_agg), Some(prev_agg_value)) =
-        (current_run_aggregate, prev.aggregated_signal.as_ref())
-    {
+    if let (Some(curr_agg), Some(prev_agg_value)) = (
+        current_run_aggregate.filter(|_| undetermined.is_none()),
+        prev.aggregated_signal.as_ref(),
+    ) {
         if let Some(prev_per_dim) = prev_agg_value
             .get("per_dimension")
             .and_then(|v| v.as_array())
@@ -1349,10 +1419,12 @@ pub async fn detect_regression(
     }
 
     let detected = !regressions.is_empty();
-    let details = if detected {
-        Some(json!(regressions))
-    } else {
-        None
+    let details = match undetermined_note {
+        // Object form only when undetermined, so existing readers of the
+        // array form (`format_regression_body`) are unchanged otherwise.
+        Some(u) => Some(json!({ "regressions": regressions, "undetermined": u })),
+        None if detected => Some(json!(regressions)),
+        None => None,
     };
     (detected, details)
 }
@@ -1365,7 +1437,10 @@ fn format_regression_body(details: &Option<Value>) -> String {
             .into();
     };
     let empty = vec![];
-    let regressions = details.as_array().unwrap_or(&empty);
+    let regressions = details
+        .as_array()
+        .or_else(|| details.get("regressions").and_then(|r| r.as_array()))
+        .unwrap_or(&empty);
 
     let mut lines = vec![format!(
         "{} regression(s) detected in the latest eval run:",
@@ -1729,5 +1804,44 @@ impl<'de> serde::Deserialize<'de> for AgentSelection {
                 "agent_ids must be \"all\" or an array of agent id/name strings",
             )),
         }
+    }
+}
+
+#[cfg(test)]
+mod run_status_tests {
+    use super::aggregate_run_signals;
+    use agent_bestiary_evaluators::{AggregatedSignal, SignalStatus};
+
+    fn sig(status: SignalStatus) -> AggregatedSignal {
+        AggregatedSignal {
+            status,
+            per_dimension: vec![],
+            conflicts: vec![],
+            flags: vec![],
+            active_evaluators: vec![],
+            inapplicable_evaluators: vec![],
+            failed_evaluators: vec![],
+            failure_reasons: vec![],
+        }
+    }
+
+    /// SPEC 36 R0.7: one undetermined case makes the run undetermined, so
+    /// it cannot be averaged into a verdict.
+    #[test]
+    fn a_run_is_as_determined_as_its_least_determined_case() {
+        use SignalStatus::*;
+        assert_eq!(aggregate_run_signals(&[]).status, Undetermined);
+        assert_eq!(
+            aggregate_run_signals(&[sig(Scored), sig(Scored)]).status,
+            Scored
+        );
+        assert_eq!(
+            aggregate_run_signals(&[sig(Scored), sig(Blocked)]).status,
+            Blocked
+        );
+        assert_eq!(
+            aggregate_run_signals(&[sig(Scored), sig(Blocked), sig(Undetermined)]).status,
+            Undetermined
+        );
     }
 }
