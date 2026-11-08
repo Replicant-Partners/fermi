@@ -30,7 +30,7 @@ use fermi::agent_backend::tool_executor::ToolAwareExecutor;
 use fermi::agent_backend::tools::{PlatformToolRegistry, ToolContext};
 use fermi::agent_backend::ExecutionContext;
 use fermi::ast;
-use fermi::gas::{charge_execution_with_royalty, charge_gas, check_low_balance};
+use fermi::gas::check_low_balance;
 use fermi_auth::{get_or_create_wallet, AuthPrincipal};
 
 use crate::{
@@ -74,13 +74,31 @@ pub async fn execute_agent_stream_handler(
     let wallet = get_or_create_wallet(&state.db, "user", &caller_id)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Wallet: {}", e)))?;
-    if wallet.balance <= 0 {
-        return Err((StatusCode::PAYMENT_REQUIRED, "Insufficient credits".into()));
-    }
-
     // ── Resolve agent ──────────────────────────────────────────────
     let db_agent = resolve_agent(&state, &agent_id).await?;
     let card = resolve_agent_card(&state, &db_agent);
+
+    // SPEC 36 R1.3: reserve before the run (replaces `balance <= 0`). The
+    // hold moves into the stream; a client that disconnects drops it, which
+    // releases it.
+    let hold = fermi::credit_hold::open(
+        &state.db,
+        wallet.wallet_id,
+        fermi::credit_hold::execution_estimate(
+            &state.gas_fees,
+            card.capabilities.resolve_sampling_params(4096).max_tokens,
+        ),
+        "execute_stream",
+    )
+    .await
+    .map_err(|e| {
+        let status = if e.is_payment_required() {
+            StatusCode::PAYMENT_REQUIRED
+        } else {
+            StatusCode::INTERNAL_SERVER_ERROR
+        };
+        (status, e.to_string())
+    })?;
     let agent_db_id = db_agent.agent_id;
     let agent_name = db_agent.agent_name.clone();
     let query = body.query.clone();
@@ -602,46 +620,35 @@ pub async fn execute_agent_stream_handler(
                 let ep_id_str = episode_id.map(|id| id.to_string()).unwrap_or_default();
                 let ep_ref = if ep_id_str.is_empty() { None } else { Some(ep_id_str.as_str()) };
 
-                // v0.10.1 credit-flow: caller pays `execution_fee`,
-                // owner receives `execution_fee * royalty_pct` when the
-                // agent is community/curated with an owner distinct
-                // from the caller. Same gates as the non-streaming
-                // execute_agent_handler in handlers/execution.rs.
-                let royalty_paid = match charge_execution_with_royalty(
+                // SPEC 36 R1.3: charge, royalty and hold close in one
+                // transaction (fermi::credit_hold::settle).
+                let settled = fermi::credit_hold::settle(
                     &state_clone.db,
-                    wallet_id,
-                    &caller_clone,
-                    execution_fee,
-                    agent_owner_id.as_deref(),
-                    &agent_tier,
-                    &agent_id_clone,
-                    tokens,
-                    ep_ref,
-                    gas_fees.execution_owner_royalty_pct,
+                    hold,
+                    &fermi::credit_hold::Settlement {
+                        execution_fee,
+                        gas_fee: gas_fee_amount,
+                        royalty: fermi::gas::royalty_for(
+                            execution_fee,
+                            agent_owner_id.as_deref(),
+                            &agent_tier,
+                            &caller_clone,
+                            gas_fees.execution_owner_royalty_pct,
+                        ),
+                        description: format!("Execute {} ({}tk)", agent_id_clone, tokens),
+                        related_id: ep_ref.map(str::to_string),
+                    },
                 )
-                .await
-                {
-                    Ok((_charged, royalty)) => royalty,
-                    Err((status, msg)) => {
-                        eprintln!(
-                            "Warning: failed to charge execution fee: {} ({})",
-                            msg, status
-                        );
-                        0
+                .await;
+                let (royalty_paid, charged) = match &settled {
+                    Ok(s) => (s.royalty_paid, s.charged),
+                    Err(e) => {
+                        tracing::error!(error = %e, "stream settlement failed");
+                        (0, 0)
                     }
                 };
 
-                let _ = charge_gas(
-                    &state_clone.db,
-                    wallet_id,
-                    gas_fee_amount,
-                    "gas_fee",
-                    &format!("Gas fee for {}", agent_id_clone),
-                    ep_ref,
-                )
-                .await;
-
-                let total_charged = execution_fee + gas_fee_amount;
+                let total_charged = charged;
                 if royalty_paid > 0 {
                     tracing::info!(
                         agent = %agent_id_clone,

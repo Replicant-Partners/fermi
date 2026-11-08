@@ -5,10 +5,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use fermi_auth::{
-    credit_charge_purchased_only, credit_deposit, credit_get_balance, credit_get_transactions,
-    get_or_create_wallet, AuthPrincipal,
-};
+use fermi_auth::{credit_get_balance, credit_get_transactions, get_or_create_wallet, AuthPrincipal};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -160,22 +157,9 @@ pub async fn transfer_credits_handler(
             )
         })?;
 
-    // Charge sender (amount + gas) — purchased balance only, granted credits cannot be transferred
-    credit_charge_purchased_only(
-        &state.db,
-        sender_wallet.wallet_id,
-        total_charge,
-        "transfer_out",
-        &format!(
-            "Transfer to {}: {} ({}cr + {}cr gas)",
-            body.recipient_id, note, body.amount, gas
-        ),
-        Some(&body.recipient_id),
-    )
-    .await
-    .map_err(|e| (StatusCode::PAYMENT_REQUIRED, format!("{}", e)))?;
-
-    // Deposit to recipient
+    // Recipient wallet first (it may be created, with its onboarding grant,
+    // exactly as before); then the debit and the deposit in one transaction,
+    // so a failed deposit can no longer leave the sender charged.
     let recipient_wallet = get_or_create_wallet(&state.db, "user", &body.recipient_id)
         .await
         .map_err(|e| {
@@ -184,12 +168,38 @@ pub async fn transfer_credits_handler(
                 format!("Recipient wallet error: {}", e),
             )
         })?;
-
-    credit_deposit(
-        &state.db,
+    let mut tx = state
+        .db
+        .begin()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    // SPEC 36 R1.3: not credits an open execution hold reserves, and not
+    // while the wallet owes an unpaid execution charge.
+    fermi_auth::credit_ensure_spendable_tx(&mut tx, sender_wallet.wallet_id, total_charge)
+        .await
+        .map_err(|e| (StatusCode::PAYMENT_REQUIRED, format!("{}", e)))?;
+    // Charge sender (amount + gas) — purchased balance only, granted credits cannot be transferred
+    fermi_auth::credit_charge_tx(
+        &mut tx,
+        sender_wallet.wallet_id,
+        total_charge,
+        "transfer_out",
+        &format!(
+            "Transfer to {}: {} ({}cr + {}cr gas)",
+            body.recipient_id, note, body.amount, gas
+        ),
+        Some(&body.recipient_id),
+        true,
+    )
+    .await
+    .map_err(|e| (StatusCode::PAYMENT_REQUIRED, format!("{}", e)))?;
+    fermi_auth::credit_deposit_tx(
+        &mut tx,
         recipient_wallet.wallet_id,
         body.amount,
+        "deposit",
         &format!("Transfer from {}: {}", sender_id, note),
+        None,
     )
     .await
     .map_err(|e| {
@@ -198,6 +208,9 @@ pub async fn transfer_credits_handler(
             format!("Deposit failed: {}", e),
         )
     })?;
+    tx.commit()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // Create notification for recipient
     crate::handlers::push::notify_user(

@@ -9,9 +9,10 @@
 //! Reservations owned by an open, unexpired grounding run are skipped
 //! (`MemoryStore::stale_running_episodes`); that run has its own TTL.
 //!
-//! Money holds: R0.5.2 also asks the sweep to release any hold (R1.3). No
-//! hold exists yet; when R1.3 adds one, its release belongs here, in the
-//! same transaction as the status change.
+//! Money holds (R0.5.2 / R1.3): each sweep also releases credit holds past
+//! `expires_at` (`credit_hold::release_expired`). A hold outlives the
+//! episode's runtime limit (`credit_hold::hold_ttl_secs`), so a reaped run's
+//! hold is released by a later sweep, not in the same transaction.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -54,6 +55,11 @@ pub fn spawn(store: Arc<MemoryStore>) {
         let mut tick = tokio::time::interval(SWEEP_EVERY);
         loop {
             tick.tick().await;
+            match crate::credit_hold::release_expired(store.pool()).await {
+                Ok(0) => {}
+                Ok(n) => tracing::warn!(count = n, "episode_reaper released expired credit holds"),
+                Err(e) => tracing::error!(error = %e, "episode_reaper hold release failed"),
+            }
             match sweep_once(&store, max_runtime).await {
                 Ok(ids) if ids.is_empty() => {}
                 Ok(ids) => tracing::warn!(

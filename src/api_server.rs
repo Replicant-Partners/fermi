@@ -1463,8 +1463,11 @@ async fn run_migrations(db: &PgPool) {
         // 244 — platform sponsor wallet for App template budgets (SPEC 36
         // R0.1 / G01): spawn transfers from it instead of minting credits.
         "migrations/244_platform_sponsor_wallet.sql",
-        // The former `ensure_critical_schema` block (SPEC 36 G16). Last.
+        // The former `ensure_critical_schema` block (SPEC 36 G16), after
+        // every file that existed when it ran last.
         "migrations/245_critical_schema.sql",
+        // SPEC 36 R1.3: append-only credit holds (#48).
+        "migrations/246_credit_holds.sql",
     ];
 
     // SPEC 36 G16: skip applied, fail on checksum change, fail on any

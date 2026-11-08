@@ -7,7 +7,7 @@ use axum::{
 };
 use fermi::agent_backend::executor::AgentStatus;
 use fermi::agent_backend::kg_context::enrich_with_kg_context;
-use fermi::gas::{charge_execution_with_royalty, charge_gas, check_low_balance};
+use fermi::gas::check_low_balance;
 use fermi_auth::{get_or_create_wallet, AuthPrincipal};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -103,30 +103,36 @@ pub async fn execute_agent_handler(
                 format!("Wallet error: {}", e),
             )
         })?;
-    if wallet.balance <= 0 {
-        // Counted. Every credit refusal in the system returned before the
-        // `credit_ledger` INSERT, so the platform recorded what it spent and
-        // nothing about what it declined — spend was observable and demand was
-        // not.
-        fermi::gate_trust::decided(
-            fermi::gate_trust::Gate::Credit,
-            fermi::gate_trust::Decision::Refused,
-            Some("execute: wallet balance <= 0"),
-        );
-        return Err((
-            StatusCode::PAYMENT_REQUIRED,
-            "Insufficient credits".to_string(),
-        ));
-    }
+    // 1. Resolve agent in database, then build card (registry or DB fallback)
+    let db_agent = resolve_agent(&state, &agent_id).await?;
+    let card = resolve_agent_card(&state, &db_agent);
+
+    // SPEC 36 R1.3: reserve before any LLM call. Replaces the `balance <= 0`
+    // pre-check; a wallet that cannot cover the estimate (or owes an unpaid
+    // charge) is refused here, not after the work.
+    let estimate = fermi::credit_hold::execution_estimate(
+        &state.gas_fees,
+        card.capabilities.resolve_sampling_params(4096).max_tokens,
+    );
+    let hold = match fermi::credit_hold::open(&state.db, wallet.wallet_id, estimate, "execute").await {
+        Ok(h) => h,
+        Err(e) if e.is_payment_required() => {
+            // Counted: a refusal returns before any ledger row, so this is
+            // the only record that demand was declined.
+            fermi::gate_trust::decided(
+                fermi::gate_trust::Gate::Credit,
+                fermi::gate_trust::Decision::Refused,
+                Some("execute: credit hold refused"),
+            );
+            return Err((StatusCode::PAYMENT_REQUIRED, e.to_string()));
+        }
+        Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
+    };
     fermi::gate_trust::decided(
         fermi::gate_trust::Gate::Credit,
         fermi::gate_trust::Decision::Approved,
         None,
     );
-
-    // 1. Resolve agent in database, then build card (registry or DB fallback)
-    let db_agent = resolve_agent(&state, &agent_id).await?;
-    let card = resolve_agent_card(&state, &db_agent);
 
     // 1a. Enrich card with relevant KG context from past dream cycles.
     // Phase 1: returns the query embedding alongside the card so we can
@@ -767,57 +773,35 @@ pub async fn execute_agent_handler(
     let tokens = output.tokens_used.unwrap_or(0) as i32;
     let (execution_fee, gas_fee) = state.gas_fees.execution_fee(tokens);
 
-    // v0.10.1 credit-flow: caller pays `execution_fee`, agent owner
-    // receives `execution_fee * execution_owner_royalty_pct` when the
-    // agent is community/curated with an owner distinct from the
-    // caller. System-tier agents (Fermi included) route 100% to the
-    // platform since they are platform-funded. See
-    // `charge_execution_with_royalty` for the gates.
-    //
-    // The old code path here was a warning-on-failure
-    // `credit_charge(…, "execution_fee", …)` — same total, same tx_type
-    // for the caller side, but no royalty leg. The wallet-error path
-    // stays soft-fail: the work has already been done and we don't
-    // want to double-bill on retry. When the royalty deposit fails
-    // the platform absorbs (logged, not raised).
+    // SPEC 36 R1.3: one transaction charges the fee and gas, transfers the
+    // owner's royalty, and closes the hold. A failure is a 500 and the cost
+    // is recorded unpaid (`credit_hold::settle`), not a free run.
     let ep_id_str = stored_episode_id.to_string();
-    let (_charged, royalty_paid) = match charge_execution_with_royalty(
+    let settled = fermi::credit_hold::settle(
         &state.db,
-        wallet.wallet_id,
-        &caller_id,
-        execution_fee,
-        db_agent.owner_id.as_deref(),
-        &db_agent.tier,
-        &agent_id,
-        tokens,
-        Some(ep_id_str.as_str()),
-        state.gas_fees.execution_owner_royalty_pct,
+        hold,
+        &fermi::credit_hold::Settlement {
+            execution_fee,
+            gas_fee,
+            royalty: fermi::gas::royalty_for(
+                execution_fee,
+                db_agent.owner_id.as_deref(),
+                &db_agent.tier,
+                &caller_id,
+                state.gas_fees.execution_owner_royalty_pct,
+            ),
+            description: format!("Execute {} ({}tk)", agent_id, tokens),
+            related_id: Some(ep_id_str.clone()),
+        },
     )
     .await
-    {
-        Ok(pair) => pair,
-        Err((status, msg)) => {
-            eprintln!(
-                "Warning: failed to charge execution fee: {} ({})",
-                msg, status
-            );
-            (0, 0)
-        }
-    };
+    .map_err(|e| {
+        tracing::error!(episode = %stored_episode_id, error = %e, "settlement failed");
+        (StatusCode::INTERNAL_SERVER_ERROR, format!("Settlement failed: {e}"))
+    })?;
+    let royalty_paid = settled.royalty_paid;
 
-    // Charge gas fee (hard error). Gas stays with the platform — it's
-    // the infrastructure surcharge, not the agent's fee.
-    charge_gas(
-        &state.db,
-        wallet.wallet_id,
-        gas_fee,
-        "gas_fee",
-        &format!("Gas fee for {}", agent_id),
-        Some(ep_id_str.as_str()),
-    )
-    .await?;
-
-    let total_charged = execution_fee + gas_fee;
+    let total_charged = settled.charged;
     // Debug trace so operators can grep `[credit-flow]` in a run log
     // and see the full charge breakdown for any given execution.
     if royalty_paid > 0 {

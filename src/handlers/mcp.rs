@@ -467,6 +467,25 @@ async fn run_llm_execute(
     let db_agent = resolve_agent(state, agent_id).await?;
     let card = resolve_agent_card(state, &db_agent);
 
+    // SPEC 36 R1.3: reserve the estimate before the LLM call.
+    let hold = match fermi::credit_hold::open(
+        &state.db,
+        wallet.wallet_id,
+        fermi::credit_hold::execution_estimate(
+            &state.gas_fees,
+            card.capabilities.resolve_sampling_params(4096).max_tokens,
+        ),
+        "mcp_execute",
+    )
+    .await
+    {
+        Ok(h) => h,
+        Err(e) => {
+            let code = if e.is_payment_required() { -32002 } else { -32000 };
+            return Ok(Json(mcp_error(rpc_id, code, &e.to_string())));
+        }
+    };
+
     let agent_stmt = ast::AgentStmt {
         name: agent_id.to_string(),
         agent_type: Some(card.agent_type.clone()),
@@ -533,28 +552,29 @@ async fn run_llm_execute(
             // royalty, plus the gas surcharge.
             let tokens = output.tokens_used.unwrap_or(0) as i32;
             let (execution_fee, gas_fee) = state.gas_fees.execution_fee(tokens);
-            let _ = fermi::gas::charge_execution_with_royalty(
+            // SPEC 36 R1.3: one transaction; a failure is an error, recorded unpaid, not a
+            // free run (the `let _ =` pair this replaces).
+            if let Err(e) = fermi::credit_hold::settle(
                 &state.db,
-                wallet.wallet_id,
-                &caller_id,
-                execution_fee,
-                db_agent.owner_id.as_deref(),
-                &db_agent.tier,
-                &db_agent.agent_name,
-                tokens,
-                None,
-                state.gas_fees.execution_owner_royalty_pct,
+                hold,
+                &fermi::credit_hold::Settlement {
+                    execution_fee,
+                    gas_fee,
+                    royalty: fermi::gas::royalty_for(
+                        execution_fee,
+                        db_agent.owner_id.as_deref(),
+                        &db_agent.tier,
+                        &caller_id,
+                        state.gas_fees.execution_owner_royalty_pct,
+                    ),
+                    description: format!("mcp execute {} ({}tk)", db_agent.agent_name, tokens),
+                    related_id: None,
+                },
             )
-            .await;
-            let _ = fermi::gas::charge_gas(
-                &state.db,
-                wallet.wallet_id,
-                gas_fee,
-                "gas_fee",
-                &format!("mcp execute gas fee for {}", db_agent.agent_name),
-                None,
-            )
-            .await;
+            .await
+            {
+                return Ok(Json(mcp_error(rpc_id, -32000, &format!("Settlement failed: {e}"))));
+            }
             let result_json = json!({
                 "status": format!("{:?}", output.status),
                 "confidence": output.confidence,

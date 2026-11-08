@@ -66,4 +66,6 @@ pub use credits::{
 pub use credits::{
     charge_tx as credit_charge_tx, deposit_tx as credit_deposit_tx,
     ensure_wallet_tx as credit_ensure_wallet_tx, transfer_tx as credit_transfer_tx,
+    transfer_typed_tx as credit_transfer_typed_tx,
+    ensure_spendable_tx as credit_ensure_spendable_tx,
 };

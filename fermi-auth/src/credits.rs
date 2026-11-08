@@ -497,6 +497,93 @@ pub async fn transfer_tx(
             "Cannot transfer to the same wallet".into(),
         ));
     }
+    sqlx::query("SELECT 1 FROM wallets WHERE wallet_id = ANY($1) ORDER BY wallet_id FOR UPDATE")
+        .bind(vec![from, to])
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(|e| AuthError::Internal(format!("Wallet lock failed: {}", e)))?;
+    ensure_spendable_tx(conn, from, amount).await?;
+    transfer_typed_tx(
+        conn,
+        from,
+        to,
+        amount,
+        ("transfer_out", "transfer_in"),
+        description,
+        related_id,
+        transferable_only,
+    )
+    .await
+}
+
+/// SPEC 36 R1.3: refuse a debit that moving credits **out** of `wallet_id`
+/// would make, when it would spend credits an open execution hold reserves
+/// (`balance - amount < Σ open holds`) or while the wallet owes an unpaid
+/// execution charge (`credit_hold`, migration 246). Call inside the debit's
+/// transaction; it locks the wallet row.
+pub async fn ensure_spendable_tx(
+    conn: &mut sqlx::PgConnection,
+    wallet_id: Uuid,
+    amount: i32,
+) -> Result<(), AuthError> {
+    let row = sqlx::query(
+        "SELECT w.balance,
+            COALESCE((SELECT sum(h.amount) FROM credit_holds h
+                       WHERE h.wallet_id = w.wallet_id
+                         AND NOT EXISTS (SELECT 1 FROM credit_hold_closures c
+                                          WHERE c.hold_id = h.hold_id)), 0)::int AS held,
+            (COALESCE((SELECT sum(c.unpaid) FROM credit_hold_closures c
+                         JOIN credit_holds h USING (hold_id) WHERE h.wallet_id = w.wallet_id), 0)
+             - COALESCE((SELECT sum(r.amount) FROM credit_debt_repayments r
+                          WHERE r.wallet_id = w.wallet_id), 0))::int AS owed
+           FROM wallets w WHERE w.wallet_id = $1 FOR UPDATE OF w",
+    )
+    .bind(wallet_id)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(|e| AuthError::Internal(format!("Hold check failed: {}", e)))?;
+    let Some(row) = row else {
+        return Err(AuthError::NotFound(format!("wallet {wallet_id}")));
+    };
+    let balance: i32 = row.try_get("balance").map_err(decode)?;
+    let held: i32 = row.try_get("held").map_err(decode)?;
+    let owed: i32 = row.try_get("owed").map_err(decode)?;
+    if owed > 0 {
+        // Same type as a short balance: the caller answers 402 either way.
+        return Err(AuthError::InsufficientCredits {
+            have: balance - held - owed,
+            need: amount,
+        });
+    }
+    if balance - held < amount {
+        return Err(AuthError::InsufficientCredits {
+            have: balance - held,
+            need: amount,
+        });
+    }
+    Ok(())
+}
+
+/// [`transfer_tx`] with explicit ledger types and **without** the hold and
+/// debt check: for the royalty leg of an execution settlement
+/// (`credit_hold::settle`), which spends the credits its own hold reserved.
+/// The granted/purchased split is preserved as in `transfer_tx`.
+#[allow(clippy::too_many_arguments)]
+pub async fn transfer_typed_tx(
+    conn: &mut sqlx::PgConnection,
+    from: Uuid,
+    to: Uuid,
+    amount: i32,
+    (out_type, in_type): (&str, &str),
+    description: &str,
+    related_id: Option<&str>,
+    transferable_only: bool,
+) -> Result<(CreditTransaction, CreditTransaction), AuthError> {
+    if from == to {
+        return Err(AuthError::InvalidInput(
+            "Cannot transfer to the same wallet".into(),
+        ));
+    }
     let locked: Vec<Uuid> = sqlx::query_scalar(
         "SELECT wallet_id FROM wallets WHERE wallet_id = ANY($1) ORDER BY wallet_id FOR UPDATE",
     )
@@ -512,7 +599,7 @@ pub async fn transfer_tx(
         conn,
         from,
         amount,
-        "transfer_out",
+        out_type,
         description,
         related_id,
         transferable_only,
@@ -525,7 +612,7 @@ pub async fn transfer_tx(
         to,
         amount,
         granted_part,
-        "transfer_in",
+        in_type,
         description,
         related_id,
     )
