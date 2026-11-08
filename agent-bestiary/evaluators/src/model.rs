@@ -12,6 +12,31 @@ use crate::tier::EvalTier;
 use crate::EvalError;
 use agent_bestiary_memory::EpisodeBundle;
 
+/// What kind of claim an evaluator's scores are (directive rule 8).
+///
+/// Declared by every evaluator, with no default, so a new evaluator cannot
+/// enter the registry without saying which it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Epistemic {
+    /// A language model's judgement. Never evidence: it cannot be a source
+    /// in a provenance or Grounding walk, and it is stored as
+    /// `eval_signals.source_class = 'interpretive'`.
+    Interpretive,
+    /// Deterministic code over recorded data: Brier against resolved
+    /// outcomes, a pattern match, a count. Reproducible from its inputs.
+    Computed,
+}
+
+impl Epistemic {
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Interpretive => "interpretive",
+            Self::Computed => "computed",
+        }
+    }
+}
+
 /// One evaluator. Stateless or wraps its own configuration / providers.
 ///
 /// `evaluate` returns `Result<EvalResult, EvalError>`; an
@@ -30,6 +55,11 @@ pub trait EvalModel: Send + Sync {
     /// Pre-filter (serial, can short-circuit) or dimensional
     /// (parallel).
     fn tier(&self) -> EvalTier;
+
+    /// Whether this instance's scores are a model's judgement or computed.
+    /// Instance-level, because several evaluators run an LLM only when one
+    /// is configured and fall back to a heuristic otherwise.
+    fn epistemic(&self) -> Epistemic;
 
     /// Dimensions this evaluator scores. The aggregator uses this
     /// list to know which keys to expect; missing dimensions in the

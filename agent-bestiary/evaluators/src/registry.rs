@@ -205,6 +205,7 @@ async fn run_one(ev: &dyn EvalModel, bundle: &EpisodeBundle) -> RegistryResult {
     RegistryResult {
         evaluator_name: ev.name().to_string(),
         tier: ev.tier(),
+        epistemic: ev.epistemic(),
         outcome,
         latency_ms,
     }

@@ -59,7 +59,7 @@ use fermi::agent_backend::ExecutionContext;
 use fermi::ast;
 
 use crate::handlers::eval_brier::{AgentNameResolver, BrierLookupSqlx};
-use crate::handlers::eval_judge::LlmJudgeAnthropic;
+use crate::handlers::eval_judge::{LlmJudgeHttp, UnavailableJudge};
 use crate::handlers::eval_projection::ProjectionLookupSqlx;
 use crate::{
     agent_output_to_episode, create_notification, resolve_agent, resolve_agent_card, AppState,
@@ -1019,8 +1019,22 @@ fn build_registry(
     // ── Dimensional evaluators (run in parallel) ─────────────────────────
 
     if judge_enabled {
+        // G12: a judge from a different model family than every model this
+        // agent may run on, or no judge. `UnavailableJudge` keeps the slot so
+        // the run records why it was not judged.
+        let proposer =
+            fermi::judge_policy::proposer_models(&db_agent.model, &db_agent.model_ladder);
+        let configured = fermi::judge_policy::configured_judges(|k| std::env::var(k).ok());
         let judge: Arc<dyn agent_bestiary_evaluators::LlmJudge> =
-            Arc::new(LlmJudgeAnthropic::new());
+            match fermi::judge_policy::independent_judge(&proposer, &configured) {
+                Ok(candidate) => Arc::new(LlmJudgeHttp::new(candidate)),
+                Err(why) => {
+                    tracing::warn!(agent = %agent_name, reason = %why, "no independent judge");
+                    Arc::new(UnavailableJudge {
+                        reason: why.to_string(),
+                    })
+                }
+            };
         registry.register(Arc::new(LlmJudgeEvaluator::new(judge)));
     }
 
@@ -1117,6 +1131,8 @@ fn registry_outcome_to_signals(
                 cost_credits: eval.cost_credits,
                 latency_ms: r.latency_ms as i64,
                 rationale: eval.rationale.clone(),
+                // Declared by the evaluator, not inferred here (rule 8).
+                source_class: Some(r.epistemic.id().to_string()),
                 created_at: chrono::Utc::now(),
             });
         }

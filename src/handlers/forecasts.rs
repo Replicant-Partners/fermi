@@ -1894,9 +1894,9 @@ pub async fn record_forecast_calibration_signals(
         let res = sqlx::query(
             "INSERT INTO eval_signals
                   (agent_id, evaluator_name, evaluator_version, evaluator_tier,
-                   dimension, score, confidence, rationale, created_at)
+                   dimension, score, confidence, rationale, created_at, source_class)
              SELECT $1, 'brier_forecast_resolver', 'v1', $4,
-                    'forecast_calibration', $2, 1.0, $3, NOW()
+                    'forecast_calibration', $2, 1.0, $3, NOW(), 'computed'
               WHERE NOT EXISTS (
                   SELECT 1 FROM eval_signals
                    WHERE agent_id = $1

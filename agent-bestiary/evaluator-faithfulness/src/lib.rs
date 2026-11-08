@@ -75,6 +75,10 @@ impl EvalModel for FaithfulnessEvaluator {
         EvalTier::Dimensional
     }
 
+    fn epistemic(&self) -> agent_bestiary_evaluators::Epistemic {
+        agent_bestiary_evaluators::Epistemic::Computed
+    }
+
     fn dimensions(&self) -> Vec<Dimension> {
         vec![Dimension::new("grounding")]
     }

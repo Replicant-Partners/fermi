@@ -160,7 +160,11 @@ fn every_outbound_call_site_is_fixed_host_or_guarded() {
         ("src/agent_backend/tools/domains/financial.rs", 1, "FMP"),
         ("src/polymarket/mod.rs", 6, "gamma-api / data-api"),
         ("src/email.rs", 1, "api.resend.com"),
-        ("src/handlers/eval_judge.rs", 1, "api.anthropic.com"),
+        (
+            "src/handlers/eval_judge.rs",
+            2,
+            "api.anthropic.com, api.openai.com",
+        ),
         ("src/handlers/eval.rs", 1, "api.anthropic.com"),
         ("src/handlers/agents.rs", 1, "Gemini"),
         ("src/handlers/misc.rs", 1, "nominatim"),

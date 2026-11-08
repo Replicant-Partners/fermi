@@ -131,6 +131,10 @@ impl EvalModel for LlmJudgeEvaluator {
         EvalTier::Dimensional
     }
 
+    fn epistemic(&self) -> crate::model::Epistemic {
+        crate::model::Epistemic::Interpretive
+    }
+
     fn dimensions(&self) -> Vec<Dimension> {
         vec![
             Dimension::new("relevance"),

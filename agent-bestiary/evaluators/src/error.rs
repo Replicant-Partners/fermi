@@ -30,6 +30,13 @@ pub enum EvalError {
     #[error("Malformed response: {0}")]
     Malformed(String),
 
+    /// The evaluator may not run under its policy, e.g. no LLM judge from a
+    /// different model family than the agent being judged is configured
+    /// (G12). Not a provider fault and not "does not apply": the question
+    /// applied and nothing permitted could answer it.
+    #[error("Unavailable: {0}")]
+    Unavailable(String),
+
     /// Validation of inputs failed (e.g. dimension score out of range
     /// before the evaluator gets to clip it).
     #[error("Invalid input: {0}")]

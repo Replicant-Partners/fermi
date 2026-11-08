@@ -132,8 +132,8 @@ pub async fn record(
     let res = sqlx::query(
         "INSERT INTO eval_signals \
             (episode_id, agent_id, evaluator_name, evaluator_tier, \
-             dimension, score, confidence, rationale) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+             dimension, score, confidence, rationale, source_class) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'computed')",
     )
     .bind(episode_id)
     .bind(agent_db_id)

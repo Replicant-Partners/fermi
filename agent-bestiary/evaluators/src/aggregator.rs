@@ -235,6 +235,7 @@ mod tests {
         }
         RegistryResult {
             evaluator_name: name.to_string(),
+            epistemic: crate::model::Epistemic::Computed,
             tier: EvalTier::Dimensional,
             outcome: Ok(eval),
             latency_ms: 1,
@@ -244,6 +245,7 @@ mod tests {
     fn inapplicable(name: &str) -> RegistryResult {
         RegistryResult {
             evaluator_name: name.to_string(),
+            epistemic: crate::model::Epistemic::Computed,
             tier: EvalTier::Dimensional,
             outcome: Err(EvalError::Inapplicable("no goal_spec".into())),
             latency_ms: 0,
@@ -253,6 +255,7 @@ mod tests {
     fn failed(name: &str) -> RegistryResult {
         RegistryResult {
             evaluator_name: name.to_string(),
+            epistemic: crate::model::Epistemic::Computed,
             tier: EvalTier::Dimensional,
             outcome: Err(EvalError::Provider("boom".into())),
             latency_ms: 0,
@@ -323,6 +326,7 @@ mod tests {
         a_eval.confidence = 0.0;
         let a = RegistryResult {
             evaluator_name: "a".into(),
+            epistemic: crate::model::Epistemic::Computed,
             tier: EvalTier::Dimensional,
             outcome: Ok(a_eval),
             latency_ms: 0,
@@ -332,6 +336,7 @@ mod tests {
             .with_confidence(1.0);
         let b = RegistryResult {
             evaluator_name: "b".into(),
+            epistemic: crate::model::Epistemic::Computed,
             tier: EvalTier::Dimensional,
             outcome: Ok(b_eval),
             latency_ms: 0,
