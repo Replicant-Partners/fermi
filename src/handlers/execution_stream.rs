@@ -63,7 +63,11 @@ pub async fn execute_agent_stream_handler(
     let caller_id = principal.user_id();
 
     // ── Rate limit ─────────────────────────────────────────────────
-    if let Err(retry) = state.rate_limits.llm.check(&format!("user:{}", caller_id)) {
+    if let Err(retry) = crate::handlers::llm_spend::admit(
+        &state,
+        &format!("user:{}", caller_id),
+        "llm limiter: execute stream",
+    ) {
         return Err((
             StatusCode::TOO_MANY_REQUESTS,
             format!("Rate limited. Retry after {}s.", retry),

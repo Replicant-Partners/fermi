@@ -46,11 +46,11 @@ pub async fn generate_ontology_handler(
     Json(req): Json<GenerateOntologyRequest>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     // Rate limit LLM calls
-    if let Err(retry) = state
-        .rate_limits
-        .llm
-        .check(&format!("user:{}", principal.user_id()))
-    {
+    if let Err(retry) = crate::handlers::llm_spend::admit(
+        &state,
+        &format!("user:{}", principal.user_id()),
+        "llm limiter: wizard",
+    ) {
         return Err((
             StatusCode::TOO_MANY_REQUESTS,
             format!("LLM rate limit exceeded. Retry after {} seconds.", retry),
@@ -132,11 +132,11 @@ pub async fn generate_prompt_handler(
     Json(req): Json<GeneratePromptRequest>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     // Rate limit LLM calls
-    if let Err(retry) = state
-        .rate_limits
-        .llm
-        .check(&format!("user:{}", principal.user_id()))
-    {
+    if let Err(retry) = crate::handlers::llm_spend::admit(
+        &state,
+        &format!("user:{}", principal.user_id()),
+        "llm limiter: wizard",
+    ) {
         return Err((
             StatusCode::TOO_MANY_REQUESTS,
             format!("LLM rate limit exceeded. Retry after {} seconds.", retry),

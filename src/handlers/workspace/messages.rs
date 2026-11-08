@@ -228,6 +228,23 @@ pub async fn post_workspace_message_handler(
         );
     let is_invocation_path = req.message_type.as_deref() == Some("agent_invocation")
         || parse_at_mention(&req.content).is_some();
+    // G17 / R0.8: a message that invokes an agent runs its tool loop, so it is
+    // admitted against the LLM limiter here, before it is charged or stored,
+    // and refused with 429 over the limit. Plain chat calls no model and is
+    // not throttled.
+    if is_invocation_path {
+        crate::handlers::llm_spend::admit(
+            &state,
+            &format!("user:{user_id}"),
+            "llm limiter: workspace message",
+        )
+        .map_err(|retry| {
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                format!("LLM rate limit exceeded. Retry after {retry} seconds."),
+            )
+        })?;
+    }
     if !(is_event_append && !is_invocation_path) {
         let charge_result = charge_workspace_gas(
             &state.db,

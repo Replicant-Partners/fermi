@@ -210,6 +210,7 @@ pub async fn delete_eval_test_case_handler(
 }
 
 pub async fn trigger_eval_run_handler(
+    _spend: crate::handlers::llm_spend::LlmSpend,
     State(state): State<AppState>,
     principal: AuthPrincipal,
     Path(agent_id): Path<String>,
@@ -1562,6 +1563,7 @@ fn format_regression_body(details: &Option<Value>) -> String {
 /// Returns: `{ updated: N, skipped: N }` where `updated` is the count of
 /// cases that received a new rubric, `skipped` is cases that already had one.
 pub async fn generate_rubrics_handler(
+    _spend: crate::handlers::llm_spend::LlmSpend,
     State(state): State<AppState>,
     principal: AuthPrincipal,
     Path(agent_id): Path<String>,
@@ -1727,6 +1729,7 @@ Return ONLY the rubric sentence. No preamble, no quotes, no extra text."#,
 /// }
 /// ```
 pub async fn batch_eval_run_handler(
+    _spend: crate::handlers::llm_spend::LlmSpend,
     State(state): State<AppState>,
     principal: AuthPrincipal,
     Json(body): Json<BatchEvalRunRequest>,

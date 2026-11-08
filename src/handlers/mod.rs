@@ -76,6 +76,7 @@ pub mod forecast_benchmark;
 /// diff, revert. See docs/specs/SPEC_31_FORECAST_HISTORY.md.
 pub mod forecast_git;
 pub mod forecasts;
+pub mod llm_spend;
 // Gates — what the platform refused, and what it cannot refuse. The register,
 // the enforcement map (which verbs a gate can actually stop), and the durable
 // receipt record. Before this the platform had a record of every request it

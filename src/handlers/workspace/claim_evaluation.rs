@@ -589,6 +589,7 @@ pub(super) fn evaluation_yaml(
 // ─── handler ─────────────────────────────────────────────────────────────────
 
 pub async fn evaluate_claims_handler(
+    _spend: crate::handlers::llm_spend::LlmSpend,
     State(state): State<AppState>,
     principal: AuthPrincipal,
     Path(workspace_id): Path<String>,

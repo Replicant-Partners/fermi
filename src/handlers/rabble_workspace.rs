@@ -222,6 +222,34 @@ pub async fn dispatch_rabble_action(
     .map(|(text, _)| text)
 }
 
+/// [`dispatch_rabble_action`] for a call made from a spawned task: asks the
+/// LLM limiter first (`llm_spend::background`) and skips the dispatch when it
+/// refuses, so a side-effect narration cannot spend past the user's limit
+/// while the action that triggered it still succeeds (G17).
+pub async fn dispatch_rabble_action_background(
+    state: &AppState,
+    workspace_id: Uuid,
+    agent_name: &str,
+    action_type: &str,
+    query: &str,
+    user_id: &str,
+    creature_id: Option<Uuid>,
+) -> Result<String, String> {
+    if !crate::handlers::llm_spend::background(state, user_id, "llm limiter: background dispatch") {
+        return Err("LLM rate limit: background dispatch skipped".into());
+    }
+    dispatch_rabble_action(
+        state,
+        workspace_id,
+        agent_name,
+        action_type,
+        query,
+        user_id,
+        creature_id,
+    )
+    .await
+}
+
 /// [`dispatch_rabble_action`], also returning the run's tool calls, so a
 /// caller that enforces a grounding contract can join sourced values to them
 /// (G09) rather than stamping them `model_inference`.
@@ -682,6 +710,7 @@ pub async fn get_personal_workspace_handler(
 /// Gathers current creature positions from active flights, dispatches reynolds_flock agent,
 /// returns updated positions + narration. Charges gas via workspace.
 pub async fn flock_tick_handler(
+    _spend: crate::handlers::llm_spend::LlmSpend,
     State(state): State<AppState>,
     principal: AuthPrincipal,
     axum::extract::Path(swarm_id): axum::extract::Path<Uuid>,
@@ -1024,7 +1053,7 @@ pub async fn transfer_anchor_handler(
                 "anchor_transferred: Anchor has been transferred to {}. Update beacon placement at new position.",
                 c_name
             );
-            let _ = dispatch_rabble_action(
+            if let Err(e) = dispatch_rabble_action_background(
                 &state2,
                 ws_id,
                 "rabble_anchor_manager",
@@ -1033,8 +1062,11 @@ pub async fn transfer_anchor_handler(
                 &user_id2,
                 None,
             )
-            .await;
-            let _ = dispatch_rabble_action(
+            .await
+            {
+                tracing::warn!(error = %e, "background agent dispatch did not complete");
+            }
+            if let Err(e) = dispatch_rabble_action_background(
                 &state2,
                 ws_id,
                 "rabble_lifecycle_coordinator",
@@ -1043,7 +1075,10 @@ pub async fn transfer_anchor_handler(
                 &user_id2,
                 None,
             )
-            .await;
+            .await
+            {
+                tracing::warn!(error = %e, "background agent dispatch did not complete");
+            }
         });
     }
 

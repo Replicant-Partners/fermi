@@ -976,6 +976,7 @@ async fn dream_one_agent(
 }
 
 pub async fn consolidate_agent_handler(
+    _spend: crate::handlers::llm_spend::LlmSpend,
     State(state): State<AppState>,
     principal: AuthPrincipal,
     Path(agent_id): Path<String>,

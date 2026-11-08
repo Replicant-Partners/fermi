@@ -107,6 +107,7 @@ pub struct EnemySensorRequest {
 
 /// POST /api/creatures/:creature_id/enemy-sensor
 pub async fn enemy_sensor_handler(
+    _spend: crate::handlers::llm_spend::LlmSpend,
     State(state): State<AppState>,
     principal: AuthPrincipal,
     Path(creature_id): Path<Uuid>,
@@ -463,6 +464,7 @@ pub struct GenomeProfilerRequest {
 
 /// POST /api/creatures/:creature_id/genome-profiler
 pub async fn genome_profiler_handler(
+    _spend: crate::handlers::llm_spend::LlmSpend,
     State(state): State<AppState>,
     principal: AuthPrincipal,
     Path(creature_id): Path<Uuid>,
@@ -849,6 +851,7 @@ pub struct PreyLocatorRequest {
 /// Premium tactical hunting: scan for prey (2cr), then stalk with flight plan (5cr).
 /// One-time unlock: 5cr.
 pub async fn prey_locator_handler(
+    _spend: crate::handlers::llm_spend::LlmSpend,
     State(state): State<AppState>,
     principal: AuthPrincipal,
     Path(creature_id): Path<Uuid>,
@@ -1495,6 +1498,7 @@ pub struct CreatureDreamRequest {
 /// Chains: coherence evaluation → consolidation → dream narrator.
 /// Records a "dream" transition in creature_versions for leveling.
 pub async fn creature_dream_handler(
+    _spend: crate::handlers::llm_spend::LlmSpend,
     State(state): State<AppState>,
     principal: AuthPrincipal,
     Path(creature_id): Path<Uuid>,
@@ -2045,6 +2049,7 @@ async fn resolve_forage_taxonomy(name: &str, kingdom: &str) -> serde_json::Value
 }
 
 pub async fn forage_handler(
+    _spend: crate::handlers::llm_spend::LlmSpend,
     State(state): State<AppState>,
     principal: AuthPrincipal,
     Path(creature_id): Path<uuid::Uuid>,

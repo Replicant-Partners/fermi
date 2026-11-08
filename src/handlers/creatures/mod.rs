@@ -294,11 +294,16 @@ pub(crate) async fn generate_creature_image(
 /// Trigger swarm host agent to generate a welcome message for a joining creature.
 pub(crate) async fn trigger_swarm_host_welcome(
     state: &crate::AppState,
+    user_id: &str,
     swarm_id: uuid::Uuid,
     creature_name: &str,
     species_name: &str,
     species_group: &str,
 ) {
+    // G17: runs the swarm host's tool loop from a spawned task.
+    if !crate::handlers::llm_spend::background(state, user_id, "llm limiter: swarm welcome") {
+        return;
+    }
     use crate::{resolve_agent, resolve_agent_card};
     use fermi::agent_backend::executor::AgentExecutor;
     use fermi::agent_backend::tool_executor::ToolAwareExecutor;

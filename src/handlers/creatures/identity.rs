@@ -194,7 +194,7 @@ pub async fn mint_creature_handler(
                 "New creature minted: {} ({}, {}). Generate a specimen description and a fun taxonomic fact.",
                 spec_name, sci_name2, group2
             );
-            match rabble_workspace::dispatch_rabble_action(
+            match rabble_workspace::dispatch_rabble_action_background(
                 &state2,
                 ws_id,
                 "naturalist",

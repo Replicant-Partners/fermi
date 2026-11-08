@@ -267,7 +267,7 @@ pub const GATES: &[GateSpec] = &[
         decides_before_the_artifact: true,
         clock: Clock::Invocation,
         retention: Retention::Counted,
-        site: "api_server::rate_limit_middleware, api_server::RateLimiter::check",
+        site: "api_server::rate_limit_middleware, handlers::llm_spend (LLM spend, per handler)",
         refuses: "a caller exceeding the window",
         if_never_refuses: "The limits are set above real traffic, which is fine \
                            and should be a measured statement rather than an \

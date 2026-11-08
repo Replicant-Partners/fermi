@@ -1228,7 +1228,7 @@ pub async fn join_swarm_handler(
                     "Welcome {} ({}, {}) to the rabble! Share a fun taxonomic fact.",
                     c_name, s_name, s_group
                 );
-                if let Ok(welcome) = rabble_workspace::dispatch_rabble_action(
+                if let Ok(welcome) = rabble_workspace::dispatch_rabble_action_background(
                     &state_bg,
                     ws_id,
                     "swarm_host",
@@ -1255,7 +1255,7 @@ pub async fn join_swarm_handler(
                     "participant_joined: {} ({}) has joined the rabble.",
                     c_name, s_name
                 );
-                let _ = rabble_workspace::dispatch_rabble_action(
+                if let Err(e) = rabble_workspace::dispatch_rabble_action_background(
                     &state_bg,
                     ws_id,
                     "rabble_lifecycle_coordinator",
@@ -1264,11 +1264,15 @@ pub async fn join_swarm_handler(
                     &uid_bg,
                     Some(cid_bg),
                 )
-                .await;
+                .await
+                {
+                    tracing::warn!(error = %e, "background agent dispatch did not complete");
+                }
             } else {
                 // Legacy fallback
                 super::trigger_swarm_host_welcome(
                     &state_bg,
+                    &uid_bg,
                     swarm_id,
                     c_name_bg.as_deref().unwrap_or("creature"),
                     s_name_bg.as_deref().unwrap_or("unknown"),

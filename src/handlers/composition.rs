@@ -302,6 +302,7 @@ pub async fn propose_composition_version_handler(
 // ─── POST /api/workspaces/:id/composition/dream ──────────────────────────────
 
 pub async fn composition_dream_handler(
+    _spend: crate::handlers::llm_spend::LlmSpend,
     State(state): State<AppState>,
     principal: AuthPrincipal,
     Path(workspace_id): Path<Uuid>,
