@@ -326,3 +326,47 @@ async fn deployed_execute_is_refused_before_work_when_the_hold_does_not_fit() {
     })
     .await;
 }
+
+/// Live: `POST /api/wallet/transfer` cannot spend credits an open execution
+/// hold reserves. On the old code the transfer checked only the purchased
+/// balance and went through.
+#[tokio::test]
+#[ignore = "needs a deployment: ABW_TEST_BASE_URL + ABW_TEST_DATABASE_URL, run with --ignored"]
+async fn deployed_transfer_cannot_spend_held_credits() {
+    let base = base_url().expect("ABW_TEST_BASE_URL must be set");
+    let Some(pool) = support::pool().await else {
+        return;
+    };
+    support::with_cleanup(&pool, move |pool, c| async move {
+        let mut cc = c.lock().await;
+        let sender = support::make_user(&pool, &mut cc).await;
+        let recipient = support::make_user(&pool, &mut cc).await;
+        let w = support::make_wallet(&pool, &mut cc, "user", &sender, 50).await;
+        let (key, info) = fermi_auth::api_keys::create_api_key(
+            &pool,
+            &sender,
+            "spec36 claims",
+            &["write".to_string()],
+        )
+        .await
+        .expect("api key");
+        cc.api_keys.push(info.key_id);
+        drop(cc);
+        // 45 of 50 reserved by a run in progress.
+        let hold = credit_hold::open(&pool, w, 45, "test").await.expect("hold");
+
+        let r = reqwest::Client::new()
+            .post(format!("{base}/api/wallet/transfer"))
+            .bearer_auth(&key)
+            .json(&serde_json::json!({ "recipient_id": recipient, "amount": 20 }))
+            .send()
+            .await
+            .expect("request");
+        let status = r.status().as_u16();
+        let body = r.text().await.unwrap_or_default();
+        credit_hold::release(&pool, hold, "test").await.unwrap();
+        assert_eq!(status, 402, "held credits are not spendable: {body}");
+        assert_eq!(balance(&pool, w).await, 50, "nothing moved");
+    })
+    .await;
+}

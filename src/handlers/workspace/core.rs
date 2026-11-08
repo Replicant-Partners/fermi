@@ -7,10 +7,7 @@ use axum::{
     Json,
 };
 use fermi::gas::charge_gas;
-use fermi_auth::{
-    credit_charge, credit_charge_purchased_only, credit_deposit_typed, credit_get_transactions,
-    get_or_create_wallet, teams, AuthPrincipal,
-};
+use fermi_auth::{credit_get_transactions, get_or_create_wallet, teams, AuthPrincipal};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::{PgPool, Row};
@@ -708,54 +705,52 @@ pub async fn fund_workspace_handler(
     // granted_balance which credit_charge_purchased_only rejects, causing a
     // silent 402 that leaves workspace_budget and wallet out of sync.
     let is_self_fund = team.owner_id == principal.user_id();
-    let charge_result = if principal.can_admin() || is_self_fund {
-        credit_charge(
-            &state.db,
-            user_wallet.wallet_id,
-            req.amount,
-            "transfer_out",
-            &format!("Fund workspace {}", team.name),
-            Some(&workspace_id),
-        )
+    let ws_wallet = get_or_create_wallet(&state.db, "workspace", &workspace_id)
         .await
-    } else {
-        credit_charge_purchased_only(
-            &state.db,
-            user_wallet.wallet_id,
-            req.amount,
-            "transfer_out",
-            &format!("Fund workspace {}", team.name),
-            Some(&workspace_id),
-        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    // One transaction: the debit, the display budget and the workspace deposit
+    // commit together (a failed deposit used to leave the user charged), and
+    // SPEC 36 R1.3: not credits an open execution hold reserves, nor while
+    // the wallet owes an unpaid execution charge.
+    let ise = |e: String| (StatusCode::INTERNAL_SERVER_ERROR, e);
+    let mut tx = state.db.begin().await.map_err(|e| ise(e.to_string()))?;
+    fermi_auth::credit_ensure_spendable_tx(&mut tx, user_wallet.wallet_id, req.amount)
         .await
-    };
-    charge_result.map_err(|e| (StatusCode::PAYMENT_REQUIRED, e.to_string()))?;
+        .map_err(|e| (StatusCode::PAYMENT_REQUIRED, e.to_string()))?;
+    fermi_auth::credit_charge_tx(
+        &mut tx,
+        user_wallet.wallet_id,
+        req.amount,
+        "transfer_out",
+        &format!("Fund workspace {}", team.name),
+        Some(&workspace_id),
+        // Granted credits only for admins and owners self-funding (unchanged).
+        !(principal.can_admin() || is_self_fund),
+    )
+    .await
+    .map_err(|e| (StatusCode::PAYMENT_REQUIRED, e.to_string()))?;
 
     // Credit workspace budget in teams table (display)
     sqlx::query("UPDATE teams SET workspace_budget = workspace_budget + $1 WHERE id = $2")
         .bind(req.amount)
         .bind(ws_uuid)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| ise(e.to_string()))?;
 
-    // Also credit the workspace wallet (used for gas charges).
-    // Use credit_deposit_typed so wallets.purchased_balance is updated
-    // alongside balance — otherwise the wallet_balance_split_check
-    // constraint (balance = granted_balance + purchased_balance) fires.
-    // tx_type='transfer_in' pairs with the user-side 'transfer_out'.
-    let ws_wallet = get_or_create_wallet(&state.db, "workspace", &workspace_id)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    credit_deposit_typed(
-        &state.db,
+    // The workspace wallet (used for gas charges). `transfer_in` pairs with
+    // the user-side `transfer_out`.
+    fermi_auth::credit_deposit_tx(
+        &mut tx,
         ws_wallet.wallet_id,
         req.amount,
         "transfer_in",
         &format!("Funded from {}", principal.user_id()),
+        None,
     )
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .map_err(|e| ise(e.to_string()))?;
+    tx.commit().await.map_err(|e| ise(e.to_string()))?;
 
     // Auto-commit budget log to workspace git repo
     let wg = state.workspace_git.clone();
