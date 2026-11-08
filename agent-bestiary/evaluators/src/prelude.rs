@@ -1,6 +1,8 @@
 //! Convenience re-exports for downstream callers.
 
-pub use crate::aggregator::{AggregatedSignal, Aggregator, ConflictFlag, DimensionAggregate};
+pub use crate::aggregator::{
+    AggregatedSignal, Aggregator, ConflictFlag, DimensionAggregate, SignalStatus,
+};
 pub use crate::error::EvalError;
 pub use crate::judge::{JudgeOutcome, LlmJudge, LlmJudgeConfig, LlmJudgeEvaluator, NoopLlmJudge};
 pub use crate::model::EvalModel;

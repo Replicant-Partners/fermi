@@ -433,3 +433,21 @@ fn legacy_payload_without_status_is_undetermined() {
     let s: crate::AggregatedSignal = serde_json::from_value(legacy).unwrap();
     assert_eq!(s.status, crate::SignalStatus::Undetermined);
 }
+
+/// A registry that scored nothing (none registered, or all inapplicable)
+/// has no verdict to call `Scored`.
+#[tokio::test]
+async fn nothing_scored_is_undetermined() {
+    use crate::SignalStatus;
+    let bundle = bundle_for(Uuid::new_v4());
+    assert_eq!(
+        EvaluatorRegistry::new().run(&bundle).await.signal.status,
+        SignalStatus::Undetermined
+    );
+    let mut only_inapplicable = EvaluatorRegistry::new();
+    only_inapplicable.register(Arc::new(AlwaysInapplicable("na")));
+    assert_eq!(
+        only_inapplicable.run(&bundle).await.signal.status,
+        SignalStatus::Undetermined
+    );
+}

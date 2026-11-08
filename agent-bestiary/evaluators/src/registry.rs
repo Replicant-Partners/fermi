@@ -169,6 +169,10 @@ impl EvaluatorRegistry {
             SignalStatus::Undetermined
         } else if blocked {
             SignalStatus::Blocked
+        } else if signal.per_dimension.is_empty() {
+            // Nothing scored (no dimensional evaluators, or all inapplicable
+            // or failed): there is no verdict to call `Scored`.
+            SignalStatus::Undetermined
         } else {
             SignalStatus::Scored
         };

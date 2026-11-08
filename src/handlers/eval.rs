@@ -848,7 +848,12 @@ pub async fn run_eval_cases(
     // conflict dimensions. `any_prefilter_blocked` is tracked in the
     // loop above (true if any case had its dimensional evaluators
     // skipped by a pre-filter short-circuit).
-    let run_aggregate = aggregate_run_signals(&per_case_signals);
+    let mut run_aggregate = aggregate_run_signals(&per_case_signals);
+    // A case with no signal (its execution failed before an episode was
+    // stored) was not evaluated, so means over the rest are partial.
+    if per_case_signals.len() < cases.len() {
+        run_aggregate.status = agent_bestiary_evaluators::SignalStatus::Undetermined;
+    }
     let aggregated_signal_json = serde_json::to_value(&run_aggregate).ok();
     let conflict_flags_json =
         serde_json::to_value(&run_aggregate.conflicts).unwrap_or_else(|_| json!([]));
@@ -1317,7 +1322,11 @@ pub async fn detect_regression(
 
     let undetermined_note = undetermined.map(|a| {
         json!({
-            "reason_class": "prefilter_undetermined",
+            "reason_class": if a.failed_evaluators.is_empty() {
+                "cases_unscored"
+            } else {
+                "prefilter_undetermined"
+            },
             "failed_evaluators": a.failed_evaluators,
             "not_evaluated": ["judge_score", "dimensions"],
         })
