@@ -1468,6 +1468,8 @@ async fn run_migrations(db: &PgPool) {
         "migrations/245_critical_schema.sql",
         // SPEC 36 R1.3: append-only credit holds (#48).
         "migrations/246_credit_holds.sql",
+        // LLD G10: the first coherence-gate outcome, replayed at consensus.
+        "migrations/247_two_reviewer_first_gate_outcome.sql",
     ];
 
     // SPEC 36 G16: skip applied, fail on checksum change, fail on any

@@ -1136,6 +1136,11 @@ pub struct TwoReviewerRequest {
     /// exactly what the first reviewer submitted.
     pub encoded_intervention: serde_json::Value,
 
+    /// The coherence-gate outcome the first review produced, replayed at
+    /// consensus rather than recomputed (LLD G10, migration 247). `None` only
+    /// for a request created before it was recorded.
+    pub first_gate_outcome: Option<serde_json::Value>,
+
     pub first_reviewer_id: String,
     pub first_reviewed_at: DateTime<Utc>,
 

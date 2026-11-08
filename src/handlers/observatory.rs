@@ -548,13 +548,22 @@ pub async fn record_hitl_action_handler(
 
     // Step 4a — AgentWide: two-reviewer consensus required.
     if scope == CorrectionScope::AgentWide {
-        let encoded_json = serde_json::to_value(&encoded).unwrap_or(serde_json::Value::Null);
+        // Both are what the second reviewer confirms, so neither may be
+        // stored as a silent `null` the confirmation would then act on.
+        let encoded_json = serde_json::to_value(&encoded)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        // G10: the outcome this review produced, recorded with the request in
+        // the same INSERT so the confirmation replays it instead of re-running
+        // the gate.
+        let first_gate_outcome = serde_json::to_value(&gate_outcome)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
         let two_review_req = TwoReviewerRequest {
             request_id: Uuid::new_v4(),
             anomaly_event_id: event_id,
             agent_id: event.agent_id,
             encoded_intervention: encoded_json,
+            first_gate_outcome: Some(first_gate_outcome),
             first_reviewer_id: user_id.clone(),
             first_reviewed_at: Utc::now(),
             second_reviewer_id: None,
@@ -744,16 +753,34 @@ pub async fn confirm_two_reviewer_handler(
             )
         })?;
 
-    // Re-run the gate to get a fresh GateOutcome for the receipt
-    // (the gate already approved when the first reviewer submitted; we
-    // run it again to populate the gate_outcome fields in the response).
-    let gate = CoherenceGate::default();
-    let gate_outcome = gate.check(&encoded).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Gate re-check failed: {}", e),
-        )
-    })?;
+    // G10: replay the outcome the first review recorded; never re-run.
+    //
+    // This re-ran the gate through `CoherenceGate::check`, which settles against
+    // an empty WorldModel and so always returns `undetermined`. Every
+    // agent-wide correction was persisted with that vacuous outcome, whatever
+    // the first review had found, and the first Γ was lost. Re-running against
+    // a freshly loaded world model would not fix it either: the decision the
+    // two reviewers agreed to is the one the first review saw.
+    //
+    // A request created before the outcome was recorded has nothing to replay,
+    // and is refused rather than confirmed on an outcome nobody computed.
+    let gate_outcome: agent_bestiary_coherence_gate::GateOutcome =
+        match two_req.first_gate_outcome.clone() {
+            Some(v) => serde_json::from_value(v).map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("stored gate outcome is unreadable: {e}"),
+                )
+            })?,
+            None => {
+                return Err((
+                    StatusCode::CONFLICT,
+                    "this request predates recorded gate outcomes (G10), so there is no \
+                     first-review outcome to confirm. Submit the intervention again."
+                        .into(),
+                ))
+            }
+        };
 
     let original_episode = if let Some(ep_id) = encoded.episode_id {
         state.memory_store.get_episode(ep_id).await.ok()
