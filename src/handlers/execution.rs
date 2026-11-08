@@ -73,26 +73,15 @@ pub async fn execute_agent_handler(
     let caller_id = principal.user_id();
 
     // Rate limit LLM calls
-    if let Err(retry) = state.rate_limits.llm.check(&format!("user:{}", caller_id)) {
-        // The limiter is an in-memory map with no export, so its refusals have
-        // never been visible — including the case that matters most, which is a
-        // per-process limiter quietly doing a fraction of its job behind more
-        // than one replica.
-        fermi::gate_trust::decided(
-            fermi::gate_trust::Gate::RateLimit,
-            fermi::gate_trust::Decision::Refused,
-            Some("llm limiter"),
-        );
+    if let Err(retry) =
+        crate::handlers::llm_spend::admit(&state, &format!("user:{}", caller_id), "llm limiter")
+    {
+        // `admit` records the refusal (and an approval) to `Gate::RateLimit`.
         return Err((
             StatusCode::TOO_MANY_REQUESTS,
             format!("LLM rate limit exceeded. Retry after {} seconds.", retry),
         ));
     }
-    fermi::gate_trust::decided(
-        fermi::gate_trust::Gate::RateLimit,
-        fermi::gate_trust::Decision::Approved,
-        None,
-    );
 
     // 0. Check caller has credits
     let wallet = get_or_create_wallet(&state.db, "user", &caller_id)

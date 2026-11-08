@@ -22,6 +22,7 @@ const PRIMITIVES: &[&str] = &[
     "dispatch_rabble_action(",
     "dispatch_rabble_action_recorded(",
     "registry.executor().execute(",
+    "LLMProviderFactory::create(",
     "api.anthropic.com",
     "api.openai.com",
     "openrouter.ai",
