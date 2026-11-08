@@ -7,10 +7,11 @@
 //! dev database run a Claude model.
 //!
 //! The rule, for the `llm_judge` slot: the proposer's family must be known,
-//! and the judge's must differ from it. The other LLM evaluators (WildGuard,
-//! Sotopia, CharacterEval) do not use it yet (#151). An unknown proposer model cannot be shown to differ
-//! from anything, so it gets no judge (rule 4), and the caller records the
-//! judge as unavailable rather than scoring without one.
+//! and the judge's must differ from it. An unknown proposer model cannot be
+//! shown to differ from anything, so it gets no judge (rule 4), and the caller
+//! records the judge as unavailable rather than scoring without one. The
+//! other LLM evaluators (WildGuard, Sotopia, CharacterEval) do not use this
+//! yet (#151).
 
 /// A model lineage. Two models in one family are not independent judges of
 /// each other.
@@ -192,9 +193,10 @@ Respond with ONLY a JSON object: \
 ///
 /// The query, expected output, rubric and agent output are JSON string values
 /// in one object, on one line, between two fence lines carrying a fresh
-/// random nonce (a v4 UUID: 122 random bits). JSON encoding escapes quotes, backslashes and newlines, so
-/// nothing in the data can end its string or start a line, and the end fence
-/// cannot be forged without the nonce. None of it appears in `system`.
+/// random nonce (a v4 UUID: 122 random bits). JSON encoding escapes quotes,
+/// backslashes and newlines, so nothing in the data can end its string or
+/// start a line, and the end fence cannot be forged without the nonce. None of
+/// it appears in `system`.
 pub fn judge_prompt(
     query: &str,
     expected_output: Option<&str>,

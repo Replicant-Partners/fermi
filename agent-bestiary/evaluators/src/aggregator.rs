@@ -273,6 +273,30 @@ mod tests {
         }
     }
 
+    fn unavailable(name: &str) -> RegistryResult {
+        RegistryResult {
+            evaluator_name: name.to_string(),
+            epistemic: crate::model::Epistemic::Interpretive,
+            tier: EvalTier::Dimensional,
+            outcome: Err(EvalError::Unavailable("judge.unavailable: test".into())),
+            latency_ms: 0,
+        }
+    }
+
+    /// G12: `Unavailable` is neither a failure nor "does not apply".
+    #[test]
+    fn unavailable_has_its_own_bucket() {
+        let agg = Aggregator::default().aggregate(&[
+            ok_result("sotopia", "v1", &[("rapport", 0.5)]),
+            unavailable("llm_judge"),
+            failed("character_eval"),
+        ]);
+        assert_eq!(agg.unavailable.len(), 1);
+        assert_eq!(agg.unavailable[0].0, "llm_judge");
+        assert_eq!(agg.failed_evaluators, vec!["character_eval".to_string()]);
+        assert!(agg.inapplicable_evaluators.is_empty());
+    }
+
     #[test]
     fn agreement_within_threshold_does_not_flag_conflict() {
         let agg = Aggregator::default();
