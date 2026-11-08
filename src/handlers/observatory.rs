@@ -21,7 +21,8 @@
 //!
 //! 1. Reviewer acts (this handler)
 //! 2. `InterventionEncoder::encode` → `EncodedIntervention`
-//! 3. `CoherenceGate::check` → blocks `AgentWide` when Γ(C) < 0.5
+//! 3. `CoherenceGate::check_against` (the agent's world model) → blocks
+//!    `AgentWide` when the correction is rejected or Γ(C) < 0.5
 //! 4. `AgentWide` scope: create `two_reviewer_requests` row, return 202
 //!    (awaiting second reviewer).  `Episode`/`Dyad` scope: proceed immediately.
 //! 5. `TwoWriteMemory::execute` → annotation + synthetic episode + optional
@@ -306,7 +307,7 @@ async fn build_agent_world_model(
     db: &sqlx::PgPool,
     agent_id: uuid::Uuid,
     target_episode: Option<uuid::Uuid>,
-) -> agent_bestiary_coherence_gate::gate::WorldModel {
+) -> Result<agent_bestiary_coherence_gate::gate::WorldModel, sqlx::Error> {
     use agent_bestiary_coherence_gate::gate::{WorldModel, WorldNode};
 
     let episodes: Vec<(uuid::Uuid, String)> = sqlx::query_as(
@@ -315,17 +316,19 @@ async fn build_agent_world_model(
     )
     .bind(agent_id)
     .fetch_all(db)
-    .await
-    .unwrap_or_default();
+    .await?;
 
+    // A failed read is an error, not an empty world: an empty world settles
+    // to `undetermined`, and that outcome is persisted and replayed at
+    // consensus (G10), so swallowing the error would freeze an infrastructure
+    // fault into the record two reviewers confirm.
     let rules: Vec<(String, Option<Vec<uuid::Uuid>>)> = sqlx::query_as(
         "SELECT rule_content, source_episode_cluster FROM semantic_rules \
           WHERE agent_id = $1 AND is_active ORDER BY created_at DESC LIMIT 40",
     )
     .bind(agent_id)
     .fetch_all(db)
-    .await
-    .unwrap_or_default();
+    .await?;
 
     let mut nodes: Vec<WorldNode> = Vec::with_capacity(episodes.len() + rules.len());
     let mut index_of: std::collections::HashMap<uuid::Uuid, usize> =
@@ -359,7 +362,7 @@ async fn build_agent_world_model(
     }
 
     let target = target_episode.and_then(|e| index_of.get(&e).copied());
-    WorldModel { nodes, target }
+    Ok(WorldModel { nodes, target })
 }
 
 pub async fn record_hitl_action_handler(
@@ -474,7 +477,14 @@ pub async fn record_hitl_action_handler(
     // score above 0.01 against a threshold of 0.5, so every agent-wide
     // intervention was refused for arithmetic reasons — taking the two-reviewer
     // consensus path, which sits downstream, with it.
-    let world = build_agent_world_model(&state.db, event.agent_id, event.episode_id).await;
+    let world = build_agent_world_model(&state.db, event.agent_id, event.episode_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("could not load the agent's world model for the coherence gate: {e}"),
+            )
+        })?;
     let gate = CoherenceGate::default();
     let gate_result = gate.check_against(&encoded, &world);
 
@@ -548,13 +558,22 @@ pub async fn record_hitl_action_handler(
 
     // Step 4a — AgentWide: two-reviewer consensus required.
     if scope == CorrectionScope::AgentWide {
-        let encoded_json = serde_json::to_value(&encoded).unwrap_or(serde_json::Value::Null);
+        // Both are what the second reviewer confirms, so neither may be
+        // stored as a silent `null` the confirmation would then act on.
+        let encoded_json = serde_json::to_value(&encoded)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        // G10: the outcome this review produced, recorded with the request in
+        // the same INSERT so the confirmation replays it instead of re-running
+        // the gate.
+        let first_gate_outcome = serde_json::to_value(&gate_outcome)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
         let two_review_req = TwoReviewerRequest {
             request_id: Uuid::new_v4(),
             anomaly_event_id: event_id,
             agent_id: event.agent_id,
             encoded_intervention: encoded_json,
+            first_gate_outcome: Some(first_gate_outcome),
             first_reviewer_id: user_id.clone(),
             first_reviewed_at: Utc::now(),
             second_reviewer_id: None,
@@ -744,16 +763,37 @@ pub async fn confirm_two_reviewer_handler(
             )
         })?;
 
-    // Re-run the gate to get a fresh GateOutcome for the receipt
-    // (the gate already approved when the first reviewer submitted; we
-    // run it again to populate the gate_outcome fields in the response).
-    let gate = CoherenceGate::default();
-    let gate_outcome = gate.check(&encoded).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Gate re-check failed: {}", e),
-        )
-    })?;
+    // G10: replay the outcome the first review recorded; never re-run.
+    //
+    // This re-ran the gate through `CoherenceGate::check`, which settles against
+    // an empty WorldModel and so always returns `undetermined`. Every
+    // agent-wide correction was persisted with that vacuous outcome, whatever
+    // the first review had found, and the first Γ was lost.
+    //
+    // Whether consensus should ALSO re-evaluate against the current world
+    // model and refuse on drift (SPEC 36 R6.3, #88) is an open owner decision;
+    // this replays the first outcome only.
+    //
+    // A request created before the outcome was recorded has nothing to replay,
+    // and is refused rather than confirmed on an outcome nobody computed.
+    let gate_outcome: agent_bestiary_coherence_gate::GateOutcome =
+        match two_req.first_gate_outcome.clone() {
+            Some(v) => serde_json::from_value(v).map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("stored gate outcome is unreadable: {e}"),
+                )
+            })?,
+            None => {
+                return Err((
+                    StatusCode::CONFLICT,
+                    "this request predates recorded gate outcomes (G10), so there is no \
+                     first-review outcome to confirm. Reject it (approved: false), then \
+                     submit the intervention again."
+                        .into(),
+                ))
+            }
+        };
 
     let original_episode = if let Some(ep_id) = encoded.episode_id {
         state.memory_store.get_episode(ep_id).await.ok()

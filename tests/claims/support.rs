@@ -63,6 +63,23 @@ pub struct Created {
 
 impl Created {
     pub async fn cleanup(&mut self, pool: &PgPool) {
+        // `episode_corrections` and `hitl_actions` are append-only (UPDATE
+        // triggers raise). Deleting a row either references would SET NULL on
+        // it, so they go first, hitl before corrections (`hitl_actions.
+        // correction_id` is SET NULL). DELETE is not blocked by the triggers.
+        // `two_reviewer_requests` references `anomaly_events` without a
+        // cascade, so it goes before the agent too.
+        for q in [
+            "DELETE FROM two_reviewer_requests WHERE agent_id = ANY($1)",
+            "DELETE FROM hitl_actions WHERE agent_id = ANY($1)",
+            "DELETE FROM episode_corrections WHERE agent_id = ANY($1)",
+        ] {
+            sqlx::query(q)
+                .bind(&self.agents)
+                .execute(pool)
+                .await
+                .expect(q);
+        }
         sqlx::query("DELETE FROM episodes WHERE episode_id = ANY($1)")
             .bind(&self.episodes)
             .execute(pool)

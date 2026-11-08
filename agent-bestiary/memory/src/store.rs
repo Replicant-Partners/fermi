@@ -4917,9 +4917,9 @@ impl MemoryStore {
                 request_id, anomaly_event_id, agent_id,
                 encoded_intervention,
                 first_reviewer_id, first_reviewed_at,
-                status, notes
+                status, notes, first_gate_outcome
                )
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                RETURNING request_id"#,
         )
         .bind(req.request_id)
@@ -4930,6 +4930,7 @@ impl MemoryStore {
         .bind(req.first_reviewed_at)
         .bind(&req.status)
         .bind(&req.notes)
+        .bind(&req.first_gate_outcome)
         .fetch_one(&self.pool)
         .await?;
         Ok(row.try_get("request_id")?)
@@ -4946,7 +4947,7 @@ impl MemoryStore {
                       first_reviewer_id, first_reviewed_at,
                       second_reviewer_id, second_reviewed_at, second_approved,
                       status, correction_id, synthetic_episode_id,
-                      notes, created_at, updated_at
+                      notes, created_at, updated_at, first_gate_outcome
                FROM two_reviewer_requests
                WHERE anomaly_event_id = $1 AND status = 'pending'
                LIMIT 1"#,
@@ -4968,7 +4969,7 @@ impl MemoryStore {
                       first_reviewer_id, first_reviewed_at,
                       second_reviewer_id, second_reviewed_at, second_approved,
                       status, correction_id, synthetic_episode_id,
-                      notes, created_at, updated_at
+                      notes, created_at, updated_at, first_gate_outcome
                FROM two_reviewer_requests
                WHERE request_id = $1"#,
         )
@@ -5005,7 +5006,7 @@ impl MemoryStore {
                          first_reviewer_id, first_reviewed_at,
                          second_reviewer_id, second_reviewed_at, second_approved,
                          status, correction_id, synthetic_episode_id,
-                         notes, created_at, updated_at"#,
+                         notes, created_at, updated_at, first_gate_outcome"#,
         )
         .bind(request_id)
         .bind(second_reviewer_id)
@@ -5024,9 +5025,8 @@ fn row_to_two_reviewer_request(row: &sqlx::postgres::PgRow) -> Result<TwoReviewe
         request_id: row.try_get("request_id")?,
         anomaly_event_id: row.try_get("anomaly_event_id")?,
         agent_id: row.try_get("agent_id")?,
-        encoded_intervention: row
-            .try_get::<serde_json::Value, _>("encoded_intervention")
-            .unwrap_or(serde_json::Value::Null),
+        encoded_intervention: row.try_get("encoded_intervention")?,
+        first_gate_outcome: row.try_get("first_gate_outcome")?,
         first_reviewer_id: row.try_get("first_reviewer_id")?,
         first_reviewed_at: row.try_get("first_reviewed_at")?,
         second_reviewer_id: row.try_get("second_reviewer_id").ok().flatten(),

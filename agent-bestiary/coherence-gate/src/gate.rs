@@ -180,22 +180,21 @@ impl CoherenceGate {
         Self { threshold }
     }
 
-    /// Run the gate check for an encoded intervention.
-    ///
-    /// For `AgentWide` scope (`gate_is_synchronous = true`):
-    ///   Returns `Err(GateError::Blocked)` when Γ(C) < threshold.
-    ///
-    /// For `Episode` / `Dyad` scope:
-    ///   Always returns `Ok(GateOutcome { verdict: Settled })`.
-    pub fn check(&self, intervention: &EncodedIntervention) -> Result<GateOutcome, GateError> {
-        self.check_against(intervention, &WorldModel::default())
-    }
-
     /// Run the gate against the agent's actual beliefs.
     ///
-    /// This is the real entry point; [`Self::check`] is the no-world-model case
-    /// and now returns [`GateVerdict::Undetermined`] rather than a verdict it
-    /// has not earned.
+    /// The only entry point. A `check(intervention)` that settled against an
+    /// empty `WorldModel` existed and could only ever return
+    /// [`GateVerdict::Undetermined`]; the consensus handler called it to
+    /// "re-check" an approved correction and persisted that vacuous outcome
+    /// (LLD G10). It is removed so nothing can re-run the gate without a
+    /// world model: a caller with no beliefs to pass must say so with
+    /// `&WorldModel::default()`.
+    ///
+    /// For `AgentWide` scope (`gate_is_synchronous = true`):
+    ///   Returns `Err(GateError::Blocked)` when the correction is rejected or
+    ///   Γ(C) < threshold.
+    ///
+    /// For `Episode` / `Dyad` scope: returns `Settled`.
     pub fn check_against(
         &self,
         intervention: &EncodedIntervention,

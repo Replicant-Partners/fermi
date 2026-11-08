@@ -311,7 +311,7 @@ fn an_absent_world_model_is_undetermined_not_approved() {
         Some("correction against an agent we know nothing about".to_string()),
     );
     let outcome = gate
-        .check(&encoded)
+        .check_against(&encoded, &WorldModel::default())
         .expect("an empty world model is not an error");
     assert_eq!(outcome.verdict, GateVerdict::Undetermined);
     assert!(outcome.gamma.is_none());
