@@ -2751,6 +2751,10 @@ async fn main() {
     // Disable with CONSOLIDATION_SWEEP_SECS=0.
     handlers::consolidation::spawn_consolidation_sweeper(state.clone());
 
+    // SPEC 36 R0.5: fail episodes left `running` by a process that died
+    // mid-run. Pulses end their own rows; this is the backstop.
+    fermi::episode_reaper::spawn(state.memory_store.clone());
+
     // Spawn rate limiter cleanup task (every 5 min)
     let rl_clone = state.rate_limits.clone();
     tokio::spawn(async move {

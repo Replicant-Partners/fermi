@@ -385,16 +385,20 @@ pub async fn send_message_handler(
         PlatformToolRegistry::standard(),
         tool_context,
     );
-    let output = executor.execute(&agent_stmt, &context).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(a2a_error_body(
-                500,
-                &format!("Execution failed: {}", e),
-                "INTERNAL_ERROR",
-            )),
-        )
-    })?;
+    let output = match executor.execute(&agent_stmt, &context).await {
+        Ok(o) => o,
+        Err(e) => {
+            pulse.abandon(&format!("executor_error: {e}")).await;
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(a2a_error_body(
+                    500,
+                    &format!("Execution failed: {}", e),
+                    "INTERNAL_ERROR",
+                )),
+            ));
+        }
+    };
 
     // ── 10. Grade + validate ──────────────────────────────────────────────
     let graded = pulse.grade(
@@ -1076,6 +1080,7 @@ pub async fn stream_message_handler(
                 ));
             }
             Err(e) => {
+                pulse.abandon(&format!("executor_error: {e}")).await;
                 // ── A2A event: FAILED ─────────────────────────────────
                 yield Ok(Event::default().data(
                     json!({

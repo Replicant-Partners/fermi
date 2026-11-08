@@ -81,10 +81,32 @@ use crate::route_trust::{self, RouteSelection};
 /// Holds how the id came to exist, because that is the difference between a
 /// delegation edge that resolves and one that dangles, and it is not
 /// recoverable from the id itself.
-#[derive(Debug, Clone)]
+///
+/// # Every opened pulse ends (SPEC 36 R0.5 / G07)
+///
+/// A pulse from [`Pulse::open`] whose reservation was written is *armed*: it
+/// owns a `running` row. It ends in exactly one of three ways:
+///
+/// * [`close`] (or [`persist_opened`]) stores the outcome and disarms;
+/// * [`Pulse::abandon`] marks the row `failure` with a reason, awaited;
+/// * [`Pulse::hand_off`] passes the row to an owner outside this process
+///   step (a grounding run, closed by its own submit).
+///
+/// Anything else (an early `?`, a panic, a branch that never closes) drops
+/// an armed pulse, and `Drop` marks the row `failure` with
+/// `abandoned_unclosed:`. Before this, those rows stayed `running` for good
+/// [V: 8 such rows on the dev DB on 2026-11-07, the oldest from 2026-09-02].
+/// `Drop` cannot await, so it spawns the write; `episode_reaper` is the
+/// backstop for a process that dies first.
+///
+/// Not `Clone`: two copies would mean two owners of one row.
+#[must_use = "an opened pulse owns a `running` row: close, abandon or hand it off"]
+#[derive(Debug)]
 pub struct Pulse {
     pub episode_id: Uuid,
     origin: Origin,
+    /// Set only while this pulse owns a reservation that was written.
+    armed: Option<PgPool>,
 }
 
 /// How the episode row came to be — or why it does not exist yet.
@@ -120,17 +142,43 @@ impl Pulse {
     /// the warning names the consequence rather than the error.
     pub async fn open(store: &MemoryStore, agent_uuid: Uuid, query: &str) -> Self {
         let episode_id = Uuid::new_v4();
-        if let Err(e) = store.reserve_episode(episode_id, agent_uuid, query).await {
-            tracing::warn!(
-                agent = %agent_uuid, episode = %episode_id, error = %e,
-                "could not reserve the episode; anything this run delegates will \
-                 point at a row that does not exist",
-            );
-        }
+        let armed = match store.reserve_episode(episode_id, agent_uuid, query).await {
+            Ok(()) => Some(store.pool().clone()),
+            Err(e) => {
+                tracing::warn!(
+                    agent = %agent_uuid, episode = %episode_id, error = %e,
+                    "could not reserve the episode; anything this run delegates will \
+                     point at a row that does not exist",
+                );
+                None
+            }
+        };
         Self {
             episode_id,
             origin: Origin::Reserved,
+            armed,
         }
+    }
+
+    /// End the pulse as a failure: the run did not produce an outcome.
+    ///
+    /// `reason` is stored in `error_details` and should start with its class,
+    /// `executor_error: …` for an executor that returned `Err`. A failed
+    /// write is logged; the caller's own error is the answer that matters,
+    /// and `episode_reaper` retries the row later.
+    pub async fn abandon(mut self, reason: &str) {
+        if let Some(pool) = self.armed.take() {
+            abandon_now(pool, self.episode_id, reason).await;
+        }
+    }
+
+    /// Give the reservation to an owner outside this request: a grounding
+    /// run (`handlers::ground`) is closed by its submit, via
+    /// [`Pulse::reserved_upstream`], or by `episode_reaper` once
+    /// `ground_runs.expires_at` passes. Returns the id.
+    pub fn hand_off(mut self) -> Uuid {
+        self.armed = None;
+        self.episode_id
     }
 
     /// Adopt an id the caller minted **and reserved** itself.
@@ -143,6 +191,7 @@ impl Pulse {
         Self {
             episode_id,
             origin: Origin::ReservedUpstream,
+            armed: None,
         }
     }
 
@@ -157,6 +206,7 @@ impl Pulse {
         Self {
             episode_id,
             origin: Origin::AfterTheFact(why),
+            armed: None,
         }
     }
 
@@ -480,6 +530,46 @@ pub struct Write<'a> {
 /// digest is not a record. What changes is that the episode carries the
 /// verdict, so anything reading it downstream can tell a checked document from
 /// an unchecked one.
+impl Drop for Pulse {
+    fn drop(&mut self) {
+        let Some(pool) = self.armed.take() else {
+            return;
+        };
+        let id = self.episode_id;
+        match tokio::runtime::Handle::try_current() {
+            Ok(rt) => {
+                rt.spawn(abandon_now(
+                    pool,
+                    id,
+                    "abandoned_unclosed: the run ended without closing its pulse \
+                     (early return, panic, or a branch that stores nothing)",
+                ));
+            }
+            Err(_) => tracing::error!(
+                episode = %id,
+                "pulse dropped outside a runtime; episode_reaper will fail the row",
+            ),
+        }
+    }
+}
+
+async fn abandon_now(pool: PgPool, episode_id: Uuid, reason: &str) {
+    match MemoryStore::from_pool(pool)
+        .abandon_running(&[episode_id], reason)
+        .await
+    {
+        Ok(changed) if changed.is_empty() => tracing::warn!(
+            episode = %episode_id,
+            "abandon found no running row: something already ended this episode",
+        ),
+        Ok(_) => tracing::warn!(episode = %episode_id, reason, "episode abandoned"),
+        Err(e) => tracing::error!(
+            episode = %episode_id, error = %e,
+            "could not abandon the episode; episode_reaper will retry",
+        ),
+    }
+}
+
 pub fn stamp_grounding(episode: &mut Episode, report: &Report) {
     if report.is_clean() && report.provenance.is_empty() {
         // No contract for this agent, or nothing to say. Deliberately not
@@ -518,15 +608,18 @@ pub fn stamp_grounding(episode: &mut Episode, report: &Report) {
 /// `agent_timeline_entries` — is keyed on the row, and a swallowed failure
 /// here was how one lost write became two lost loop sinks with no signal
 /// anywhere.
-pub async fn close(pulse: Pulse, graded: &Graded, mut w: Write<'_>) -> anyhow::Result<Uuid> {
+pub async fn close(mut pulse: Pulse, graded: &Graded, mut w: Write<'_>) -> anyhow::Result<Uuid> {
     w.episode.episode_id = pulse.episode_id;
     route_trust::stamp(&mut w.episode, w.route);
     stamp_grounding(&mut w.episode, &graded.report);
 
+    // On `Err` the pulse is still armed and is dropped by the `?`, so a
+    // failed store marks the reservation failed instead of leaving it running.
     let stored = w
         .store
         .store_episode_with_provenance(w.episode, w.provenance, w.source_ref)
         .await?;
+    pulse.armed = None;
 
     // ── Which workspace this happened in ─────────────────────────────────
     //

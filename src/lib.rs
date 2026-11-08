@@ -406,6 +406,7 @@ pub mod verification_queue;
 pub mod episode_access;
 pub mod net_guard;
 pub mod episode_boundary;
+pub mod episode_reaper;
 
 // Running the tool a field contract names.
 //
