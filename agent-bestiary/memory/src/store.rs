@@ -5025,9 +5025,7 @@ fn row_to_two_reviewer_request(row: &sqlx::postgres::PgRow) -> Result<TwoReviewe
         request_id: row.try_get("request_id")?,
         anomaly_event_id: row.try_get("anomaly_event_id")?,
         agent_id: row.try_get("agent_id")?,
-        encoded_intervention: row
-            .try_get::<serde_json::Value, _>("encoded_intervention")
-            .unwrap_or(serde_json::Value::Null),
+        encoded_intervention: row.try_get("encoded_intervention")?,
         first_gate_outcome: row.try_get("first_gate_outcome")?,
         first_reviewer_id: row.try_get("first_reviewer_id")?,
         first_reviewed_at: row.try_get("first_reviewed_at")?,

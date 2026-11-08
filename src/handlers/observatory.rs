@@ -21,7 +21,8 @@
 //!
 //! 1. Reviewer acts (this handler)
 //! 2. `InterventionEncoder::encode` → `EncodedIntervention`
-//! 3. `CoherenceGate::check` → blocks `AgentWide` when Γ(C) < 0.5
+//! 3. `CoherenceGate::check_against` (the agent's world model) → blocks
+//!    `AgentWide` when the correction is rejected or Γ(C) < 0.5
 //! 4. `AgentWide` scope: create `two_reviewer_requests` row, return 202
 //!    (awaiting second reviewer).  `Episode`/`Dyad` scope: proceed immediately.
 //! 5. `TwoWriteMemory::execute` → annotation + synthetic episode + optional
@@ -306,7 +307,7 @@ async fn build_agent_world_model(
     db: &sqlx::PgPool,
     agent_id: uuid::Uuid,
     target_episode: Option<uuid::Uuid>,
-) -> agent_bestiary_coherence_gate::gate::WorldModel {
+) -> Result<agent_bestiary_coherence_gate::gate::WorldModel, sqlx::Error> {
     use agent_bestiary_coherence_gate::gate::{WorldModel, WorldNode};
 
     let episodes: Vec<(uuid::Uuid, String)> = sqlx::query_as(
@@ -315,17 +316,19 @@ async fn build_agent_world_model(
     )
     .bind(agent_id)
     .fetch_all(db)
-    .await
-    .unwrap_or_default();
+    .await?;
 
+    // A failed read is an error, not an empty world: an empty world settles
+    // to `undetermined`, and that outcome is persisted and replayed at
+    // consensus (G10), so swallowing the error would freeze an infrastructure
+    // fault into the record two reviewers confirm.
     let rules: Vec<(String, Option<Vec<uuid::Uuid>>)> = sqlx::query_as(
         "SELECT rule_content, source_episode_cluster FROM semantic_rules \
           WHERE agent_id = $1 AND is_active ORDER BY created_at DESC LIMIT 40",
     )
     .bind(agent_id)
     .fetch_all(db)
-    .await
-    .unwrap_or_default();
+    .await?;
 
     let mut nodes: Vec<WorldNode> = Vec::with_capacity(episodes.len() + rules.len());
     let mut index_of: std::collections::HashMap<uuid::Uuid, usize> =
@@ -359,7 +362,7 @@ async fn build_agent_world_model(
     }
 
     let target = target_episode.and_then(|e| index_of.get(&e).copied());
-    WorldModel { nodes, target }
+    Ok(WorldModel { nodes, target })
 }
 
 pub async fn record_hitl_action_handler(
@@ -474,7 +477,14 @@ pub async fn record_hitl_action_handler(
     // score above 0.01 against a threshold of 0.5, so every agent-wide
     // intervention was refused for arithmetic reasons — taking the two-reviewer
     // consensus path, which sits downstream, with it.
-    let world = build_agent_world_model(&state.db, event.agent_id, event.episode_id).await;
+    let world = build_agent_world_model(&state.db, event.agent_id, event.episode_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("could not load the agent's world model for the coherence gate: {e}"),
+            )
+        })?;
     let gate = CoherenceGate::default();
     let gate_result = gate.check_against(&encoded, &world);
 
@@ -758,9 +768,11 @@ pub async fn confirm_two_reviewer_handler(
     // This re-ran the gate through `CoherenceGate::check`, which settles against
     // an empty WorldModel and so always returns `undetermined`. Every
     // agent-wide correction was persisted with that vacuous outcome, whatever
-    // the first review had found, and the first Γ was lost. Re-running against
-    // a freshly loaded world model would not fix it either: the decision the
-    // two reviewers agreed to is the one the first review saw.
+    // the first review had found, and the first Γ was lost.
+    //
+    // Whether consensus should ALSO re-evaluate against the current world
+    // model and refuse on drift (SPEC 36 R6.3, #88) is an open owner decision;
+    // this replays the first outcome only.
     //
     // A request created before the outcome was recorded has nothing to replay,
     // and is refused rather than confirmed on an outcome nobody computed.
@@ -776,7 +788,8 @@ pub async fn confirm_two_reviewer_handler(
                 return Err((
                     StatusCode::CONFLICT,
                     "this request predates recorded gate outcomes (G10), so there is no \
-                     first-review outcome to confirm. Submit the intervention again."
+                     first-review outcome to confirm. Reject it (approved: false), then \
+                     submit the intervention again."
                         .into(),
                 ))
             }
