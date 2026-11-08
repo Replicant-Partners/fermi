@@ -415,7 +415,7 @@ pub async fn post_rabble_message(
             let user_id2 = user_id.clone();
             tokio::spawn(async move {
                 let query = "Narrate what's happening in this rabble based on the recent conversation. Keep it brief and fun.".to_string();
-                if let Ok(narration) = rabble_workspace::dispatch_rabble_action(
+                if let Ok(narration) = rabble_workspace::dispatch_rabble_action_background(
                     &state2,
                     ws_id,
                     "swarm_host",

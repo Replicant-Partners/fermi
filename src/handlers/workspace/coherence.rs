@@ -233,6 +233,23 @@ pub async fn evaluate_coherence_handler(
         }
     };
 
+    // G17: the paid depths run the consultant's tool loop; `index` is free and
+    // calls no model, so only the paid depths are admitted against the LLM
+    // limiter, before anything is charged.
+    if depth != "index" {
+        crate::handlers::llm_spend::admit(
+            &state,
+            &format!("user:{user_id}"),
+            "llm limiter: coherence evaluate",
+        )
+        .map_err(|retry| {
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                format!("LLM rate limit exceeded. Retry after {retry} seconds."),
+            )
+        })?;
+    }
+
     // Charge credits if tier requires it
     if credit_cost > 0 {
         charge_workspace_gas(

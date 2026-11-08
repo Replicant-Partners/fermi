@@ -389,6 +389,7 @@ pub async fn list_notebooks_handler(
 
 /// POST /api/notebooks/:id/execute
 pub async fn execute_notebook_handler(
+    _spend: crate::handlers::llm_spend::LlmSpend,
     State(state): State<AppState>,
     principal: AuthPrincipal,
     Path(id): Path<Uuid>,
@@ -683,6 +684,7 @@ pub struct FplExecuteResponse {
 }
 
 pub async fn fpl_execute_handler(
+    _spend: crate::handlers::llm_spend::LlmSpend,
     State(state): State<AppState>,
     principal: AuthPrincipal,
     Json(req): Json<FplExecuteRequest>,

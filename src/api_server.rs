@@ -219,117 +219,9 @@ async fn rate_limit_middleware(
     }
 }
 
-/// Routes that dispatch an LLM, and therefore spend real money per call.
-///
-/// `*` matches exactly one path segment, so `/api/agents/*/execute` matches
-/// `/api/agents/abc/execute` and not `/api/agents/abc/execute/stream` — which
-/// is listed separately rather than caught by accident.
-///
-/// ## Why a list and not "all protected routes"
-///
-/// The strict limiter is 10/min. Applying that to every authenticated route
-/// would throttle ordinary dashboard use, the limit would be raised to
-/// something harmless, and the protection would be gone — the same way a
-/// lint that fires on correct code gets deleted. So it is scoped to the
-/// endpoints where one request costs a model call.
-///
-/// ## Why these and not every credit-spending handler
-///
-/// 57 call sites across 23 handler files call `charge_gas` and friends, but
-/// most are bounded by the wallet: `charge_gas` debits first and fails on an
-/// empty balance, so a user cannot spend what they do not have. The
-/// unbounded exposure is the LLM bill we incur per dispatch, which is why
-/// this list is the *dispatch* entry points rather than everything that
-/// touches credits.
-const LLM_SPEND_ROUTES: &[&str] = &[
-    "/api/agents/*/execute",
-    "/api/agents/*/execute/stream",
-    "/api/agents/*/eval/run",
-    "/api/agents/*/consolidate",
-    // NOT `/api/agents/*/dreaming`. That path is a GET returning Loop 1
-    // maturity — five COUNT queries and no model call. It was listed here as
-    // though it were a dispatch, and since the matcher is path-only (no
-    // method), the effect was a 10/min ceiling on a read. The observatory
-    // loads it on every agent selection, so an operator clicking through
-    // eleven agents in a minute got a 429 from a rate limiter that exists to
-    // cap the LLM bill. The dispatch on this loop is `*/consolidate`, above.
-    "/api/me/eval/runs/batch",
-    "/api/creatures/*/enemy-sensor",
-    "/api/creatures/*/genome-profiler",
-    "/api/creatures/*/prey-locator",
-    "/api/creatures/*/dream",
-    "/api/workspaces/*/composition/dream",
-    "/api/notebooks/*/execute",
-];
-
-/// Does this request path name an LLM-dispatching endpoint?
-fn is_llm_spend_route(path: &str) -> bool {
-    let segs: Vec<&str> = path.trim_end_matches('/').split('/').collect();
-    LLM_SPEND_ROUTES.iter().any(|pattern| {
-        let pat: Vec<&str> = pattern.split('/').collect();
-        pat.len() == segs.len()
-            && pat
-                .iter()
-                .zip(&segs)
-                .all(|(p, s)| *p == "*" || p.eq_ignore_ascii_case(s))
-    })
-}
-
-/// Rate limit middleware for LLM endpoints (stricter, per-user).
-///
-/// Was `#[allow(dead_code)]` and referenced nowhere: the limiter was
-/// constructed from `RATE_LIMIT_LLM` on every boot and never consulted, so
-/// the endpoints that spend money were the only ones with no rate limit at
-/// all while the public read-only routes had one. Dead code that looks like
-/// a control is worse than absent code, because the control appears in the
-/// config and in review.
-///
-/// Passes non-LLM paths straight through, so it can be layered over the
-/// whole protected router without carving hundreds of routes into a
-/// sub-router.
-async fn llm_rate_limit_middleware(
-    State(state): State<AppState>,
-    req: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> Result<Response, (StatusCode, String)> {
-    // Everything that is not an LLM dispatch is none of this layer's
-    // business. Checked before the key is built so the common path costs a
-    // string comparison.
-    if !is_llm_spend_route(req.uri().path()) {
-        return Ok(next.run(req).await);
-    }
-
-    // Try to extract user_id from auth principal (Extension)
-    let key = req
-        .extensions()
-        .get::<AuthPrincipal>()
-        .map(|p| format!("user:{}", p.user_id()))
-        .unwrap_or_else(|| {
-            req.headers()
-                .get("x-forwarded-for")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.split(',').next())
-                .map(|s| format!("ip:{}", s.trim()))
-                .unwrap_or_else(|| "unknown".to_string())
-        });
-
-    match state.rate_limits.llm.check(&key) {
-        Ok(remaining) => {
-            let mut response = next.run(req).await;
-            response
-                .headers_mut()
-                .insert("x-ratelimit-remaining", HeaderValue::from(remaining));
-            Ok(response)
-        }
-        Err(retry_after) => Err((
-            StatusCode::TOO_MANY_REQUESTS,
-            format!(
-                "LLM rate limit exceeded ({}/min). Retry after {} seconds.",
-                state.rate_limits.llm.max_requests, retry_after
-            ),
-        )),
-    }
-}
+// LLM spend is rate limited per handler, not per path: see
+// `handlers::llm_spend` (G17). The path list `LLM_SPEND_ROUTES` and its
+// middleware were removed because the list drifted from the handlers.
 
 /// Stripe configuration — pricing tiers for credit purchases.
 #[derive(Clone, Default)]
@@ -4859,18 +4751,8 @@ async fn main() {
         // Layers run outermost-last, so the order below is:
         //   auth_middleware -> impersonation_guard -> llm_rate_limit -> handler
         //
-        // The LLM limiter is innermost because it keys on the resolved
-        // AuthPrincipal, which `auth_middleware` puts in the extensions. It
-        // passes every non-LLM path straight through; see LLM_SPEND_ROUTES.
-        //
-        // Until now this router had NO rate limiting of any kind, while the
-        // public read-only router had one. The endpoints that spend money
-        // were the only unprotected ones, because the middleware written for
-        // them was `#[allow(dead_code)]` and never layered.
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            llm_rate_limit_middleware,
-        ))
+        // No LLM layer here: each spending handler declares its spend
+        // (`handlers::llm_spend::LlmSpend`, G17).
         // Inside `auth_middleware` (see the public-router note above):
         // enforces the read-only contract and writes the audit trail
         // for any request carrying an impersonated principal.
@@ -6550,92 +6432,8 @@ mod failure_provenance_tests {
         );
     }
 
-    // ── LLM rate limiting ──────────────────────────────────────────
-
-    #[test]
-    fn the_expensive_endpoints_are_rate_limited() {
-        for path in [
-            "/api/agents/1f3c-abc/execute",
-            "/api/agents/1f3c-abc/execute/stream",
-            "/api/agents/1f3c-abc/eval/run",
-            "/api/agents/1f3c-abc/consolidate",
-            "/api/me/eval/runs/batch",
-            "/api/creatures/9a/genome-profiler",
-            "/api/creatures/9a/enemy-sensor",
-            "/api/creatures/9a/prey-locator",
-            "/api/creatures/9a/dream",
-            "/api/workspaces/w1/composition/dream",
-            "/api/notebooks/n1/execute",
-        ] {
-            assert!(
-                is_llm_spend_route(path),
-                "{path} dispatches a model and must be rate limited"
-            );
-        }
-    }
-
-    #[test]
-    fn ordinary_reads_are_not_throttled() {
-        // The strict limiter is 10/min. If it caught routine dashboard
-        // traffic the limit would be raised until it was harmless, and the
-        // protection would be gone — so over-matching is the failure mode
-        // that actually matters here.
-        for path in [
-            "/api/auth/me",
-            "/api/agents",
-            "/api/agents/1f3c-abc",
-            "/api/agents/1f3c-abc/episodes",
-            "/api/agents/1f3c-abc/eval/runs",
-            // Loop 1 maturity: a read the observatory issues on every agent
-            // selection. It was on the LLM list, which capped the clinical
-            // view at ten agents per minute.
-            "/api/agents/1f3c-abc/dreaming",
-            "/api/observatory/agents/1f3c-abc/loops",
-            "/api/forecasts",
-            "/api/creatures/9a",
-            "/api/workspaces/w1/messages",
-            "/api/notebooks/n1",
-        ] {
-            assert!(
-                !is_llm_spend_route(path),
-                "{path} is a read and must not be throttled at LLM rates"
-            );
-        }
-    }
-
-    #[test]
-    fn a_wildcard_matches_exactly_one_segment() {
-        // `/api/agents/*/execute` must not swallow `/execute/stream` by
-        // prefix, and must not match a path with the segment missing.
-        assert!(!is_llm_spend_route("/api/agents/execute"));
-        assert!(!is_llm_spend_route("/api/agents/a/b/execute"));
-        // Trailing slash is the same route.
-        assert!(is_llm_spend_route("/api/agents/abc/execute/"));
-        // And nothing matches the root, which an empty or "/" pattern would.
-        assert!(!is_llm_spend_route("/"));
-        assert!(!is_llm_spend_route(""));
-    }
-
-    #[test]
-    fn no_declared_pattern_is_dangerously_broad() {
-        for pattern in LLM_SPEND_ROUTES {
-            assert!(
-                pattern.starts_with("/api/"),
-                "{pattern} does not look like an API route"
-            );
-            let segs: Vec<&str> = pattern.split('/').collect();
-            assert!(
-                segs.len() >= 4,
-                "{pattern} is too short to be specific — a two-segment \
-                 pattern would throttle an entire namespace"
-            );
-            assert!(
-                !pattern.ends_with('*'),
-                "{pattern} ends in a wildcard, which matches every child \
-                 route including cheap reads"
-            );
-        }
-    }
+    // LLM rate limiting moved to `handlers::llm_spend`; its claims are in
+    // tests/claims/llm_spend.rs (G17).
 
     #[test]
     fn the_binding_verdict_comes_from_the_card_not_the_caller() {

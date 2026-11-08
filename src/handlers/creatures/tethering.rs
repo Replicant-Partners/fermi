@@ -77,7 +77,7 @@ pub async fn update_creature_presence_handler(
                 "Creature {} is now {}. Log the transition.",
                 name2, presence2
             );
-            let _ = rabble_workspace::dispatch_rabble_action(
+            let _ = rabble_workspace::dispatch_rabble_action_background(
                 &state2,
                 ws_id,
                 "keeper",

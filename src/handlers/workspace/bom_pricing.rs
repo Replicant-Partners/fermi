@@ -437,6 +437,7 @@ pub(super) fn serving_basis_ml(composition: &Value) -> Option<f64> {
 // ─── handler ─────────────────────────────────────────────────────────────────
 
 pub async fn price_bom_handler(
+    _spend: crate::handlers::llm_spend::LlmSpend,
     State(state): State<AppState>,
     principal: AuthPrincipal,
     Path(workspace_id): Path<String>,

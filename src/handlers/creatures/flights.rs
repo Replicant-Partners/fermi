@@ -238,7 +238,7 @@ pub async fn record_flight_handler(
                 "Creature is flying from {}. Describe the habitat and what it might observe.",
                 loc
             );
-            match rabble_workspace::dispatch_rabble_action(
+            match rabble_workspace::dispatch_rabble_action_background(
                 &state2,
                 ws_id,
                 "navigator",
@@ -296,7 +296,7 @@ pub async fn record_flight_handler(
                                  Use scan_nearby_creatures with creature_id \"{}\".",
                                 cid, cid
                             );
-                            match rabble_workspace::dispatch_rabble_action(
+                            match rabble_workspace::dispatch_rabble_action_background(
                                 &state3,
                                 ws_id,
                                 "enemy_sensor",
@@ -763,7 +763,7 @@ pub async fn end_flight_handler(
                     "anchor_departing: Anchor creature {} is leaving the rabble! List eligible transfer targets.",
                     creature_name
                 );
-                let _ = rabble_workspace::dispatch_rabble_action(
+                let _ = rabble_workspace::dispatch_rabble_action_background(
                     &spawn_state,
                     ws_id,
                     "rabble_anchor_manager",
@@ -980,7 +980,7 @@ pub async fn plan_flight_handler(
     let dest_clone = req.destination.clone();
     tokio::spawn(async move {
         let pool_bg = spawn_state.memory_store.pool();
-        match rabble_workspace::dispatch_rabble_action(
+        match rabble_workspace::dispatch_rabble_action_background(
             &spawn_state,
             ws_id,
             "flight_coordinator",
@@ -1544,7 +1544,7 @@ pub async fn fly_handler(
                 )
             };
 
-            match rabble_workspace::dispatch_rabble_action(
+            match rabble_workspace::dispatch_rabble_action_background(
                 &spawn_state,
                 ws_id,
                 "flight_coordinator",

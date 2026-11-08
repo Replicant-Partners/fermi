@@ -210,6 +210,7 @@ pub async fn delete_eval_test_case_handler(
 }
 
 pub async fn trigger_eval_run_handler(
+    _spend: crate::handlers::llm_spend::LlmSpend,
     State(state): State<AppState>,
     principal: AuthPrincipal,
     Path(agent_id): Path<String>,
@@ -1727,6 +1728,7 @@ Return ONLY the rubric sentence. No preamble, no quotes, no extra text."#,
 /// }
 /// ```
 pub async fn batch_eval_run_handler(
+    _spend: crate::handlers::llm_spend::LlmSpend,
     State(state): State<AppState>,
     principal: AuthPrincipal,
     Json(body): Json<BatchEvalRunRequest>,

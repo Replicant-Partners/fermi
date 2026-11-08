@@ -1228,7 +1228,7 @@ pub async fn join_swarm_handler(
                     "Welcome {} ({}, {}) to the rabble! Share a fun taxonomic fact.",
                     c_name, s_name, s_group
                 );
-                if let Ok(welcome) = rabble_workspace::dispatch_rabble_action(
+                if let Ok(welcome) = rabble_workspace::dispatch_rabble_action_background(
                     &state_bg,
                     ws_id,
                     "swarm_host",
@@ -1255,7 +1255,7 @@ pub async fn join_swarm_handler(
                     "participant_joined: {} ({}) has joined the rabble.",
                     c_name, s_name
                 );
-                let _ = rabble_workspace::dispatch_rabble_action(
+                let _ = rabble_workspace::dispatch_rabble_action_background(
                     &state_bg,
                     ws_id,
                     "rabble_lifecycle_coordinator",
