@@ -42,11 +42,34 @@ pub struct ConflictFlag {
     pub evaluators: Vec<String>,
 }
 
+/// Whether the signal is a verdict (SPEC 36 R0.7 / LLD G11).
+///
+/// `Undetermined` is the default, including for stored payloads written
+/// before the field existed: a signal nobody marked as scored must not read
+/// as one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SignalStatus {
+    /// Every pre-filter decided and none blocked; dimensional scoring ran.
+    Scored,
+    /// A pre-filter scored below the block threshold; dimensional scoring
+    /// was skipped. A verdict.
+    Blocked,
+    /// A pre-filter could not decide (it returned an error that is not
+    /// `Inapplicable`). Dimensional scoring was skipped. Not a verdict, and
+    /// never a pass.
+    #[default]
+    Undetermined,
+}
+
 /// What the aggregator emits. Phase 2 stores this on `eval_runs` /
 /// `eval_signals`; Phase 3 surfaces it on the timeline; Phase 4 routes
 /// to the HITL queue when conflicts trigger.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AggregatedSignal {
+    /// Set by `EvaluatorRegistry::run`; see [`SignalStatus`].
+    #[serde(default)]
+    pub status: SignalStatus,
     pub per_dimension: Vec<DimensionAggregate>,
     pub conflicts: Vec<ConflictFlag>,
     /// Aggregated flags from all evaluators (pre-filter `safety:*`,
@@ -157,6 +180,9 @@ impl Aggregator {
         failure_reasons.sort();
 
         AggregatedSignal {
+            // The aggregator only sees results; whether a pre-filter stopped
+            // the run is the registry's to say, and it overwrites this.
+            status: SignalStatus::Scored,
             per_dimension,
             conflicts,
             flags: all_flags,

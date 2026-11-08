@@ -78,6 +78,7 @@ mod tests {
     #[test]
     fn entry_serializes_dim_scores_as_object() {
         let agg = AggregatedSignal {
+            status: agent_bestiary_evaluators::SignalStatus::Scored,
             per_dimension: vec![
                 DimensionAggregate {
                     dimension: Dimension::new("rapport"),

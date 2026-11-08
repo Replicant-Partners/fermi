@@ -1137,6 +1137,8 @@ fn tier_label(tier: agent_bestiary_evaluators::EvalTier) -> fermi::seam_vocabula
 fn aggregate_run_signals(signals: &[AggregatedSignal]) -> AggregatedSignal {
     if signals.is_empty() {
         return AggregatedSignal {
+            // No case produced a signal: nothing was decided.
+            status: agent_bestiary_evaluators::SignalStatus::Undetermined,
             per_dimension: vec![],
             conflicts: vec![],
             flags: vec![],
@@ -1218,7 +1220,23 @@ fn aggregate_run_signals(signals: &[AggregatedSignal]) -> AggregatedSignal {
     let mut conflicts: Vec<ConflictFlag> = conflict_dims.into_values().collect();
     conflicts.sort_by(|a, b| a.dimension.as_str().cmp(b.dimension.as_str()));
 
+    // The run is only as determined as its least determined case: one case
+    // whose pre-filter could not decide makes the run undetermined, so an
+    // outage cannot be averaged into a pass (SPEC 36 R0.7).
+    use agent_bestiary_evaluators::SignalStatus;
+    let status = if signals
+        .iter()
+        .any(|s| s.status == SignalStatus::Undetermined)
+    {
+        SignalStatus::Undetermined
+    } else if signals.iter().any(|s| s.status == SignalStatus::Blocked) {
+        SignalStatus::Blocked
+    } else {
+        SignalStatus::Scored
+    };
+
     AggregatedSignal {
+        status,
         per_dimension,
         conflicts,
         flags: all_flags,

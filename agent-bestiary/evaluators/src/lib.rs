@@ -52,7 +52,9 @@ pub mod tier;
 #[cfg(test)]
 mod tests;
 
-pub use aggregator::{AggregatedSignal, Aggregator, ConflictFlag, DimensionAggregate};
+pub use aggregator::{
+    AggregatedSignal, Aggregator, ConflictFlag, DimensionAggregate, SignalStatus,
+};
 pub use error::EvalError;
 pub use judge::{JudgeOutcome, LlmJudge, LlmJudgeConfig, LlmJudgeEvaluator, NoopLlmJudge};
 pub use llm_json::{extract_json_object, parse_llm_json};

@@ -17,7 +17,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::aggregator::{AggregatedSignal, Aggregator};
+use crate::aggregator::{AggregatedSignal, Aggregator, SignalStatus};
 use crate::model::EvalModel;
 use crate::result::RegistryResult;
 use crate::tier::EvalTier;
@@ -117,18 +117,32 @@ impl EvaluatorRegistry {
         let start = Instant::now();
         let mut results: Vec<RegistryResult> = Vec::new();
         let mut blocked = false;
+        let mut undetermined = false;
 
         // ── Pre-filters: serial, ordered, can short-circuit ──
+        //
+        // A pre-filter that errors has not said the content is safe. It used
+        // to be read as "not below block" and scoring went on, so a safety
+        // filter failed open on every provider outage (SPEC 36 R0.7 / G11).
+        // Now it stops the run as `Undetermined`. `Inapplicable` is a
+        // decision ("this filter does not apply") and continues.
         for ev in &self.pre_filters {
             let r = run_one(ev.as_ref(), bundle).await;
-            let score_below_block = match &r.outcome {
-                Ok(eval) => self
-                    .prefilter_block_threshold
-                    .map(|t| eval.dimension_scores.values().any(|s| *s < t))
-                    .unwrap_or(false),
-                _ => false,
+            let (score_below_block, failed) = match &r.outcome {
+                Ok(eval) => (
+                    self.prefilter_block_threshold
+                        .map(|t| eval.dimension_scores.values().any(|s| *s < t))
+                        .unwrap_or(false),
+                    false,
+                ),
+                Err(e) if e.is_inapplicable() => (false, false),
+                Err(_) => (false, true),
             };
             results.push(r);
+            if failed {
+                undetermined = true;
+                break;
+            }
             if score_below_block {
                 blocked = true;
                 break;
@@ -136,7 +150,7 @@ impl EvaluatorRegistry {
         }
 
         // ── Dimensional: parallel ──
-        if !blocked {
+        if !blocked && !undetermined {
             let futs: Vec<_> = self
                 .dimensional
                 .iter()
@@ -149,7 +163,14 @@ impl EvaluatorRegistry {
             results.extend(parallel_results);
         }
 
-        let signal = self.aggregator.aggregate(&results);
+        let mut signal = self.aggregator.aggregate(&results);
+        signal.status = if undetermined {
+            SignalStatus::Undetermined
+        } else if blocked {
+            SignalStatus::Blocked
+        } else {
+            SignalStatus::Scored
+        };
         let total_latency_ms = start.elapsed().as_millis() as u64;
 
         RegistryOutcome {
