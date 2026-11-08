@@ -1287,28 +1287,19 @@ pub async fn detect_regression(
     // also flagged as regressions.
     current_run_aggregate: Option<&AggregatedSignal>,
 ) -> (bool, Option<Value>) {
-    // An undetermined run (a pre-filter could not decide on some case) has
-    // no verdict to compare, so it is not "no regression". `regression_detected`
-    // is a bool column, so the run stores `false` and says why in the details:
-    // `{"status": "undetermined", "reason_class": ...}`, which
-    // `format_regression_body` never sees because nothing is notified
-    // (SPEC 36 R0.7, directive rule 4).
-    if let Some(agg) = current_run_aggregate {
-        if agg.status == agent_bestiary_evaluators::SignalStatus::Undetermined {
-            return (
-                false,
-                Some(json!({
-                    "status": "undetermined",
-                    "reason_class": "prefilter_undetermined",
-                    "failed_evaluators": agg.failed_evaluators,
-                })),
-            );
-        }
-    }
+    // Pass rate and latency do not depend on evaluators and are always
+    // checked. Judge and per-dimension comparisons need a verdict: on an
+    // undetermined run (a pre-filter could not decide on some case,
+    // [V] `EvaluatorRegistry::run`, agent-bestiary/evaluators/src/registry.rs:132)
+    // they are not "no regression", they are not evaluated, and the details
+    // say so under `undetermined`. `regression_detected` is a bool column; it
+    // is true only when a check that could decide found a drop.
+    let undetermined = current_run_aggregate
+        .filter(|a| a.status == agent_bestiary_evaluators::SignalStatus::Undetermined);
 
-    // The baseline is the latest completed run that reached a verdict. An
-    // undetermined or blocked run has no dimensional scores, and using it as
-    // the baseline would hide the next run's drops. Runs stored before
+    // The baseline is the latest completed run that is not undetermined: its
+    // judge and dimension means cover only the cases that decided, so using
+    // it as the baseline would hide the next run's drops. Runs stored before
     // `status` existed carry no field and stay eligible.
     let prev_runs = state.memory_store.list_eval_runs(agent_id, 10).await.ok();
     let prev = prev_runs.and_then(|runs| {
@@ -1319,13 +1310,23 @@ pub async fn detect_regression(
                         .as_ref()
                         .and_then(|a| a.get("status"))
                         .and_then(|s| s.as_str()),
-                    Some("undetermined") | Some("blocked")
+                    Some("undetermined")
                 )
         })
     });
 
+    let undetermined_note = undetermined.map(|a| {
+        json!({
+            "reason_class": "prefilter_undetermined",
+            "failed_evaluators": a.failed_evaluators,
+            "not_evaluated": ["judge_score", "dimensions"],
+        })
+    });
     let Some(prev) = prev else {
-        return (false, None);
+        return (
+            false,
+            undetermined_note.map(|u| json!({ "regressions": [], "undetermined": u })),
+        );
     };
 
     let mut regressions = Vec::new();
@@ -1347,6 +1348,7 @@ pub async fn detect_regression(
     }
 
     // Judge score regression (>0.5 drop on 5-point scale)
+    let current_judge = current_judge.filter(|_| undetermined.is_none());
     if let (Some(prev_j), Some(curr_j)) = (prev.avg_judge_score, current_judge) {
         if prev_j - curr_j > 0.5 {
             regressions.push(json!({
@@ -1374,9 +1376,10 @@ pub async fn detect_regression(
     // Compares the current run's per-dimension means against the
     // previous run's `aggregated_signal.per_dimension`. A drop > 0.10
     // on any dimension flags a regression for that dimension.
-    if let (Some(curr_agg), Some(prev_agg_value)) =
-        (current_run_aggregate, prev.aggregated_signal.as_ref())
-    {
+    if let (Some(curr_agg), Some(prev_agg_value)) = (
+        current_run_aggregate.filter(|_| undetermined.is_none()),
+        prev.aggregated_signal.as_ref(),
+    ) {
         if let Some(prev_per_dim) = prev_agg_value
             .get("per_dimension")
             .and_then(|v| v.as_array())
@@ -1407,10 +1410,12 @@ pub async fn detect_regression(
     }
 
     let detected = !regressions.is_empty();
-    let details = if detected {
-        Some(json!(regressions))
-    } else {
-        None
+    let details = match undetermined_note {
+        // Object form only when undetermined, so existing readers of the
+        // array form (`format_regression_body`) are unchanged otherwise.
+        Some(u) => Some(json!({ "regressions": regressions, "undetermined": u })),
+        None if detected => Some(json!(regressions)),
+        None => None,
     };
     (detected, details)
 }
@@ -1423,7 +1428,10 @@ fn format_regression_body(details: &Option<Value>) -> String {
             .into();
     };
     let empty = vec![];
-    let regressions = details.as_array().unwrap_or(&empty);
+    let regressions = details
+        .as_array()
+        .or_else(|| details.get("regressions").and_then(|r| r.as_array()))
+        .unwrap_or(&empty);
 
     let mut lines = vec![format!(
         "{} regression(s) detected in the latest eval run:",

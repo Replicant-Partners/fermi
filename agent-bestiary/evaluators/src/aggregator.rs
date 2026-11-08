@@ -182,7 +182,7 @@ impl Aggregator {
         AggregatedSignal {
             // Fail closed: the aggregator only sees results, so it does not
             // claim a verdict. `EvaluatorRegistry::run`
-            // (agent-bestiary/evaluators/src/registry.rs) sets the status.
+            // (agent-bestiary/evaluators/src/registry.rs:168) sets the status.
             status: SignalStatus::Undetermined,
             per_dimension,
             conflicts,

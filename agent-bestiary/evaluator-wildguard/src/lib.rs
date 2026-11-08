@@ -180,7 +180,7 @@ impl EvalModel for WildGuardEvaluator {
         // default below, so a moderation outage scored every response 1.0
         // [V: 1,172 such WildGuard signals in dev `eval_signals`,
         // 2026-06-06..2026-08-11]. [I] The registry turns the error into an
-        // `Undetermined` signal (agent-bestiary/evaluators/src/registry.rs,
+        // `Undetermined` signal (agent-bestiary/evaluators/src/registry.rs:168,
         // `EvaluatorRegistry::run`).
         if let Some(llm) = &self.llm {
             return llm_moderate(llm, &text, bundle, self.name(), self.version(), t0).await;
