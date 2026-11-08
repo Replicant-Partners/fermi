@@ -6160,7 +6160,7 @@ mod tests {
     }
 
     #[test]
-    fn values_the_tool_returned_bind_to_tool_verified() {
+    fn values_the_tool_returned_join_to_tool_verified() {
         let mut doc = resolved_chanterelle();
         let mut report = enforce("forage_identify", &mut doc);
         let gbif = r#"{"kingdom":"Fungi","family":"Hydnaceae","scientificName":"Cantharellus cibarius Fr.","usageKey":5249504}"#;
