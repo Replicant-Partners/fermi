@@ -1511,7 +1511,7 @@ pub fn response_floor(
         return None;
     }
     let mut report = enforce(agent_id, &mut doc);
-    bind_tool_calls(Some(&mut doc), &mut report, tool_calls);
+    join_tool_calls(Some(&mut doc), &mut report, tool_calls);
     Some(floor(report.provenance.iter().map(|(_, v)| *v)))
 }
 
@@ -4232,10 +4232,10 @@ pub struct Report {
     pub provenance: Vec<(String, &'static str)>,
     /// Populated sourced blocks enforcement could not settle, because it cannot
     /// see the run record. Stamped [`PROV_INFERRED`] until
-    /// [`bind_tool_calls`] drains this list.
-    pub awaiting_binding: Vec<AwaitingBinding>,
-    /// What [`bind_tool_calls`] decided for each block it drained.
-    pub binding: Vec<BindingOutcome>,
+    /// [`join_tool_calls`] drains this list.
+    pub awaiting_tool_join: Vec<AwaitingToolJoin>,
+    /// What [`join_tool_calls`] decided for each block it drained.
+    pub tool_join: Vec<ToolJoinOutcome>,
 }
 
 /// A sourced block with content, whose values have not yet been joined
@@ -4243,43 +4243,47 @@ pub struct Report {
 ///
 /// Enforcement is pure over the document. Whether a value came from a tool is
 /// a fact about the run record, so enforcement stamps [`PROV_INFERRED`] and
-/// leaves this behind; [`bind_tool_calls`] is the only code that can replace it
+/// leaves this behind; [`join_tool_calls`] is the only code that can replace it
 /// with [`PROV_TOOL`].
 #[derive(Debug, Clone, PartialEq)]
-pub struct AwaitingBinding {
+pub struct AwaitingToolJoin {
     pub block: String,
     /// The `Sourced` paths under `block` whose values are claims. For a
     /// block-level `sourced` declaration this is the block itself.
     pub paths: Vec<String>,
 }
 
-/// Why a sourced block was not bound to a tool call.
+/// Why a sourced block was not joined to a tool call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UnboundReason {
+pub enum UnjoinedReason {
     /// The run recorded no tool call at all.
     NoToolCalls,
     /// At least one claimed value appears in no tool output.
     ValueNotInToolOutput,
+    /// Every claimed value was a boolean, null, placeholder or one-character
+    /// string: nothing a literal comparison can decide either way.
+    NothingCheckable,
 }
 
-impl UnboundReason {
+impl UnjoinedReason {
     pub fn id(self) -> &'static str {
         match self {
             Self::NoToolCalls => "no_tool_calls",
             Self::ValueNotInToolOutput => "value_not_in_tool_output",
+            Self::NothingCheckable => "nothing_checkable",
         }
     }
 }
 
-/// One block's binding verdict.
+/// One block's tool-join verdict.
 #[derive(Debug, Clone, PartialEq)]
-pub struct BindingOutcome {
+pub struct ToolJoinOutcome {
     pub block: String,
     /// [`PROV_TOOL`] when every claimed value was found in a tool output,
     /// [`PROV_INFERRED`] otherwise.
     pub verdict: &'static str,
-    /// `None` when bound.
-    pub reason: Option<UnboundReason>,
+    /// `None` when joined.
+    pub reason: Option<UnjoinedReason>,
     /// The paths holding values no tool output contains.
     pub unmatched: Vec<String>,
 }
@@ -4300,8 +4304,8 @@ impl Report {
     pub fn merge(&mut self, other: Report) {
         self.violations.extend(other.violations);
         self.provenance.extend(other.provenance);
-        self.awaiting_binding.extend(other.awaiting_binding);
-        self.binding.extend(other.binding);
+        self.awaiting_tool_join.extend(other.awaiting_tool_join);
+        self.tool_join.extend(other.tool_join);
     }
 
     /// **What was refused**, for `gate_decisions.reason`.
@@ -5124,7 +5128,7 @@ pub fn enforce_from_output_contract(
 ///
 /// The only function that can stamp [`PROV_TOOL`]. Enforcement stamps every
 /// populated sourced block [`PROV_INFERRED`] and records it in
-/// [`Report::awaiting_binding`]; this drains that list and decides each block:
+/// [`Report::awaiting_tool_join`]; this drains that list and decides each block:
 ///
 /// * no tool call recorded for the run: [`PROV_INFERRED`], `no_tool_calls`;
 /// * any claimed value under the block's sourced paths that appears in no tool
@@ -5135,56 +5139,74 @@ pub fn enforce_from_output_contract(
 /// and three `genome_profiler` taxonomy blocks on the dev database carried it
 /// with zero tool calls behind them.
 ///
-/// Matching is deliberately literal: a string matches when it occurs,
-/// case-insensitively, in some tool output (raw, or the decoded string leaves
-/// of a JSON output); a number when one of its usual renderings does. Strings
-/// shorter than three characters, booleans, nulls and provenance labels
-/// (`*_provenance`, `provenance`) are not checked, because a substring test cannot tell them apart from noise.
+/// Matching is literal and per call: a value is supported only by one tool
+/// output, never by a seam between two.
+///
+/// * A string (two characters or more) must occur in a single output with no
+///   letter or digit either side, after both sides are lowercased, stripped of
+///   HTML tags, and have dashes, quotes and whitespace folded. For a JSON
+///   output only its string values are searched, never its keys.
+/// * A number must equal one the output contains, or be that number rounded
+///   to the claim's own decimal places. A claim more precise than the tool's
+///   number is not supported, and an integer must match exactly.
+/// * Booleans, nulls, placeholders, one-character strings and provenance
+///   labels (`*_provenance`, `provenance`) decide nothing. A block whose claims
+///   are all of that kind is `nothing_checkable`, never `tool_verified`.
+///
 /// A value the tool returned in a different form is demoted. That is the safe
 /// direction: under-claiming routes the value to review, over-claiming is the
-/// defect this function removes.
+/// defect this function removes. What this does **not** check: which tool
+/// returned the value, or which field it came from (R4.2, #69). A tool that
+/// echoes its input back in its output supports that input.
 ///
 /// Rewrites both the `<block>_provenance` stamp on `doc` and the matching
 /// [`Report::provenance`] entry, so the document and the report cannot
-/// disagree. A block a caller never binds stays [`PROV_INFERRED`]: a value
+/// disagree. A block a caller never joins stays [`PROV_INFERRED`]: a value
 /// nothing has shown to be a retrieval is the model's claim.
 ///
 /// Not [`PROV_PENDING_TOOL`]. That token already means a `deferred` coverage
 /// block whose check had not run (`contract_sketch::Coverage::Deferred`), and
 /// card schemas encode coverage by which verdicts their enum admits.
-pub fn bind_tool_calls(doc: Option<&mut Value>, report: &mut Report, calls: &[ToolOutput<'_>]) {
-    let awaiting = std::mem::take(&mut report.awaiting_binding);
+pub fn join_tool_calls(doc: Option<&mut Value>, report: &mut Report, calls: &[ToolOutput<'_>]) {
+    let awaiting = std::mem::take(&mut report.awaiting_tool_join);
     if awaiting.is_empty() {
         return;
     }
-    let haystack = tool_haystack(calls);
+    let evidence = evidence_of(calls);
     let mut doc = doc;
     for a in awaiting {
         let (verdict, reason, unmatched) = if calls.is_empty() {
-            (PROV_INFERRED, Some(UnboundReason::NoToolCalls), Vec::new())
+            (PROV_INFERRED, Some(UnjoinedReason::NoToolCalls), Vec::new())
         } else {
-            let unmatched: Vec<String> = match doc.as_deref() {
+            let mut unmatched = Vec::new();
+            let mut checked = 0usize;
+            match doc.as_deref() {
                 Some(d) => {
-                    let mut out = Vec::new();
                     for p in &a.paths {
                         for v in select(d, &segments(p)) {
-                            unmatched_leaves(v, p, &haystack, &mut out);
+                            unmatched_leaves(v, p, &evidence, &mut unmatched, &mut checked);
                         }
                     }
-                    out
                 }
                 // No document to read the values from: nothing can be shown
                 // to have come from a tool.
-                None => a.paths.clone(),
-            };
-            if unmatched.is_empty() {
-                (PROV_TOOL, None, unmatched)
-            } else {
+                None => unmatched = a.paths.clone(),
+            }
+            if !unmatched.is_empty() {
                 (
                     PROV_INFERRED,
-                    Some(UnboundReason::ValueNotInToolOutput),
+                    Some(UnjoinedReason::ValueNotInToolOutput),
                     unmatched,
                 )
+            } else if checked == 0 {
+                // Rule 4: a check that could decide nothing records no pass.
+                (
+                    PROV_INFERRED,
+                    Some(UnjoinedReason::NothingCheckable),
+                    unmatched,
+                )
+            } else {
+                (PROV_TOOL, None, unmatched)
             }
         };
         if let Some(obj) = doc.as_deref_mut().and_then(|d| d.as_object_mut()) {
@@ -5196,7 +5218,7 @@ pub fn bind_tool_calls(doc: Option<&mut Value>, report: &mut Report, calls: &[To
         for entry in report.provenance.iter_mut().filter(|(b, _)| *b == a.block) {
             entry.1 = verdict;
         }
-        report.binding.push(BindingOutcome {
+        report.tool_join.push(ToolJoinOutcome {
             block: a.block,
             verdict,
             reason,
@@ -5205,7 +5227,7 @@ pub fn bind_tool_calls(doc: Option<&mut Value>, report: &mut Report, calls: &[To
     }
 }
 
-/// The run record of an agent invocation, as [`bind_tool_calls`] reads it.
+/// The run record of an agent invocation, as [`join_tool_calls`] reads it.
 pub fn tool_outputs(
     calls: &[crate::agent_backend::executor::ToolInvocation],
 ) -> Vec<ToolOutput<'_>> {
@@ -5218,36 +5240,90 @@ pub fn tool_outputs(
         .collect()
 }
 
-/// Every tool output, lowercased, plus the decoded string leaves of any output
-/// that parses as JSON (so an escaped quote or `\u00e9` still matches).
-fn tool_haystack(calls: &[ToolOutput<'_>]) -> String {
-    fn push_leaves(v: &Value, out: &mut String) {
+/// What one tool call returned, in the two forms a claimed value is compared
+/// against. One per call, so a claim cannot match across the seam between two
+/// outputs.
+struct CallEvidence {
+    /// Normalised text. For a JSON output, its string **values** joined by a
+    /// unit separator, so object keys (`"name"`, `"family"`) are never
+    /// matched as if a tool had returned them, and a match cannot span two
+    /// values. For any other output, the whole text.
+    text: String,
+    /// Every number the output contains: JSON numbers, and numerals inside its
+    /// strings.
+    numbers: Vec<f64>,
+}
+
+const LEAF_SEPARATOR: char = '\u{1f}';
+
+fn evidence_of(calls: &[ToolOutput<'_>]) -> Vec<CallEvidence> {
+    fn walk(v: &Value, text: &mut String, numbers: &mut Vec<f64>) {
         match v {
             Value::String(s) => {
-                out.push_str(s);
-                out.push('\n');
+                text.push_str(s);
+                text.push(LEAF_SEPARATOR);
+                numbers.extend(numerals(s));
             }
-            Value::Array(a) => a.iter().for_each(|x| push_leaves(x, out)),
-            Value::Object(o) => o.values().for_each(|x| push_leaves(x, out)),
+            Value::Number(n) => numbers.extend(n.as_f64()),
+            Value::Array(a) => a.iter().for_each(|x| walk(x, text, numbers)),
+            Value::Object(o) => o.values().for_each(|x| walk(x, text, numbers)),
             _ => {}
         }
     }
-    let mut hay = String::new();
-    for c in calls {
-        hay.push_str(c.output);
-        hay.push('\n');
-        if let Ok(v) = serde_json::from_str::<Value>(c.output) {
-            push_leaves(&v, &mut hay);
+    calls
+        .iter()
+        .map(|c| match serde_json::from_str::<Value>(c.output) {
+            Ok(v) => {
+                let (mut text, mut numbers) = (String::new(), Vec::new());
+                walk(&v, &mut text, &mut numbers);
+                CallEvidence {
+                    text: normalise_for_join(&text),
+                    numbers,
+                }
+            }
+            Err(_) => CallEvidence {
+                text: normalise_for_join(c.output),
+                numbers: numerals(c.output),
+            },
+        })
+        .collect()
+}
+
+/// The numerals in free text: `-?digits(.digits)?`. A thousands separator
+/// splits a numeral rather than joining it, which can only lose a match.
+fn numerals(s: &str) -> Vec<f64> {
+    let b = s.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        let neg = b[i] == b'-' && b.get(i + 1).is_some_and(u8::is_ascii_digit);
+        if b[i].is_ascii_digit() || neg {
+            let start = i;
+            i += 1;
+            while i < b.len() && b[i].is_ascii_digit() {
+                i += 1;
+            }
+            if i + 1 < b.len() && b[i] == b'.' && b[i + 1].is_ascii_digit() {
+                i += 1;
+                while i < b.len() && b[i].is_ascii_digit() {
+                    i += 1;
+                }
+            }
+            if let Ok(f) = s[start..i].parse::<f64>() {
+                out.push(f);
+            }
+        } else {
+            i += 1;
         }
     }
-    normalise_for_binding(&hay)
+    out
 }
 
 /// Lowercase, drop HTML tags (search results arrive as
 /// `<strong>group</strong> <strong>f</strong>`), fold typographic dashes and
 /// quotes to ASCII, and collapse whitespace. Applied to both sides, so the
 /// match is still literal: a paraphrase does not survive it, markup does.
-fn normalise_for_binding(s: &str) -> String {
+fn normalise_for_join(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut in_tag = false;
     let mut last_space = false;
@@ -5280,73 +5356,122 @@ fn normalise_for_binding(s: &str) -> String {
     out
 }
 
-/// Push the dotted path of every checkable leaf under `v` that does not occur
-/// in `haystack`.
-fn unmatched_leaves(v: &Value, at: &str, haystack: &str, out: &mut Vec<String>) {
+/// Does `needle` occur in `hay` with no letter or digit either side of it?
+/// `"cat"` is not found in `"category"`, nor `"US"` in `"status"`.
+fn contains_bounded(hay: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    hay.match_indices(needle).any(|(i, m)| {
+        let before = hay[..i].chars().next_back();
+        let after = hay[i + m.len()..].chars().next();
+        !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
+    })
+}
+
+/// How one claimed leaf stands against the run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LeafCheck {
+    /// Found in a single tool output.
+    Matched,
+    /// Checkable, and in no tool output.
+    Unmatched,
+    /// Nothing a literal comparison can decide: a boolean, a null, a
+    /// one-character string, a placeholder. Counts for neither side; a block of
+    /// nothing but these is not `tool_verified`.
+    NotCheckable,
+}
+
+fn check_leaf(v: &Value, evidence: &[CallEvidence]) -> LeafCheck {
+    match v {
+        Value::String(s) => {
+            let t = normalise_for_join(s.trim());
+            if !is_claim(v) || t.chars().count() < 2 {
+                return LeafCheck::NotCheckable;
+            }
+            if evidence.iter().any(|e| contains_bounded(&e.text, &t)) {
+                LeafCheck::Matched
+            } else {
+                LeafCheck::Unmatched
+            }
+        }
+        Value::Number(n) => {
+            let Some(claimed) = n.as_f64() else {
+                return LeafCheck::NotCheckable;
+            };
+            if evidence
+                .iter()
+                .any(|e| e.numbers.iter().any(|t| number_supports(claimed, n, *t)))
+            {
+                LeafCheck::Matched
+            } else {
+                LeafCheck::Unmatched
+            }
+        }
+        _ => LeafCheck::NotCheckable,
+    }
+}
+
+/// Does a tool's `returned` number support the `claimed` one?
+///
+/// Equal, or `returned` rounded to the claim's own decimal places equals it: a
+/// claim of `3.14` is a rounding of a returned `3.14159`. Never the reverse: a
+/// claim of `3.14159` asserts precision a returned `3.1` does not have. An
+/// integer claim must be returned exactly.
+fn number_supports(claimed: f64, as_written: &serde_json::Number, returned: f64) -> bool {
+    if claimed == returned {
+        return true;
+    }
+    let written = as_written.to_string();
+    let Some((_, frac)) = written.split_once('.') else {
+        return false;
+    };
+    if frac.contains(['e', 'E']) {
+        return false;
+    }
+    let dp = frac.len() as i32;
+    let scale = 10f64.powi(dp);
+    ((returned * scale).round() - claimed * scale).abs() < 0.5
+}
+
+/// Push the dotted path of every claimed leaf under `v` that no tool output
+/// supports, and count the leaves that were checkable at all.
+fn unmatched_leaves(
+    v: &Value,
+    at: &str,
+    evidence: &[CallEvidence],
+    out: &mut Vec<String>,
+    checked: &mut usize,
+) {
     match v {
         Value::Array(a) => {
             for (i, x) in a.iter().enumerate() {
-                unmatched_leaves(x, &format!("{at}[{i}]"), haystack, out);
+                unmatched_leaves(x, &format!("{at}[{i}]"), evidence, out, checked);
             }
         }
         Value::Object(o) => {
             for (k, x) in o.iter().filter(|(k, _)| !is_provenance_label(k)) {
-                unmatched_leaves(x, &format!("{at}.{k}"), haystack, out);
+                unmatched_leaves(x, &format!("{at}.{k}"), evidence, out, checked);
             }
         }
-        leaf => {
-            if !all_leaves_in(leaf, haystack) {
+        leaf => match check_leaf(leaf, evidence) {
+            LeafCheck::Matched => *checked += 1,
+            LeafCheck::Unmatched => {
+                *checked += 1;
                 out.push(at.to_string());
             }
-        }
-    }
-}
-
-/// Does every checkable leaf under `v` occur in `haystack` (already lowercase)?
-fn all_leaves_in(v: &Value, haystack: &str) -> bool {
-    match v {
-        Value::Null | Value::Bool(_) => true,
-        Value::String(s) => {
-            let t = s.trim();
-            !is_claim(v) || t.chars().count() < 3 || haystack.contains(&normalise_for_binding(t))
-        }
-        Value::Number(n) => number_renderings(n)
-            .iter()
-            .any(|r| haystack.contains(r.as_str())),
-        Value::Array(a) => a.iter().all(|x| all_leaves_in(x, haystack)),
-        Value::Object(o) => o
-            .iter()
-            .filter(|(k, _)| !is_provenance_label(k))
-            .all(|(_, x)| all_leaves_in(x, haystack)),
+            LeafCheck::NotCheckable => {}
+        },
     }
 }
 
 /// A key naming where a value came from, rather than holding one: the
 /// platform's `<block>_provenance` stamps, and the `provenance` labels models
 /// write inside blocks (`football_analyst.league_context.provenance`). Not
-/// bound, because the label is not data, and not trusted either: the block's
+/// joined, because the label is not data, and not trusted either: the block's
 /// verdict comes from its values.
 fn is_provenance_label(key: &str) -> bool {
     key == "provenance" || key.ends_with("_provenance")
-}
-
-/// The ways a number is commonly written in a tool's output.
-fn number_renderings(n: &serde_json::Number) -> Vec<String> {
-    let mut out = vec![n.to_string()];
-    if let Some(f) = n.as_f64() {
-        if f.fract() == 0.0 && f.abs() < 1e15 {
-            out.push(format!("{}", f as i64));
-            out.push(format!("{f:.1}"));
-        }
-        for dp in 1..=4 {
-            let r = format!("{f:.dp$}");
-            out.push(r.trim_end_matches('0').trim_end_matches('.').to_string());
-            out.push(r);
-        }
-    }
-    out.retain(|r| !r.is_empty());
-    out.dedup();
-    out
 }
 
 /// Drive enforcement from the `grounding` object already compiled into the
@@ -5484,8 +5609,8 @@ fn enforce_refined_block(
     let verdict = if pre_contract {
         PROV_UNAVAILABLE
     } else if any_sourced && sourced_populated {
-        // Not verified until bound: see `enforce` step 4.
-        report.awaiting_binding.push(AwaitingBinding {
+        // Not verified until joined: see `enforce` step 4.
+        report.awaiting_tool_join.push(AwaitingToolJoin {
             block: block.to_string(),
             paths: sourced_claimed,
         });
@@ -5582,10 +5707,10 @@ fn enforce_from_grounding_map(
             match status {
                 "sourced" => {
                     // Content present is a claim that a tool returned it, not
-                    // evidence. Not verified until `bind_tool_calls`; see
+                    // evidence. Not verified until `join_tool_calls`; see
                     // `enforce` step 4.
                     if path_has_claim(doc, block_name) {
-                        report.awaiting_binding.push(AwaitingBinding {
+                        report.awaiting_tool_join.push(AwaitingToolJoin {
                             block: block_name.clone(),
                             paths: vec![block_name.clone()],
                         });
@@ -5808,10 +5933,10 @@ pub fn enforce(agent_id: &str, doc: &mut Value) -> Report {
                 // Has sourced fields, and at least one came back populated.
                 // Whether a TOOL populated them is a question about the run
                 // record, which this function cannot see: `model_inference`
-                // until `bind_tool_calls` joins the values against the tool
+                // until `join_tool_calls` joins the values against the tool
                 // outputs.
                 Some(true) => {
-                    report.awaiting_binding.push(AwaitingBinding {
+                    report.awaiting_tool_join.push(AwaitingToolJoin {
                         block: b.to_string(),
                         paths: contracts
                             .iter()
@@ -5851,7 +5976,7 @@ mod tests {
 
     /// A run whose one tool returned `output` verbatim: every value in it was
     /// retrieved. For tests about what enforcement does with a retrieval,
-    /// rather than about binding (G09).
+    /// rather than about the tool join (G09).
     fn ran(output: &str) -> [ToolOutput<'_>; 1] {
         [ToolOutput {
             tool: "fixture",
@@ -5859,12 +5984,12 @@ mod tests {
         }]
     }
 
-    /// [`enforce`] then [`bind_tool_calls`] against a run that returned the
+    /// [`enforce`] then [`join_tool_calls`] against a run that returned the
     /// document itself.
     fn enforce_retrieved(agent: &str, doc: &mut Value) -> Report {
         let retrieved = doc.to_string();
         let mut report = enforce(agent, doc);
-        bind_tool_calls(Some(doc), &mut report, &ran(&retrieved));
+        join_tool_calls(Some(doc), &mut report, &ran(&retrieved));
         report
     }
 
@@ -5991,22 +6116,22 @@ mod tests {
         let report = enforce("forage_identify", &mut doc);
         assert_eq!(doc.get("taxonomy_provenance").unwrap(), PROV_INFERRED);
         assert!(report.provenance.iter().all(|(_, v)| *v != PROV_TOOL));
-        assert_eq!(report.awaiting_binding.len(), 1);
-        assert_eq!(report.awaiting_binding[0].block, "taxonomy");
+        assert_eq!(report.awaiting_tool_join.len(), 1);
+        assert_eq!(report.awaiting_tool_join[0].block, "taxonomy");
     }
 
     #[test]
     fn a_sourced_block_with_no_tool_calls_is_model_inference() {
         let mut doc = resolved_chanterelle();
         let mut report = enforce("forage_identify", &mut doc);
-        bind_tool_calls(Some(&mut doc), &mut report, &[]);
+        join_tool_calls(Some(&mut doc), &mut report, &[]);
         assert_eq!(doc.get("taxonomy_provenance").unwrap(), PROV_INFERRED);
-        let b = &report.binding[0];
+        let b = &report.tool_join[0];
         assert_eq!(b.verdict, PROV_INFERRED);
-        assert_eq!(b.reason, Some(UnboundReason::NoToolCalls));
+        assert_eq!(b.reason, Some(UnjoinedReason::NoToolCalls));
         assert!(
-            report.awaiting_binding.is_empty(),
-            "binding drains the list"
+            report.awaiting_tool_join.is_empty(),
+            "the join drains the list"
         );
     }
 
@@ -6016,10 +6141,10 @@ mod tests {
         let mut report = enforce("forage_identify", &mut doc);
         // GBIF answered, but with a different family than the document claims.
         let gbif = r#"{"kingdom":"Fungi","family":"Cantharellaceae","scientificName":"Cantharellus cibarius Fr.","usageKey":5249504}"#;
-        bind_tool_calls(Some(&mut doc), &mut report, &ran(gbif));
+        join_tool_calls(Some(&mut doc), &mut report, &ran(gbif));
         assert_eq!(doc.get("taxonomy_provenance").unwrap(), PROV_INFERRED);
-        let b = &report.binding[0];
-        assert_eq!(b.reason, Some(UnboundReason::ValueNotInToolOutput));
+        let b = &report.tool_join[0];
+        assert_eq!(b.reason, Some(UnjoinedReason::ValueNotInToolOutput));
         assert_eq!(
             b.unmatched,
             vec!["taxonomy.family".to_string()],
@@ -6039,25 +6164,87 @@ mod tests {
         let mut doc = resolved_chanterelle();
         let mut report = enforce("forage_identify", &mut doc);
         let gbif = r#"{"kingdom":"Fungi","family":"Hydnaceae","scientificName":"Cantharellus cibarius Fr.","usageKey":5249504}"#;
-        bind_tool_calls(Some(&mut doc), &mut report, &ran(gbif));
+        join_tool_calls(Some(&mut doc), &mut report, &ran(gbif));
         assert_eq!(doc.get("taxonomy_provenance").unwrap(), PROV_TOOL);
-        assert_eq!(report.binding[0].reason, None);
+        assert_eq!(report.tool_join[0].reason, None);
     }
 
     #[test]
-    fn binding_reads_decoded_json_and_common_number_renderings() {
-        let hay = tool_haystack(&ran(r#"{"name":"Caf\u00e9 \"Noir\"","size":245.20}"#));
-        assert!(all_leaves_in(&json!("café \"noir\""), &hay));
-        assert!(all_leaves_in(&json!(245.2), &hay));
-        assert!(!all_leaves_in(&json!(999.9), &hay));
-        let search = tool_haystack(&ran(
-            "<strong>Group</strong>  <strong>F</strong> \u{2014} draw",
-        ));
-        assert!(all_leaves_in(&json!("group f - draw"), &search), "{search}");
-        assert!(!all_leaves_in(&json!("group g - draw"), &search));
-        assert!(
-            all_leaves_in(&json!({"x_provenance": "tool_verified", "ok": true}), &hay),
-            "provenance keys and booleans are not claims to bind"
+    fn the_tool_join_matches_values_not_keys_seams_or_lost_precision() {
+        let check = |v: Value, out: &str| check_leaf(&v, &evidence_of(&ran(out)));
+        let gbif = r#"{"name":"Caf\u00e9 \"Noir\"","size":3.14159,"count":7}"#;
+        // Decoded string values, case-folded.
+        assert_eq!(check(json!("café \"noir\""), gbif), LeafCheck::Matched);
+        // A rounding of what the tool returned is supported...
+        assert_eq!(check(json!(3.14), gbif), LeafCheck::Matched);
+        // ...more precision than the tool returned is not.
+        assert_eq!(check(json!(3.1416), gbif), LeafCheck::Matched);
+        assert_eq!(check(json!(3.14160), gbif), LeafCheck::Matched);
+        assert_eq!(check(json!(3.141592), gbif), LeafCheck::Unmatched);
+        assert_eq!(
+            check(json!(3.14159), r#"{"size":3.1}"#),
+            LeafCheck::Unmatched,
+            "a claim more precise than the tool's number"
+        );
+        // Integers exactly; no substring of another number.
+        assert_eq!(check(json!(7), gbif), LeafCheck::Matched);
+        assert_eq!(check(json!(7), r#"{"count":17}"#), LeafCheck::Unmatched);
+        assert_eq!(check(json!(0.5), r#"{"x":10.55}"#), LeafCheck::Unmatched);
+        // Keys are not values.
+        assert_eq!(check(json!("size"), gbif), LeafCheck::Unmatched);
+        // Word-bounded: "US" is not in "status".
+        assert_eq!(
+            check(json!("US"), r#"{"s":"status ok"}"#),
+            LeafCheck::Unmatched
+        );
+        assert_eq!(
+            check(json!("US"), r#"{"s":"US market"}"#),
+            LeafCheck::Matched
+        );
+        // Markup and typographic dashes fold; a different word does not.
+        let search = "<strong>Group</strong>  <strong>F</strong> \u{2014} draw";
+        assert_eq!(check(json!("group f - draw"), search), LeafCheck::Matched);
+        assert_eq!(check(json!("group g - draw"), search), LeafCheck::Unmatched);
+        // No match across the seam between two calls.
+        let two = [
+            ToolOutput {
+                tool: "a",
+                output: r#"{"v":"Apatura"}"#,
+            },
+            ToolOutput {
+                tool: "b",
+                output: r#"{"v":"iris"}"#,
+            },
+        ];
+        assert_eq!(
+            check_leaf(&json!("apatura iris"), &evidence_of(&two)),
+            LeafCheck::Unmatched
+        );
+        // Undecidable leaves decide nothing.
+        assert_eq!(check(json!(true), gbif), LeafCheck::NotCheckable);
+        assert_eq!(check(json!("x"), gbif), LeafCheck::NotCheckable);
+        assert_eq!(check(json!("..."), gbif), LeafCheck::NotCheckable);
+    }
+
+    /// Rule 4: a block with nothing checkable in it is not `tool_verified`
+    /// just because some unrelated tool ran.
+    #[test]
+    fn a_block_with_nothing_checkable_is_not_tool_verified() {
+        let mut doc = json!({
+            "taxonomy": { "kingdom": true },
+            "identification": { "species": "Cantharellus cibarius", "kingdom": "fungi" },
+            "safety": { "directive": "..." }
+        });
+        let mut report = enforce("forage_identify", &mut doc);
+        join_tool_calls(
+            Some(&mut doc),
+            &mut report,
+            &ran(r#"{"unrelated":"weather is fine"}"#),
+        );
+        assert_eq!(doc.get("taxonomy_provenance").unwrap(), PROV_INFERRED);
+        assert_eq!(
+            report.tool_join[0].reason,
+            Some(UnjoinedReason::NothingCheckable)
         );
     }
 
@@ -8672,10 +8859,10 @@ mod tests {
             via_card.get("advanced_metrics_provenance").unwrap(),
             PROV_INFERRED
         );
-        // And both hand the binder the same sourced paths to check.
+        // And both hand the tool join the same sourced paths to check.
         let awaiting = |r: &Report| {
             let mut v: Vec<(String, Vec<String>)> = r
-                .awaiting_binding
+                .awaiting_tool_join
                 .iter()
                 .map(|a| {
                     let mut p = a.paths.clone();
@@ -8686,7 +8873,11 @@ mod tests {
             v.sort();
             v
         };
-        assert_eq!(awaiting(&card), awaiting(&table), "different binding work");
+        assert_eq!(
+            awaiting(&card),
+            awaiting(&table),
+            "different tool-join work"
+        );
         assert_eq!(
             via_card.get("ratings_provenance").unwrap(),
             PROV_UNAVAILABLE

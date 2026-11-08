@@ -451,15 +451,15 @@ pub fn merge_reports(a: Report, b: Report) -> Report {
         }
     }
 
-    let mut awaiting_binding = a.awaiting_binding;
-    awaiting_binding.extend(b.awaiting_binding);
-    let mut binding = a.binding;
-    binding.extend(b.binding);
+    let mut awaiting_tool_join = a.awaiting_tool_join;
+    awaiting_tool_join.extend(b.awaiting_tool_join);
+    let mut tool_join = a.tool_join;
+    tool_join.extend(b.tool_join);
     Report {
         violations,
         provenance,
-        awaiting_binding,
-        binding,
+        awaiting_tool_join,
+        tool_join,
     }
 }
 

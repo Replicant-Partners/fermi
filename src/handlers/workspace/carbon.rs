@@ -1704,8 +1704,8 @@ async fn execute_carbon_run(
     // stamps every block, and scans the prose for a dataset nothing came back
     // from.
     let mut report = grounding_trust::enforce(ACCOUNTANT, &mut doc);
-    // G09: bind sourced values to this run's tool calls.
-    grounding_trust::bind_tool_calls(
+    // G09: join sourced values to this run's tool calls.
+    grounding_trust::join_tool_calls(
         Some(&mut doc),
         &mut report,
         &grounding_trust::tool_outputs(&reply_calls),

@@ -240,7 +240,7 @@ pub fn build(
     };
     // G09: the hop has the producer's run record, so a sourced block reaches
     // the coordinator as `tool_verified` only if its values are in it.
-    crate::grounding_trust::bind_tool_calls(
+    crate::grounding_trust::join_tool_calls(
         payload.as_mut(),
         &mut report,
         &crate::grounding_trust::tool_outputs(&output.tool_invocations),
@@ -521,7 +521,7 @@ mod tests {
     use serde_json::json;
 
     /// [`output_with`] plus one tool call that returned `raw` verbatim, so
-    /// every sourced value in it binds (G09).
+    /// every sourced value in it joins (G09).
     pub(super) fn retrieved_output_with(raw: &str) -> AgentOutput {
         let mut o = output_with(Some(raw));
         o.tool_invocations = vec![crate::agent_backend::executor::ToolInvocation {

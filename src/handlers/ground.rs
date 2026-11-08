@@ -16,8 +16,8 @@
 //! recorded on the run, and read back when the output is graded. That is the
 //! difference between `tool_verified` meaning "a tool ABW ran returned this"
 //! and meaning "the agent says so". [V: a sourced block is `tool_verified` only
-//! when every claimed value occurs in a recorded tool output,
-//! `src/grounding_trust.rs:5155` (`bind_tool_calls`, G09); before G09 it was
+//! when every checkable claimed value occurs in a recorded tool output,
+//! `src/grounding_trust.rs:5170` (`join_tool_calls`, G09); before G09 it was
 //! stamped on content alone, `src/grounding_trust.rs:5279` @ 8000415d.]
 //!
 //! # Same boundary as a hosted agent

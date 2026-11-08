@@ -271,8 +271,8 @@ pub async fn enemy_sensor_handler(
             // one thing that would be a fabrication: a threat naming a
             // creature the scan never returned.
             let mut grounding = crate::grounding_trust::enforce("enemy_sensor", &mut parsed);
-            // G09: bind sourced values to this run's tool calls.
-            crate::grounding_trust::bind_tool_calls(
+            // G09: join sourced values to this run's tool calls.
+            crate::grounding_trust::join_tool_calls(
                 Some(&mut parsed),
                 &mut grounding,
                 &crate::grounding_trust::tool_outputs(&assessment_calls),
@@ -707,8 +707,8 @@ pub async fn genome_profiler_handler(
             // validator. Mixing the two would make the grounding rules
             // invisible to anyone reading either call site.
             let mut grounding = crate::grounding_trust::enforce("genome_profiler", &mut parsed);
-            // G09: bind sourced values to this run's tool calls.
-            crate::grounding_trust::bind_tool_calls(
+            // G09: join sourced values to this run's tool calls.
+            crate::grounding_trust::join_tool_calls(
                 Some(&mut parsed),
                 &mut grounding,
                 &crate::grounding_trust::tool_outputs(&profile_calls),
@@ -1002,8 +1002,8 @@ pub async fn prey_locator_handler(
             // entry, which names this the cheapest Unsourced field in the
             // corpus to retire.
             let mut grounding = crate::grounding_trust::enforce("prey_locator", &mut parsed);
-            // G09: bind sourced values to this run's tool calls.
-            crate::grounding_trust::bind_tool_calls(
+            // G09: join sourced values to this run's tool calls.
+            crate::grounding_trust::join_tool_calls(
                 Some(&mut parsed),
                 &mut grounding,
                 &crate::grounding_trust::tool_outputs(&result_calls),
@@ -1162,8 +1162,8 @@ pub async fn prey_locator_handler(
             // in a document meant to be flown rather than read. The strategy
             // and the difficulty rating survive; the geometry does not.
             let mut grounding = crate::grounding_trust::enforce("prey_locator", &mut parsed);
-            // G09: bind sourced values to this run's tool calls.
-            crate::grounding_trust::bind_tool_calls(
+            // G09: join sourced values to this run's tool calls.
+            crate::grounding_trust::join_tool_calls(
                 Some(&mut parsed),
                 &mut grounding,
                 &crate::grounding_trust::tool_outputs(&plan_calls),

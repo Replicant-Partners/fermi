@@ -38,4 +38,4 @@ mod migration_ledger;
 
 mod credit_holds;
 
-mod tool_binding;
+mod tool_join;

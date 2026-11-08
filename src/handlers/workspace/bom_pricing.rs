@@ -640,8 +640,8 @@ pub async fn price_bom_handler(
         card.capabilities.output_contract.as_ref(),
         &mut doc,
     );
-    // G09: bind sourced values to this run's tool calls.
-    grounding_trust::bind_tool_calls(
+    // G09: join sourced values to this run's tool calls.
+    grounding_trust::join_tool_calls(
         Some(&mut doc),
         &mut report,
         &grounding_trust::tool_outputs(&reply_calls),

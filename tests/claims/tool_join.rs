@@ -6,7 +6,7 @@
 //! opposite, that `tool_verified` means "a tool ABW ran returned this"
 //! [V: `src/handlers/ground.rs:17` @ 8000415d]. Now enforcement stamps a
 //! populated sourced block `model_inference`, and only
-//! `grounding_trust::bind_tool_calls` can raise it to `tool_verified`, when
+//! `grounding_trust::join_tool_calls` can raise it to `tool_verified`, when
 //! every claimed value occurs in a tool output of the same run.
 
 use crate::deployed::base_url;
@@ -54,15 +54,15 @@ fn tool_verified_requires_the_values_in_a_tool_output() {
             .iter()
             .filter(|f| f.block == "taxonomy")
             .all(|f| f.provenance == PROV_INFERRED),
-        "graded fields read the bound verdict"
+        "graded fields read the joined verdict"
     );
 
     let gbif = r#"{"kingdom":"Animalia","order":"Lepidoptera","family":"Nymphalidae","canonicalName":"Apatura iris"}"#;
-    let bound = grade(&[ToolOutput {
+    let joined = grade(&[ToolOutput {
         tool: "gbif_species_search",
         output: gbif,
     }]);
-    assert_eq!(taxonomy_stamp(&bound).as_deref(), Some(PROV_TOOL));
+    assert_eq!(taxonomy_stamp(&joined).as_deref(), Some(PROV_TOOL));
 
     let other = r#"{"kingdom":"Animalia","order":"Lepidoptera","family":"Pieridae","canonicalName":"Apatura iris"}"#;
     let wrong = grade(&[ToolOutput {
@@ -72,78 +72,102 @@ fn tool_verified_requires_the_values_in_a_tool_output() {
     assert_eq!(taxonomy_stamp(&wrong).as_deref(), Some(PROV_INFERRED));
     let b = wrong
         .report
-        .binding
+        .tool_join
         .iter()
         .find(|b| b.block == "taxonomy")
-        .expect("taxonomy was bound");
+        .expect("taxonomy was joined");
     assert_eq!(b.unmatched, vec!["taxonomy.family".to_string()]);
 }
 
-/// Every production enforcement site either binds or is listed here with the
+/// Every production enforcement site either joins or is listed here with the
 /// reason it has no run record. A new site that does neither fails.
+///
+/// "Joins" means a `join_tool_calls(` call within the next 25 **code** lines
+/// (comments stripped) whose run record is not `&[]` and not a hand-built
+/// `ToolOutput { .. }` literal, either of which would satisfy the scan without
+/// a record. `grounding_trust.rs` is skipped: it defines enforcement and the
+/// join, and its internal calls are the implementation, not sites.
 #[test]
-fn every_enforcement_site_binds_or_says_why_not() {
+fn every_enforcement_site_joins_or_says_why_not() {
     let root = env!("CARGO_MANIFEST_DIR");
     let call = regex::Regex::new(
         r"grounding_trust::(enforce|enforce_from_output_contract)\(|hud_contract::enforce\(",
     )
     .unwrap();
-    // (file, unbound sites, why there is no run record)
-    let unbound: &[(&str, usize, &str)] = &[
+    // An enforcement function imported by name would evade `call`.
+    let import = regex::Regex::new(
+        r"use [^;]*grounding_trust::\{?[^;]*\b(enforce|enforce_from_output_contract)\b",
+    )
+    .unwrap();
+    let fake_record = regex::Regex::new(r"join_tool_calls\([^;]*(&\[\]|ToolOutput \{)").unwrap();
+    // (file, unjoined sites, why there is no run record)
+    let unjoined: &[(&str, usize, &str)] = &[
         (
             "src/handlers/creatures/agent_modules.rs",
             1,
-            "cached genome profile re-read: the cache row keeps no run record (follow-up)",
+            "cached genome profile re-read: the cache row keeps no run record (#149)",
         ),
         (
             "src/handlers/workspace/lens_actions.rs",
             2,
-            "documents built from ruleset YAML by platform code; no agent ran",
-        ),
-        (
-            "src/hud_contract.rs",
-            0,
-            "takes the run record as an argument and binds inside",
+            "documents built from ruleset YAML by platform code; no agent ran (#148)",
         ),
     ];
     let mut found: Vec<(String, usize)> = Vec::new();
-    for dir in ["src"] {
-        for entry in walkdir(std::path::Path::new(root).join(dir)) {
-            let rel = entry
-                .strip_prefix(root)
-                .unwrap()
-                .to_string_lossy()
-                .trim_start_matches('/')
-                .to_string();
-            if rel == "src/grounding_trust.rs" {
+    for entry in walkdir(std::path::Path::new(root).join("src")) {
+        let rel = entry
+            .strip_prefix(root)
+            .unwrap()
+            .to_string_lossy()
+            .trim_start_matches('/')
+            .to_string();
+        if rel == "src/grounding_trust.rs" {
+            continue;
+        }
+        let text = std::fs::read_to_string(&entry).unwrap();
+        let body = text.split("#[cfg(test)]").next().unwrap_or("");
+        let code: Vec<&str> = body
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .filter(|l| !l.trim().is_empty())
+            .collect();
+        let joined_code = code.join("\n");
+        assert!(
+            !import.is_match(&joined_code),
+            "{rel}: imports an enforcement function by name, which this scan cannot follow"
+        );
+        assert!(
+            !fake_record.is_match(&joined_code),
+            "{rel}: join_tool_calls with an empty or hand-built run record"
+        );
+        let mut n = 0;
+        for (i, l) in code.iter().enumerate() {
+            if !call.is_match(l) || l.contains("fn enforce") {
                 continue;
             }
-            let text = std::fs::read_to_string(&entry).unwrap();
-            let body = text.split("#[cfg(test)]").next().unwrap_or("");
-            let lines: Vec<&str> = body.lines().collect();
-            let mut n = 0;
-            for (i, l) in lines.iter().enumerate() {
-                let code = l.split("//").next().unwrap_or("");
-                if !call.is_match(code) || code.contains("fn enforce") {
-                    continue;
-                }
-                let window = lines[i..lines.len().min(i + 25)].join("\n");
-                if !window.contains("bind_tool_calls(") {
-                    n += 1;
-                }
+            let window = code[i..code.len().min(i + 25)].join("\n");
+            if !window.contains("join_tool_calls(") {
+                n += 1;
             }
-            if n > 0 {
-                found.push((rel, n));
-            }
+        }
+        if n > 0 {
+            found.push((rel, n));
         }
     }
     for (file, n) in &found {
-        let listed = unbound.iter().find(|(f, _, _)| f == file);
+        let listed = unjoined.iter().find(|(f, _, _)| f == file);
         assert_eq!(
             listed.map(|(_, k, _)| *k),
             Some(*n),
-            "{file}: {n} enforcement site(s) without bind_tool_calls. Bind them to the \
+            "{file}: {n} enforcement site(s) without join_tool_calls. Join them to the \
              run's tool calls, or list them here with the reason there is no run record."
+        );
+    }
+    for (file, k, why) in unjoined {
+        assert!(
+            found.iter().any(|(f, n)| f == file && n == k),
+            "{file} is listed with {k} unjoined site(s) ({why}) but the scan found a \
+             different number: update the list"
         );
     }
 }

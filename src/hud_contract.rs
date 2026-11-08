@@ -516,7 +516,7 @@ pub fn enforce(
 
     // 1. The data boundary. Ungrounded fields nulled, blocks stamped.
     report.grounding = grounding_trust::enforce(agent_id, doc);
-    grounding_trust::bind_tool_calls(Some(&mut *doc), &mut report.grounding, tool_calls);
+    grounding_trust::join_tool_calls(Some(&mut *doc), &mut report.grounding, tool_calls);
 
     let contracted: Vec<String> = grounding_trust::contracts_for(agent_id)
         .map(|c| block_of(c.path).to_string())

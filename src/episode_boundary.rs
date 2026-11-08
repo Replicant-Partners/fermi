@@ -284,15 +284,15 @@ impl Pulse {
         };
         // G09: `tool_verified` is earned by joining the sourced values against
         // this run's tool outputs, not by the block having content.
-        grounding_trust::bind_tool_calls(enforced.as_mut(), &mut report, tool_calls);
-        for b in report.binding.iter().filter(|b| b.reason.is_some()) {
+        grounding_trust::join_tool_calls(enforced.as_mut(), &mut report, tool_calls);
+        for b in report.tool_join.iter().filter(|b| b.reason.is_some()) {
             tracing::info!(
                 agent = %agent_slug,
                 episode = %self.episode_id,
                 block = %b.block,
                 reason = b.reason.map(|r| r.id()).unwrap_or_default(),
                 unmatched = ?b.unmatched,
-                "sourced block not bound to a tool call; stamped model_inference",
+                "sourced block not joined to a tool call; stamped model_inference",
             );
         }
         // Every contracted field with its grade and the claim behind it,
@@ -778,8 +778,8 @@ pub async fn persist_opened(pulse: Pulse, w: Write<'_>) -> anyhow::Result<Uuid> 
 
 /// `(tool_name, output)` for every call `agent_output_to_episode` recorded in
 /// `context.tool_invocations` (`src/episodes.rs:295`). An entry missing either
-/// field is skipped rather than defaulted: an empty output would bind nothing,
-/// and a fabricated one would bind everything.
+/// field is skipped rather than defaulted: an empty output would join nothing,
+/// and a fabricated one would join everything.
 pub fn recorded_tool_outputs(context: &Value) -> Vec<(String, String)> {
     context
         .get("tool_invocations")

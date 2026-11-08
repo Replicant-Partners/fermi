@@ -650,7 +650,7 @@ fn a_compiled_card_contract_is_enforced_and_satisfies_its_own_schema() {
         "a card-contract coverage fixture",
     );
     // The run record: the tool returned exactly what `items` claims, so the
-    // block binds (G09). Without it `items` is `model_inference`.
+    // block joins (G09). Without it `items` is `model_inference`.
     let tool_output = r#"{"name":"ashwagandha root","unit":"kg","currency":"USD","unit_cost":12.5,"risk_flags":["seasonal"]}"#;
     let graded = pulse.grade(
         "supply_chain_oracle",

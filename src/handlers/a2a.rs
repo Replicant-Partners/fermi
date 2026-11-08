@@ -645,13 +645,13 @@ pub async fn get_task_handler(
                 ),
                 _ => fermi::grounding_trust::Report::default(),
             };
-            // G09: bind against the run record stored with the episode.
+            // G09: join against the run record stored with the episode.
             let recorded = fermi::episode_boundary::recorded_tool_outputs(&episode.context);
             let calls: Vec<fermi::grounding_trust::ToolOutput<'_>> = recorded
                 .iter()
                 .map(|(tool, output)| fermi::grounding_trust::ToolOutput { tool, output })
                 .collect();
-            fermi::grounding_trust::bind_tool_calls(enforced.as_mut(), &mut report, &calls);
+            fermi::grounding_trust::join_tool_calls(enforced.as_mut(), &mut report, &calls);
             let stripped: Vec<String> = report.violations.iter().map(|v| v.path.clone()).collect();
             let validation = fermi::agent_backend::envelope::validation_status(
                 output_contract.as_ref(),

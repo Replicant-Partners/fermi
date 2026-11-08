@@ -471,8 +471,8 @@ async fn evaluate_one(
     // The gate. Strips ungrounded fields, stamps every block, scans the prose
     // for authorities whose evidence block came back empty.
     let mut report = grounding_trust::enforce(EVALUATOR, &mut doc);
-    // G09: bind sourced values to this run's tool calls.
-    grounding_trust::bind_tool_calls(
+    // G09: join sourced values to this run's tool calls.
+    grounding_trust::join_tool_calls(
         Some(&mut doc),
         &mut report,
         &grounding_trust::tool_outputs(&reply_calls),

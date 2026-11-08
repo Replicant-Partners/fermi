@@ -223,7 +223,7 @@ pub async fn dispatch_rabble_action(
 }
 
 /// [`dispatch_rabble_action`], also returning the run's tool calls, so a
-/// caller that enforces a grounding contract can bind sourced values to them
+/// caller that enforces a grounding contract can join sourced values to them
 /// (G09) rather than stamping them `model_inference`.
 pub async fn dispatch_rabble_action_recorded(
     state: &AppState,

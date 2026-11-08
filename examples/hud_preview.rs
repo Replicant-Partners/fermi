@@ -66,7 +66,7 @@ fn show(title: &str, note: &str, mut doc: Value) {
         .to_string();
 
     // A preview of the fixture as if its tool returned exactly this document,
-    // so sourced blocks bind (G09).
+    // so sourced blocks join (G09).
     let retrieved = doc.to_string();
     let ran = [fermi::grounding_trust::ToolOutput {
         tool: "fixture",
