@@ -221,128 +221,26 @@ pub async fn charge_gas(
         })
 }
 
-/// Charge the caller for an agent execution and route the owner
-/// royalty in one call.
-///
-/// v0.10.1 credit-flow slice — completes the marketplace loop started
-/// in v0.9.0–v0.9.2 (agent-owner API key routing + marketplace
-/// substrate cleanup). Now that owner-owned agents run on the owner's
-/// keys, a portion of the caller's execution fee flows back to the
-/// owner as royalty. System-tier agents remain platform-funded (no
-/// royalty). Self-hires (caller == owner) skip the wash-transaction.
-///
-/// Flow:
-///   1. Debit `execution_fee` from `caller_wallet_id` (same total the
-///      caller has always paid — no price increase to this change).
-///   2. If eligible, deposit `execution_fee * royalty_pct` to the
-///      owner's user wallet (`user`-typed) with `tx_type="agent_royalty_in"`.
-///   3. Platform keeps the remainder (execution_fee minus the royalty).
-///
-/// **Not atomic.** Same pattern as `charge_and_distribute`: if the
-/// deposit fails after the charge succeeded, we log and move on — the
-/// platform absorbs the missed royalty for this call. Ledger
-/// reconciliation can catch persistent failures. In practice the
-/// deposit is a straightforward `credit_deposit_typed` and won't fail
-/// unless the DB itself is unhealthy.
-///
-/// Returns `(execution_fee_charged, royalty_paid_to_owner)`. If the
-/// caller lacks credits, the debit's PAYMENT_REQUIRED status
-/// propagates via the same shape `charge_gas` returns.
-///
-/// `royalty_pct` is typically `state.gas_fees.execution_owner_royalty_pct`.
-#[allow(clippy::too_many_arguments)]
-pub async fn charge_execution_with_royalty(
-    pool: &PgPool,
-    caller_wallet_id: Uuid,
-    caller_user_id: &str,
+/// Who earns a royalty on an execution, and how much. `None` for system
+/// agents, agents with no owner, and self-hires; at least 1 credit when the
+/// split rounds to 0. Paid inside `credit_hold::settle`'s transaction
+/// (SPEC 36 R1.3), replacing `charge_execution_with_royalty`, which charged
+/// and paid in separate transactions and absorbed a failed deposit.
+pub fn royalty_for(
     execution_fee: i32,
     agent_owner_id: Option<&str>,
     agent_tier: &str,
-    agent_id_str: &str,
-    tokens: i32,
-    episode_id: Option<&str>,
+    caller_user_id: &str,
     royalty_pct: f64,
-) -> std::result::Result<(i32, i32), (axum::http::StatusCode, String)> {
-    // 1. Debit the caller. Same tx_type/description shape as before
-    // (`execution_fee`) so existing ledger queries keep working.
-    charge_gas(
-        pool,
-        caller_wallet_id,
-        execution_fee,
-        "execution_fee",
-        &format!("Execute {} ({}tk)", agent_id_str, tokens),
-        episode_id,
-    )
-    .await?;
-
-    // 2. Decide whether a royalty flows. Three gates:
-    //    - Agent must have an owner (system agents lack one).
-    //    - Tier must not be "system" (platform-funded regardless).
-    //    - Caller must not BE the owner (skip self-hire round-trip).
-    let owner_id = match agent_owner_id {
-        Some(o) if !o.is_empty() => o,
-        _ => return Ok((execution_fee, 0)),
-    };
-    if agent_tier == "system" {
-        return Ok((execution_fee, 0));
+) -> Option<(String, i32)> {
+    let owner = agent_owner_id.filter(|o| !o.is_empty())?;
+    if agent_tier == "system" || owner == caller_user_id || execution_fee <= 0 {
+        return None;
     }
-    if owner_id == caller_user_id {
-        return Ok((execution_fee, 0));
-    }
-
-    // 3. Compute royalty. Clamped so we always pay at least 1 credit
-    // when the split rounds down to zero (avoids owners feeling the
-    // marketplace is broken on small executions).
-    let royalty_pct = royalty_pct.clamp(0.0, 1.0);
-    let raw_amount = (execution_fee as f64 * royalty_pct) as i32;
-    let royalty = raw_amount.clamp(1, execution_fee);
-
-    // 4. Deposit to the owner's user wallet.
-    let owner_wallet = match get_or_create_wallet(pool, "user", owner_id).await {
-        Ok(w) => w,
-        Err(e) => {
-            tracing::warn!(
-                owner_id = %owner_id,
-                agent_id = %agent_id_str,
-                error = %e,
-                "[credit-flow] failed to resolve owner wallet — royalty NOT paid (platform absorbs)"
-            );
-            return Ok((execution_fee, 0));
-        }
-    };
-    if let Err(e) = credit_deposit_typed(
-        pool,
-        owner_wallet.wallet_id,
-        royalty,
-        "agent_royalty_in",
-        &format!(
-            "Royalty from {} — {} ({}tk)",
-            caller_user_id, agent_id_str, tokens
-        ),
-    )
-    .await
-    {
-        tracing::warn!(
-            owner_id = %owner_id,
-            agent_id = %agent_id_str,
-            error = %e,
-            "[credit-flow] failed to deposit royalty — platform absorbs"
-        );
-        return Ok((execution_fee, 0));
-    }
-
-    tracing::info!(
-        owner_id = %owner_id,
-        agent_id = %agent_id_str,
-        caller_id = %caller_user_id,
-        execution_fee = execution_fee,
-        royalty = royalty,
-        platform_cut = execution_fee - royalty,
-        "[credit-flow] royalty paid"
-    );
-
-    Ok((execution_fee, royalty))
+    let raw = (execution_fee as f64 * royalty_pct.clamp(0.0, 1.0)) as i32;
+    Some((owner.to_string(), raw.clamp(1, execution_fee)))
 }
+
 
 /// Check wallet balance and return true if low.
 ///
@@ -604,4 +502,18 @@ pub async fn get_workspace_agent_ids(pool: &PgPool, workspace_id: Uuid) -> Vec<U
         .iter()
         .filter_map(|r| r.try_get::<Uuid, _>("agent_id").ok())
         .collect()
+}
+
+#[cfg(test)]
+mod royalty_tests {
+    #[test]
+    fn royalty_gates_match_the_charge_path() {
+        use super::royalty_for as r;
+        assert_eq!(r(100, Some("o"), "community", "c", 0.85), Some(("o".into(), 85)));
+        assert_eq!(r(1, Some("o"), "community", "c", 0.85), Some(("o".into(), 1)));
+        assert_eq!(r(100, Some("o"), "system", "c", 0.85), None);
+        assert_eq!(r(100, Some("c"), "community", "c", 0.85), None);
+        assert_eq!(r(100, None, "community", "c", 0.85), None);
+        assert_eq!(r(100, Some(""), "community", "c", 0.85), None);
+    }
 }

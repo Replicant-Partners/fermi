@@ -85,6 +85,15 @@ impl Created {
         // sponsored a spawn) keeps its whole ledger, so balance = Σ ledger
         // still holds for it; nothing pinned is half-deleted. Only the
         // deployed (HTTP) tests use this path; in-process tests roll back.
+        // Credit holds (SPEC 36 R1.3) are append-only in production; a test
+        // wallet's holds go with it.
+        for q in [
+            "DELETE FROM credit_hold_closures WHERE hold_id IN (SELECT h.hold_id FROM credit_holds h JOIN wallets w USING (wallet_id) WHERE w.owner_id = ANY($1))",
+            "DELETE FROM credit_holds WHERE wallet_id IN (SELECT wallet_id FROM wallets WHERE owner_id = ANY($1))",
+            "DELETE FROM credit_debt_repayments WHERE wallet_id IN (SELECT wallet_id FROM wallets WHERE owner_id = ANY($1))",
+        ] {
+            sqlx::query(q).bind(&owners).execute(pool).await.expect(q);
+        }
         sqlx::query(
             "DELETE FROM credit_ledger WHERE wallet_id IN (
                  SELECT wallet_id FROM wallets WHERE owner_id = ANY($1)

@@ -5,7 +5,7 @@
 #   let_underscore_sqlx=115 row_get=707 db_decode_unwrap=76
 update_ident=328
 delete_from=63
-let_underscore=275
+let_underscore=267
 let_underscore_sqlx=105
 row_get=706
 db_decode_unwrap=0

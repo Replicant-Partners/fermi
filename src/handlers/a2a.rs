@@ -28,7 +28,6 @@ use fermi::agent_backend::{
     ExecutionContext,
 };
 use fermi::episode_boundary;
-use fermi::gas::{charge_execution_with_royalty, charge_gas};
 use fermi_auth::{api_keys, get_or_create_wallet, types::ApiKey};
 use futures_core::Stream;
 use serde::Deserialize;
@@ -286,14 +285,6 @@ pub async fn send_message_handler(
         .await
         .map_err(|e| credit_error(&format!("Wallet error: {}", e), None))?;
 
-    if wallet.balance <= 0 {
-        let base = fermi::agent_backend::credentials::abw_base_url();
-        return Err(credit_error(
-            "Insufficient credits. Top up your balance to continue.",
-            Some(&format!("{}/credits/topup?ref=a2a", base)),
-        ));
-    }
-
     // ── 4. Extract query from A2A message parts ──────────────────────────
     let query = extract_query(&req)?;
 
@@ -311,6 +302,7 @@ pub async fn send_message_handler(
 
     // ── 6. Resolve card + KG enrichment ─────────────────────────────────
     let card = resolve_agent_card(&state, &db_agent);
+    let hold = open_execution_hold(&state, wallet.wallet_id, &card, "a2a_send").await?;
     let (card, _) = fermi::agent_backend::kg_context::enrich_with_kg_context(
         &state.memory_store,
         &state.embedder,
@@ -333,6 +325,9 @@ pub async fn send_message_handler(
         pulse
             .abandon("not_executed: return_immediately has no background runner (G25)")
             .await;
+        if let Err(e) = fermi::credit_hold::release(&state.db, hold, "not_executed: return_immediately").await {
+            tracing::error!(error = %e, "hold release failed; episode_reaper releases it at expiry");
+        }
         return Ok(Json(fermi::a2a_task::submitted_task(
             episode_id, &caller_id,
         )));
@@ -488,29 +483,32 @@ pub async fn send_message_handler(
     let (execution_fee, gas_fee) = state.gas_fees.execution_fee(tokens);
     let ep_id_str = stored_id.to_string();
 
-    let _ = charge_execution_with_royalty(
+    // SPEC 36 R1.3: charge, royalty and hold close in one transaction. A
+    // failure is a 500, not a free run (the `let _ =` this replaces).
+    fermi::credit_hold::settle(
         &state.db,
-        wallet.wallet_id,
-        &caller_id,
-        execution_fee,
-        db_agent.owner_id.as_deref(),
-        &db_agent.tier,
-        &slug,
-        tokens,
-        Some(ep_id_str.as_str()),
-        state.gas_fees.execution_owner_royalty_pct,
+        hold,
+        &fermi::credit_hold::Settlement {
+            execution_fee,
+            gas_fee,
+            royalty: fermi::gas::royalty_for(
+                execution_fee,
+                db_agent.owner_id.as_deref(),
+                &db_agent.tier,
+                &caller_id,
+                state.gas_fees.execution_owner_royalty_pct,
+            ),
+            description: format!("A2A {} ({}tk)", slug, tokens),
+            related_id: Some(ep_id_str.clone()),
+        },
     )
-    .await;
-
-    let _ = charge_gas(
-        &state.db,
-        wallet.wallet_id,
-        gas_fee,
-        "gas_fee",
-        &format!("A2A gas fee for {}", slug),
-        Some(ep_id_str.as_str()),
-    )
-    .await;
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(a2a_error_body(500, &format!("Settlement failed: {e}"), "INTERNAL_ERROR")),
+        )
+    })?;
 
     // ── 13. Build Task response ─────────────────────────────────────────────
     let task = if matches!(
@@ -775,13 +773,6 @@ pub async fn stream_message_handler(
     let wallet = get_or_create_wallet(&state.db, "user", &caller_id)
         .await
         .map_err(|e| credit_error(&format!("Wallet error: {}", e), None))?;
-    if wallet.balance <= 0 {
-        let base = fermi::agent_backend::credentials::abw_base_url();
-        return Err(credit_error(
-            "Insufficient credits. Top up your balance to continue.",
-            Some(&format!("{}/credits/topup?ref=a2a", base)),
-        ));
-    }
 
     // ── 4. Extract query ─────────────────────────────────────────────────
     let query = extract_query(&req)?;
@@ -800,6 +791,8 @@ pub async fn stream_message_handler(
 
     // ── 6. Resolve card + KG enrichment ─────────────────────────────────
     let card = resolve_agent_card(&state, &db_agent);
+    // Moves into the stream; a disconnect drops it, which releases it.
+    let hold = open_execution_hold(&state, wallet.wallet_id, &card, "a2a_stream").await?;
     let (card, _) = fermi::agent_backend::kg_context::enrich_with_kg_context(
         &state.memory_store,
         &state.embedder,
@@ -1007,14 +1000,27 @@ pub async fn stream_message_handler(
                 let ep_str = stored_id.map(|id| id.to_string()).unwrap_or_default();
                 let ep_ref = if ep_str.is_empty() { None } else { Some(ep_str.as_str()) };
 
-                let _ = charge_execution_with_royalty(
-                    &state_clone.db, wallet_id, &caller_clone,
-                    execution_fee, agent_owner_id.as_deref(), &agent_tier,
-                    &slug_clone, tokens, ep_ref,
-                    gas_fees.execution_owner_royalty_pct,
-                ).await;
-                let _ = charge_gas(&state_clone.db, wallet_id, gas_fee_amt, "gas_fee",
-                    &format!("A2A stream gas fee for {}", slug_clone), ep_ref).await;
+                // SPEC 36 R1.3: charge, royalty and hold close in one
+                // transaction. A failure leaves the hold open (logged in
+                // `credit_hold::settle`), not a free run.
+                let _settled = fermi::credit_hold::settle(
+                    &state_clone.db,
+                    hold,
+                    &fermi::credit_hold::Settlement {
+                        execution_fee,
+                        gas_fee: gas_fee_amt,
+                        royalty: fermi::gas::royalty_for(
+                            execution_fee,
+                            agent_owner_id.as_deref(),
+                            &agent_tier,
+                            &caller_clone,
+                            gas_fees.execution_owner_royalty_pct,
+                        ),
+                        description: format!("A2A stream {} ({}tk)", slug_clone, tokens),
+                        related_id: ep_ref.map(str::to_string),
+                    },
+                )
+                .await;
 
                 let task_id = stored_id.unwrap_or(episode_id).to_string();
 
@@ -1573,6 +1579,35 @@ fn a2a_error_body(status: u16, message: &str, reason: &str) -> Value {
 }
 
 /// 402 Payment Required with a Stripe top-up URL.
+/// SPEC 36 R1.3: reserve the execution estimate before any LLM call. A
+/// refusal is the A2A `INSUFFICIENT_CREDITS` 402 the balance pre-check used
+/// to return.
+async fn open_execution_hold(
+    state: &AppState,
+    wallet_id: Uuid,
+    card: &fermi::agent_backend::agent_card::AgentCard,
+    purpose: &str,
+) -> Result<fermi::credit_hold::Hold, (StatusCode, Json<Value>)> {
+    let estimate = fermi::credit_hold::execution_estimate(
+        &state.gas_fees,
+        card.capabilities.resolve_sampling_params(4096).max_tokens,
+    );
+    match fermi::credit_hold::open(&state.db, wallet_id, estimate, purpose).await {
+        Ok(h) => Ok(h),
+        Err(e) if e.is_payment_required() => {
+            let base = fermi::agent_backend::credentials::abw_base_url();
+            Err(credit_error(
+                &e.to_string(),
+                Some(&format!("{}/credits/topup?ref=a2a", base)),
+            ))
+        }
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(a2a_error_body(500, &e.to_string(), "INTERNAL_ERROR")),
+        )),
+    }
+}
+
 fn credit_error(message: &str, topup_url: Option<&str>) -> (StatusCode, Json<Value>) {
     let mut details = vec![json!({
         "@type": "type.googleapis.com/google.rpc.ErrorInfo",

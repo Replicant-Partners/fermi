@@ -30,6 +30,7 @@ pub mod api;
 
 // Gas fees and workflow engine
 pub mod gas;
+pub mod credit_hold;
 pub mod glasses_shell;
 pub mod workflows;
 

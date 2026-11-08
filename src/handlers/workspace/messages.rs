@@ -30,7 +30,9 @@ use fermi::agent_backend::tools::{PlatformToolRegistry, ToolContext};
 use fermi::agent_backend::ExecutionContext;
 use fermi::ast;
 
-use super::core::{charge_workspace_gas, get_workspace_slug, parse_at_mention};
+use super::core::{
+    charge_workspace_gas, get_workspace_slug, parse_at_mention, sync_workspace_spent,
+};
 use crate::handlers::agents::CreateAgentRequest;
 use crate::{agent_output_to_episode, resolve_agent, resolve_agent_card, AppState};
 
@@ -379,6 +381,31 @@ pub async fn post_workspace_message_handler(
                         let db_agent = resolve_agent(&state2, &agent_name2).await?;
                         let card = resolve_agent_card(&state2, &db_agent);
 
+                        // SPEC 36 R1.3: reserve on the workspace wallet before
+                        // the run. It used to be charged after the work, with
+                        // the result discarded (`let _ = charge_workspace_gas`).
+                        let ws_wallet = get_or_create_wallet(&state2.db, "workspace", &ws_id)
+                            .await
+                            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                        let hold = fermi::credit_hold::open(
+                            &state2.db,
+                            ws_wallet.wallet_id,
+                            fermi::credit_hold::execution_estimate(
+                                &state2.gas_fees,
+                                card.capabilities.resolve_sampling_params(4096).max_tokens,
+                            ),
+                            "workspace_mention",
+                        )
+                        .await
+                        .map_err(|e| {
+                            let status = if e.is_payment_required() {
+                                StatusCode::PAYMENT_REQUIRED
+                            } else {
+                                StatusCode::INTERNAL_SERVER_ERROR
+                            };
+                            (status, e.to_string())
+                        })?;
+
                         // Enrich card with KG context from past dream cycles
                         let t_kg = tokio::time::Instant::now();
                         let (card, _kg_query_embedding) = enrich_with_kg_context(
@@ -715,17 +742,23 @@ pub async fn post_workspace_message_handler(
                         // Charge execution gas from workspace wallet
                         let tokens = output.tokens_used.unwrap_or(0) as i32;
                         let (exec_fee, gas_fee) = state2.gas_fees.execution_fee(tokens);
-                        let total = exec_fee + gas_fee;
-                        let _ = charge_workspace_gas(
+                        let episode_ref = episode_id.to_string();
+                        let settled = fermi::credit_hold::settle(
                             &state2.db,
-                            ws_uuid2,
-                            &ws_id,
-                            total,
-                            "execution_fee",
-                            &format!("@{} execution ({}tk)", agent_name2, tokens),
-                            None,
+                            hold,
+                            &fermi::credit_hold::Settlement {
+                                execution_fee: exec_fee,
+                                gas_fee,
+                                // Workspace wallets paid no royalty before this
+                                // change either; unchanged.
+                                royalty: None,
+                                description: format!("@{} execution ({}tk)", agent_name2, tokens),
+                                related_id: Some(episode_ref),
+                            },
                         )
-                        .await;
+                        .await
+                        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Settlement failed: {e}")))?;
+                        sync_workspace_spent(&state2.db, ws_uuid2, settled.charged).await;
 
                         // Auto-commit ontology snapshot to workspace repo
                         if !slug.is_empty() {

@@ -817,13 +817,18 @@ pub async fn charge_workspace_gas(
         related_id,
     )
     .await?;
-    // Keep teams.workspace_spent in sync for display
+    sync_workspace_spent(pool, ws_uuid, charged).await;
+    Ok(charged)
+}
+
+/// Keep `teams.workspace_spent` in sync for display (moved out of
+/// `charge_workspace_gas` so `credit_hold::settle` callers share it).
+pub async fn sync_workspace_spent(pool: &PgPool, ws_uuid: uuid::Uuid, charged: i32) {
     let _ = sqlx::query("UPDATE teams SET workspace_spent = workspace_spent + $1 WHERE id = $2")
         .bind(charged)
         .bind(ws_uuid)
         .execute(pool)
         .await;
-    Ok(charged)
 }
 
 // ─── Shared helpers (used by messages + coherence) ──────────────────
