@@ -58,7 +58,7 @@ pub use aggregator::{
 pub use error::EvalError;
 pub use judge::{JudgeOutcome, LlmJudge, LlmJudgeConfig, LlmJudgeEvaluator, NoopLlmJudge};
 pub use llm_json::{extract_json_object, parse_llm_json};
-pub use model::EvalModel;
+pub use model::{Epistemic, EvalModel};
 pub use projection_scoring::{ProjectionLookup, ProjectionObservation, ProjectionScoringEvaluator};
 pub use registry::{EvaluatorRegistry, RegistryOutcome};
 pub use result::{Dimension, EvalFlag, EvalResult, RegistryResult};

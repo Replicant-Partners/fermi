@@ -237,3 +237,26 @@ pub async fn balances(pool: &PgPool, owner_id: &str) -> (i32, i32, i32) {
     .await
     .expect("balances")
 }
+
+/// Every `.rs` file under `dir`, recursively, skipping `target` and
+/// `node_modules`.
+pub fn rust_files(dir: &str) -> Vec<std::path::PathBuf> {
+    fn walk(d: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(rd) = std::fs::read_dir(d) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                if !p.ends_with("target") && !p.ends_with("node_modules") {
+                    walk(&p, out);
+                }
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                out.push(p);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(std::path::Path::new(dir), &mut out);
+    out
+}

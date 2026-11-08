@@ -178,6 +178,8 @@ impl EvalResult {
 pub struct RegistryResult {
     pub evaluator_name: String,
     pub tier: EvalTier,
+    /// What the evaluator declared its scores to be (rule 8).
+    pub epistemic: crate::model::Epistemic,
     /// `Ok(EvalResult)` on success; `Err(EvalError)` for failure or
     /// inapplicability.
     pub outcome: Result<EvalResult, EvalError>,

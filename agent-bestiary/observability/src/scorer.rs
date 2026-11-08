@@ -101,6 +101,7 @@ mod tests {
             inapplicable_evaluators: vec![],
             failed_evaluators: vec![],
             failure_reasons: vec![],
+            unavailable: vec![],
         };
 
         // Reproduce the dim_scores serialization the scorer would do.

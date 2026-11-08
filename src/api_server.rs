@@ -1470,6 +1470,8 @@ async fn run_migrations(db: &PgPool) {
         "migrations/246_credit_holds.sql",
         // LLD G10: the first coherence-gate outcome, replayed at consensus.
         "migrations/247_two_reviewer_first_gate_outcome.sql",
+        // LLD G12: eval_signals.source_class (interpretive | computed).
+        "migrations/248_eval_signals_source_class.sql",
     ];
 
     // SPEC 36 G16: skip applied, fail on checksum change, fail on any

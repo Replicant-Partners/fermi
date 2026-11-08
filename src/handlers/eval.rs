@@ -59,7 +59,7 @@ use fermi::agent_backend::ExecutionContext;
 use fermi::ast;
 
 use crate::handlers::eval_brier::{AgentNameResolver, BrierLookupSqlx};
-use crate::handlers::eval_judge::LlmJudgeAnthropic;
+use crate::handlers::eval_judge::LlmJudgeHttp;
 use crate::handlers::eval_projection::ProjectionLookupSqlx;
 use crate::{
     agent_output_to_episode, create_notification, resolve_agent, resolve_agent_card, AppState,
@@ -854,6 +854,10 @@ pub async fn run_eval_cases(
     if per_case_signals.len() < cases.len() {
         run_aggregate.status = agent_bestiary_evaluators::SignalStatus::Undetermined;
     }
+    // G12: a judge average over only the cases an independent judge could
+    // score is not this run's judge score. Stored as `None`, so it is neither
+    // reported nor used as the next run's baseline (rule 4).
+    let avg_judge = avg_judge.filter(|_| judge_unavailable_reasons(&run_aggregate).is_empty());
     let aggregated_signal_json = serde_json::to_value(&run_aggregate).ok();
     let conflict_flags_json =
         serde_json::to_value(&run_aggregate.conflicts).unwrap_or_else(|_| json!([]));
@@ -1019,8 +1023,13 @@ fn build_registry(
     // ── Dimensional evaluators (run in parallel) ─────────────────────────
 
     if judge_enabled {
+        // G12: for each case, `LlmJudgeHttp::score` calls `independent_judge`
+        // with the model that case actually ran on (`context.model_used`) and
+        // returns `EvalError::Unavailable` when no configured judge is of
+        // another family, so the run records why it was not judged.
+        let configured = fermi::judge_policy::configured_judges(|k| std::env::var(k).ok());
         let judge: Arc<dyn agent_bestiary_evaluators::LlmJudge> =
-            Arc::new(LlmJudgeAnthropic::new());
+            Arc::new(LlmJudgeHttp::new(configured));
         registry.register(Arc::new(LlmJudgeEvaluator::new(judge)));
     }
 
@@ -1117,6 +1126,8 @@ fn registry_outcome_to_signals(
                 cost_credits: eval.cost_credits,
                 latency_ms: r.latency_ms as i64,
                 rationale: eval.rationale.clone(),
+                // Declared by the evaluator, not inferred here (rule 8).
+                source_class: Some(r.epistemic.id().to_string()),
                 created_at: chrono::Utc::now(),
             });
         }
@@ -1155,6 +1166,7 @@ fn aggregate_run_signals(signals: &[AggregatedSignal]) -> AggregatedSignal {
             inapplicable_evaluators: vec![],
             failed_evaluators: vec![],
             failure_reasons: vec![],
+            unavailable: vec![],
         };
     }
 
@@ -1167,6 +1179,7 @@ fn aggregate_run_signals(signals: &[AggregatedSignal]) -> AggregatedSignal {
     // Deduplicated across cases: the same evaluator failing on all nine test
     // cases for the same reason should read as one problem, not nine.
     let mut failure_reasons = std::collections::BTreeSet::new();
+    let mut unavailable = std::collections::BTreeSet::new();
     let mut all_flags = Vec::new();
 
     for sig in signals {
@@ -1203,6 +1216,9 @@ fn aggregate_run_signals(signals: &[AggregatedSignal]) -> AggregatedSignal {
         }
         for r in &sig.failure_reasons {
             failure_reasons.insert(r.clone());
+        }
+        for u in &sig.unavailable {
+            unavailable.insert(u.clone());
         }
         for f in &sig.flags {
             all_flags.push(f.clone());
@@ -1255,7 +1271,31 @@ fn aggregate_run_signals(signals: &[AggregatedSignal]) -> AggregatedSignal {
         inapplicable_evaluators: inapplicable.into_iter().collect(),
         failure_reasons: failure_reasons.into_iter().collect(),
         failed_evaluators: failed.into_iter().collect(),
+        unavailable: unavailable.into_iter().collect(),
     }
+}
+
+/// Why the `llm_judge` slot could not judge, for every case where it could
+/// not (`EvalError::Unavailable`, G12). Empty when it judged every case.
+fn judge_unavailable_reasons(agg: &AggregatedSignal) -> Vec<String> {
+    agg.unavailable
+        .iter()
+        .filter(|(e, _)| e == "llm_judge")
+        .map(|(_, why)| why.clone())
+        .collect()
+}
+
+/// The regression-details note for a run whose judge was unavailable: the
+/// judge score was not evaluated, with the reason class and reasons.
+fn judge_unavailable_note(agg: &AggregatedSignal) -> Option<Value> {
+    let reasons = judge_unavailable_reasons(agg);
+    (!reasons.is_empty()).then(|| {
+        json!({
+            "reason_class": "judge_unavailable",
+            "reasons": reasons,
+            "not_evaluated": ["judge_score"],
+        })
+    })
 }
 
 fn format_conflict_body(conflicts: &[ConflictFlag]) -> String {
@@ -1331,11 +1371,13 @@ pub async fn detect_regression(
             "not_evaluated": ["judge_score", "dimensions"],
         })
     });
+    let judge_note = current_run_aggregate.and_then(judge_unavailable_note);
     let Some(prev) = prev else {
-        return (
-            false,
-            undetermined_note.map(|u| json!({ "regressions": [], "undetermined": u })),
-        );
+        let details = match (undetermined_note, judge_note) {
+            (None, None) => None,
+            (u, j) => Some(json!({ "regressions": [], "undetermined": u, "judge": j })),
+        };
+        return (false, details);
     };
 
     let mut regressions = Vec::new();
@@ -1356,7 +1398,8 @@ pub async fn detect_regression(
         }
     }
 
-    // Judge score regression (>0.5 drop on 5-point scale)
+    // Judge score regression (>0.5 drop on 5-point scale). `current_judge` is
+    // already `None` when the judge was unavailable on any case (G12).
     let current_judge = current_judge.filter(|_| undetermined.is_none());
     if let (Some(prev_j), Some(curr_j)) = (prev.avg_judge_score, current_judge) {
         if prev_j - curr_j > 0.5 {
@@ -1419,12 +1462,14 @@ pub async fn detect_regression(
     }
 
     let detected = !regressions.is_empty();
-    let details = match undetermined_note {
-        // Object form only when undetermined, so existing readers of the
-        // array form (`format_regression_body`) are unchanged otherwise.
-        Some(u) => Some(json!({ "regressions": regressions, "undetermined": u })),
-        None if detected => Some(json!(regressions)),
-        None => None,
+    let details = match (undetermined_note, judge_note) {
+        // Object form only when something was not evaluated, so existing
+        // readers of the array form (`format_regression_body`) are
+        // unchanged otherwise.
+        (Some(u), j) => Some(json!({ "regressions": regressions, "undetermined": u, "judge": j })),
+        (None, Some(j)) => Some(json!({ "regressions": regressions, "judge": j })),
+        (None, None) if detected => Some(json!(regressions)),
+        (None, None) => None,
     };
     (detected, details)
 }
@@ -1809,7 +1854,7 @@ impl<'de> serde::Deserialize<'de> for AgentSelection {
 
 #[cfg(test)]
 mod run_status_tests {
-    use super::aggregate_run_signals;
+    use super::{aggregate_run_signals, judge_unavailable_note, judge_unavailable_reasons};
     use agent_bestiary_evaluators::{AggregatedSignal, SignalStatus};
 
     fn sig(status: SignalStatus) -> AggregatedSignal {
@@ -1822,6 +1867,7 @@ mod run_status_tests {
             inapplicable_evaluators: vec![],
             failed_evaluators: vec![],
             failure_reasons: vec![],
+            unavailable: vec![],
         }
     }
 
@@ -1843,5 +1889,28 @@ mod run_status_tests {
             aggregate_run_signals(&[sig(Scored), sig(Blocked), sig(Undetermined)]).status,
             Undetermined
         );
+    }
+
+    /// G12: an unavailable judge on any case is carried to the run, and the
+    /// run's judge score is recorded as not evaluated, with its reason class.
+    #[test]
+    fn an_unavailable_judge_reaches_the_run_and_is_not_a_score() {
+        let mut judged = sig(SignalStatus::Scored);
+        judged.active_evaluators = vec!["llm_judge".into()];
+        let mut unjudged = sig(SignalStatus::Scored);
+        unjudged.unavailable = vec![(
+            "llm_judge".into(),
+            "Unavailable: judge.unavailable: model `` names no known family".into(),
+        )];
+        let run = aggregate_run_signals(&[judged.clone(), unjudged]);
+        assert_eq!(run.unavailable.len(), 1, "unioned into the run");
+        assert!(run.failed_evaluators.is_empty(), "not a failure");
+        assert_eq!(judge_unavailable_reasons(&run).len(), 1);
+        let note = judge_unavailable_note(&run).expect("a note");
+        assert_eq!(note["reason_class"], "judge_unavailable");
+        assert_eq!(note["not_evaluated"][0], "judge_score");
+
+        let all_judged = aggregate_run_signals(&[judged]);
+        assert!(judge_unavailable_note(&all_judged).is_none());
     }
 }

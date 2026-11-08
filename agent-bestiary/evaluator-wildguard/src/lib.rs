@@ -150,6 +150,14 @@ impl EvalModel for WildGuardEvaluator {
         EvalTier::PreFilter
     }
 
+    fn epistemic(&self) -> agent_bestiary_evaluators::Epistemic {
+        if self.llm.is_some() {
+            agent_bestiary_evaluators::Epistemic::Interpretive
+        } else {
+            agent_bestiary_evaluators::Epistemic::Computed
+        }
+    }
+
     fn dimensions(&self) -> Vec<Dimension> {
         vec![Dimension::new("safety")]
     }

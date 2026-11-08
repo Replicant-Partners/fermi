@@ -93,6 +93,10 @@ impl EvalModel for BrierEvaluator {
         EvalTier::Dimensional
     }
 
+    fn epistemic(&self) -> crate::model::Epistemic {
+        crate::model::Epistemic::Computed
+    }
+
     fn dimensions(&self) -> Vec<Dimension> {
         vec![Dimension::new("forecast_calibration")]
     }

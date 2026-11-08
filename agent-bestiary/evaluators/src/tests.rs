@@ -64,6 +64,10 @@ impl EvalModel for FixedScorer {
     fn tier(&self) -> EvalTier {
         self.tier
     }
+
+    fn epistemic(&self) -> crate::model::Epistemic {
+        crate::model::Epistemic::Computed
+    }
     fn dimensions(&self) -> Vec<Dimension> {
         vec![self.dim.clone()]
     }
@@ -84,6 +88,10 @@ impl EvalModel for AlwaysFail {
     }
     fn tier(&self) -> EvalTier {
         EvalTier::Dimensional
+    }
+
+    fn epistemic(&self) -> crate::model::Epistemic {
+        crate::model::Epistemic::Computed
     }
     fn dimensions(&self) -> Vec<Dimension> {
         vec![Dimension::new("ignored")]
@@ -107,6 +115,10 @@ impl EvalModel for FailingPreFilter {
     fn tier(&self) -> EvalTier {
         EvalTier::PreFilter
     }
+
+    fn epistemic(&self) -> crate::model::Epistemic {
+        crate::model::Epistemic::Computed
+    }
     fn dimensions(&self) -> Vec<Dimension> {
         vec![Dimension::new("safety")]
     }
@@ -129,6 +141,10 @@ impl EvalModel for InapplicablePreFilter {
     fn tier(&self) -> EvalTier {
         EvalTier::PreFilter
     }
+
+    fn epistemic(&self) -> crate::model::Epistemic {
+        crate::model::Epistemic::Computed
+    }
     fn dimensions(&self) -> Vec<Dimension> {
         vec![Dimension::new("safety")]
     }
@@ -149,6 +165,10 @@ impl EvalModel for AlwaysInapplicable {
     }
     fn tier(&self) -> EvalTier {
         EvalTier::Dimensional
+    }
+
+    fn epistemic(&self) -> crate::model::Epistemic {
+        crate::model::Epistemic::Computed
     }
     fn dimensions(&self) -> Vec<Dimension> {
         vec![Dimension::new("ignored")]
@@ -307,6 +327,7 @@ async fn reference_impls_run_through_registry() {
         completeness: 5.0,
         overall: 4.3,
         reasoning: Some("good".into()),
+        judge_model: None,
     }));
     let llm_judge = Arc::new(LlmJudgeEvaluator::new(judge));
 

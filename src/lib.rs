@@ -88,6 +88,7 @@ pub mod rollup_trust;
 // contract that maps output fields to the tools that could supply them
 // catches it.
 pub mod grounding_trust;
+pub mod judge_policy;
 
 // The one implementation of `ProvenanceOracle`, which carries the grounding
 // verdict across the crate boundary into the memory layer.

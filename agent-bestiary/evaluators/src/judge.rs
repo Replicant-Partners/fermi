@@ -27,6 +27,10 @@ pub struct JudgeOutcome {
     pub overall: f64,
     #[serde(default)]
     pub reasoning: Option<String>,
+    /// The model that produced this judgement, when the judge is chosen per
+    /// bundle (G12: independent of the model that produced the output).
+    #[serde(default)]
+    pub judge_model: Option<String>,
 }
 
 /// Provider-agnostic LLM judge interface. The concrete implementor
@@ -83,7 +87,8 @@ impl Default for LlmJudgeConfig {
     fn default() -> Self {
         Self {
             name: "llm_judge",
-            version: "v1",
+            // v2: per-bundle independent judge, graded text fenced as data (G12).
+            version: "v2",
         }
     }
 }
@@ -131,6 +136,10 @@ impl EvalModel for LlmJudgeEvaluator {
         EvalTier::Dimensional
     }
 
+    fn epistemic(&self) -> crate::model::Epistemic {
+        crate::model::Epistemic::Interpretive
+    }
+
     fn dimensions(&self) -> Vec<Dimension> {
         vec![
             Dimension::new("relevance"),
@@ -161,7 +170,12 @@ impl EvalModel for LlmJudgeEvaluator {
                 Dimension::new("completeness"),
                 normalize_likert(outcome.completeness),
             )
-            .with_model(self.judge.model_id().to_string());
+            .with_model(
+                outcome
+                    .judge_model
+                    .clone()
+                    .unwrap_or_else(|| self.judge.model_id().to_string()),
+            );
 
         if let Some(reasoning) = outcome.reasoning {
             result = result.with_rationale(reasoning);
@@ -217,6 +231,7 @@ mod tests {
             completeness: 1.0,
             overall: 3.0,
             reasoning: Some("solid".into()),
+            judge_model: None,
         }));
         let ev = LlmJudgeEvaluator::new(judge);
         let result = ev.evaluate(&dummy_bundle()).await.unwrap();
@@ -226,7 +241,7 @@ mod tests {
         assert!((scores.get(&Dimension::new("accuracy")).unwrap() - 0.5).abs() < 1e-9);
         assert!((scores.get(&Dimension::new("completeness")).unwrap() - 0.0).abs() < 1e-9);
         assert_eq!(result.evaluator_name, "llm_judge");
-        assert_eq!(result.evaluator_version, "v1");
+        assert_eq!(result.evaluator_version, "v2");
         assert_eq!(result.model_used.as_deref(), Some("noop-judge"));
     }
 
@@ -238,6 +253,7 @@ mod tests {
             completeness: 4.0, // mid
             overall: 4.0,
             reasoning: None,
+            judge_model: None,
         }));
         let ev = LlmJudgeEvaluator::new(judge);
         let result = ev.evaluate(&dummy_bundle()).await.unwrap();

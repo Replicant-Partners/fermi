@@ -466,9 +466,9 @@ async fn emit_extraction_utility_signal(state: &AppState, extractor_id: uuid::Uu
     let res = sqlx::query(
         "INSERT INTO eval_signals
               (agent_id, evaluator_name, evaluator_version, evaluator_tier,
-               dimension, score, confidence, rationale, created_at)
+               dimension, score, confidence, rationale, created_at, source_class)
          SELECT $1, 'extraction_utility_resolver', 'v1', $5,
-                'extraction_utility', $2, $3, $4, NOW()
+                'extraction_utility', $2, $3, $4, NOW(), 'computed'
           WHERE NOT EXISTS (
               SELECT 1 FROM eval_signals
                WHERE agent_id = $1

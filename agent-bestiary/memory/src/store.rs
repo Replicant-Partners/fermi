@@ -4196,9 +4196,9 @@ impl MemoryStore {
                 evaluator_name, evaluator_version, evaluator_tier,
                 dimension, score, confidence, flags,
                 bundle_provenance, persona_version,
-                model_used, cost_credits, latency_ms, rationale
+                model_used, cost_credits, latency_ms, rationale, source_class
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
             RETURNING signal_id"#,
         )
         .bind(signal.signal_id)
@@ -4218,6 +4218,7 @@ impl MemoryStore {
         .bind(signal.cost_credits)
         .bind(signal.latency_ms)
         .bind(&signal.rationale)
+        .bind(&signal.source_class)
         .fetch_one(&self.pool)
         .await?;
         Ok(row.try_get("signal_id")?)
@@ -4247,7 +4248,7 @@ impl MemoryStore {
                       dimension, score, confidence, flags,
                       bundle_provenance, persona_version,
                       model_used, cost_credits, latency_ms, rationale,
-                      created_at
+                      source_class, created_at
                FROM eval_signals
                WHERE run_id = $1
                ORDER BY evaluator_name, dimension"#,
@@ -4272,7 +4273,7 @@ impl MemoryStore {
                       dimension, score, confidence, flags,
                       bundle_provenance, persona_version,
                       model_used, cost_credits, latency_ms, rationale,
-                      created_at
+                      source_class, created_at
                FROM eval_signals
                WHERE agent_id = $1 AND dimension = $2
                ORDER BY created_at DESC
@@ -5081,6 +5082,7 @@ fn row_to_eval_signal(row: &sqlx::postgres::PgRow) -> Result<EvalSignal> {
         cost_credits: row.try_get("cost_credits")?,
         latency_ms: row.try_get("latency_ms")?,
         rationale: row.try_get("rationale").ok().flatten(),
+        source_class: row.try_get("source_class")?,
         created_at: row.try_get("created_at")?,
     })
 }

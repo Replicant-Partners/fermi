@@ -90,6 +90,12 @@ pub struct AggregatedSignal {
     /// malformed response short of redeploying with extra logging.
     #[serde(default)]
     pub failure_reasons: Vec<(String, String)>,
+    /// Evaluators that applied but could not run under their policy
+    /// (`EvalError::Unavailable`, e.g. no independent judge), with the reason.
+    /// Their dimensions are not evaluated, which is neither a failure nor
+    /// "does not apply" (G12, rule 4).
+    #[serde(default)]
+    pub unavailable: Vec<(String, String)>,
 }
 
 /// Aggregator with a configurable conflict threshold.
@@ -121,6 +127,7 @@ impl Aggregator {
         let mut inapplicable_evaluators: Vec<String> = Vec::new();
         let mut failed_evaluators: Vec<String> = Vec::new();
         let mut failure_reasons: Vec<(String, String)> = Vec::new();
+        let mut unavailable: Vec<(String, String)> = Vec::new();
 
         for r in results {
             match &r.outcome {
@@ -141,6 +148,9 @@ impl Aggregator {
                 }
                 Err(e) if e.is_inapplicable() => {
                     inapplicable_evaluators.push(r.evaluator_name.clone());
+                }
+                Err(e) if e.is_unavailable() => {
+                    unavailable.push((r.evaluator_name.clone(), e.to_string()));
                 }
                 Err(e) => {
                     failed_evaluators.push(r.evaluator_name.clone());
@@ -191,6 +201,7 @@ impl Aggregator {
             inapplicable_evaluators,
             failed_evaluators,
             failure_reasons,
+            unavailable,
         }
     }
 }
@@ -235,6 +246,7 @@ mod tests {
         }
         RegistryResult {
             evaluator_name: name.to_string(),
+            epistemic: crate::model::Epistemic::Computed,
             tier: EvalTier::Dimensional,
             outcome: Ok(eval),
             latency_ms: 1,
@@ -244,6 +256,7 @@ mod tests {
     fn inapplicable(name: &str) -> RegistryResult {
         RegistryResult {
             evaluator_name: name.to_string(),
+            epistemic: crate::model::Epistemic::Computed,
             tier: EvalTier::Dimensional,
             outcome: Err(EvalError::Inapplicable("no goal_spec".into())),
             latency_ms: 0,
@@ -253,10 +266,35 @@ mod tests {
     fn failed(name: &str) -> RegistryResult {
         RegistryResult {
             evaluator_name: name.to_string(),
+            epistemic: crate::model::Epistemic::Computed,
             tier: EvalTier::Dimensional,
             outcome: Err(EvalError::Provider("boom".into())),
             latency_ms: 0,
         }
+    }
+
+    fn unavailable(name: &str) -> RegistryResult {
+        RegistryResult {
+            evaluator_name: name.to_string(),
+            epistemic: crate::model::Epistemic::Interpretive,
+            tier: EvalTier::Dimensional,
+            outcome: Err(EvalError::Unavailable("judge.unavailable: test".into())),
+            latency_ms: 0,
+        }
+    }
+
+    /// G12: `Unavailable` is neither a failure nor "does not apply".
+    #[test]
+    fn unavailable_has_its_own_bucket() {
+        let agg = Aggregator::default().aggregate(&[
+            ok_result("sotopia", "v1", &[("rapport", 0.5)]),
+            unavailable("llm_judge"),
+            failed("character_eval"),
+        ]);
+        assert_eq!(agg.unavailable.len(), 1);
+        assert_eq!(agg.unavailable[0].0, "llm_judge");
+        assert_eq!(agg.failed_evaluators, vec!["character_eval".to_string()]);
+        assert!(agg.inapplicable_evaluators.is_empty());
     }
 
     #[test]
@@ -323,6 +361,7 @@ mod tests {
         a_eval.confidence = 0.0;
         let a = RegistryResult {
             evaluator_name: "a".into(),
+            epistemic: crate::model::Epistemic::Computed,
             tier: EvalTier::Dimensional,
             outcome: Ok(a_eval),
             latency_ms: 0,
@@ -332,6 +371,7 @@ mod tests {
             .with_confidence(1.0);
         let b = RegistryResult {
             evaluator_name: "b".into(),
+            epistemic: crate::model::Epistemic::Computed,
             tier: EvalTier::Dimensional,
             outcome: Ok(b_eval),
             latency_ms: 0,

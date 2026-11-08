@@ -1009,6 +1009,11 @@ pub struct EvalSignal {
 
     pub rationale: Option<String>,
 
+    /// `interpretive` (a model's judgement) or `computed` (code over recorded
+    /// data); migration 248, directive rule 8. `None` only on rows recorded
+    /// before the column existed.
+    pub source_class: Option<String>,
+
     pub created_at: DateTime<Utc>,
 }
 

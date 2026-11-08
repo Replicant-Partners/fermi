@@ -41,3 +41,5 @@ mod credit_holds;
 mod tool_join;
 
 mod coherence_replay;
+
+mod judge_independence;
