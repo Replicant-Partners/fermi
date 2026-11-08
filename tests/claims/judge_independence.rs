@@ -48,41 +48,71 @@ fn no_judge_shares_the_agents_family() {
             }
         }
     }
-    // The dev fleet's common case: a Claude agent with both keys set gets a
-    // non-Claude judge. On the old code it got claude-haiku.
+    // The models dev episodes actually recorded in the last 60 days
+    // (`context.model_used`): Claude cases get gpt-4o-mini, the gpt-4o-mini
+    // cases get Claude, and a case with no recorded model gets no judge. On
+    // the old code every one of them got claude-haiku.
     let both = configured_judges(|k| Some(k.to_string()));
-    let j = independent_judge(&["claude-sonnet-4-5"], &both).unwrap();
-    assert_eq!(j.model, "gpt-4o-mini");
+    for m in [
+        "claude-sonnet-4-6",
+        "claude-haiku-4-5-20251001",
+        "claude-sonnet-4-5-20250929",
+    ] {
+        assert_eq!(independent_judge(&[m], &both).unwrap().model, "gpt-4o-mini");
+    }
+    assert_eq!(
+        independent_judge(&["gpt-4o-mini"], &both).unwrap().model,
+        "claude-haiku-4-5-20251001"
+    );
+    assert!(matches!(
+        independent_judge(&[""], &both),
+        Err(JudgeUnavailable::UnknownProposerFamily(_))
+    ));
 }
 
-/// The registry only ever registers a judge chosen by the independence
-/// policy, and the judge file names no default model. Fails on the old code,
-/// where `build_registry` registered `LlmJudgeAnthropic::new()`.
+/// The `llm_judge` slot only ever judges with a model chosen by the
+/// independence policy, per case, from the model that case ran on; and the
+/// judge has no default model. Fails on the old code, where `build_registry`
+/// registered `LlmJudgeAnthropic::new()` (always `claude-haiku`).
+///
+/// Scope: WildGuard, Sotopia and CharacterEval still run on `claude-haiku`
+/// for every agent. They are pinned here at exactly three sites so the
+/// exception cannot grow and is removed by #151.
 #[test]
-fn every_judge_registration_goes_through_the_independence_policy() {
+fn the_llm_judge_slot_is_independent_and_the_exceptions_are_pinned() {
     let root = env!("CARGO_MANIFEST_DIR");
-    let eval = std::fs::read_to_string(format!("{root}/src/handlers/eval.rs")).unwrap();
-    let code: Vec<&str> = eval
-        .lines()
-        .map(|l| l.split("//").next().unwrap_or(""))
-        .collect();
-    let mut sites = 0;
-    for (i, l) in code.iter().enumerate() {
-        if l.contains("LlmJudgeEvaluator::new(") {
-            sites += 1;
-            let before = code[i.saturating_sub(20)..i].join("\n");
-            assert!(
-                before.contains("independent_judge("),
-                "src/handlers/eval.rs:{}: a judge registered without the independence policy",
-                i + 1
-            );
-        }
-    }
-    assert!(sites >= 1, "no judge registration found; did it move?");
-    let judge = std::fs::read_to_string(format!("{root}/src/handlers/eval_judge.rs")).unwrap();
+    let strip = |t: &str| -> String {
+        t.lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let eval = strip(&std::fs::read_to_string(format!("{root}/src/handlers/eval.rs")).unwrap());
+    let judge =
+        strip(&std::fs::read_to_string(format!("{root}/src/handlers/eval_judge.rs")).unwrap());
+    assert_eq!(
+        eval.matches("LlmJudgeEvaluator::new(").count(),
+        1,
+        "one llm_judge registration"
+    );
+    assert!(
+        eval.contains("LlmJudgeHttp::new(configured)"),
+        "the llm_judge slot is the policy judge"
+    );
+    let score = &judge[judge.find("async fn score").expect("LlmJudgeHttp::score")..];
+    assert!(
+        score.contains("\"model_used\"") && score.contains("independent_judge("),
+        "the judge is chosen from the model the case ran on"
+    );
     assert!(
         !judge.contains("impl Default for"),
-        "the judge must not have a default model; it is chosen per agent"
+        "the judge must not have a default model"
+    );
+    assert_eq!(
+        eval.matches("model: \"claude-haiku-4-5-20251001\".into()")
+            .count(),
+        3,
+        "same-family evaluator configs changed: update this pin and #151"
     );
 }
 
@@ -173,5 +203,20 @@ async fn eval_signals_source_class_is_checked() {
     sqlx::query("SAVEPOINT s").execute(&mut *tx).await.unwrap();
     let err = sqlx::query(&insert("evidence")).execute(&mut *tx).await;
     assert!(err.is_err(), "a judge's score cannot be filed as evidence");
+    sqlx::query("ROLLBACK TO SAVEPOINT s")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let unclassified = sqlx::query(&format!(
+        "INSERT INTO eval_signals (agent_id, evaluator_name, evaluator_version, \
+         evaluator_tier, dimension, score, confidence) \
+         VALUES ('{agent}', 'spec36_g12', 'v1', 'dimensional', 'relevance', 0.5, 0.5)"
+    ))
+    .execute(&mut *tx)
+    .await;
+    assert!(
+        unclassified.is_err(),
+        "a new row must say what kind of claim it is"
+    );
     tx.rollback().await.unwrap();
 }

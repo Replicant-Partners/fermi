@@ -52,4 +52,8 @@ impl EvalError {
     pub fn is_inapplicable(&self) -> bool {
         matches!(self, EvalError::Inapplicable(_))
     }
+
+    pub fn is_unavailable(&self) -> bool {
+        matches!(self, EvalError::Unavailable(_))
+    }
 }

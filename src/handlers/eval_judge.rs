@@ -2,10 +2,13 @@
 //!
 //! Two properties this file enforces (LLD G12):
 //!
-//! 1. **The judge is independent of the agent it grades.** It is chosen by
-//!    `fermi::judge_policy::independent_judge` from a different model family
-//!    than every model the agent may run on; when none is configured the judge
-//!    is unavailable, not substituted. It used to be `claude-haiku-4-5` for
+//! 1. **The judge is independent of the output it grades.** For each case it
+//!    is chosen by `fermi::judge_policy::independent_judge` from a different
+//!    model family than the model the case ran on (`context.model_used`);
+//!    when none is configured, or that model is unknown, the judge is
+//!    `EvalError::Unavailable`, never substituted. This covers the
+//!    `llm_judge` slot only: WildGuard, Sotopia and CharacterEval still run
+//!    on Claude for every agent (#151). It used to be `claude-haiku-4-5` for
 //!    every agent [V: `src/handlers/eval_judge.rs:37` @ 25cc31ed].
 //! 2. **What is graded is data, not instructions.** The query, expected
 //!    output, rubric and agent output go into the prompt only as JSON string
@@ -24,9 +27,10 @@ use async_trait::async_trait;
 use fermi::judge_policy::{judge_prompt, JudgeCandidate, JudgePrompt, JudgeProvider};
 use serde_json::json;
 
-/// An LLM judge over HTTP, for one chosen `JudgeCandidate`.
+/// An LLM judge over HTTP. Holds the configured judges and picks, per
+/// bundle, one from a different family than the model that produced it.
 pub struct LlmJudgeHttp {
-    candidate: JudgeCandidate,
+    configured: Vec<JudgeCandidate>,
     /// Rubric text from the test case, when there is one.
     pub rubric: Option<String>,
     /// Expected output from the test case, when there is one.
@@ -34,9 +38,9 @@ pub struct LlmJudgeHttp {
 }
 
 impl LlmJudgeHttp {
-    pub fn new(candidate: JudgeCandidate) -> Self {
+    pub fn new(configured: Vec<JudgeCandidate>) -> Self {
         Self {
-            candidate,
+            configured,
             rubric: None,
             expected_output: None,
         }
@@ -78,9 +82,9 @@ impl LlmJudgeHttp {
         )
     }
 
-    async fn call(&self, prompt: &JudgePrompt) -> Result<String, EvalError> {
+    async fn call(candidate: &JudgeCandidate, prompt: &JudgePrompt) -> Result<String, EvalError> {
         let client = reqwest::Client::new();
-        match self.candidate.provider {
+        match candidate.provider {
             JudgeProvider::Anthropic => {
                 let key = std::env::var("ANTHROPIC_API_KEY")
                     .map_err(|_| EvalError::Provider("ANTHROPIC_API_KEY not set".into()))?;
@@ -90,7 +94,7 @@ impl LlmJudgeHttp {
                     .header("anthropic-version", "2023-06-01")
                     .header("content-type", "application/json")
                     .json(&json!({
-                        "model": self.candidate.model,
+                        "model": candidate.model,
                         "max_tokens": 300,
                         "system": prompt.system,
                         "messages": [{ "role": "user", "content": prompt.user }],
@@ -111,7 +115,7 @@ impl LlmJudgeHttp {
                     .post("https://api.openai.com/v1/chat/completions")
                     .bearer_auth(&key)
                     .json(&json!({
-                        "model": self.candidate.model,
+                        "model": candidate.model,
                         "max_tokens": 300,
                         "response_format": { "type": "json_object" },
                         "messages": [
@@ -146,8 +150,10 @@ impl LlmJudgeHttp {
     }
 }
 
-/// Parse the judge's JSON. Every score is required: a missing one is a
-/// malformed judgement, not a zero.
+/// Parse the judge's JSON: the first JSON object in the reply
+/// (`parse_llm_json` tolerates surrounding prose). The three dimension scores
+/// are required, and a missing one is a malformed judgement, not a zero;
+/// `overall` falls back to their mean.
 pub fn parse_outcome(text: &str) -> Result<JudgeOutcome, EvalError> {
     let parsed: serde_json::Value = agent_bestiary_evaluators::parse_llm_json(text)
         .map_err(|e| EvalError::Malformed(format!("judge JSON parse: {e}")))?;
@@ -168,36 +174,32 @@ pub fn parse_outcome(text: &str) -> Result<JudgeOutcome, EvalError> {
             .get("reasoning")
             .and_then(|v| v.as_str())
             .map(str::to_string),
+        judge_model: None,
     })
 }
 
 #[async_trait]
 impl LlmJudge for LlmJudgeHttp {
     fn model_id(&self) -> &str {
-        &self.candidate.model
+        // Chosen per bundle; the outcome carries the model that judged.
+        "per-bundle"
     }
 
     async fn score(&self, bundle: &EpisodeBundle) -> Result<JudgeOutcome, EvalError> {
+        // The model the episode actually ran on, as `agent_output_to_episode`
+        // recorded it (`src/episodes.rs:249`). Absent means unknown, and an
+        // unknown proposer gets no judge (rule 4).
+        let proposer = bundle
+            .context
+            .get("model_used")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let candidate = fermi::judge_policy::independent_judge(&[proposer], &self.configured)
+            .map_err(|why| EvalError::Unavailable(why.to_string()))?;
         let prompt = self.build_prompt(bundle);
-        let text = self.call(&prompt).await?;
-        parse_outcome(&text)
-    }
-}
-
-/// The judge slot when no independent judge exists: it runs, and reports why
-/// it could not judge, so the run records the gap instead of scoring without
-/// a judge or with a same-family one.
-pub struct UnavailableJudge {
-    pub reason: String,
-}
-
-#[async_trait]
-impl LlmJudge for UnavailableJudge {
-    fn model_id(&self) -> &str {
-        "none"
-    }
-
-    async fn score(&self, _bundle: &EpisodeBundle) -> Result<JudgeOutcome, EvalError> {
-        Err(EvalError::Unavailable(self.reason.clone()))
+        let text = Self::call(&candidate, &prompt).await?;
+        let mut outcome = parse_outcome(&text)?;
+        outcome.judge_model = Some(candidate.model);
+        Ok(outcome)
     }
 }

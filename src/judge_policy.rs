@@ -6,8 +6,9 @@
 //! `src/handlers/eval_judge.rs:37` @ 25cc31ed], and 143 of the agents on the
 //! dev database run a Claude model.
 //!
-//! The rule is total: the proposer's family must be known, and the judge's
-//! must differ from it. An unknown proposer model cannot be shown to differ
+//! The rule, for the `llm_judge` slot: the proposer's family must be known,
+//! and the judge's must differ from it. The other LLM evaluators (WildGuard,
+//! Sotopia, CharacterEval) do not use it yet (#151). An unknown proposer model cannot be shown to differ
 //! from anything, so it gets no judge (rule 4), and the caller records the
 //! judge as unavailable rather than scoring without one.
 
@@ -138,8 +139,8 @@ impl std::fmt::Display for JudgeUnavailable {
     }
 }
 
-/// The first configured judge whose family differs from **every** model the
-/// agent may run on (its configured model and its ladder).
+/// The first configured judge whose family differs from every one of
+/// `proposer_models` (the model or models that produced the output).
 pub fn independent_judge(
     proposer_models: &[&str],
     configured: &[JudgeCandidate],
@@ -167,22 +168,6 @@ pub fn independent_judge(
         })
 }
 
-/// The models an agent may run on: its configured `model`, plus every
-/// `model` string in its `model_ladder` (a JSON array of rungs).
-pub fn proposer_models<'a>(model: &'a str, ladder: &'a serde_json::Value) -> Vec<&'a str> {
-    let mut out = vec![model];
-    if let Some(rungs) = ladder.as_array() {
-        for rung in rungs {
-            if let Some(m) = rung.get("model").and_then(|v| v.as_str()) {
-                out.push(m);
-            } else if let Some(m) = rung.as_str() {
-                out.push(m);
-            }
-        }
-    }
-    out
-}
-
 /// The two halves of a judge prompt.
 #[derive(Debug, Clone)]
 pub struct JudgePrompt {
@@ -207,7 +192,7 @@ Respond with ONLY a JSON object: \
 ///
 /// The query, expected output, rubric and agent output are JSON string values
 /// in one object, on one line, between two fence lines carrying a fresh
-/// 128-bit nonce. JSON encoding escapes quotes, backslashes and newlines, so
+/// random nonce (a v4 UUID: 122 random bits). JSON encoding escapes quotes, backslashes and newlines, so
 /// nothing in the data can end its string or start a line, and the end fence
 /// cannot be forged without the nonce. None of it appears in `system`.
 pub fn judge_prompt(
@@ -265,16 +250,6 @@ mod tests {
         assert_eq!(j.family(), Some(ModelFamily::OpenAiGpt));
         let j = independent_judge(&["gpt-4o"], &both()).unwrap();
         assert_eq!(j.family(), Some(ModelFamily::AnthropicClaude));
-    }
-
-    #[test]
-    fn the_ladder_counts() {
-        let ladder = serde_json::json!([{ "model": "gpt-4o" }]);
-        let models = proposer_models("claude-sonnet-4-5", &ladder);
-        assert!(matches!(
-            independent_judge(&models, &both()),
-            Err(JudgeUnavailable::NoIndependentJudge { .. })
-        ));
     }
 
     #[test]

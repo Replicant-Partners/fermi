@@ -90,6 +90,12 @@ pub struct AggregatedSignal {
     /// malformed response short of redeploying with extra logging.
     #[serde(default)]
     pub failure_reasons: Vec<(String, String)>,
+    /// Evaluators that applied but could not run under their policy
+    /// (`EvalError::Unavailable`, e.g. no independent judge), with the reason.
+    /// Their dimensions are not evaluated, which is neither a failure nor
+    /// "does not apply" (G12, rule 4).
+    #[serde(default)]
+    pub unavailable: Vec<(String, String)>,
 }
 
 /// Aggregator with a configurable conflict threshold.
@@ -121,6 +127,7 @@ impl Aggregator {
         let mut inapplicable_evaluators: Vec<String> = Vec::new();
         let mut failed_evaluators: Vec<String> = Vec::new();
         let mut failure_reasons: Vec<(String, String)> = Vec::new();
+        let mut unavailable: Vec<(String, String)> = Vec::new();
 
         for r in results {
             match &r.outcome {
@@ -141,6 +148,9 @@ impl Aggregator {
                 }
                 Err(e) if e.is_inapplicable() => {
                     inapplicable_evaluators.push(r.evaluator_name.clone());
+                }
+                Err(e) if e.is_unavailable() => {
+                    unavailable.push((r.evaluator_name.clone(), e.to_string()));
                 }
                 Err(e) => {
                     failed_evaluators.push(r.evaluator_name.clone());
@@ -191,6 +201,7 @@ impl Aggregator {
             inapplicable_evaluators,
             failed_evaluators,
             failure_reasons,
+            unavailable,
         }
     }
 }

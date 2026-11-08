@@ -59,7 +59,7 @@ use fermi::agent_backend::ExecutionContext;
 use fermi::ast;
 
 use crate::handlers::eval_brier::{AgentNameResolver, BrierLookupSqlx};
-use crate::handlers::eval_judge::{LlmJudgeHttp, UnavailableJudge};
+use crate::handlers::eval_judge::LlmJudgeHttp;
 use crate::handlers::eval_projection::ProjectionLookupSqlx;
 use crate::{
     agent_output_to_episode, create_notification, resolve_agent, resolve_agent_card, AppState,
@@ -1019,22 +1019,13 @@ fn build_registry(
     // ── Dimensional evaluators (run in parallel) ─────────────────────────
 
     if judge_enabled {
-        // G12: a judge from a different model family than every model this
-        // agent may run on, or no judge. `UnavailableJudge` keeps the slot so
-        // the run records why it was not judged.
-        let proposer =
-            fermi::judge_policy::proposer_models(&db_agent.model, &db_agent.model_ladder);
+        // G12: for each case, `LlmJudgeHttp::score` calls `independent_judge`
+        // with the model that case actually ran on (`context.model_used`) and
+        // returns `EvalError::Unavailable` when no configured judge is of
+        // another family, so the run records why it was not judged.
         let configured = fermi::judge_policy::configured_judges(|k| std::env::var(k).ok());
         let judge: Arc<dyn agent_bestiary_evaluators::LlmJudge> =
-            match fermi::judge_policy::independent_judge(&proposer, &configured) {
-                Ok(candidate) => Arc::new(LlmJudgeHttp::new(candidate)),
-                Err(why) => {
-                    tracing::warn!(agent = %agent_name, reason = %why, "no independent judge");
-                    Arc::new(UnavailableJudge {
-                        reason: why.to_string(),
-                    })
-                }
-            };
+            Arc::new(LlmJudgeHttp::new(configured));
         registry.register(Arc::new(LlmJudgeEvaluator::new(judge)));
     }
 
@@ -1171,6 +1162,7 @@ fn aggregate_run_signals(signals: &[AggregatedSignal]) -> AggregatedSignal {
             inapplicable_evaluators: vec![],
             failed_evaluators: vec![],
             failure_reasons: vec![],
+            unavailable: vec![],
         };
     }
 
@@ -1183,6 +1175,7 @@ fn aggregate_run_signals(signals: &[AggregatedSignal]) -> AggregatedSignal {
     // Deduplicated across cases: the same evaluator failing on all nine test
     // cases for the same reason should read as one problem, not nine.
     let mut failure_reasons = std::collections::BTreeSet::new();
+    let mut unavailable = std::collections::BTreeSet::new();
     let mut all_flags = Vec::new();
 
     for sig in signals {
@@ -1219,6 +1212,9 @@ fn aggregate_run_signals(signals: &[AggregatedSignal]) -> AggregatedSignal {
         }
         for r in &sig.failure_reasons {
             failure_reasons.insert(r.clone());
+        }
+        for u in &sig.unavailable {
+            unavailable.insert(u.clone());
         }
         for f in &sig.flags {
             all_flags.push(f.clone());
@@ -1271,6 +1267,7 @@ fn aggregate_run_signals(signals: &[AggregatedSignal]) -> AggregatedSignal {
         inapplicable_evaluators: inapplicable.into_iter().collect(),
         failure_reasons: failure_reasons.into_iter().collect(),
         failed_evaluators: failed.into_iter().collect(),
+        unavailable: unavailable.into_iter().collect(),
     }
 }
 
@@ -1373,7 +1370,22 @@ pub async fn detect_regression(
     }
 
     // Judge score regression (>0.5 drop on 5-point scale)
-    let current_judge = current_judge.filter(|_| undetermined.is_none());
+    //
+    // Not evaluated, and said so, when the judge was unavailable on any case
+    // (no independent judge for the model that ran, G12): a mean over the
+    // cases that were judged is not this run's judge score.
+    let judge_unavailable: Vec<String> = current_run_aggregate
+        .map(|a| {
+            a.unavailable
+                .iter()
+                .filter(|(e, _)| e == "llm_judge")
+                .map(|(_, why)| why.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    let current_judge = current_judge
+        .filter(|_| undetermined.is_none())
+        .filter(|_| judge_unavailable.is_empty());
     if let (Some(prev_j), Some(curr_j)) = (prev.avg_judge_score, current_judge) {
         if prev_j - curr_j > 0.5 {
             regressions.push(json!({
@@ -1435,12 +1447,21 @@ pub async fn detect_regression(
     }
 
     let detected = !regressions.is_empty();
-    let details = match undetermined_note {
-        // Object form only when undetermined, so existing readers of the
-        // array form (`format_regression_body`) are unchanged otherwise.
-        Some(u) => Some(json!({ "regressions": regressions, "undetermined": u })),
-        None if detected => Some(json!(regressions)),
-        None => None,
+    let judge_note = (!judge_unavailable.is_empty()).then(|| {
+        json!({
+            "reason_class": "judge_unavailable",
+            "reasons": judge_unavailable,
+            "not_evaluated": ["judge_score"],
+        })
+    });
+    let details = match (undetermined_note, judge_note) {
+        // Object form only when something was not evaluated, so existing
+        // readers of the array form (`format_regression_body`) are
+        // unchanged otherwise.
+        (Some(u), j) => Some(json!({ "regressions": regressions, "undetermined": u, "judge": j })),
+        (None, Some(j)) => Some(json!({ "regressions": regressions, "judge": j })),
+        (None, None) if detected => Some(json!(regressions)),
+        (None, None) => None,
     };
     (detected, details)
 }
@@ -1838,6 +1859,7 @@ mod run_status_tests {
             inapplicable_evaluators: vec![],
             failed_evaluators: vec![],
             failure_reasons: vec![],
+            unavailable: vec![],
         }
     }
 

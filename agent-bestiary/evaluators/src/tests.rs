@@ -327,6 +327,7 @@ async fn reference_impls_run_through_registry() {
         completeness: 5.0,
         overall: 4.3,
         reasoning: Some("good".into()),
+        judge_model: None,
     }));
     let llm_judge = Arc::new(LlmJudgeEvaluator::new(judge));
 
