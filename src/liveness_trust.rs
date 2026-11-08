@@ -525,7 +525,9 @@ pub const LIVENESS_CONTRACTS: &[LivenessContract] = &[
         opportunity_sql: "SELECT count(*)::bigint AS opportunities FROM episodes",
         expectation: Expectation::EveryOpportunity,
         requires: Some(("schema_migrations", "filename")),
-        accounted: Some(Sink::SchemaMigrations),
+        // Not a swallowed write since SPEC 36 G16: a failed ledger write
+        // fails boot (src/migration_runner.rs).
+        accounted: None,
         why: "The ledger is what makes a failing migration answerable. Without it \
               `run_migrations` prints the failure and continues, which is how a \
               CHECK constraint was declared by seventeen migrations and applied by \

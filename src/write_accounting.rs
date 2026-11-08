@@ -98,10 +98,11 @@ pub enum Sink {
     ProcessProjectionCommits = 11,
     ProcessSpacetime = 12,
     CoherenceEvaluations = 13,
-    SchemaMigrations = 14,
-    GateDecisions = 15,
-    AssertionVerifications = 16,
-    WorkspaceIntentions = 17,
+    // 14 was `SchemaMigrations`: its writer no longer swallows. A failed
+    // ledger write fails boot (src/migration_runner.rs, SPEC 36 G16).
+    GateDecisions = 14,
+    AssertionVerifications = 15,
+    WorkspaceIntentions = 16,
 }
 
 /// What a sink is, who writes it non-fatally, and why that is allowed.
@@ -244,15 +245,6 @@ pub const SINKS: &[SinkSpec] = &[
                        the automatic writer does not bind its error at all, while \
                        the on-demand twin propagates — so the trend is built from \
                        whichever of the two happens to succeed.",
-    },
-    SinkSpec {
-        sink: Sink::SchemaMigrations,
-        table: "schema_migrations",
-        writer: "api_server::record_migration_attempt",
-        why_nonfatal: "The ledger records boot-time migration attempts and must \
-                       not be able to prevent a boot. It is the only table in the \
-                       repository with failure columns of its own, and its own \
-                       write failure is printed and forgotten.",
     },
     SinkSpec {
         sink: Sink::GateDecisions,

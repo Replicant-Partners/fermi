@@ -66,6 +66,7 @@ pub mod email;
 // a ladder, and the two disagree on three of five. This is the map, with tests.
 pub mod ladder;
 
+pub mod migration_runner;
 pub mod schema_trust;
 
 // Rollup trust contract — the sibling that asks whether a column is

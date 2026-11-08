@@ -561,7 +561,7 @@ pub(crate) struct GeminiInlineData {
     data: String,
 }
 
-/// Run SQL migration files on startup (idempotent — uses IF NOT EXISTS).
+/// Run the listed migration files on startup through `fermi::migration_runner`.
 async fn run_migrations(db: &PgPool) {
     let migration_files = [
         "migrations/004_add_users_table.sql",
@@ -1463,801 +1463,55 @@ async fn run_migrations(db: &PgPool) {
         // 244 — platform sponsor wallet for App template budgets (SPEC 36
         // R0.1 / G01): spawn transfers from it instead of minting credits.
         "migrations/244_platform_sponsor_wallet.sql",
+        // The former `ensure_critical_schema` block (SPEC 36 G16). Last.
+        "migrations/245_critical_schema.sql",
     ];
 
-    // Bootstrap the ledger before anything is recorded into it.
-    //
-    // Inline rather than a migration file, and the reason is unavoidable: a
-    // migration that records migrations cannot record itself. Everything else
-    // in this project lives in `migrations/`, and this is the one exception the
-    // ordering forces. `IF NOT EXISTS` throughout, so it is as replay-safe as
-    // the files it tracks.
-    ensure_migration_ledger(db).await;
-
-    for file in &migration_files {
-        let started = std::time::Instant::now();
-        match std::fs::read_to_string(file) {
-            Ok(sql) => {
-                println!("Running migration: {}", file);
-                let digest = {
-                    use sha2::{Digest, Sha256};
-                    format!("{:x}", Sha256::digest(sql.as_bytes()))
-                };
-                match sqlx::raw_sql(&sql).execute(db).await {
-                    Ok(_) => {
-                        println!("Migration {} completed", file);
-                        record_migration_attempt(
-                            db,
-                            file,
-                            &digest,
-                            "ok",
-                            None,
-                            started.elapsed().as_millis() as i32,
-                        )
-                        .await;
-                    }
-                    Err(e) => {
-                        // Still does not panic. A migration that cannot apply
-                        // must not be able to take the service down, because
-                        // most failures here are genuinely benign replays of
-                        // already-applied DDL.
-                        //
-                        // What changed is that the failure is now WRITTEN DOWN.
-                        // `credit_ledger_tx_type_check` was declared by
-                        // seventeen migrations and applied by none: each one
-                        // dropped the constraint, failed to re-add it, and left
-                        // exactly this line in a boot log nobody reads. A
-                        // failure that is only ever printed is a failure nobody
-                        // can be asked about.
-                        eprintln!("Migration {} warning: {}", file, e);
-                        record_migration_attempt(
-                            db,
-                            file,
-                            &digest,
-                            "failed",
-                            Some(&e.to_string()),
-                            started.elapsed().as_millis() as i32,
-                        )
-                        .await;
-                    }
-                }
-            }
-            Err(e) => {
-                eprintln!("Could not read migration {}: {}", file, e);
-                // A registered file that is missing from the image is a
-                // different fault from SQL that failed, and worth its own
-                // status: the deploy is not carrying what the code believes it
-                // is carrying.
-                record_migration_attempt(
-                    db,
-                    file,
-                    "",
-                    "unreadable",
-                    Some(&e.to_string()),
-                    started.elapsed().as_millis() as i32,
-                )
-                .await;
-            }
+    // SPEC 36 G16: skip applied, fail on checksum change, fail on any
+    // failure outside the known-failing list (src/migration_runner.rs).
+    let known = match std::fs::read_to_string(fermi::migration_runner::KNOWN_FAILING_PATH)
+        .map_err(|e| e.to_string())
+        .and_then(|t| fermi::migration_runner::KnownFailing::parse(&t))
+    {
+        Ok(k) => k,
+        Err(e) => {
+            eprintln!(
+                "[migrations] {}: {e}",
+                fermi::migration_runner::KNOWN_FAILING_PATH
+            );
+            std::process::exit(2);
         }
-    }
-}
-
-/// Create the migration ledger, so there is somewhere to record the very first
-/// run of the migration that declares it.
-///
-/// `migrations/207_migration_ledger.sql` is the authoritative declaration and
-/// carries the reasoning; this is the bootstrap. Both are `IF NOT EXISTS`, so
-/// whichever runs first wins and the other is a no-op. If they ever disagree,
-/// 207 is right and this is the bug.
-async fn ensure_migration_ledger(db: &PgPool) {
-    let ddl = "CREATE TABLE IF NOT EXISTS public.schema_migrations (                    filename          TEXT PRIMARY KEY,                    content_sha256    TEXT NOT NULL,                    attempts          INTEGER NOT NULL DEFAULT 0,                    successes         INTEGER NOT NULL DEFAULT 0,                    failures          INTEGER NOT NULL DEFAULT 0,                    consecutive_failures INTEGER NOT NULL DEFAULT 0,                    first_succeeded_at   TIMESTAMPTZ,                    last_attempt_at   TIMESTAMPTZ NOT NULL DEFAULT now(),                    last_status       TEXT NOT NULL,                    last_error        TEXT,                    last_duration_ms  INTEGER                )";
-    if let Err(e) = sqlx::raw_sql(ddl).execute(db).await {
-        // Recording is best-effort by construction: a ledger that could fail
-        // the boot would be a worse problem than the blindness it fixes.
-        eprintln!("Could not ensure schema_migrations ledger: {}", e);
-    }
-}
-
-/// Record one attempt, success or failure.
-///
-/// Upsert keyed on filename rather than append-per-boot. Migrations replay on
-/// every start, so an append-only log would grow without bound and answer no
-/// question the counters do not. What the counters do answer, and a print
-/// cannot:
-///
-/// * has this migration EVER succeeded (`first_succeeded_at`)
-/// * is it failing RIGHT NOW (`consecutive_failures`)
-/// * has the file changed since it last applied (`content_sha256`)
-///
-/// `first_succeeded_at` is the field the rest of the verification work has been
-/// missing. Without a record of when a migration landed, `liveness_trust` cannot
-/// tell a write path that is broken from one whose sink was created five minutes
-/// ago, and it currently carries a documented exemption saying exactly that.
-async fn record_migration_attempt(
-    db: &PgPool,
-    filename: &str,
-    sha: &str,
-    status: &str,
-    error: Option<&str>,
-    duration_ms: i32,
-) {
-    let ok = status == "ok";
-    let res = sqlx::query(
-        "INSERT INTO public.schema_migrations              (filename, content_sha256, attempts, successes, failures,               consecutive_failures, first_succeeded_at, last_attempt_at,               last_status, last_error, last_duration_ms)          VALUES ($1, $2, 1, $3, $4, $5,                  CASE WHEN $6 THEN now() END, now(), $7, $8, $9)          ON CONFLICT (filename) DO UPDATE SET              content_sha256 = EXCLUDED.content_sha256,              attempts  = schema_migrations.attempts + 1,              successes = schema_migrations.successes + EXCLUDED.successes,              failures  = schema_migrations.failures + EXCLUDED.failures,              consecutive_failures = CASE WHEN $6 THEN 0                                          ELSE schema_migrations.consecutive_failures + 1 END,              first_succeeded_at = COALESCE(schema_migrations.first_succeeded_at,                                            EXCLUDED.first_succeeded_at),              last_attempt_at = now(),              last_status = EXCLUDED.last_status,              last_error = EXCLUDED.last_error,              last_duration_ms = EXCLUDED.last_duration_ms",
-    )
-    .bind(filename)
-    .bind(sha)
-    .bind(if ok { 1i32 } else { 0i32 })
-    .bind(if ok { 0i32 } else { 1i32 })
-    .bind(if ok { 0i32 } else { 1i32 })
-    .bind(ok)
-    .bind(status)
-    .bind(error)
-    .bind(duration_ms)
-    .execute(db)
-    .await;
-
-    // The one table in the repository with `failures` and `consecutive_failures`
-    // columns of its own, and until now the one whose own write failure was
-    // printed to stderr at boot and forgotten. Its schema is declared twice —
-    // here and in migration 207 — so a divergence between them shows up as a
-    // `column does not exist` on exactly this statement.
-    let _ = fermi::write_accounting::observe(
-        fermi::write_accounting::Sink::SchemaMigrations,
-        res.map_err(|e| format!("{filename}: {e}")),
-    );
-}
-
-/// Belt-and-suspenders schema ensure. Each ALTER is its own single-statement
-/// sqlx::query — bypasses any interaction between raw_sql, DO blocks, and
-/// PgBouncer in transaction mode that has eaten multi-statement DDL in the
-/// past. Run after `run_migrations`. Idempotent.
-async fn ensure_critical_schema(db: &PgPool) {
-    // (label, ALTER statement) — keep tight, only columns whose
-    // absence causes user-facing 500s on the workspace and dashboard
-    // surfaces.
-    let alters: &[(&str, &str)] = &[
-        ("teams.mission",
-         "ALTER TABLE public.teams ADD COLUMN IF NOT EXISTS mission TEXT"),
-        ("teams.coordination_strategist_id",
-         "ALTER TABLE public.teams ADD COLUMN IF NOT EXISTS coordination_strategist_id UUID"),
-        ("teams.strategist_assigned_at",
-         "ALTER TABLE public.teams ADD COLUMN IF NOT EXISTS strategist_assigned_at TIMESTAMPTZ"),
-        // composition_versions table — migration 113 uses raw_sql which
-        // PgBouncer in transaction mode can split; belt-and-suspenders
-        // CREATE TABLE IF NOT EXISTS ensures the table always exists.
-        ("composition_versions.table",
-         "CREATE TABLE IF NOT EXISTS public.composition_versions ( \
-              composition_version_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), \
-              workspace_id UUID NOT NULL REFERENCES public.teams(id) ON DELETE CASCADE, \
-              version_number INT NOT NULL, \
-              mission TEXT, \
-              coordination_strategist_id UUID, \
-              member_agent_ids UUID[], \
-              member_weights JSONB, \
-              diff_summary TEXT, \
-              proposed_by TEXT, \
-              accepted_by TEXT, \
-              rejected_by TEXT, \
-              rejection_note TEXT, \
-              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW() \
-          )"),
-        ("composition_versions.rejected_by",
-         "ALTER TABLE public.composition_versions ADD COLUMN IF NOT EXISTS rejected_by TEXT"),
-        ("composition_versions.rejection_note",
-         "ALTER TABLE public.composition_versions ADD COLUMN IF NOT EXISTS rejection_note TEXT"),
-
-        // ── Forecast benchmark tables (migration 140) ─────────────
-        // Migration 140 runs through sqlx::raw_sql, which PgBouncer in
-        // transaction mode can split at the CREATE OR REPLACE FUNCTION
-        // dollar-quoted body. When that happens, the entire script aborts
-        // mid-way and the three tables never get created. Symptom: every
-        // call to /api/benchmark/anchor-sweep and /api/forecasts/:id/spacetime
-        // 500s with `relation "forecast_commitments" does not exist`.
-        //
-        // Each CREATE TABLE here is a single statement, so PgBouncer can't
-        // split it. The trigger/function in 140 is non-essential for the
-        // anchor-sweep path (the handler writes directly), so we don't
-        // restore the trigger here — only the tables it depends on.
-        ("harness_snapshots.table",
-         "CREATE TABLE IF NOT EXISTS public.harness_snapshots ( \
-              snapshot_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), \
-              content_hash TEXT NOT NULL UNIQUE, \
-              conductor_card_hash TEXT NOT NULL, \
-              routing_weights_hash TEXT, \
-              specialist_roster_hash TEXT NOT NULL, \
-              bayesops_params_hash TEXT, \
-              conductor_version TEXT NOT NULL, \
-              specialist_roster JSONB NOT NULL, \
-              routing_weights JSONB, \
-              bayesops_params JSONB, \
-              parent_hash TEXT, \
-              surface_changed TEXT, \
-              change_rationale TEXT, \
-              captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW() \
-          )"),
-        // fermi_forecast_updates is declared in migration 094 but some
-        // deploys (notably the live one) appear to be missing it — the
-        // /update-probability endpoint 500s with "relation does not exist".
-        // Ensure it here as critical schema so the rate-update path works
-        // even when the migration history is incomplete. Schema mirrors
-        // 094§143.
-        ("fermi_forecast_updates.table",
-         "CREATE TABLE IF NOT EXISTS public.fermi_forecast_updates ( \
-              id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text, \
-              forecast_id TEXT NOT NULL REFERENCES public.fermi_forecasts(id) ON DELETE CASCADE, \
-              previous_probability REAL NOT NULL, \
-              new_probability REAL NOT NULL, \
-              reason TEXT, \
-              agent_id TEXT, \
-              evidence_added JSONB, \
-              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), \
-              revision_trigger TEXT \
-          )"),
-        // Migration 150 adds 'cascade' to the legal revision_trigger values.
-        // Drop+recreate, because PG cannot ALTER a CHECK in place.
-        //
-        // ONE statement, not two. This function runs each entry as its own
-        // `sqlx::query`, which is its whole purpose — and that makes it the one
-        // place in this codebase where a DROP and an ADD really do land in
-        // separate transactions. As two entries, a failing ADD left the DROP
-        // committed and the constraint simply gone, with nothing later to restore
-        // it. The migration files do NOT have this problem: `run_migrations` hands
-        // each file to `raw_sql` as a single simple query, which Postgres wraps in
-        // one implicit transaction — measured in
-        // `tests/migration_atomicity.rs`, after the opposite was believed and
-        // written down for some time.
-        ("fermi_forecast_updates.recheck_revision_trigger",
-         "DO $$ BEGIN \
-            ALTER TABLE public.fermi_forecast_updates \
-              DROP CONSTRAINT IF EXISTS fermi_forecast_updates_revision_trigger_check; \
-            ALTER TABLE public.fermi_forecast_updates \
-              ADD CONSTRAINT fermi_forecast_updates_revision_trigger_check \
-              CHECK ( \
-                  revision_trigger IS NULL OR revision_trigger IN ( \
-                      'initial', 'evidence_update', 'agent_correction', \
-                      'schedule_rerun', 'manual', 'bayesops_refit', 'cascade', 'cascade_undo' \
-                  ) \
-              ); \
-          END $$"),
-        ("fermi_forecast_updates.idx_forecast",
-         "CREATE INDEX IF NOT EXISTS idx_forecast_updates_forecast \
-          ON public.fermi_forecast_updates(forecast_id)"),
-        ("fermi_forecast_updates.idx_time",
-         "CREATE INDEX IF NOT EXISTS idx_forecast_updates_time \
-          ON public.fermi_forecast_updates(created_at)"),
-
-        // ── 150: forecast_relationships — declarable inter-forecast
-        //    dependencies. See src/handlers/relationships.rs.
-        ("forecast_relationships.table",
-         "CREATE TABLE IF NOT EXISTS public.forecast_relationships ( \
-              id UUID PRIMARY KEY DEFAULT gen_random_uuid(), \
-              kind TEXT NOT NULL, \
-              forecast_ids TEXT[] NOT NULL, \
-              parameters JSONB NOT NULL DEFAULT '{}'::jsonb, \
-              description TEXT, \
-              owner_id TEXT NOT NULL, \
-              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), \
-              updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), \
-              archived_at TIMESTAMPTZ \
-          )"),
-        ("forecast_relationships.idx_kind",
-         "CREATE INDEX IF NOT EXISTS idx_relationships_kind \
-          ON public.forecast_relationships(kind)"),
-        ("forecast_relationships.idx_owner",
-         "CREATE INDEX IF NOT EXISTS idx_relationships_owner \
-          ON public.forecast_relationships(owner_id)"),
-        ("forecast_relationships.idx_forecast_ids",
-         "CREATE INDEX IF NOT EXISTS idx_relationships_forecast_ids \
-          ON public.forecast_relationships USING gin (forecast_ids)"),
-
-        // ── 151: pending_cascades — operator-gated cascade queue.
-        //    When a forecast resolves (manually OR via upstream
-        //    workspace resolution), the server queues a pending_cascade
-        //    row for each non-archived relationship the resolved
-        //    forecast is part of. The operator reviews and applies
-        //    or dismisses from the console queue. Operator-gate rule:
-        //    nothing that mutates probabilities fires without a click.
-        ("pending_cascades.table",
-         "CREATE TABLE IF NOT EXISTS public.pending_cascades ( \
-              id UUID PRIMARY KEY DEFAULT gen_random_uuid(), \
-              relationship_id UUID NOT NULL REFERENCES public.forecast_relationships(id) ON DELETE CASCADE, \
-              trigger_forecast_id TEXT NOT NULL REFERENCES public.fermi_forecasts(id) ON DELETE CASCADE, \
-              trigger_kind TEXT NOT NULL, \
-              outcome BOOLEAN, \
-              source TEXT NOT NULL DEFAULT 'manual', \
-              status TEXT NOT NULL DEFAULT 'pending', \
-              owner_id TEXT NOT NULL, \
-              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), \
-              decided_at TIMESTAMPTZ, \
-              decided_by TEXT, \
-              notes TEXT, \
-              proposed_snapshot JSONB \
-          )"),
-        ("pending_cascades.idx_status",
-         "CREATE INDEX IF NOT EXISTS idx_pending_cascades_status \
-          ON public.pending_cascades(status)"),
-        ("pending_cascades.idx_owner",
-         "CREATE INDEX IF NOT EXISTS idx_pending_cascades_owner \
-          ON public.pending_cascades(owner_id, status, created_at DESC)"),
-        ("pending_cascades.idx_trigger",
-         "CREATE INDEX IF NOT EXISTS idx_pending_cascades_trigger \
-          ON public.pending_cascades(trigger_forecast_id)"),
-        ("pending_cascades.idx_relationship",
-         "CREATE INDEX IF NOT EXISTS idx_pending_cascades_relationship \
-          ON public.pending_cascades(relationship_id)"),
-        // One statement, for the reason given above the revision_trigger pair.
-        ("pending_cascades.recheck_status",
-         "DO $$ BEGIN \
-            ALTER TABLE public.pending_cascades \
-              DROP CONSTRAINT IF EXISTS pending_cascades_status_check; \
-            ALTER TABLE public.pending_cascades \
-              ADD CONSTRAINT pending_cascades_status_check \
-              CHECK (status IN ('pending', 'applied', 'dismissed', 'superseded')); \
-          END $$"),
-
-        ("forecast_commitments.table",
-         "CREATE TABLE IF NOT EXISTS public.forecast_commitments ( \
-              commitment_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), \
-              forecast_id TEXT REFERENCES public.fermi_forecasts(id) ON DELETE CASCADE, \
-              revision_id TEXT REFERENCES public.fermi_forecast_updates(id) ON DELETE SET NULL, \
-              predicted_probability REAL NOT NULL, \
-              fpl_source_hash TEXT, \
-              harness_snapshot_id UUID REFERENCES public.harness_snapshots(snapshot_id), \
-              commitment_hash TEXT NOT NULL UNIQUE, \
-              anchor_method TEXT NOT NULL DEFAULT 'db_timestamp', \
-              anchor_ref TEXT, \
-              anchor_note TEXT, \
-              emitted_at TIMESTAMPTZ NOT NULL, \
-              committed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), \
-              sosa_projection_id TEXT, \
-              CONSTRAINT commitment_has_subject CHECK ( \
-                  forecast_id IS NOT NULL OR sosa_projection_id IS NOT NULL \
-              ) \
-          )"),
-        ("forecast_commitments.idx_forecast",
-         "CREATE INDEX IF NOT EXISTS idx_forecast_commitments_forecast \
-          ON public.forecast_commitments(forecast_id, committed_at DESC)"),
-        ("forecast_commitments.idx_hash",
-         "CREATE INDEX IF NOT EXISTS idx_forecast_commitments_hash \
-          ON public.forecast_commitments(commitment_hash)"),
-        ("forecast_splits.table",
-         "CREATE TABLE IF NOT EXISTS public.forecast_splits ( \
-              forecast_id TEXT PRIMARY KEY REFERENCES public.fermi_forecasts(id) ON DELETE CASCADE, \
-              split TEXT NOT NULL CHECK (split IN ('held_in','held_out','validation')), \
-              split_hash_input TEXT NOT NULL, \
-              split_salt TEXT NOT NULL, \
-              assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), \
-              contamination_status TEXT NOT NULL DEFAULT 'pending' \
-                  CHECK (contamination_status IN ('pending','clean','contaminated','exempt')), \
-              probe_transcript TEXT, \
-              evidence_freeze_cutoff TIMESTAMPTZ \
-          )"),
-        ("forecast_spacetime.table",
-         "CREATE TABLE IF NOT EXISTS public.forecast_spacetime ( \
-              spacetime_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), \
-              forecast_id TEXT NOT NULL REFERENCES public.fermi_forecasts(id) ON DELETE CASCADE, \
-              revision_seq INTEGER NOT NULL DEFAULT 0, \
-              predicted_probability REAL NOT NULL, \
-              previous_probability REAL, \
-              revision_trigger TEXT, \
-              revision_reason TEXT, \
-              triggering_agent TEXT, \
-              evidence_delta JSONB, \
-              drivers_snapshot JSONB, \
-              base_rate_snapshot JSONB, \
-              fpl_snapshot TEXT, \
-              sobol_snapshot JSONB, \
-              harness_snapshot_id UUID REFERENCES public.harness_snapshots(snapshot_id), \
-              brier_at_this_point REAL, \
-              loop1_signal JSONB, \
-              loop3_coherence REAL, \
-              loop5_calibration JSONB, \
-              committed_at TIMESTAMPTZ, \
-              revision_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(), \
-              UNIQUE (forecast_id, revision_seq) \
-          )"),
-        ("forecast_spacetime.idx_forecast",
-         "CREATE INDEX IF NOT EXISTS idx_spacetime_forecast \
-          ON public.forecast_spacetime(forecast_id, revision_seq ASC)"),
-
-        // Trigger function that propagates every insert into
-        // fermi_forecast_updates into a new forecast_spacetime row, which
-        // is what the Trajectory tab reads. Without this the
-        // /update-probability handler succeeds but the trajectory endpoint
-        // shows no rate movement and the cockpit's spacetime view stays
-        // frozen at the initial probability. Migration 140§201 + 149§49
-        // declare the same function — we replicate it here so deploys with
-        // an incomplete migrations history still get the propagation wire.
-        ("forecast_spacetime.trigger_fn",
-         "CREATE OR REPLACE FUNCTION public.fn_forecast_spacetime_on_update() \
-          RETURNS TRIGGER LANGUAGE plpgsql AS $$ \
-          BEGIN \
-              INSERT INTO public.forecast_spacetime ( \
-                  forecast_id, revision_seq, predicted_probability, previous_probability, \
-                  revision_trigger, revision_reason, triggering_agent, evidence_delta, \
-                  fpl_snapshot, revision_ts \
-              ) \
-              SELECT \
-                  NEW.forecast_id, \
-                  COALESCE(( \
-                      SELECT MAX(revision_seq) + 1 \
-                      FROM public.forecast_spacetime \
-                      WHERE forecast_id = NEW.forecast_id \
-                  ), 1), \
-                  NEW.new_probability, \
-                  NEW.previous_probability, \
-                  COALESCE(NEW.revision_trigger, 'evidence_update'), \
-                  NEW.reason, \
-                  NEW.agent_id, \
-                  NEW.evidence_added, \
-                  (SELECT fpl_source FROM public.fermi_forecasts WHERE id = NEW.forecast_id), \
-                  NEW.created_at; \
-              RETURN NEW; \
-          END; \
-          $$"),
-        // Drop + create as two separate sqlx execute() calls because the
-        // sqlx::query layer doesn't run multi-statement strings.
-        ("forecast_spacetime.trigger_drop",
-         "DROP TRIGGER IF EXISTS trg_forecast_spacetime ON public.fermi_forecast_updates"),
-        ("forecast_spacetime.trigger_create",
-         "CREATE TRIGGER trg_forecast_spacetime \
-              AFTER INSERT ON public.fermi_forecast_updates \
-              FOR EACH ROW EXECUTE FUNCTION public.fn_forecast_spacetime_on_update()"),
-
-        // ── 094: resolve_forecast + compute_brier_score ────────────
-        //
-        // These plpgsql functions live in migration 094 alongside the
-        // fermi_forecasts table itself. On Vercel/serverless deploys the
-        // multi-statement raw_sql execution of that file has sometimes
-        // silently swallowed the function-creation half (PgBouncer
-        // transaction-mode eating multi-statement DDL), producing the
-        // user-facing error
-        //   function resolve_forecast(text, boolean, text, text) does not exist
-        // when an operator clicks Resolve on any forecast.
-        //
-        // Re-declare them here as single-statement CREATE OR REPLACE so
-        // each is its own sqlx::query() round-trip — immune to whatever
-        // ate them the first time. Idempotent and cheap.
-        ("fn.compute_brier_score",
-         "CREATE OR REPLACE FUNCTION public.compute_brier_score( \
-              predicted REAL, \
-              actual BOOLEAN \
-          ) RETURNS REAL AS $$ \
-          BEGIN \
-              RETURN (predicted - (CASE WHEN actual THEN 1.0 ELSE 0.0 END)) ^ 2; \
-          END; \
-          $$ LANGUAGE plpgsql IMMUTABLE"),
-        ("fn.resolve_forecast",
-         "CREATE OR REPLACE FUNCTION public.resolve_forecast( \
-              p_forecast_id TEXT, \
-              p_actual_outcome BOOLEAN, \
-              p_resolved_by TEXT, \
-              p_resolution_notes TEXT DEFAULT NULL \
-          ) RETURNS REAL AS $$ \
-          DECLARE \
-              v_predicted REAL; \
-              v_brier REAL; \
-              v_status TEXT; \
-          BEGIN \
-              SELECT predicted_probability, status \
-                INTO v_predicted, v_status \
-                FROM public.fermi_forecasts \
-               WHERE id = p_forecast_id \
-               FOR UPDATE; \
-              IF NOT FOUND THEN \
-                  RAISE EXCEPTION 'Forecast % not found', p_forecast_id; \
-              END IF; \
-              IF v_status != 'active' THEN \
-                  RAISE EXCEPTION 'Forecast % is not active (status: %)', p_forecast_id, v_status; \
-              END IF; \
-              v_brier := public.compute_brier_score(v_predicted, p_actual_outcome); \
-              UPDATE public.fermi_forecasts SET \
-                  actual_outcome = p_actual_outcome, \
-                  brier_score = v_brier, \
-                  scored_probability = v_predicted, \
-                  resolution_source = COALESCE(resolution_source, 'operator'), \
-                  status = 'resolved', \
-                  resolved_at = NOW(), \
-                  resolved_by = p_resolved_by, \
-                  resolution_notes = p_resolution_notes, \
-                  updated_at = NOW() \
-              WHERE id = p_forecast_id; \
-              RETURN v_brier; \
-          END; \
-          $$ LANGUAGE plpgsql"),
-
-        // ── 099: fermi_market_observations + indexes ───────────
-        //
-        // Append-only Polymarket snapshot log. Every POST
-        // /api/polymarket/snapshot (including the console's 5-minute
-        // background poll and the operator's manual ↻ Refresh) writes
-        // one row here. When the table is missing, every write dies
-        // with `relation "fermi_market_observations" does not exist`,
-        // .map_err(...).ok() swallows it, and the trajectory view
-        // silently shows zero crowd ticks forever — that's how we
-        // ended up here in prod. Adding the CREATE TABLE + indexes to
-        // ensure_critical_schema makes the observations infrastructure
-        // self-heal on every deploy, matching the treatment we give
-        // fermi_forecasts / forecast_relationships / pending_cascades.
-        ("fermi_market_observations.table",
-         "CREATE TABLE IF NOT EXISTS public.fermi_market_observations ( \
-              id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text, \
-              forecast_id TEXT REFERENCES public.fermi_forecasts(id) ON DELETE SET NULL, \
-              pm_event_id TEXT NOT NULL, \
-              pm_market_id TEXT NOT NULL, \
-              pm_condition_id TEXT, \
-              pm_slug TEXT, \
-              pm_question TEXT NOT NULL, \
-              pm_event_title TEXT, \
-              market_price REAL NOT NULL CHECK (market_price >= 0 AND market_price <= 1), \
-              bid_price REAL CHECK (bid_price IS NULL OR (bid_price >= 0 AND bid_price <= 1)), \
-              ask_price REAL CHECK (ask_price IS NULL OR (ask_price >= 0 AND ask_price <= 1)), \
-              midpoint_price REAL CHECK (midpoint_price IS NULL OR (midpoint_price >= 0 AND midpoint_price <= 1)), \
-              spread REAL, \
-              volume_total REAL, \
-              volume_24h REAL, \
-              liquidity REAL, \
-              price_change_1h REAL, \
-              price_change_1d REAL, \
-              price_change_1w REAL, \
-              price_change_1m REAL, \
-              pm_end_date TIMESTAMPTZ, \
-              pm_active BOOLEAN NOT NULL DEFAULT true, \
-              pm_closed BOOLEAN NOT NULL DEFAULT false, \
-              pm_resolved BOOLEAN NOT NULL DEFAULT false, \
-              pm_outcome TEXT, \
-              fermi_probability REAL CHECK (fermi_probability IS NULL OR (fermi_probability >= 0 AND fermi_probability <= 1)), \
-              divergence_pp REAL, \
-              confidence_signal TEXT CHECK (confidence_signal IS NULL OR confidence_signal IN ('very_high', 'high', 'medium', 'low')), \
-              observer_id TEXT NOT NULL REFERENCES public.users(user_id), \
-              observation_type TEXT NOT NULL DEFAULT 'search' CHECK (observation_type IN ('search', 'import', 'manual_link', 'refresh', 'scheduled', 'agent_research', 'resolution_check')), \
-              tags TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[], \
-              metadata JSONB NOT NULL DEFAULT '{}'::jsonb, \
-              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW() \
-          )"),
-        ("fermi_market_observations.idx_forecast",
-         "CREATE INDEX IF NOT EXISTS idx_market_obs_forecast \
-              ON public.fermi_market_observations(forecast_id, created_at) \
-            WHERE forecast_id IS NOT NULL"),
-        ("fermi_market_observations.idx_pm_market",
-         "CREATE INDEX IF NOT EXISTS idx_market_obs_pm_market \
-              ON public.fermi_market_observations(pm_market_id, created_at)"),
-        ("fermi_market_observations.idx_pm_event",
-         "CREATE INDEX IF NOT EXISTS idx_market_obs_pm_event \
-              ON public.fermi_market_observations(pm_event_id)"),
-        ("fermi_market_observations.idx_observer",
-         "CREATE INDEX IF NOT EXISTS idx_market_obs_observer \
-              ON public.fermi_market_observations(observer_id, created_at)"),
-        ("fermi_market_observations.idx_type",
-         "CREATE INDEX IF NOT EXISTS idx_market_obs_type \
-              ON public.fermi_market_observations(observation_type)"),
-        ("fermi_market_observations.idx_unresolved",
-         "CREATE INDEX IF NOT EXISTS idx_market_obs_unresolved \
-              ON public.fermi_market_observations(pm_market_id, created_at) \
-            WHERE forecast_id IS NOT NULL \
-              AND pm_closed = false \
-              AND pm_resolved = false"),
-        ("fermi_market_observations.idx_resolved",
-         "CREATE INDEX IF NOT EXISTS idx_market_obs_resolved \
-              ON public.fermi_market_observations(forecast_id, created_at) \
-            WHERE pm_resolved = true"),
-
-        // ── 151: forecast_invites (unified invite primitive) ─────────
-        //
-        // Backs the three Spec 24 collab flows (share forecast, share
-        // portfolio, join team). The console's Access tab, teams panel,
-        // and Inbox all query this. Same failure class as 099/094: if
-        // migration 151 didn't apply, every invite POST 500s and every
-        // Inbox render silently shows empty. Bake in the CREATE + three
-        // partial indexes so team/invite flows self-heal on deploy.
-        ("forecast_invites.table",
-         "CREATE TABLE IF NOT EXISTS public.forecast_invites ( \
-              id UUID PRIMARY KEY DEFAULT gen_random_uuid(), \
-              target_type TEXT NOT NULL CHECK (target_type IN ('forecast', 'portfolio', 'team')), \
-              target_id TEXT NOT NULL, \
-              permission TEXT NOT NULL CHECK (permission IN ('view', 'edit', 'admin', 'owner', 'member', 'viewer')), \
-              invitee_user_id TEXT, \
-              invitee_email TEXT, \
-              token TEXT UNIQUE, \
-              inviter_id TEXT NOT NULL, \
-              message TEXT, \
-              status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'declined', 'revoked', 'expired')), \
-              expires_at TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '14 days', \
-              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), \
-              accepted_at TIMESTAMPTZ, \
-              CONSTRAINT forecast_invites_recipient_exactly_one \
-                CHECK ((invitee_user_id IS NOT NULL AND invitee_email IS NULL) \
-                    OR (invitee_user_id IS NULL AND invitee_email IS NOT NULL)) \
-          )"),
-        ("forecast_invites.idx_recipient_user",
-         "CREATE INDEX IF NOT EXISTS idx_invites_recipient_user \
-              ON public.forecast_invites(invitee_user_id) \
-            WHERE invitee_user_id IS NOT NULL AND status = 'pending'"),
-        ("forecast_invites.idx_recipient_email",
-         "CREATE INDEX IF NOT EXISTS idx_invites_recipient_email \
-              ON public.forecast_invites(LOWER(invitee_email)) \
-            WHERE invitee_email IS NOT NULL AND status = 'pending'"),
-        ("forecast_invites.idx_target",
-         "CREATE INDEX IF NOT EXISTS idx_invites_target \
-              ON public.forecast_invites(target_type, target_id) \
-            WHERE status = 'pending'"),
-
-        // v0.10.26: `agents.updated_at` was declared in mig-166 via a
-        // DO $$ block, which — exactly per the header comment on this
-        // function — PgBouncer in transaction mode ate silently on
-        // Ivan's deploy. Symptom is the exact error he hit AGAIN
-        // (post-v0.10.18) when trying to force-publish Mario's
-        // `key_metrics` agent:
-        //
-        //   Publish failed: 400 DB error: column "updated_at" of
-        //   relation "agents" does not exist
-        //
-        // Four write sites reference the column (publish_agent,
-        // archive_agent, restore_agent, update_fork_pricing_handler);
-        // every one 500's until this ALTER lands. Single-statement
-        // form so PgBouncer can't split it. Idempotent via IF NOT
-        // EXISTS. NOT NULL DEFAULT NOW() so future INSERTs get it
-        // automatically. Backfill of existing rows is a follow-up
-        // one-liner if any rows end up NULL (default fires on
-        // INSERT but not on existing rows added between the
-        // migration path and this ensure).
-        ("agents.updated_at",
-         "ALTER TABLE public.agents \
-            ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"),
-        // Belt-and-braces backfill for any rows created between the
-        // failed mig-166 attempt and this ensure. NULL updated_at is
-        // impossible now (NOT NULL DEFAULT NOW() enforces it on ADD),
-        // but PostgreSQL versions handle ADD COLUMN NOT NULL DEFAULT
-        // for existing rows by treating the default as retroactive, so
-        // this is a no-op on new PG and a fill-in on older PG. Kept
-        // in the ensure so re-runs converge.
-        ("agents.updated_at.backfill",
-         "UPDATE public.agents SET updated_at = created_at WHERE updated_at IS NULL"),
-
-        // v0.11.3: counterfactual_probability. Companion to
-        // fermi_forecasts.counterfactual_brier from mig-172. The client
-        // (Fermi harness) computes what its naive-average baseline
-        // would have said and sends it at forecast creation time; the
-        // server just persists. At resolution we compute
-        // counterfactual_brier = (counterfactual_probability -
-        // actual_outcome::int)^2 alongside the actual brier_score.
-        // Team Brier − Counterfactual Brier = manager-effect delta.
-        // Nullable — legacy forecasts and non-Fermi forecasts don't
-        // populate it.
-        ("fermi_forecasts.counterfactual_probability",
-         "ALTER TABLE public.fermi_forecasts \
-            ADD COLUMN IF NOT EXISTS counterfactual_probability REAL \
-              CHECK (counterfactual_probability IS NULL OR (counterfactual_probability >= 0 AND counterfactual_probability <= 1))"),
-
-        // ── mig-174: Brier integrity ───────────────────────────────
-        //
-        // Migration 174 creates two columns, a plpgsql trigger function
-        // with a dollar-quoted body, a trigger, and a view. That is
-        // exactly the multi-statement shape PgBouncer transaction mode
-        // has eaten before (see the 094 and 140 notes above). If the
-        // raw_sql run aborts at the function body, the columns silently
-        // never appear and every resolution writes a NULL audit anchor.
-        //
-        // Re-declare the load-bearing parts as single statements. The
-        // audit view is non-essential (nothing reads it at runtime) so
-        // it is not restored here.
-        ("fermi_forecasts.scored_probability",
-         "ALTER TABLE public.fermi_forecasts \
-            ADD COLUMN IF NOT EXISTS scored_probability REAL"),
-        ("fermi_forecasts.resolution_source",
-         "ALTER TABLE public.fermi_forecasts \
-            ADD COLUMN IF NOT EXISTS resolution_source TEXT \
-              CHECK (resolution_source IS NULL OR resolution_source IN ( \
-                  'operator', 'polymarket_oracle', 'polymarket_price_heuristic', \
-                  'workspace_upstream', 'backtest_seed', 'unknown'))"),
-        ("fn.fermi_forecasts_freeze_resolved",
-         "CREATE OR REPLACE FUNCTION public.fn_fermi_forecasts_freeze_resolved() \
-          RETURNS TRIGGER LANGUAGE plpgsql AS $$ \
-          BEGIN \
-              IF OLD.status = 'resolved' AND NEW.status = 'resolved' THEN \
-                  IF NEW.scored_probability IS DISTINCT FROM OLD.scored_probability THEN \
-                      RAISE WARNING 'fermi_forecasts %: scored_probability is immutable once resolved (attempted % -> %); keeping original', OLD.id, OLD.scored_probability, NEW.scored_probability; \
-                      NEW.scored_probability := OLD.scored_probability; \
-                  END IF; \
-                  IF NEW.brier_score IS DISTINCT FROM OLD.brier_score THEN \
-                      RAISE WARNING 'fermi_forecasts %: brier_score is immutable once resolved (attempted % -> %); keeping original', OLD.id, OLD.brier_score, NEW.brier_score; \
-                      NEW.brier_score := OLD.brier_score; \
-                  END IF; \
-                  IF NEW.actual_outcome IS DISTINCT FROM OLD.actual_outcome THEN \
-                      RAISE WARNING 'fermi_forecasts %: actual_outcome is immutable once resolved (attempted % -> %); keeping original', OLD.id, OLD.actual_outcome, NEW.actual_outcome; \
-                      NEW.actual_outcome := OLD.actual_outcome; \
-                  END IF; \
-                  IF NEW.predicted_probability IS DISTINCT FROM OLD.predicted_probability THEN \
-                      RAISE WARNING 'fermi_forecasts %: predicted_probability is frozen once resolved (attempted % -> %); keeping original. Filter on status = ''active'' in the calling UPDATE.', OLD.id, OLD.predicted_probability, NEW.predicted_probability; \
-                      NEW.predicted_probability := OLD.predicted_probability; \
-                  END IF; \
-              END IF; \
-              RETURN NEW; \
-          END; \
-          $$"),
-        // Drop + create as two separate calls: the sqlx::query layer
-        // doesn't run multi-statement strings.
-        ("fermi_forecasts.freeze_trigger_drop",
-         "DROP TRIGGER IF EXISTS trg_fermi_forecasts_freeze_resolved ON public.fermi_forecasts"),
-        ("fermi_forecasts.freeze_trigger_create",
-         "CREATE TRIGGER trg_fermi_forecasts_freeze_resolved \
-              BEFORE UPDATE ON public.fermi_forecasts \
-              FOR EACH ROW EXECUTE FUNCTION public.fn_fermi_forecasts_freeze_resolved()"),
-    ];
-
-    println!(
-        "[ensure_critical_schema] running {} column ensures…",
-        alters.len()
-    );
-    for (label, stmt) in alters {
-        match sqlx::query(stmt).execute(db).await {
-            Ok(_) => println!("[ensure_critical_schema] ✓ {}", label),
-            Err(e) => eprintln!("[ensure_critical_schema] ✗ {} — {}", label, e),
+    };
+    let mut conn = match db.acquire().await {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[migrations] no connection: {e}");
+            std::process::exit(2);
         }
-    }
-
-    // Verify post-state and log it so Railway logs show exactly what landed.
-    let probe = sqlx::query(
-        "SELECT table_name, column_name
-         FROM information_schema.columns
-         WHERE table_schema = 'public'
-           AND ((table_name = 'teams' AND column_name IN ('mission','coordination_strategist_id','strategist_assigned_at'))
-             OR (table_name = 'composition_versions' AND column_name IN ('composition_version_id','rejected_by','rejection_note')))
-         ORDER BY table_name, column_name",
+    };
+    match fermi::migration_runner::run(
+        &mut conn,
+        fermi::migration_runner::LEDGER,
+        &migration_files,
+        |f| std::fs::read_to_string(f),
+        &known,
     )
-    .fetch_all(db)
-    .await;
-
-    match probe {
-        Ok(rows) => {
-            use sqlx::Row;
-            let names: Vec<String> = rows
-                .iter()
-                .map(|r| {
-                    format!(
-                        "{}.{}",
-                        r.try_get::<String, _>("table_name").unwrap_or_default(),
-                        r.try_get::<String, _>("column_name").unwrap_or_default()
-                    )
-                })
-                .collect();
-            println!("[ensure_critical_schema] present: [{}]", names.join(", "));
-        }
-        Err(e) => eprintln!("[ensure_critical_schema] verification probe failed: {}", e),
-    }
-
-    // Also probe the forecast benchmark tables so we can see at-a-glance
-    // in Railway logs whether migration 140 (or this ensure block) landed
-    // them. Single query, returns each table name that exists.
-    let bench_probe = sqlx::query(
-        "SELECT table_name FROM information_schema.tables
-         WHERE table_schema = 'public'
-           AND table_name IN (
-               'harness_snapshots',
-               'forecast_commitments',
-               'forecast_splits',
-               'forecast_spacetime'
-           )
-         ORDER BY table_name",
-    )
-    .fetch_all(db)
-    .await;
-
-    match bench_probe {
-        Ok(rows) => {
-            use sqlx::Row;
-            let names: Vec<String> = rows
-                .iter()
-                .map(|r| r.try_get::<String, _>("table_name").unwrap_or_default())
-                .collect();
+    .await
+    {
+        Ok(outcomes) => {
+            use fermi::migration_runner::Outcome;
+            let count = |o: Outcome| outcomes.iter().filter(|(_, x)| *x == o).count();
             println!(
-                "[ensure_critical_schema] benchmark tables present: [{}] ({}/4)",
-                names.join(", "),
-                names.len()
+                "[migrations] applied {}, skipped {}, known-failing {}",
+                count(Outcome::Applied),
+                count(Outcome::Skipped),
+                count(Outcome::KnownFailure)
             );
         }
-        Err(e) => eprintln!("[ensure_critical_schema] benchmark probe failed: {}", e),
+        Err(e) => {
+            eprintln!("[migrations] refusing to boot: {e}");
+            std::process::exit(2);
+        }
     }
 }
 
@@ -2360,20 +1614,10 @@ async fn main() {
         println!("Skipping migrations (SKIP_MIGRATIONS=1)");
     }
 
-    // Belt-and-suspenders: ensure the columns that have repeatedly failed
-    // to land via the multi-statement migration runner (PgBouncer + raw_sql
-    // interaction is suspect) actually exist. Each ALTER below is its own
-    // single-statement sqlx::query — bypasses any raw_sql / DO-block
-    // weirdness. Logs the schema state so we can see in Railway logs
-    // whether the columns are present.
-    ensure_critical_schema(&db).await;
-
-    // v0.11.0: schema trust contract check. Runs AFTER migrations and
-    // ensure_critical_schema so any drift caught here is a genuine
-    // contract violation, not just "migration hasn't run yet." Default
-    // mode logs LOUDLY and continues; SCHEMA_STRICT=1 aborts boot on
-    // drift (production-strict posture once the contract is
-    // comprehensive). See src/schema_trust.rs.
+    // Schema trust contract check, after migrations, so drift caught here
+    // is a contract violation and not "not migrated yet". Strict by default
+    // (SPEC 36 G16): drift aborts boot unless SCHEMA_STRICT=0. See
+    // src/schema_trust.rs.
     match schema_trust::verify_and_report(&db).await {
         schema_trust::BootDecision::Healthy => {}
         schema_trust::BootDecision::DriftContinueBoot => {
@@ -2384,8 +1628,8 @@ async fn main() {
         }
         schema_trust::BootDecision::DriftAbortBoot => {
             eprintln!(
-                "[main] aborting boot due to SCHEMA_STRICT=1 + contract violations. \
-                 Fix the drift (check migrations and ensure_critical_schema) and redeploy."
+                "[main] aborting boot: schema contract violations (strict by default). \
+                 Fix the drift via a migration and redeploy, or set SCHEMA_STRICT=0."
             );
             std::process::exit(2);
         }
@@ -5042,7 +4286,7 @@ async fn main() {
             post(handlers::admin::admin_recompose_mutex_groups_handler),
         )
         // Schema health probe: verifies every table / function / column
-        // that ensure_critical_schema is responsible for landing is
+        // that migration 245 (formerly ensure_critical_schema) lands is
         // actually present in the DB. Returns 200 with status='degraded'
         // when anything is missing, so this can be wired into monitoring
         // without hard-failing the console.

@@ -44,14 +44,11 @@
 //!
 //! Two modes, controlled by `SCHEMA_STRICT` env var:
 //!
-//!   * **`SCHEMA_STRICT` unset / `SCHEMA_STRICT=0`** — default. Log every
-//!     drift to stderr with a WARNING banner. Continue booting. Suitable
-//!     for gradual rollout: the deploy proceeds, but the operator sees
-//!     the drift in Railway logs immediately.
+//!   * **`SCHEMA_STRICT` unset or `1`** — default (SPEC 36 G16). Abort
+//!     boot on any drift.
 //!
-//!   * **`SCHEMA_STRICT=1`** — abort boot on any drift. The intended
-//!     production posture once the contract is comprehensive enough
-//!     that a false positive is rarer than a real drift.
+//!   * **`SCHEMA_STRICT=0`** — log every drift to stderr with a WARNING
+//!     banner and continue booting. An explicit operator override.
 //!
 //! ## Why hand-declared and not auto-generated
 //!
@@ -1078,11 +1075,17 @@ pub fn emit_boot_report(verdict: &SchemaVerdict, strict: bool) -> BootDecision {
         eprintln!();
         BootDecision::DriftAbortBoot
     } else {
-        eprintln!("[schema_trust] SCHEMA_STRICT unset — continuing boot in warn-only mode.");
-        eprintln!("[schema_trust] Set SCHEMA_STRICT=1 to refuse traffic on future drift.");
+        eprintln!("[schema_trust] SCHEMA_STRICT=0 — continuing boot in warn-only mode.");
         eprintln!();
         BootDecision::DriftContinueBoot
     }
+}
+
+/// Strict unless explicitly turned off with `SCHEMA_STRICT=0` / `false`
+/// (SPEC 36 G16: strict is the default). The dev DB verified with 0 issues
+/// on 2026-11-08, so the default refuses nothing that serves today.
+fn strict_from(v: Option<&str>) -> bool {
+    !matches!(v, Some(v) if v == "0" || v.eq_ignore_ascii_case("false"))
 }
 
 /// Convenience: verify against the DB and log the verdict in one call.
@@ -1102,9 +1105,7 @@ pub fn emit_boot_report(verdict: &SchemaVerdict, strict: bool) -> BootDecision {
 /// strict mode refuses to serve if it cannot *prove* the schema is
 /// sound.
 pub async fn verify_and_report(db: &PgPool) -> BootDecision {
-    let strict = std::env::var("SCHEMA_STRICT")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
+    let strict = strict_from(std::env::var("SCHEMA_STRICT").ok().as_deref());
 
     match verify(db).await {
         Ok(verdict) => emit_boot_report(&verdict, strict),
@@ -1123,5 +1124,16 @@ pub async fn verify_and_report(db: &PgPool) -> BootDecision {
                 BootDecision::DriftContinueBoot
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod strict_default_tests {
+    #[test]
+    fn strict_is_the_default() {
+        assert!(super::strict_from(None));
+        assert!(super::strict_from(Some("1")));
+        assert!(!super::strict_from(Some("0")));
+        assert!(!super::strict_from(Some("false")));
     }
 }
