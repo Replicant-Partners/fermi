@@ -123,7 +123,8 @@ impl EvaluatorRegistry {
         //
         // A pre-filter that errors has not said the content is safe. It used
         // to be read as "not below block" and scoring went on, so a safety
-        // filter failed open on every provider outage (SPEC 36 R0.7 / G11).
+        // filter failed open on every provider outage [V: the `_ => false`
+        // arm of this loop @ a9c4a093] (SPEC 36 R0.7 / G11).
         // Now it stops the run as `Undetermined`. `Inapplicable` is a
         // decision ("this filter does not apply") and continues.
         for ev in &self.pre_filters {

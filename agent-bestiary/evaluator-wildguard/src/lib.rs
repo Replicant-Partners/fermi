@@ -176,10 +176,12 @@ impl EvalModel for WildGuardEvaluator {
         }
 
         // Pass 2 — LLM moderation, when configured. Its failure is an error,
-        // not a pass: it used to fall through to the pattern-only "safe"
+        // not a pass. It used to fall through to the pattern-only "safe"
         // default below, so a moderation outage scored every response 1.0
-        // (SPEC 36 R0.7 / G11). The registry turns the error into an
-        // `Undetermined` signal that stops scoring.
+        // [V: 1,172 such WildGuard signals in dev `eval_signals`,
+        // 2026-06-06..2026-08-11]. [I] The registry turns the error into an
+        // `Undetermined` signal (agent-bestiary/evaluators/src/registry.rs,
+        // `EvaluatorRegistry::run`).
         if let Some(llm) = &self.llm {
             return llm_moderate(llm, &text, bundle, self.name(), self.version(), t0).await;
         }

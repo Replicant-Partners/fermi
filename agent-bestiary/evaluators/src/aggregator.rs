@@ -180,9 +180,10 @@ impl Aggregator {
         failure_reasons.sort();
 
         AggregatedSignal {
-            // The aggregator only sees results; whether a pre-filter stopped
-            // the run is the registry's to say, and it overwrites this.
-            status: SignalStatus::Scored,
+            // Fail closed: the aggregator only sees results, so it does not
+            // claim a verdict. `EvaluatorRegistry::run`
+            // (agent-bestiary/evaluators/src/registry.rs) sets the status.
+            status: SignalStatus::Undetermined,
             per_dimension,
             conflicts,
             flags: all_flags,
