@@ -136,6 +136,19 @@ async fn scenario(conn: &mut sqlx::PgConnection, schema: &str) {
         .await
         .unwrap_err();
     assert!(matches!(err, BootError::Unreadable { .. }), "{err}");
+
+    // An applied file that goes missing fails boot, and once it is back the
+    // next boot skips it: its recorded checksum was not overwritten.
+    let mut gone = files.clone();
+    gone.remove("m/001.sql");
+    let err = run(conn, &ledger, &list, read(&gone), &none)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, BootError::Unreadable { .. }), "{err}");
+    let out = run(conn, &ledger, &list, read(&files), &none)
+        .await
+        .expect("restored");
+    assert!(out.iter().all(|(_, o)| *o == Outcome::Skipped), "{out:?}");
 }
 
 /// The committed known-failing list parses, and every entry's checksum is

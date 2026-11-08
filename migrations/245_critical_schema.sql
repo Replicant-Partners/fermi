@@ -4,6 +4,12 @@
 -- cleanly in one transaction on the dev DB (verified with BEGIN … ROLLBACK,
 -- 2026-11-08). Runs last, as the function did, after every other migration.
 
+-- One implicit transaction (the runner sends the file as one simple query),
+-- so the ACCESS EXCLUSIVE locks below are held to commit. Bounded, so a busy
+-- table during a deploy overlap fails this boot (the next retries) rather
+-- than queueing live traffic indefinitely.
+SET LOCAL lock_timeout = '10s';
+
 -- teams.mission
 ALTER TABLE public.teams ADD COLUMN IF NOT EXISTS mission TEXT;
 

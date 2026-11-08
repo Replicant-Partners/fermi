@@ -20,7 +20,7 @@
 //! rule, and it was repeated as established mechanism in commit messages. The
 //! real reason that constraint was missing is **still unknown**: the migration
 //! replay path could not have deleted it, and it was never managed by
-//! `ensure_critical_schema` either. An admitted gap is worth more than an
+//! `ensure_critical_schema` (removed in SPEC 36 G16) either. An admitted gap is worth more than an
 //! unverified causal story, and this test is the part that can be verified.
 //!
 //! # What remains a real hazard
@@ -31,10 +31,11 @@
 //!    statement in its own implicit transaction. That is how migrations get
 //!    validated by hand, so a `DROP`+`ADD` pair really can half-apply — just not
 //!    on the deploy path.
-//! 2. **`ensure_critical_schema`.** It runs each statement as its own
-//!    `sqlx::query`, deliberately, and it contains `DROP CONSTRAINT` /
-//!    `ADD CONSTRAINT` pairs. Those *are* two transactions. That is the genuinely
-//!    non-atomic drop/add in this codebase.
+//! 2. **`ensure_critical_schema`**, until SPEC 36 G16. It ran each statement as
+//!    its own `sqlx::query` and held `DROP CONSTRAINT` / `ADD CONSTRAINT` pairs,
+//!    which were two transactions. Its statements are now
+//!    `migrations/245_critical_schema.sql`, one file, so one implicit
+//!    transaction on the deploy path; the test below pins that it stays gone.
 //!
 //! Read-only apart from a scratch table created and dropped under a reserved
 //! name.
@@ -116,110 +117,25 @@ async fn raw_sql_applies_a_multi_statement_file_atomically() {
     );
 }
 
-/// The path that really is two transactions per pair.
+/// The path that was two transactions per pair is gone.
 ///
-/// `ensure_critical_schema` executes each statement as its own `sqlx::query`, on
-/// purpose, and it holds `DROP CONSTRAINT` / `ADD CONSTRAINT` pairs. Offline scan,
-/// because the hazard is in the shape of the code rather than in any current row.
+/// `ensure_critical_schema` executed each statement as its own `sqlx::query`
+/// and held `DROP CONSTRAINT` / `ADD CONSTRAINT` pairs. SPEC 36 G16 moved its
+/// statements into `migrations/245_critical_schema.sql`, which the runner sends
+/// as one simple query, so the pairs are atomic. Offline scan.
 #[test]
-fn the_single_statement_schema_path_has_no_unguarded_drop_add_pair() {
-    let src = std::fs::read_to_string(
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/api_server.rs"),
-    )
-    .expect("api_server.rs");
-
-    let start = src
-        .find("async fn ensure_critical_schema")
-        .expect("ensure_critical_schema must exist");
-    // Bounded to the `alters` array. Without this, the tuple scan below runs past
-    // the closing bracket into the rest of the file and slices out of range.
-    let body = {
-        let after = &src[start..];
-        let end = after.find("\n    ];").map(|x| x + 1).unwrap_or(after.len());
-        &after[..end]
-    };
-
-    /// Leading SQL identifier only.
-    ///
-    /// The first version of this trimmed trailing quotes and backslashes and took
-    /// the first whitespace-delimited token — which left
-    /// `fermi_forecast_updates_revision_trigger_check"),` intact, matched nothing,
-    /// and made the whole test pass while detecting none of the pairs it exists to
-    /// find. Scanning forward over identifier characters cannot do that.
-    fn ident(s: &str) -> &str {
-        let t = s.trim_start();
-        let end = t
-            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-            .unwrap_or(t.len());
-        &t[..end]
-    }
-
-    // Entry-aware, because "is a DROP present" is the wrong question. The list is
-    // a sequence of `("label", "SQL")` tuples and each tuple becomes one query, so
-    // what matters is whether a DROP and its matching ADD sit in the SAME entry.
-    // A line-based version of this scan reported both pairs as unguarded after
-    // they had been correctly combined into one `DO $$ ... $$` statement each.
-    let entries: Vec<&str> = {
-        let mut v = Vec::new();
-        let mut idxs: Vec<usize> = body
-            .match_indices("(\"")
-            .filter(|(i, _)| body[..*i].ends_with("        "))
-            .map(|(i, _)| i)
-            .collect();
-        idxs.push(body.len());
-        for w in idxs.windows(2) {
-            v.push(&body[w[0]..w[1]]);
-        }
-        v
-    };
-
-    let mut dropped_total = 0usize;
-    let mut added_total = 0usize;
-    let mut unguarded: Vec<String> = Vec::new();
-
-    for e in &entries {
-        let drops: Vec<&str> = e
-            .match_indices("DROP CONSTRAINT IF EXISTS ")
-            .map(|(i, m)| ident(&e[i + m.len()..]))
-            .filter(|s| !s.is_empty())
-            .collect();
-        let adds: Vec<&str> = e
-            .match_indices("ADD CONSTRAINT ")
-            .map(|(i, m)| ident(&e[i + m.len()..]))
-            .filter(|s| !s.is_empty())
-            .collect();
-        dropped_total += drops.len();
-        added_total += adds.len();
-        for d in drops {
-            // Safe when the same entry puts it back. A DROP with no ADD anywhere is
-            // a deliberate removal and not this defect.
-            if !adds.contains(&d) && body.contains(&format!("ADD CONSTRAINT {d}")) {
-                unguarded.push(d.to_string());
-            }
-        }
-    }
-
-    // A scan that matches nothing passes for the wrong reason. This function is
-    // known to contain DROP CONSTRAINT statements; if it stops, the scan has lost
-    // its target and must say so rather than going green.
+fn the_single_statement_schema_path_is_gone() {
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src = std::fs::read_to_string(root.join("src/api_server.rs")).expect("api_server.rs");
     assert!(
-        dropped_total > 0 && added_total > 0,
-        "found {dropped_total} DROP and {added_total} ADD constraint statements \
-         across {} entries in ensure_critical_schema — the scan no longer matches \
-         the code it is meant to police",
-        entries.len()
+        !src.contains("async fn ensure_critical_schema"),
+        "a per-statement schema path is back; put the statements in a migration"
     );
-
+    assert!(src.contains("\"migrations/245_critical_schema.sql\""));
+    let sql =
+        std::fs::read_to_string(root.join("migrations/245_critical_schema.sql")).expect("245");
     assert!(
-        unguarded.is_empty(),
-        "`ensure_critical_schema` drops and re-adds {} constraint(s) as separate \
-         single-statement queries: {:?}\n\n\
-         Unlike the migration files, this path really is one transaction per \
-         statement — that is its stated purpose. So if the ADD fails the DROP \
-         stays committed and the constraint is gone, with nothing to restore it. \
-         Combine each pair into a single statement (a `DO $$ ... $$` block) so the \
-         two move together.",
-        unguarded.len(),
-        unguarded
+        sql.contains("ADD CONSTRAINT"),
+        "the pairs moved with the statements"
     );
 }

@@ -7,7 +7,7 @@
 //!
 //! ## What it does
 //!
-//! At boot, after `run_migrations()` and `ensure_critical_schema()`, we
+//! At boot, after `run_migrations()`, we
 //! probe the DB for every schema object the Rust code assumes exists:
 //!
 //!   * Every table in [`SCHEMA_TABLES`] is present *and is a table*.
@@ -567,7 +567,8 @@ pub const SCHEMA_FUNCTIONS: &[(&str, &str, &str)] = &[
 /// statements. Through PgBouncer in transaction-pooling mode those are two
 /// separate implicit transactions, so when the `ADD` failed — and it failed,
 /// because rows already violated the new list — the `DROP` stayed committed.
-/// `run_migrations` logs a migration failure with `eprintln!` and continues, so
+/// `run_migrations` logged a migration failure and continued (until SPEC 36
+/// G16, src/migration_runner.rs), so
 /// **the net effect of each attempted fix was to delete the constraint.**
 /// Migration 075 finally wrapped the pair in a DO block, making it atomic and
 /// therefore correct; by then 22 of the 43 live `tx_type` values were absent
@@ -1000,10 +1001,10 @@ pub async fn verify(db: &PgPool) -> Result<SchemaVerdict, sqlx::Error> {
 pub enum BootDecision {
     /// Schema is healthy — serve traffic.
     Healthy,
-    /// Drift detected but running in default (non-strict) mode. Continue
+    /// Drift detected and `SCHEMA_STRICT=0` (operator override). Continue
     /// booting so the operator can diagnose from Railway logs.
     DriftContinueBoot,
-    /// Drift detected and `SCHEMA_STRICT=1` — refuse to serve.
+    /// Drift detected in strict mode (the default) — refuse to serve.
     DriftAbortBoot,
 }
 
@@ -1071,7 +1072,7 @@ pub fn emit_boot_report(verdict: &SchemaVerdict, strict: bool) -> BootDecision {
     eprintln!();
 
     if strict {
-        eprintln!("[schema_trust] SCHEMA_STRICT=1 — refusing to serve traffic. Fix the drift and redeploy.");
+        eprintln!("[schema_trust] strict (default; SCHEMA_STRICT=0 overrides) — refusing to serve traffic. Fix the drift and redeploy.");
         eprintln!();
         BootDecision::DriftAbortBoot
     } else {

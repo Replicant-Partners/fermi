@@ -2,7 +2,7 @@
 //!
 //! Before this, every listed migration re-ran on every boot and a failure
 //! was printed and recorded but never stopped the boot
-//! [V: `run_migrations`, src/api_server.rs @ 59d76b00]. 30 files were
+//! [V: `run_migrations` loop, src/api_server.rs:1477-1537 @ 59d76b00]. 30 files were
 //! failing on every boot, 26 of them had never succeeded, and nothing
 //! acted on it.
 //!
@@ -133,16 +133,21 @@ where
         let sql = match read(file) {
             Ok(s) => s,
             Err(e) => {
-                record(
-                    conn,
-                    ledger,
-                    file,
-                    "",
-                    "unreadable",
-                    Some(&e.to_string()),
-                    0,
-                )
-                .await?;
+                // An applied file keeps its ledger row untouched: recording
+                // `unreadable` would replace its checksum with '' and every
+                // later boot would fail on `ChecksumChanged`.
+                if !applied.contains_key(file) {
+                    record(
+                        conn,
+                        ledger,
+                        file,
+                        "",
+                        "unreadable",
+                        Some(&e.to_string()),
+                        0,
+                    )
+                    .await?;
+                }
                 return Err(BootError::Unreadable {
                     file: file.into(),
                     error: e.to_string(),
@@ -252,7 +257,10 @@ async fn record(
               last_status, last_error, last_duration_ms)
          VALUES ($1, $2, 1, $3, $4, $4, CASE WHEN $5 THEN now() END, now(), $6, $7, $8)
          ON CONFLICT (filename) DO UPDATE SET
-             content_sha256 = EXCLUDED.content_sha256,
+             -- The checksum of an applied file is the one it applied with.
+             content_sha256 = CASE WHEN {t}.first_succeeded_at IS NULL
+                                   THEN EXCLUDED.content_sha256
+                                   ELSE {t}.content_sha256 END,
              attempts  = {t}.attempts + 1,
              successes = {t}.successes + EXCLUDED.successes,
              failures  = {t}.failures + EXCLUDED.failures,
