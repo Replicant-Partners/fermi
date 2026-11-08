@@ -516,7 +516,7 @@ pub const LIVENESS_CONTRACTS: &[LivenessContract] = &[
     },
     LivenessContract {
         sink: "schema_migrations",
-        writer: "api_server::record_migration_attempt (called from run_migrations)",
+        writer: "migration_runner::record (called from run_migrations)",
         sink_sql: "SELECT count(*)::bigint AS writes FROM schema_migrations",
         // If the platform has served anything at all, it has booted, and
         // `run_migrations` runs on every boot. So any episode is evidence that
@@ -525,17 +525,21 @@ pub const LIVENESS_CONTRACTS: &[LivenessContract] = &[
         opportunity_sql: "SELECT count(*)::bigint AS opportunities FROM episodes",
         expectation: Expectation::EveryOpportunity,
         requires: Some(("schema_migrations", "filename")),
-        accounted: Some(Sink::SchemaMigrations),
-        why: "The ledger is what makes a failing migration answerable. Without it \
-              `run_migrations` prints the failure and continues, which is how a \
+        // Not a swallowed write since SPEC 36 G16: a failed ledger write
+        // fails boot (src/migration_runner.rs).
+        accounted: None,
+        why: "The ledger is what makes a failing migration answerable, and since \
+              SPEC 36 G16 what decides skip versus run. Before it, \
+              `run_migrations` printed the failure and continued, which is how a \
               CHECK constraint was declared by seventeen migrations and applied by \
               none — the repair was performed, believed and repeated for the life \
               of the project. An empty ledger means that blindness is back, and \
               the irony is available: the check that watches the recorder is \
               itself a write path that could silently never run.",
-        remediation: "Confirm the deployed binary includes `record_migration_attempt` \
-                      and that `ensure_migration_ledger` is not erroring at boot — \
-                      both log to stderr and neither can fail the boot, by design.",
+        remediation: "A ledger read or write failure fails boot \
+                      (src/migration_runner.rs, `BootError::Ledger`), so an empty \
+                      ledger on a serving instance means the runner did not run: \
+                      check `SKIP_MIGRATIONS` and the boot log line `[migrations]`.",
     },
     // ── positive controls ───────────────────────────────────────────
     //

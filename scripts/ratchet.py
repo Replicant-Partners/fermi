@@ -129,7 +129,19 @@ def count(ref):
         for k, rx in METRICS.items():
             c[k] += len(rx.findall(t))
         c["db_decode_unwrap"] += decode_unwraps(t)
+    c["known_failing_migrations"] = known_failing(ref)
     return c
+
+
+def known_failing(ref):
+    """Entries in migrations/KNOWN_FAILING.txt (SPEC 36 G16): migrations the
+    boot runner tolerates failing. May only shrink."""
+    path = "migrations/KNOWN_FAILING.txt"
+    try:
+        text = read(ref, path) if ref else open(path).read()
+    except FileNotFoundError:
+        return 0
+    return sum(1 for l in text.splitlines() if l.strip() and not l.lstrip().startswith("#"))
 
 
 def load(path):

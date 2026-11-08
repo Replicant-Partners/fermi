@@ -1162,8 +1162,10 @@ Numbers continue from `243`. Every file MUST be added to the `run_migrations` li
 
 | # | File | Workstream |
 |---|---|---|
-| 244 | `244_credit_ledger_idempotency_and_holds.sql`: `idempotency_key`, `credit_holds`, `wallets.held_balance`, new `TxType` values | WS1 |
-| 245 | `245_credit_ledger_projection.sql`: `credit_ledger_apply` trigger; backfill check `balance = Σ ledger` (**fails loudly** with a mismatch report, does not "fix") | WS1 |
+| 244 | **Taken** by `244_platform_sponsor_wallet.sql` (R0.1, #132). The holds work below takes the next free number. | WS1 |
+| 245 | **Taken** by `245_critical_schema.sql` (G16, #144: the former `ensure_critical_schema`). | — |
+| — | `credit_ledger_idempotency_and_holds`: `idempotency_key`, `credit_holds`, `wallets.held_balance`, new `TxType` values | WS1 |
+| — | `credit_ledger_projection`: `credit_ledger_apply` trigger; backfill check `balance = Σ ledger` (**fails loudly** with a mismatch report, does not "fix") | WS1 |
 | 246 | `246_event_store.sql`: `streams`, `events`, `event_types`, `aggregate_snapshots`, `projector_checkpoints`, `outbox` | WS2 |
 | 247 | `247_forbid_mutation.sql`: `forbid_mutation()`, triggers on all trust tables, cascade → restrict, soft-delete columns | WS2 |
 | 248 | `248_roles.sql`: `abw_app` and `abw_owner`, grants. **Requires a deploy-config change** (§13) | WS2 |
@@ -1183,6 +1185,7 @@ Numbers continue from `243`. Every file MUST be added to the `run_migrations` li
 - A migration whose recorded `content_sha256` matches and has `first_succeeded_at` is **skipped**.
 - A changed checksum on an already-applied migration fails boot.
 - Any failure fails boot. `SCHEMA_STRICT` becomes the default and the flag is removed.
+- *As shipped (#144, owner decision on #120, option 2):* failures of the files listed in `migrations/KNOWN_FAILING.txt` (never applied on the prototype, listed with checksum) are tolerated; the list may only shrink (ratchet `known_failing_migrations`). `SCHEMA_STRICT=0` remains as an explicit operator override; strict is the default.
 - `ensure_critical_schema` is deleted after its statements are moved into a numbered migration.
 
 ---
