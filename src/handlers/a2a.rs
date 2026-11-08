@@ -328,6 +328,11 @@ pub async fn send_message_handler(
     // agent does NOT run here (G25), and the reserved row has no source_ref,
     // so the task poll answers 404 for it.
     if req.configuration.return_immediately {
+        // Nothing runs this reservation (G25), so end it now rather than
+        // leave it `running` or to the drop guard.
+        pulse
+            .abandon("not_executed: return_immediately has no background runner (G25)")
+            .await;
         return Ok(Json(fermi::a2a_task::submitted_task(
             episode_id, &caller_id,
         )));

@@ -523,13 +523,6 @@ pub struct Write<'a> {
     pub workspace: Option<Uuid>,
 }
 
-/// Stamp the grade on the episode itself.
-///
-/// A stamp rather than a rewrite: the raw response stays verbatim, because
-/// retention is a precondition for every later form of verification and a
-/// digest is not a record. What changes is that the episode carries the
-/// verdict, so anything reading it downstream can tell a checked document from
-/// an unchecked one.
 impl Drop for Pulse {
     fn drop(&mut self) {
         let Some(pool) = self.armed.take() else {
@@ -570,6 +563,13 @@ async fn abandon_now(pool: PgPool, episode_id: Uuid, reason: &str) {
     }
 }
 
+/// Stamp the grade on the episode itself.
+///
+/// A stamp rather than a rewrite: the raw response stays verbatim, because
+/// retention is a precondition for every later form of verification and a
+/// digest is not a record. What changes is that the episode carries the
+/// verdict, so anything reading it downstream can tell a checked document from
+/// an unchecked one.
 pub fn stamp_grounding(episode: &mut Episode, report: &Report) {
     if report.is_clean() && report.provenance.is_empty() {
         // No contract for this agent, or nothing to say. Deliberately not
@@ -613,12 +613,20 @@ pub async fn close(mut pulse: Pulse, graded: &Graded, mut w: Write<'_>) -> anyho
     route_trust::stamp(&mut w.episode, w.route);
     stamp_grounding(&mut w.episode, &graded.report);
 
-    // On `Err` the pulse is still armed and is dropped by the `?`, so a
-    // failed store marks the reservation failed instead of leaving it running.
-    let stored = w
+    // A failed store ends the reservation as `failure` with the store error,
+    // instead of leaving it running.
+    let stored = match w
         .store
         .store_episode_with_provenance(w.episode, w.provenance, w.source_ref)
-        .await?;
+        .await
+    {
+        Ok(id) => id,
+        Err(e) => {
+            let msg = format!("store_failed: {e}");
+            pulse.abandon(&msg).await;
+            return Err(e.into());
+        }
+    };
     pulse.armed = None;
 
     // ── Which workspace this happened in ─────────────────────────────────

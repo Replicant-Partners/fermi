@@ -389,3 +389,81 @@ async fn deployed_workspace_message_error_leaves_no_running_row() {
     })
     .await;
 }
+
+/// Delegation (`execute_agent` tool): the child's episode is reserved, then
+/// the target's card is looked up in the in-memory registry. With an empty
+/// registry that lookup fails after the reservation
+/// (`src/agent_backend/tools/domains/platform.rs`, `execute_execute_agent`),
+/// which on the old code left the child row `running`.
+#[tokio::test]
+async fn a_failed_delegation_leaves_no_running_child() {
+    use fermi::agent_backend::tools::{PlatformToolRegistry, ToolContext};
+    use std::sync::Arc;
+    let Some(pool) = support::pool().await else {
+        return;
+    };
+    support::with_cleanup(&pool, |pool, created| async move {
+        let name = support::tag("pulse_delegate");
+        let agent: uuid::Uuid = sqlx::query_scalar(
+            "INSERT INTO agents (agent_name, agent_type, version, tier, executor_type, model,
+                                 temperature, author, status, visibility)
+             VALUES ($1, 'research', '1.0.0', 'community', 'llm', 'spec36-model', 0.5,
+                     'spec36', 'draft', 'private')
+             RETURNING agent_id",
+        )
+        .bind(&name)
+        .fetch_one(&pool)
+        .await
+        .expect("agent");
+        created.lock().await.agents.push(agent);
+
+        let ctx = ToolContext {
+            memory_store: Arc::new(MemoryStore::from_pool(pool.clone())),
+            embedder: Arc::new(agent_bestiary_memory::MockEmbeddings::new(8)),
+            registry: Arc::new(fermi::agent_backend::AgentRegistry::new()),
+            current_agent_id: None,
+            workspace_id: None,
+            workspace_slug: None,
+            workspace_git: None,
+            db: Some(pool.clone()),
+            gas_fees: None,
+            user_id: None,
+            user_secrets: None,
+            credentials: Arc::new(Default::default()),
+            parent_episode_id: None,
+            eval_trigger: None,
+            remote_mcp: None,
+        };
+        let r = PlatformToolRegistry::all()
+            .execute(
+                "execute_agent",
+                &serde_json::json!({ "agent_id": name, "query": "spec36 delegation probe" }),
+                &ctx,
+            )
+            .await;
+        assert!(r.is_err(), "the delegation fails: {r:?}");
+
+        let p = pool.clone();
+        let reserved: Vec<uuid::Uuid> =
+            sqlx::query_scalar("SELECT episode_id FROM episodes WHERE agent_id = $1")
+                .bind(agent)
+                .fetch_all(&pool)
+                .await
+                .expect("ids");
+        created
+            .lock()
+            .await
+            .episodes
+            .extend(reserved.iter().copied());
+        assert_eq!(reserved.len(), 1, "the child episode was reserved");
+        assert!(
+            eventually(Duration::from_secs(10), || {
+                let p = p.clone();
+                async move { running_rows(&p, agent).await == 0 }
+            })
+            .await,
+            "a failed delegation must not leave its child running"
+        );
+    })
+    .await;
+}

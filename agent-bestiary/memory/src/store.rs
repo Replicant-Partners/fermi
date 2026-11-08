@@ -125,6 +125,10 @@ impl CompositionOutcome {
     }
 }
 
+/// Upper bound on the duration [`MemoryStore::abandon_running`] records:
+/// 30 min, the reaper's default `EPISODE_MAX_RUNTIME`.
+pub const ABANDON_DURATION_CAP_MS: i64 = 30 * 60 * 1000;
+
 pub struct MemoryStore {
     pool: PgPool,
 }
@@ -225,8 +229,9 @@ impl MemoryStore {
     ///
     /// `reason` goes to `error_details` and starts with its class
     /// (`executor_error:`, `abandoned_unclosed:`, `abandoned_timeout:`).
-    /// The duration is the wall time since the reservation, so an abandoned
-    /// run does not read as instantaneous.
+    /// The duration is the wall time since the reservation, capped at
+    /// [`ABANDON_DURATION_CAP_MS`]: a row reaped weeks late must not enter
+    /// latency averages (`agent_execution_rollup`) as a weeks-long run.
     ///
     /// Returns the ids that changed.
     pub async fn abandon_running(&self, episode_ids: &[Uuid], reason: &str) -> Result<Vec<Uuid>> {
@@ -238,15 +243,18 @@ impl MemoryStore {
             UPDATE episodes
                SET execution_status = 'failure',
                    error_details = $1,
-                   execution_time_ms = GREATEST(
-                       execution_time_ms,
-                       (EXTRACT(EPOCH FROM (now() - timestamp_ref)) * 1000)::bigint)
+                   execution_time_ms = LEAST(
+                       GREATEST(
+                           execution_time_ms,
+                           (EXTRACT(EPOCH FROM (now() - timestamp_ref)) * 1000)::bigint),
+                       $3)
              WHERE episode_id = ANY($2) AND execution_status = 'running'
             RETURNING episode_id
             "#,
         )
         .bind(reason)
         .bind(episode_ids)
+        .bind(ABANDON_DURATION_CAP_MS)
         .fetch_all(&self.pool)
         .await?;
         rows.iter()
@@ -268,8 +276,9 @@ impl MemoryStore {
                AND NOT EXISTS (
                    SELECT 1 FROM ground_runs g
                     WHERE g.run_id = e.episode_id
-                      AND g.closed_at IS NULL
-                      AND g.expires_at > now())
+                      AND ((g.closed_at IS NULL AND g.expires_at > now())
+                           -- a submit closes the run just before it stores
+                           OR g.closed_at > now() - interval '5 minutes'))
              ORDER BY e.timestamp_ref
              LIMIT 500
             "#,
