@@ -484,7 +484,7 @@ pub async fn send_message_handler(
     let ep_id_str = stored_id.to_string();
 
     // SPEC 36 R1.3: charge, royalty and hold close in one transaction. A
-    // failure is a 500, not a free run (the `let _ =` this replaces).
+    // failure is a 500, recorded unpaid, not a free run (the `let _ =` this replaces).
     fermi::credit_hold::settle(
         &state.db,
         hold,
@@ -1001,9 +1001,9 @@ pub async fn stream_message_handler(
                 let ep_ref = if ep_str.is_empty() { None } else { Some(ep_str.as_str()) };
 
                 // SPEC 36 R1.3: charge, royalty and hold close in one
-                // transaction. A failure leaves the hold open (logged in
-                // `credit_hold::settle`), not a free run.
-                let _settled = fermi::credit_hold::settle(
+                // transaction; a failure is recorded as unpaid, not a free run.
+                // Errors are logged and recorded as unpaid inside `settle`.
+                if let Err(e) = fermi::credit_hold::settle(
                     &state_clone.db,
                     hold,
                     &fermi::credit_hold::Settlement {
@@ -1020,7 +1020,10 @@ pub async fn stream_message_handler(
                         related_id: ep_ref.map(str::to_string),
                     },
                 )
-                .await;
+                .await
+                {
+                    tracing::warn!(error = %e, "a2a stream settlement failed");
+                }
 
                 let task_id = stored_id.unwrap_or(episode_id).to_string();
 

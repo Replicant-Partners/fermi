@@ -497,6 +497,79 @@ pub async fn transfer_tx(
             "Cannot transfer to the same wallet".into(),
         ));
     }
+    // SPEC 36 R1.3: a transfer may not spend credits an open execution hold
+    // reserves, and a wallet that owes an unpaid execution charge cannot move
+    // credits out (`credit_hold`, migration 246).
+    sqlx::query("SELECT 1 FROM wallets WHERE wallet_id = ANY($1) ORDER BY wallet_id FOR UPDATE")
+        .bind(vec![from, to])
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(|e| AuthError::Internal(format!("Wallet lock failed: {}", e)))?;
+    let row = sqlx::query(
+        "SELECT w.balance,
+            COALESCE((SELECT sum(h.amount) FROM credit_holds h
+                       WHERE h.wallet_id = w.wallet_id
+                         AND NOT EXISTS (SELECT 1 FROM credit_hold_closures c
+                                          WHERE c.hold_id = h.hold_id)), 0)::int AS held,
+            (COALESCE((SELECT sum(c.unpaid) FROM credit_hold_closures c
+                         JOIN credit_holds h USING (hold_id) WHERE h.wallet_id = w.wallet_id), 0)
+             - COALESCE((SELECT sum(r.amount) FROM credit_debt_repayments r
+                          WHERE r.wallet_id = w.wallet_id), 0))::int AS owed
+           FROM wallets w WHERE w.wallet_id = $1",
+    )
+    .bind(from)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(|e| AuthError::Internal(format!("Hold check failed: {}", e)))?;
+    if let Some(row) = row {
+        let balance: i32 = row.try_get("balance").map_err(decode)?;
+        let held: i32 = row.try_get("held").map_err(decode)?;
+        let owed: i32 = row.try_get("owed").map_err(decode)?;
+        if owed > 0 {
+            return Err(AuthError::InvalidInput(format!(
+                "This wallet owes {owed} credits from an earlier run; settle it before transferring."
+            )));
+        }
+        if balance - held < amount {
+            return Err(AuthError::InsufficientCredits {
+                have: balance - held,
+                need: amount,
+            });
+        }
+    }
+    transfer_typed_tx(
+        conn,
+        from,
+        to,
+        amount,
+        ("transfer_out", "transfer_in"),
+        description,
+        related_id,
+        transferable_only,
+    )
+    .await
+}
+
+/// [`transfer_tx`] with explicit ledger types and **without** the hold and
+/// debt check: for the royalty leg of an execution settlement
+/// (`credit_hold::settle`), which spends the credits its own hold reserved.
+/// The granted/purchased split is preserved as in `transfer_tx`.
+#[allow(clippy::too_many_arguments)]
+pub async fn transfer_typed_tx(
+    conn: &mut sqlx::PgConnection,
+    from: Uuid,
+    to: Uuid,
+    amount: i32,
+    (out_type, in_type): (&str, &str),
+    description: &str,
+    related_id: Option<&str>,
+    transferable_only: bool,
+) -> Result<(CreditTransaction, CreditTransaction), AuthError> {
+    if from == to {
+        return Err(AuthError::InvalidInput(
+            "Cannot transfer to the same wallet".into(),
+        ));
+    }
     let locked: Vec<Uuid> = sqlx::query_scalar(
         "SELECT wallet_id FROM wallets WHERE wallet_id = ANY($1) ORDER BY wallet_id FOR UPDATE",
     )
@@ -512,7 +585,7 @@ pub async fn transfer_tx(
         conn,
         from,
         amount,
-        "transfer_out",
+        out_type,
         description,
         related_id,
         transferable_only,
@@ -525,7 +598,7 @@ pub async fn transfer_tx(
         to,
         amount,
         granted_part,
-        "transfer_in",
+        in_type,
         description,
         related_id,
     )

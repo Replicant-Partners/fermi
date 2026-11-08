@@ -150,6 +150,121 @@ async fn holds_reserve_settle_and_refuse_before_work() {
     .await;
 }
 
+/// R1.4: the royalty moves caller → owner with the bucket split kept, so
+/// granted credits the caller spends arrive as granted. Transfers cannot spend
+/// held credits and are refused while the wallet owes an unpaid charge.
+#[tokio::test]
+async fn royalty_keeps_the_granted_split_and_transfers_respect_holds() {
+    let Some(pool) = support::pool().await else {
+        return;
+    };
+    support::with_cleanup(&pool, |pool, c| async move {
+        let mut cc = c.lock().await;
+        let caller = support::make_user(&pool, &mut cc).await;
+        let owner = support::make_user(&pool, &mut cc).await;
+        let other = support::make_user(&pool, &mut cc).await;
+        let w = support::make_wallet(&pool, &mut cc, "user", &caller, 0).await;
+        let w_other = support::make_wallet(&pool, &mut cc, "user", &other, 0).await;
+        cc.wallet_owners.push(owner.clone());
+        drop(cc);
+        // 20 granted (non-transferable), 10 purchased.
+        fermi_auth::credit_grant(&pool, w, 20, "spec36 grant")
+            .await
+            .unwrap();
+        fermi_auth::credit_deposit(&pool, w, 10, "spec36 purchase")
+            .await
+            .unwrap();
+
+        // Held credits cannot be transferred out mid-run.
+        let h = credit_hold::open(&pool, w, 25, "test").await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let t =
+            fermi_auth::credits::transfer_tx(&mut conn, w, w_other, 10, "spec36", None, true).await;
+        assert!(
+            t.is_err(),
+            "available is 5, a 10 transfer must be refused: {t:?}"
+        );
+        drop(conn);
+
+        let mut s = plain(10, 0);
+        s.royalty = Some((owner.clone(), 8));
+        let settled = credit_hold::settle(&pool, h, &s).await.unwrap();
+        assert_eq!(settled.royalty_paid, 8);
+        // Granted is spent first: the 8 royalty arrives as granted.
+        let (bal, granted, purchased): (i32, i32, i32) = sqlx::query_as(
+            "SELECT balance, granted_balance, purchased_balance FROM wallets
+              WHERE owner_type = 'user' AND owner_id = $1",
+        )
+        .bind(&owner)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            (bal, granted, purchased),
+            (8, 8, 0),
+            "granted stays granted"
+        );
+        let kinds: Vec<String> = sqlx::query_scalar(
+            "SELECT tx_type FROM credit_ledger l JOIN wallets w USING (wallet_id)
+              WHERE w.owner_id = $1 ORDER BY l.created_at",
+        )
+        .bind(&owner)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(kinds, vec!["agent_royalty_in".to_string()]);
+
+        // Debt blocks transfers out.
+        let h2 = credit_hold::open(&pool, w, 20, "test").await.unwrap();
+        let over = credit_hold::settle(&pool, h2, &plain(25, 0)).await.unwrap();
+        assert_eq!(over.unpaid, 5);
+        fermi_auth::credit_deposit(&pool, w, 3, "spec36")
+            .await
+            .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let t =
+            fermi_auth::credits::transfer_tx(&mut conn, w, w_other, 1, "spec36", None, true).await;
+        assert!(t.is_err(), "a wallet in debt cannot move credits out");
+    })
+    .await;
+}
+
+/// A settlement whose transaction fails charges nothing and records the
+/// whole cost as unpaid, so expiry cannot forgive the run.
+#[tokio::test]
+async fn a_failed_settlement_is_recorded_unpaid_not_forgiven() {
+    let Some(pool) = support::pool().await else {
+        return;
+    };
+    support::with_cleanup(&pool, |pool, c| async move {
+        let mut cc = c.lock().await;
+        let caller = support::make_user(&pool, &mut cc).await;
+        let w = support::make_wallet(&pool, &mut cc, "user", &caller, 30).await;
+        // The royalty "owner" id names a workspace wallet, so the owner's
+        // user wallet cannot be ensured and the settle transaction fails.
+        let ws_owner = support::tag("ws_owner");
+        support::make_wallet(&pool, &mut cc, "workspace", &ws_owner, 0).await;
+        drop(cc);
+
+        let h = credit_hold::open(&pool, w, 10, "test").await.unwrap();
+        let id = h.hold_id;
+        let mut s = plain(12, 1);
+        s.royalty = Some((ws_owner.clone(), 5));
+        assert!(credit_hold::settle(&pool, h, &s).await.is_err());
+        assert_eq!(
+            balance(&pool, w).await,
+            30,
+            "nothing charged by the failed transaction"
+        );
+        assert_eq!(closure(&pool, id).await, Some(("settle".into(), 0, 13)));
+        // Recorded, not forgiven: the next hold repays it first.
+        let h2 = credit_hold::open(&pool, w, 1, "test").await.unwrap();
+        assert_eq!(balance(&pool, w).await, 17);
+        credit_hold::release(&pool, h2, "test").await.unwrap();
+    })
+    .await;
+}
+
 /// Live: a caller with 1 credit is refused (402) before the run, and no
 /// episode is reserved. On the old code `balance > 0` admitted the run, which
 /// then failed after reserving an episode (500).

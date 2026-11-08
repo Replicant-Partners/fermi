@@ -11,7 +11,7 @@
 //!
 //! Money holds (R0.5.2 / R1.3): each sweep also releases credit holds past
 //! `expires_at` (`credit_hold::release_expired`). A hold outlives the
-//! episode's 30 min limit (`credit_hold::HOLD_TTL_SECS`), so a reaped run's
+//! episode's runtime limit (`credit_hold::hold_ttl_secs`), so a reaped run's
 //! hold is released by a later sweep, not in the same transaction.
 
 use std::sync::Arc;

@@ -116,7 +116,7 @@ pub async fn execute_agent_handler(
     );
     let hold = match fermi::credit_hold::open(&state.db, wallet.wallet_id, estimate, "execute").await {
         Ok(h) => h,
-        Err(e) => {
+        Err(e) if e.is_payment_required() => {
             // Counted: a refusal returns before any ledger row, so this is
             // the only record that demand was declined.
             fermi::gate_trust::decided(
@@ -124,13 +124,9 @@ pub async fn execute_agent_handler(
                 fermi::gate_trust::Decision::Refused,
                 Some("execute: credit hold refused"),
             );
-            let status = if e.is_payment_required() {
-                StatusCode::PAYMENT_REQUIRED
-            } else {
-                StatusCode::INTERNAL_SERVER_ERROR
-            };
-            return Err((status, e.to_string()));
+            return Err((StatusCode::PAYMENT_REQUIRED, e.to_string()));
         }
+        Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
     };
     fermi::gate_trust::decided(
         fermi::gate_trust::Gate::Credit,
@@ -777,10 +773,9 @@ pub async fn execute_agent_handler(
     let tokens = output.tokens_used.unwrap_or(0) as i32;
     let (execution_fee, gas_fee) = state.gas_fees.execution_fee(tokens);
 
-    // SPEC 36 R1.3: one transaction charges the fee and gas, pays the
-    // owner's royalty, and closes the hold. A failure here is an error, not
-    // a free run: the episode is stored, the hold stays open until the
-    // reaper releases it at expiry, and the caller sees 500.
+    // SPEC 36 R1.3: one transaction charges the fee and gas, transfers the
+    // owner's royalty, and closes the hold. A failure is a 500 and the cost
+    // is recorded unpaid (`credit_hold::settle`), not a free run.
     let ep_id_str = stored_episode_id.to_string();
     let settled = fermi::credit_hold::settle(
         &state.db,

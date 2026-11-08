@@ -24,7 +24,7 @@ use chrono::Utc;
 use std::sync::Arc;
 use std::time::Instant;
 
-const MAX_ITERATIONS: u32 = 5;
+pub(crate) const MAX_ITERATIONS: u32 = 5;
 
 /// Per-request timeout for the flush turn, overriding the 90s the shared
 /// client allows every other hop.

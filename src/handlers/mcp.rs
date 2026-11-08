@@ -552,7 +552,7 @@ async fn run_llm_execute(
             // royalty, plus the gas surcharge.
             let tokens = output.tokens_used.unwrap_or(0) as i32;
             let (execution_fee, gas_fee) = state.gas_fees.execution_fee(tokens);
-            // SPEC 36 R1.3: one transaction; a failure is an error, not a
+            // SPEC 36 R1.3: one transaction; a failure is an error, recorded unpaid, not a
             // free run (the `let _ =` pair this replaces).
             if let Err(e) = fermi::credit_hold::settle(
                 &state.db,
