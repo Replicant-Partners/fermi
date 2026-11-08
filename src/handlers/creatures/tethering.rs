@@ -77,7 +77,7 @@ pub async fn update_creature_presence_handler(
                 "Creature {} is now {}. Log the transition.",
                 name2, presence2
             );
-            let _ = rabble_workspace::dispatch_rabble_action_background(
+            if let Err(e) = rabble_workspace::dispatch_rabble_action_background(
                 &state2,
                 ws_id,
                 "keeper",
@@ -86,7 +86,10 @@ pub async fn update_creature_presence_handler(
                 &user_id2,
                 Some(creature_id),
             )
-            .await;
+            .await
+            {
+                tracing::warn!(error = %e, "background agent dispatch did not complete");
+            }
         });
     }
 

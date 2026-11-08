@@ -1563,6 +1563,7 @@ fn format_regression_body(details: &Option<Value>) -> String {
 /// Returns: `{ updated: N, skipped: N }` where `updated` is the count of
 /// cases that received a new rubric, `skipped` is cases that already had one.
 pub async fn generate_rubrics_handler(
+    _spend: crate::handlers::llm_spend::LlmSpend,
     State(state): State<AppState>,
     principal: AuthPrincipal,
     Path(agent_id): Path<String>,

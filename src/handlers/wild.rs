@@ -434,6 +434,7 @@ pub struct IdentifyRequest {
 /// endpoint the glasses shell and any other surface should call; the Rabble
 /// creature route is a second caller of the same function, not the way in.
 pub async fn identify_action_handler(
+    _spend: crate::handlers::llm_spend::LlmSpend,
     State(state): State<AppState>,
     principal: AuthPrincipal,
     Path(workspace_id): Path<String>,

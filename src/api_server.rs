@@ -4749,10 +4749,10 @@ async fn main() {
             get(handlers::observations::observation_experience_handler),
         )
         // Layers run outermost-last, so the order below is:
-        //   auth_middleware -> impersonation_guard -> llm_rate_limit -> handler
+        //   auth_middleware -> impersonation_guard -> handler
         //
-        // No LLM layer here: each spending handler declares its spend
-        // (`handlers::llm_spend::LlmSpend`, G17).
+        // No LLM layer: each spending handler declares its spend
+        // (`handlers::llm_spend`, G17).
         // Inside `auth_middleware` (see the public-router note above):
         // enforces the read-only contract and writes the audit trail
         // for any request carrying an impersonated principal.

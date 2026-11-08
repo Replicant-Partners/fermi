@@ -9,25 +9,28 @@
 use crate::deployed::base_url;
 use crate::support;
 
-/// Calls that run a model (directly or through a local helper that does).
+/// Calls that run a language model.
+///
+/// Platform executors, the rabble dispatcher, and direct provider HTTP calls.
+/// Any function in `src/handlers` whose body contains one is a spender, and so
+/// is any function that calls a spender (followed transitively, by name).
+/// `executor.execute(` alone is not listed: in `notebooks.rs` it is the FPL
+/// Monte Carlo executor, which calls no model.
 const PRIMITIVES: &[&str] = &[
     "tool_executor.execute(",
-    "executor.execute(",
+    "ToolAwareExecutor::new(",
     "dispatch_rabble_action(",
     "dispatch_rabble_action_recorded(",
-    "execute_carbon_run(",
-    "evaluate_one(",
-    "run_eval_cases(",
+    "registry.executor().execute(",
+    "api.anthropic.com",
+    "api.openai.com",
+    "openrouter.ai",
 ];
 
-/// Handlers that reach a model through a path the primitive scan does not
-/// follow (consolidation, composition dream, eval run). Pinned.
-const PINNED: &[(&str, &str)] = &[
-    ("src/handlers/consolidation.rs", "consolidate_agent_handler"),
-    ("src/handlers/composition.rs", "composition_dream_handler"),
-    ("src/handlers/eval.rs", "trigger_eval_run_handler"),
-    ("src/handlers/eval.rs", "batch_eval_run_handler"),
-];
+/// Paid image/vision model calls (Gemini), not admitted by this limiter:
+/// bounded by the credits they charge first; scope is an open owner question
+/// on #44.
+const OUT_OF_SCOPE: &[&str] = &["generativelanguage.googleapis.com"];
 
 fn matching(s: &str, open: usize, o: u8, c: u8) -> usize {
     let b = s.as_bytes();
@@ -45,6 +48,24 @@ fn matching(s: &str, open: usize, o: u8, c: u8) -> usize {
         j += 1;
     }
     b.len()
+}
+
+/// Drop a `//` comment from a line, but not a `//` inside a string literal
+/// (`"https://api.anthropic.com"` is code, and a primitive).
+fn strip_line_comment(line: &str) -> &str {
+    let b = line.as_bytes();
+    let mut in_str = false;
+    let mut i = 0;
+    while i + 1 < b.len() {
+        match b[i] {
+            b'\\' if in_str => i += 1,
+            b'"' => in_str = !in_str,
+            b'/' if !in_str && b[i + 1] == b'/' => return &line[..i],
+            _ => {}
+        }
+        i += 1;
+    }
+    line
 }
 
 struct Handler {
@@ -65,7 +86,7 @@ fn handlers() -> Vec<Handler> {
             .next()
             .unwrap_or("")
             .lines()
-            .map(|l| l.split("//").next().unwrap_or(""))
+            .map(strip_line_comment)
             .collect::<Vec<_>>()
             .join("\n");
         for m in fn_re.captures_iter(&src) {
@@ -100,15 +121,43 @@ fn admits(body: &str) -> bool {
     body.contains("rate_limits.llm.check(") || body.contains("llm_spend::admit(")
 }
 
-/// Every HTTP handler that awaits a model call on the request path is
-/// admitted by the LLM limiter (extractor, or an inline check in it or a
-/// local helper it calls); every model call in a spawned task either belongs
-/// to an admitted request or asks `llm_spend::background` first. Fails on the old code: none of the
-/// handlers above declared spend, and the list lived in a path matcher.
+/// Every HTTP handler that reaches a language model call on the request
+/// path is admitted by the LLM limiter (the `LlmSpend` extractor, or `admit`
+/// / an inline check in its own body or in a helper it calls), and every
+/// language-model call inside a spawned task either belongs to an admitted
+/// request or asks `llm_spend::background` first. Fails on the old code:
+/// no handler declared spend, and the list lived in a path matcher.
 #[test]
 fn every_handler_that_spends_declares_it() {
     let all = handlers();
-    let local_admits: Vec<&str> = all
+    let calls = |body: &str, name: &str| -> bool {
+        let pat = format!("{name}(");
+        body.match_indices(&pat).any(|(i, _)| {
+            body[..i]
+                .chars()
+                .next_back()
+                .is_none_or(|c| !(c.is_alphanumeric() || c == '_'))
+        })
+    };
+    // Spenders: a primitive in the body, or a call to a spender.
+    let mut spenders: Vec<String> = all
+        .iter()
+        .filter(|h| PRIMITIVES.iter().any(|p| h.body.contains(p)))
+        .map(|h| h.name.clone())
+        .collect();
+    loop {
+        let more: Vec<String> = all
+            .iter()
+            .filter(|h| !spenders.contains(&h.name))
+            .filter(|h| spenders.iter().any(|s| calls(&h.body, s)))
+            .map(|h| h.name.clone())
+            .collect();
+        if more.is_empty() {
+            break;
+        }
+        spenders.extend(more);
+    }
+    let admitting: Vec<&str> = all
         .iter()
         .filter(|h| admits(&h.body))
         .map(|h| h.name.as_str())
@@ -118,22 +167,45 @@ fn every_handler_that_spends_declares_it() {
     for h in all.iter().filter(|h| h.sig.contains("State(")) {
         let spans = spawn_spans(&h.body);
         let mut fg = false;
-        for p in PRIMITIVES {
-            for (i, _) in h.body.match_indices(p) {
+        for s in spenders
+            .iter()
+            .map(String::as_str)
+            .chain(PRIMITIVES.iter().copied())
+        {
+            let hits: Vec<usize> = if PRIMITIVES.contains(&s) {
+                h.body.match_indices(s).map(|(i, _)| i).collect()
+            } else {
+                let pat = format!("{s}(");
+                h.body
+                    .match_indices(&pat)
+                    .map(|(i, _)| i)
+                    .filter(|i| {
+                        h.body[..*i]
+                            .chars()
+                            .next_back()
+                            .is_none_or(|c| !(c.is_alphanumeric() || c == '_'))
+                    })
+                    .collect()
+            };
+            for i in hits {
                 match spans.iter().find(|(a, b)| *a <= i && i <= *b) {
                     Some((a, _)) => {
-                        // Covered when the request itself was admitted, or
-                        // when the task asks before it dispatches.
                         let before = &h.body[*a..i];
-                        if !(h.sig.contains("LlmSpend")
-                            || before.contains("llm_spend::background("))
-                        {
+                        let admitted_inside = before.contains("llm_spend::background(")
+                            || (s.ends_with("_background") || s == "trigger_swarm_host_welcome");
+                        // A handler that admitted the request in its own
+                        // body before spawning covers the task it spawns.
+                        let admitted_before = admits(&h.body[..*a]);
+                        if !(h.sig.contains("LlmSpend") || admitted_inside || admitted_before) {
                             problems.push(format!(
-                                "{}::{}: `{p}` in a spawned task without llm_spend::background",
+                                "{}::{}: `{s}` in a spawned task without llm_spend::background",
                                 h.file, h.name
                             ));
                         }
                     }
+                    // Calling another handler: that handler is checked on
+                    // its own, so it is not this one's foreground spend.
+                    None if all.iter().any(|o| o.name == s && o.sig.contains("State(")) => {}
                     None => fg = true,
                 }
             }
@@ -142,24 +214,35 @@ fn every_handler_that_spends_declares_it() {
             foreground += 1;
             let declared = h.sig.contains("LlmSpend")
                 || admits(&h.body)
-                || local_admits
-                    .iter()
-                    .any(|n| h.body.contains(&format!("{n}(")));
+                || admitting.iter().any(|n| calls(&h.body, n));
             if !declared {
                 problems.push(format!(
-                    "{}::{}: awaits a model call without the LLM limiter",
+                    "{}::{}: reaches a model call without the LLM limiter",
                     h.file, h.name
                 ));
             }
         }
     }
-    for (file, name) in PINNED {
+    // Functions that dispatch from a spawned context on their own must ask.
+    for name in [
+        "dispatch_rabble_action_background",
+        "trigger_swarm_host_welcome",
+    ] {
         let h = all
             .iter()
-            .find(|h| h.file == *file && h.name == *name)
-            .unwrap_or_else(|| panic!("{file}::{name} moved; update PINNED"));
-        if !h.sig.contains("LlmSpend") {
-            problems.push(format!("{file}::{name}: pinned spender without LlmSpend"));
+            .find(|h| h.name == name)
+            .unwrap_or_else(|| panic!("{name} moved"));
+        if !h.body.contains("llm_spend::background(") {
+            problems.push(format!("{name} dispatches without llm_spend::background"));
+        }
+    }
+    // An FPL-only handler is not a spender, so it is not throttled.
+    for h in all.iter().filter(|h| h.file == "src/handlers/notebooks.rs") {
+        if h.sig.contains("LlmSpend") && !spenders.contains(&h.name) {
+            problems.push(format!(
+                "{}::{} throttled but calls no model",
+                h.file, h.name
+            ));
         }
     }
     assert!(problems.is_empty(), "{}", problems.join("\n"));
@@ -173,12 +256,7 @@ fn every_handler_that_spends_declares_it() {
         !api.contains("const LLM_SPEND_ROUTES"),
         "a path allowlist is back"
     );
-    // The background dispatcher asks the limiter before it dispatches.
-    let rw = all
-        .iter()
-        .find(|h| h.name == "dispatch_rabble_action_background")
-        .expect("background dispatcher");
-    assert!(rw.body.contains("llm_spend::background("));
+    let _ = OUT_OF_SCOPE;
 }
 
 /// Live: a spending handler is refused by the LLM limiter before any work,
@@ -206,18 +284,19 @@ async fn deployed_a_spending_handler_is_rate_limited() {
         let ws = uuid::Uuid::new_v4();
         let http = reqwest::Client::new();
         let mut statuses = Vec::new();
+        let mut body_429 = String::new();
         for _ in 0..60 {
-            let s = http
+            let r = http
                 .post(format!("{base}/api/workspaces/{ws}/actions/price_bom"))
                 .bearer_auth(&key)
                 .json(&serde_json::json!({}))
                 .send()
                 .await
-                .expect("request")
-                .status()
-                .as_u16();
+                .expect("request");
+            let s = r.status().as_u16();
             statuses.push(s);
             if s == 429 {
+                body_429 = r.text().await.unwrap_or_default();
                 break;
             }
         }
@@ -229,6 +308,10 @@ async fn deployed_a_spending_handler_is_rate_limited() {
         assert!(
             statuses[..first_429.unwrap()].iter().all(|s| *s != 200),
             "the probe must not succeed (it would spend): {statuses:?}"
+        );
+        assert!(
+            body_429.contains("LLM rate limit"),
+            "refused by the LLM limiter, not another one: {body_429}"
         );
     })
     .await;

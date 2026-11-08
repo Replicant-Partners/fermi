@@ -19,8 +19,14 @@
 //!   the user's action itself (a presence change, a flight record) still
 //!   succeeds.
 //!
-//! `tests/claims/llm_spend.rs` checks that every handler reaching a model
-//! call does one of the two.
+//! Scope: calls to language models (Anthropic, OpenAI, OpenRouter, the
+//! platform executors). Paid Gemini image and vision calls (avatar and art
+//! generation, animation, wing segmentation) are not admitted here; they are
+//! bounded by the credits they charge first, and whether they belong under
+//! this limiter is an open owner question (#44).
+//!
+//! `tests/claims/llm_spend.rs` checks that every handler reaching a language
+//! model call, through the primitives it lists, does one of the two.
 
 use axum::{
     async_trait,
@@ -32,8 +38,9 @@ use fermi_auth::AuthPrincipal;
 
 use crate::AppState;
 
-/// Proof that this request was admitted by the LLM limiter.
-pub struct LlmSpend;
+/// Proof that this request was admitted by the LLM limiter. Only the
+/// extractor below constructs it.
+pub struct LlmSpend(());
 
 /// One admission against the per-user LLM limiter, recorded to
 /// `Gate::RateLimit` either way. `Err` carries the retry-after seconds.
@@ -70,7 +77,7 @@ impl FromRequestParts<AppState> for LlmSpend {
             }
         };
         admit(state, &key, "llm limiter: handler")
-            .map(|_| LlmSpend)
+            .map(|_| LlmSpend(()))
             .map_err(|retry| {
                 (
                     StatusCode::TOO_MANY_REQUESTS,

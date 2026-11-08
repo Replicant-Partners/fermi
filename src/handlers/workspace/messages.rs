@@ -228,6 +228,23 @@ pub async fn post_workspace_message_handler(
         );
     let is_invocation_path = req.message_type.as_deref() == Some("agent_invocation")
         || parse_at_mention(&req.content).is_some();
+    // G17 / R0.8: a message that invokes an agent runs its tool loop, so it is
+    // admitted against the LLM limiter here, before it is charged or stored,
+    // and refused with 429 over the limit. Plain chat calls no model and is
+    // not throttled.
+    if is_invocation_path {
+        crate::handlers::llm_spend::admit(
+            &state,
+            &format!("user:{user_id}"),
+            "llm limiter: workspace message",
+        )
+        .map_err(|retry| {
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                format!("LLM rate limit exceeded. Retry after {retry} seconds."),
+            )
+        })?;
+    }
     if !(is_event_append && !is_invocation_path) {
         let charge_result = charge_workspace_gas(
             &state.db,
@@ -344,26 +361,6 @@ pub async fn post_workspace_message_handler(
                 let user_id2 = user_id.clone();
 
                 tokio::spawn(async move {
-                    // G17: the reply runs the agent's tool loop. Over the
-                    // user's LLM limit it is not dispatched, and the workspace
-                    // is told so rather than left waiting for a reply.
-                    if !crate::handlers::llm_spend::background(
-                        &state2,
-                        &user_id2,
-                        "llm limiter: workspace message",
-                    ) {
-                        post_system_message(
-                            &state2,
-                            ws_uuid2,
-                            &format!(
-                                "{display2} was not asked: LLM rate limit reached \
-                                 ({}/min). Send the message again in a minute.",
-                                state2.rate_limits.llm.max_requests
-                            ),
-                        )
-                        .await;
-                        return;
-                    }
                     // Load workspace context
                     let slug = get_workspace_slug(&state2.db, ws_uuid2)
                         .await

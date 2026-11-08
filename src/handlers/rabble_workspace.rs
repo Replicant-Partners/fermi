@@ -1053,7 +1053,7 @@ pub async fn transfer_anchor_handler(
                 "anchor_transferred: Anchor has been transferred to {}. Update beacon placement at new position.",
                 c_name
             );
-            let _ = dispatch_rabble_action_background(
+            if let Err(e) = dispatch_rabble_action_background(
                 &state2,
                 ws_id,
                 "rabble_anchor_manager",
@@ -1062,8 +1062,11 @@ pub async fn transfer_anchor_handler(
                 &user_id2,
                 None,
             )
-            .await;
-            let _ = dispatch_rabble_action_background(
+            .await
+            {
+                tracing::warn!(error = %e, "background agent dispatch did not complete");
+            }
+            if let Err(e) = dispatch_rabble_action_background(
                 &state2,
                 ws_id,
                 "rabble_lifecycle_coordinator",
@@ -1072,7 +1075,10 @@ pub async fn transfer_anchor_handler(
                 &user_id2,
                 None,
             )
-            .await;
+            .await
+            {
+                tracing::warn!(error = %e, "background agent dispatch did not complete");
+            }
         });
     }
 

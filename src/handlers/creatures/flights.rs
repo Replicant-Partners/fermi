@@ -763,7 +763,7 @@ pub async fn end_flight_handler(
                     "anchor_departing: Anchor creature {} is leaving the rabble! List eligible transfer targets.",
                     creature_name
                 );
-                let _ = rabble_workspace::dispatch_rabble_action_background(
+                if let Err(e) = rabble_workspace::dispatch_rabble_action_background(
                     &spawn_state,
                     ws_id,
                     "rabble_anchor_manager",
@@ -772,7 +772,10 @@ pub async fn end_flight_handler(
                     &spawn_user_id,
                     Some(creature_id),
                 )
-                .await;
+                .await
+                {
+                    tracing::warn!(error = %e, "background agent dispatch did not complete");
+                }
             }
         });
     }

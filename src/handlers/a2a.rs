@@ -289,7 +289,9 @@ pub async fn send_message_handler(
     let query = extract_query(&req)?;
 
     // ── 5. Rate limit ────────────────────────────────────────────────────
-    if let Err(retry) = state.rate_limits.llm.check(&format!("user:{}", caller_id)) {
+    if let Err(retry) =
+        crate::handlers::llm_spend::admit(&state, &format!("user:{}", caller_id), "llm limiter: a2a")
+    {
         return Err((
             StatusCode::TOO_MANY_REQUESTS,
             Json(a2a_error_body(
@@ -786,7 +788,9 @@ pub async fn stream_message_handler(
     let query = extract_query(&req)?;
 
     // ── 5. Rate limit ────────────────────────────────────────────────────
-    if let Err(retry) = state.rate_limits.llm.check(&format!("user:{}", caller_id)) {
+    if let Err(retry) =
+        crate::handlers::llm_spend::admit(&state, &format!("user:{}", caller_id), "llm limiter: a2a")
+    {
         return Err((
             StatusCode::TOO_MANY_REQUESTS,
             Json(a2a_error_body(
