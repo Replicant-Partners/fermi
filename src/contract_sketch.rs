@@ -468,15 +468,26 @@ impl Source {
     /// when the block gets no sibling at all.
     fn provenance_schema(&self) -> Option<Value> {
         let verdicts: Vec<&str> = match self {
+            // Every sourced block can also be stamped `model_inference`: that
+            // is what `grounding_trust` writes when a claimed value is not
+            // found in the run's tool outputs, or no run record was available
+            // (G09). A narrower enum would make the platform's own honest stamp
+            // fail the agent's schema. Appended last so the coverage encoding
+            // `source_from_stamp` reads back is unchanged.
             Source::Sourced { coverage, .. } => match coverage {
-                Coverage::Complete => vec![PROV_TOOL, PROV_NO_MATCH],
-                Coverage::Partial => vec![PROV_TOOL, PROV_NO_MATCH, PROV_UNAVAILABLE],
-                Coverage::Deferred => vec![PROV_TOOL, PROV_NO_MATCH, PROV_PENDING_TOOL],
+                Coverage::Complete => vec![PROV_TOOL, PROV_NO_MATCH, PROV_INFERRED],
+                Coverage::Partial => {
+                    vec![PROV_TOOL, PROV_NO_MATCH, PROV_UNAVAILABLE, PROV_INFERRED]
+                }
+                Coverage::Deferred => {
+                    vec![PROV_TOOL, PROV_NO_MATCH, PROV_PENDING_TOOL, PROV_INFERRED]
+                }
                 Coverage::PartialDeferred => vec![
                     PROV_TOOL,
                     PROV_NO_MATCH,
                     PROV_UNAVAILABLE,
                     PROV_PENDING_TOOL,
+                    PROV_INFERRED,
                 ],
             },
             Source::Inferred { .. } => return Some(json!({ "const": PROV_INFERRED })),
@@ -491,8 +502,11 @@ impl Source {
         match self {
             Source::Sourced { tool, coverage, .. } => {
                 let base = format!(
-                    "`{PROV_TOOL}` when `{tool}` returned a value, `{PROV_NO_MATCH}` \
-                     when it was asked and had nothing"
+                    "`{PROV_TOOL}` when every claimed value occurs in the run's tool \
+                     outputs (`{tool}` is the declared source), `{PROV_NO_MATCH}` when \
+                     it was asked and had nothing, `{PROV_INFERRED}` when a claimed \
+                     value occurs in no tool output or no run record was available to \
+                     check it against"
                 );
                 match coverage {
                     Coverage::Complete => base,
@@ -1754,7 +1768,7 @@ mod tests {
         let props = c.output_contract.pointer("/schema/properties").unwrap();
         assert_eq!(
             props.get("ratios_provenance").unwrap(),
-            &json!({ "enum": ["tool_verified", "tool_no_match"] }),
+            &json!({ "enum": ["tool_verified", "tool_no_match", "model_inference"] }),
             "a tool with complete coverage cannot honestly say \
              unavailable_no_tool_source"
         );
@@ -1771,7 +1785,9 @@ mod tests {
             c.output_contract
                 .pointer("/schema/properties/ratios_provenance")
                 .unwrap(),
-            &json!({ "enum": ["tool_verified", "tool_no_match", "unavailable_no_tool_source"] })
+            &json!({
+                "enum": ["tool_verified", "tool_no_match", "unavailable_no_tool_source", "model_inference"]
+            })
         );
 
         let mut s = minimal();
@@ -1783,7 +1799,9 @@ mod tests {
             c.output_contract
                 .pointer("/schema/properties/ratios_provenance")
                 .unwrap(),
-            &json!({ "enum": ["tool_verified", "tool_no_match", "pending_tool_check"] }),
+            &json!({
+                "enum": ["tool_verified", "tool_no_match", "pending_tool_check", "model_inference"]
+            }),
             "`not asked yet` and `nothing exists` are different facts and must not \
              collapse into one enum"
         );
@@ -2347,7 +2365,7 @@ mod tests {
     #[test]
     fn a_block_that_is_both_partial_and_deferred_survives_a_round_trip() {
         let all_four = json!({
-            "enum": [PROV_TOOL, PROV_NO_MATCH, PROV_UNAVAILABLE, PROV_PENDING_TOOL]
+            "enum": [PROV_TOOL, PROV_NO_MATCH, PROV_UNAVAILABLE, PROV_PENDING_TOOL, PROV_INFERRED]
         });
 
         let src = source_from_stamp(Some(&all_four));
@@ -2696,7 +2714,12 @@ mod tests {
             card.pointer(
                 "/capabilities/output_contract/schema/properties/phylogeny_provenance/enum"
             ),
-            Some(&json!([PROV_TOOL, PROV_NO_MATCH, PROV_UNAVAILABLE])),
+            Some(&json!([
+                PROV_TOOL,
+                PROV_NO_MATCH,
+                PROV_UNAVAILABLE,
+                PROV_INFERRED
+            ])),
         );
     }
 

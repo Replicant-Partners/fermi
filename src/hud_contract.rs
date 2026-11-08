@@ -492,7 +492,14 @@ fn block_of(path: &str) -> &str {
 /// [`PROV_UNAVAILABLE`] and reported, never defaulted to something clean. An
 /// agent with no grounding contract gets `flagged`, because silence about
 /// grounding is not evidence of grounding.
-pub fn enforce(agent_id: &str, doc: &mut Value) -> HudReport {
+///
+/// `tool_calls` is the run record of the invocation that produced `doc`. A
+/// sourced block is only `tool_verified` if its values occur in it (G09).
+pub fn enforce(
+    agent_id: &str,
+    doc: &mut Value,
+    tool_calls: &[grounding_trust::ToolOutput<'_>],
+) -> HudReport {
     let mut report = HudReport::default();
 
     if !doc.is_object() {
@@ -509,6 +516,7 @@ pub fn enforce(agent_id: &str, doc: &mut Value) -> HudReport {
 
     // 1. The data boundary. Ungrounded fields nulled, blocks stamped.
     report.grounding = grounding_trust::enforce(agent_id, doc);
+    grounding_trust::bind_tool_calls(Some(&mut *doc), &mut report.grounding, tool_calls);
 
     let contracted: Vec<String> = grounding_trust::contracts_for(agent_id)
         .map(|c| block_of(c.path).to_string())
@@ -1147,7 +1155,7 @@ mod tests {
     #[test]
     fn prose_is_flagged_rather_than_rendered() {
         let mut doc = json!("I think that is a chanterelle.");
-        let r = enforce("hud_field_scout", &mut doc);
+        let r = enforce("hud_field_scout", &mut doc, &[]);
         assert_eq!(r.confidence_display, CONF_FLAGGED);
         assert!(!r.is_clean());
     }
@@ -1157,7 +1165,7 @@ mod tests {
         let mut doc = json!({
             "card": { "title": "Whatever", "lines": [], "confidence_display": "high" }
         });
-        let r = enforce("no_such_agent_anywhere", &mut doc);
+        let r = enforce("no_such_agent_anywhere", &mut doc, &[]);
         assert_eq!(r.confidence_display, CONF_FLAGGED);
         assert_eq!(r.floor, None, "an absent contract is unknown, not clean");
         assert_eq!(doc.pointer("/card/confidence_display").unwrap(), "flagged");

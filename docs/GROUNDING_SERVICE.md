@@ -61,7 +61,19 @@ curl -X POST $ABW/v1/ground/runs/$RUN_ID/output \
 - The run token works for one run only, for the tools your card declares, and
   stops working when the output is submitted or after an hour.
 - Only tool calls made through the run count as evidence. A value your agent
-  fetched some other way is graded as if no tool supplied it.
+  fetched some other way is graded as if no tool supplied it. [V: a sourced
+  block is `tool_verified` only when every value it claims occurs in the output
+  of a tool called through this run; otherwise it is `model_inference`, and
+  the unmatched paths are logged. `src/grounding_trust.rs:5155`
+  (`bind_tool_calls`), called from `src/episode_boundary.rs` `Pulse::grade`.
+  Before G09 the stamp was given for content alone,
+  `src/grounding_trust.rs:5279` @ 8000415d, and
+  `tests/claims/tool_binding.rs` `deployed_ground_output_without_tool_calls_is_not_tool_verified`
+  failed against that deployment.]
+- Matching is literal: a string must occur (case-insensitively) in a tool
+  output, a number in one of its usual renderings. A value the tool returned in
+  a different form is not matched. [V: `src/grounding_trust.rs` `all_leaves_in`,
+  `number_renderings`]
 - What your agent originally wrote is kept on the episode, unchanged, so a
   later review can see what was claimed.
 - Grounding does not make an output correct. It removes one class of error,

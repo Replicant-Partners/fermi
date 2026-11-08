@@ -209,6 +209,31 @@ pub async fn dispatch_rabble_action(
     user_id: &str,
     creature_id: Option<Uuid>,
 ) -> Result<String, String> {
+    dispatch_rabble_action_recorded(
+        state,
+        workspace_id,
+        agent_name,
+        action_type,
+        query,
+        user_id,
+        creature_id,
+    )
+    .await
+    .map(|(text, _)| text)
+}
+
+/// [`dispatch_rabble_action`], also returning the run's tool calls, so a
+/// caller that enforces a grounding contract can bind sourced values to them
+/// (G09) rather than stamping them `model_inference`.
+pub async fn dispatch_rabble_action_recorded(
+    state: &AppState,
+    workspace_id: Uuid,
+    agent_name: &str,
+    action_type: &str,
+    query: &str,
+    user_id: &str,
+    creature_id: Option<Uuid>,
+) -> Result<(String, Vec<fermi::agent_backend::executor::ToolInvocation>), String> {
     // Resolve agent card first (in-memory registry — no I/O)
     let db_agent = resolve_agent(state, agent_name)
         .await
@@ -556,7 +581,7 @@ pub async fn dispatch_rabble_action(
         });
     }
 
-    Ok(response_text)
+    Ok((response_text, output.tool_invocations))
 }
 
 /// GET /api/me/workspace — return the caller's personal workspace (menagerie) details.

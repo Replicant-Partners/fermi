@@ -183,7 +183,8 @@ impl ProvenanceOracle for DbProvenanceOracle {
         // migration 199, and NULL there means the evidence is gone rather
         // than unrecorded.
         let rows = sqlx::query(
-            "SELECT e.episode_id, a.agent_name, e.response_text
+            "SELECT e.episode_id, a.agent_name, e.response_text,
+                    jsonb_build_object('tool_invocations', e.context->'tool_invocations') AS run_record
                FROM episodes e
                JOIN agents a ON a.agent_id = e.agent_id
               WHERE e.episode_id = ANY($1)",
@@ -199,10 +200,16 @@ impl ProvenanceOracle for DbProvenanceOracle {
             let episode_id: Uuid = row.try_get("episode_id")?;
             let agent_name: String = row.try_get("agent_name")?;
             let response_text: Option<String> = row.try_get("response_text")?;
+            let run_record: serde_json::Value = row.try_get("run_record")?;
+            let recorded = crate::episode_boundary::recorded_tool_outputs(&run_record);
+            let calls: Vec<crate::grounding_trust::ToolOutput<'_>> = recorded
+                .iter()
+                .map(|(tool, output)| crate::grounding_trust::ToolOutput { tool, output })
+                .collect();
 
             let (verdict, why) = match response_text.as_deref() {
                 None => (None, "no_retained_response_pre_migration_199"),
-                Some(text) => match response_floor(&agent_name, text) {
+                Some(text) => match response_floor(&agent_name, text, &calls) {
                     Some(v) => (Some(v), "graded_against_field_contract"),
                     None => (None, "agent_has_no_field_contract"),
                 },

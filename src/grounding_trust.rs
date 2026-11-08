@@ -1460,7 +1460,15 @@ pub fn extracted_floor<'a>(sources: impl IntoIterator<Item = &'a str>) -> &'stat
 /// before migration 199 the response was discarded, so nothing about a
 /// historical episode's groundedness is recoverable — those rows get `None`,
 /// which must be read as *unknown*, never as clean.
-pub fn response_floor(agent_id: &str, response_text: &str) -> Option<&'static str> {
+///
+/// `tool_calls` is the run record of the episode that produced the response.
+/// Without it no sourced block can be shown to have come from a tool, so it
+/// floors at [`PROV_INFERRED`] or below (G09).
+pub fn response_floor(
+    agent_id: &str,
+    response_text: &str,
+    tool_calls: &[ToolOutput<'_>],
+) -> Option<&'static str> {
     // `extract_json`, not `serde_json::from_str`.
     //
     // # The measured defect this fixes
@@ -1502,7 +1510,8 @@ pub fn response_floor(agent_id: &str, response_text: &str) -> Option<&'static st
         // Distinct from "ungrounded" — see the caller.
         return None;
     }
-    let report = enforce(agent_id, &mut doc);
+    let mut report = enforce(agent_id, &mut doc);
+    bind_tool_calls(Some(&mut doc), &mut report, tool_calls);
     Some(floor(report.provenance.iter().map(|(_, v)| *v)))
 }
 
@@ -4221,6 +4230,65 @@ pub struct Report {
     pub violations: Vec<Violation>,
     /// `(block, provenance)` pairs written onto the document.
     pub provenance: Vec<(String, &'static str)>,
+    /// Populated sourced blocks enforcement could not settle, because it cannot
+    /// see the run record. Stamped [`PROV_INFERRED`] until
+    /// [`bind_tool_calls`] drains this list.
+    pub awaiting_binding: Vec<AwaitingBinding>,
+    /// What [`bind_tool_calls`] decided for each block it drained.
+    pub binding: Vec<BindingOutcome>,
+}
+
+/// A sourced block with content, whose values have not yet been joined
+/// against the tool calls of the run that produced them (G09).
+///
+/// Enforcement is pure over the document. Whether a value came from a tool is
+/// a fact about the run record, so enforcement stamps [`PROV_INFERRED`] and
+/// leaves this behind; [`bind_tool_calls`] is the only code that can replace it
+/// with [`PROV_TOOL`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct AwaitingBinding {
+    pub block: String,
+    /// The `Sourced` paths under `block` whose values are claims. For a
+    /// block-level `sourced` declaration this is the block itself.
+    pub paths: Vec<String>,
+}
+
+/// Why a sourced block was not bound to a tool call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnboundReason {
+    /// The run recorded no tool call at all.
+    NoToolCalls,
+    /// At least one claimed value appears in no tool output.
+    ValueNotInToolOutput,
+}
+
+impl UnboundReason {
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::NoToolCalls => "no_tool_calls",
+            Self::ValueNotInToolOutput => "value_not_in_tool_output",
+        }
+    }
+}
+
+/// One block's binding verdict.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BindingOutcome {
+    pub block: String,
+    /// [`PROV_TOOL`] when every claimed value was found in a tool output,
+    /// [`PROV_INFERRED`] otherwise.
+    pub verdict: &'static str,
+    /// `None` when bound.
+    pub reason: Option<UnboundReason>,
+    /// The paths holding values no tool output contains.
+    pub unmatched: Vec<String>,
+}
+
+/// One tool call's output, as the run recorded it.
+#[derive(Debug, Clone, Copy)]
+pub struct ToolOutput<'a> {
+    pub tool: &'a str,
+    pub output: &'a str,
 }
 
 impl Report {
@@ -4232,6 +4300,8 @@ impl Report {
     pub fn merge(&mut self, other: Report) {
         self.violations.extend(other.violations);
         self.provenance.extend(other.provenance);
+        self.awaiting_binding.extend(other.awaiting_binding);
+        self.binding.extend(other.binding);
     }
 
     /// **What was refused**, for `gate_decisions.reason`.
@@ -5050,6 +5120,235 @@ pub fn enforce_from_output_contract(
     enforce(agent_id, doc)
 }
 
+/// **Join sourced values against the run's tool calls** (G09).
+///
+/// The only function that can stamp [`PROV_TOOL`]. Enforcement stamps every
+/// populated sourced block [`PROV_INFERRED`] and records it in
+/// [`Report::awaiting_binding`]; this drains that list and decides each block:
+///
+/// * no tool call recorded for the run: [`PROV_INFERRED`], `no_tool_calls`;
+/// * any claimed value under the block's sourced paths that appears in no tool
+///   output: [`PROV_INFERRED`], `value_not_in_tool_output`;
+/// * otherwise [`PROV_TOOL`].
+///
+/// Before this existed `tool_verified` meant "the sourced block has content",
+/// and three `genome_profiler` taxonomy blocks on the dev database carried it
+/// with zero tool calls behind them.
+///
+/// Matching is deliberately literal: a string matches when it occurs,
+/// case-insensitively, in some tool output (raw, or the decoded string leaves
+/// of a JSON output); a number when one of its usual renderings does. Strings
+/// shorter than three characters, booleans, nulls and provenance labels
+/// (`*_provenance`, `provenance`) are not checked, because a substring test cannot tell them apart from noise.
+/// A value the tool returned in a different form is demoted. That is the safe
+/// direction: under-claiming routes the value to review, over-claiming is the
+/// defect this function removes.
+///
+/// Rewrites both the `<block>_provenance` stamp on `doc` and the matching
+/// [`Report::provenance`] entry, so the document and the report cannot
+/// disagree. A block a caller never binds stays [`PROV_INFERRED`]: a value
+/// nothing has shown to be a retrieval is the model's claim.
+///
+/// Not [`PROV_PENDING_TOOL`]. That token already means a `deferred` coverage
+/// block whose check had not run (`contract_sketch::Coverage::Deferred`), and
+/// card schemas encode coverage by which verdicts their enum admits.
+pub fn bind_tool_calls(doc: Option<&mut Value>, report: &mut Report, calls: &[ToolOutput<'_>]) {
+    let awaiting = std::mem::take(&mut report.awaiting_binding);
+    if awaiting.is_empty() {
+        return;
+    }
+    let haystack = tool_haystack(calls);
+    let mut doc = doc;
+    for a in awaiting {
+        let (verdict, reason, unmatched) = if calls.is_empty() {
+            (PROV_INFERRED, Some(UnboundReason::NoToolCalls), Vec::new())
+        } else {
+            let unmatched: Vec<String> = match doc.as_deref() {
+                Some(d) => {
+                    let mut out = Vec::new();
+                    for p in &a.paths {
+                        for v in select(d, &segments(p)) {
+                            unmatched_leaves(v, p, &haystack, &mut out);
+                        }
+                    }
+                    out
+                }
+                // No document to read the values from: nothing can be shown
+                // to have come from a tool.
+                None => a.paths.clone(),
+            };
+            if unmatched.is_empty() {
+                (PROV_TOOL, None, unmatched)
+            } else {
+                (
+                    PROV_INFERRED,
+                    Some(UnboundReason::ValueNotInToolOutput),
+                    unmatched,
+                )
+            }
+        };
+        if let Some(obj) = doc.as_deref_mut().and_then(|d| d.as_object_mut()) {
+            obj.insert(
+                format!("{}_provenance", a.block),
+                Value::String(verdict.to_string()),
+            );
+        }
+        for entry in report.provenance.iter_mut().filter(|(b, _)| *b == a.block) {
+            entry.1 = verdict;
+        }
+        report.binding.push(BindingOutcome {
+            block: a.block,
+            verdict,
+            reason,
+            unmatched,
+        });
+    }
+}
+
+/// The run record of an agent invocation, as [`bind_tool_calls`] reads it.
+pub fn tool_outputs(
+    calls: &[crate::agent_backend::executor::ToolInvocation],
+) -> Vec<ToolOutput<'_>> {
+    calls
+        .iter()
+        .map(|c| ToolOutput {
+            tool: &c.tool_name,
+            output: &c.output,
+        })
+        .collect()
+}
+
+/// Every tool output, lowercased, plus the decoded string leaves of any output
+/// that parses as JSON (so an escaped quote or `\u00e9` still matches).
+fn tool_haystack(calls: &[ToolOutput<'_>]) -> String {
+    fn push_leaves(v: &Value, out: &mut String) {
+        match v {
+            Value::String(s) => {
+                out.push_str(s);
+                out.push('\n');
+            }
+            Value::Array(a) => a.iter().for_each(|x| push_leaves(x, out)),
+            Value::Object(o) => o.values().for_each(|x| push_leaves(x, out)),
+            _ => {}
+        }
+    }
+    let mut hay = String::new();
+    for c in calls {
+        hay.push_str(c.output);
+        hay.push('\n');
+        if let Ok(v) = serde_json::from_str::<Value>(c.output) {
+            push_leaves(&v, &mut hay);
+        }
+    }
+    normalise_for_binding(&hay)
+}
+
+/// Lowercase, drop HTML tags (search results arrive as
+/// `<strong>group</strong> <strong>f</strong>`), fold typographic dashes and
+/// quotes to ASCII, and collapse whitespace. Applied to both sides, so the
+/// match is still literal: a paraphrase does not survive it, markup does.
+fn normalise_for_binding(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_tag = false;
+    let mut last_space = false;
+    for ch in s.chars() {
+        if in_tag {
+            in_tag = ch != '>';
+            continue;
+        }
+        let c = match ch {
+            '<' => {
+                in_tag = true;
+                continue;
+            }
+            '\u{2010}'..='\u{2015}' | '\u{2212}' => '-',
+            '\u{2018}' | '\u{2019}' | '\u{201B}' => '\'',
+            '\u{201C}' | '\u{201D}' | '\u{201F}' => '"',
+            c if c.is_whitespace() => ' ',
+            c => c,
+        };
+        if c == ' ' {
+            if last_space {
+                continue;
+            }
+            last_space = true;
+        } else {
+            last_space = false;
+        }
+        out.extend(c.to_lowercase());
+    }
+    out
+}
+
+/// Push the dotted path of every checkable leaf under `v` that does not occur
+/// in `haystack`.
+fn unmatched_leaves(v: &Value, at: &str, haystack: &str, out: &mut Vec<String>) {
+    match v {
+        Value::Array(a) => {
+            for (i, x) in a.iter().enumerate() {
+                unmatched_leaves(x, &format!("{at}[{i}]"), haystack, out);
+            }
+        }
+        Value::Object(o) => {
+            for (k, x) in o.iter().filter(|(k, _)| !is_provenance_label(k)) {
+                unmatched_leaves(x, &format!("{at}.{k}"), haystack, out);
+            }
+        }
+        leaf => {
+            if !all_leaves_in(leaf, haystack) {
+                out.push(at.to_string());
+            }
+        }
+    }
+}
+
+/// Does every checkable leaf under `v` occur in `haystack` (already lowercase)?
+fn all_leaves_in(v: &Value, haystack: &str) -> bool {
+    match v {
+        Value::Null | Value::Bool(_) => true,
+        Value::String(s) => {
+            let t = s.trim();
+            !is_claim(v) || t.chars().count() < 3 || haystack.contains(&normalise_for_binding(t))
+        }
+        Value::Number(n) => number_renderings(n)
+            .iter()
+            .any(|r| haystack.contains(r.as_str())),
+        Value::Array(a) => a.iter().all(|x| all_leaves_in(x, haystack)),
+        Value::Object(o) => o
+            .iter()
+            .filter(|(k, _)| !is_provenance_label(k))
+            .all(|(_, x)| all_leaves_in(x, haystack)),
+    }
+}
+
+/// A key naming where a value came from, rather than holding one: the
+/// platform's `<block>_provenance` stamps, and the `provenance` labels models
+/// write inside blocks (`football_analyst.league_context.provenance`). Not
+/// bound, because the label is not data, and not trusted either: the block's
+/// verdict comes from its values.
+fn is_provenance_label(key: &str) -> bool {
+    key == "provenance" || key.ends_with("_provenance")
+}
+
+/// The ways a number is commonly written in a tool's output.
+fn number_renderings(n: &serde_json::Number) -> Vec<String> {
+    let mut out = vec![n.to_string()];
+    if let Some(f) = n.as_f64() {
+        if f.fract() == 0.0 && f.abs() < 1e15 {
+            out.push(format!("{}", f as i64));
+            out.push(format!("{f:.1}"));
+        }
+        for dp in 1..=4 {
+            let r = format!("{f:.dp$}");
+            out.push(r.trim_end_matches('0').trim_end_matches('.').to_string());
+            out.push(r);
+        }
+    }
+    out.retain(|r| !r.is_empty());
+    out.dedup();
+    out
+}
+
 /// Drive enforcement from the `grounding` object already compiled into the
 /// agent's `output_contract`. Block-level: one entry per top-level response
 /// block (items, risks, summary, taxonomy, genome, …).
@@ -5139,6 +5438,7 @@ fn enforce_refined_block(
     //    as tool-verified.
     let mut any_sourced = false;
     let mut sourced_populated = false;
+    let mut sourced_claimed: Vec<String> = Vec::new();
     let mut any_derived = false;
     let mut any_inferred = false;
 
@@ -5158,7 +5458,10 @@ fn enforce_refined_block(
             }
             "sourced" => {
                 any_sourced = true;
-                sourced_populated |= !pre_contract && path_has_claim(doc, &path);
+                if !pre_contract && path_has_claim(doc, &path) {
+                    sourced_populated = true;
+                    sourced_claimed.push(path.clone());
+                }
             }
             "derived" => any_derived = true,
             "inferred" => any_inferred = true,
@@ -5181,7 +5484,12 @@ fn enforce_refined_block(
     let verdict = if pre_contract {
         PROV_UNAVAILABLE
     } else if any_sourced && sourced_populated {
-        PROV_TOOL
+        // Not verified until bound: see `enforce` step 4.
+        report.awaiting_binding.push(AwaitingBinding {
+            block: block.to_string(),
+            paths: sourced_claimed,
+        });
+        PROV_INFERRED
     } else if any_sourced {
         PROV_NO_MATCH
     } else if any_derived {
@@ -5273,10 +5581,15 @@ fn enforce_from_grounding_map(
         } else {
             match status {
                 "sourced" => {
-                    // Content present ≈ tool returned data. Same proxy the
-                    // FIELD_CONTRACTS path uses; see enforce() step 2.
+                    // Content present is a claim that a tool returned it, not
+                    // evidence. Not verified until `bind_tool_calls`; see
+                    // `enforce` step 4.
                     if path_has_claim(doc, block_name) {
-                        PROV_TOOL
+                        report.awaiting_binding.push(AwaitingBinding {
+                            block: block_name.clone(),
+                            paths: vec![block_name.clone()],
+                        });
+                        PROV_INFERRED
                     } else {
                         PROV_NO_MATCH
                     }
@@ -5493,7 +5806,25 @@ pub fn enforce(agent_id: &str, doc: &mut Value) -> Report {
         } else {
             match block_is_sourced(b) {
                 // Has sourced fields, and at least one came back populated.
-                Some(true) => PROV_TOOL,
+                // Whether a TOOL populated them is a question about the run
+                // record, which this function cannot see: `model_inference`
+                // until `bind_tool_calls` joins the values against the tool
+                // outputs.
+                Some(true) => {
+                    report.awaiting_binding.push(AwaitingBinding {
+                        block: b.to_string(),
+                        paths: contracts
+                            .iter()
+                            .filter(|c| {
+                                matches!(c.grounding, Grounding::Sourced { .. })
+                                    && block_of(c.path) == b
+                                    && path_has_claim(doc, c.path)
+                            })
+                            .map(|c| c.path.to_string())
+                            .collect(),
+                    });
+                    PROV_INFERRED
+                }
                 // Has sourced fields and none came back: the tool was asked and
                 // had nothing. Distinct from "no tool exists".
                 Some(false) => PROV_NO_MATCH,
@@ -5517,6 +5848,25 @@ pub fn enforce(agent_id: &str, doc: &mut Value) -> Report {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// A run whose one tool returned `output` verbatim: every value in it was
+    /// retrieved. For tests about what enforcement does with a retrieval,
+    /// rather than about binding (G09).
+    fn ran(output: &str) -> [ToolOutput<'_>; 1] {
+        [ToolOutput {
+            tool: "fixture",
+            output,
+        }]
+    }
+
+    /// [`enforce`] then [`bind_tool_calls`] against a run that returned the
+    /// document itself.
+    fn enforce_retrieved(agent: &str, doc: &mut Value) -> Report {
+        let retrieved = doc.to_string();
+        let mut report = enforce(agent, doc);
+        bind_tool_calls(Some(doc), &mut report, &ran(&retrieved));
+        report
+    }
 
     /// A document shaped exactly like the ones in production today.
     fn fabricated() -> Value {
@@ -5618,6 +5968,99 @@ mod tests {
         );
     }
 
+    // ── G09: tool_verified is earned by the run record ──────────────────
+
+    fn resolved_chanterelle() -> Value {
+        serde_json::json!({
+            "identification": { "species": "Cantharellus cibarius", "kingdom": "fungi" },
+            "taxonomy": {
+                "kingdom": "Fungi", "family": "Hydnaceae",
+                "matched_name": "Cantharellus cibarius Fr.",
+                "gbif_usage_key": 5249504
+            },
+            "safety": { "directive": "..." }
+        })
+    }
+
+    /// The defect: a sourced block with content was `tool_verified` whether or
+    /// not any tool ran. On the dev database three `genome_profiler` taxonomy
+    /// blocks carried it with zero tool calls behind them.
+    #[test]
+    fn enforcement_alone_never_stamps_tool_verified() {
+        let mut doc = resolved_chanterelle();
+        let report = enforce("forage_identify", &mut doc);
+        assert_eq!(doc.get("taxonomy_provenance").unwrap(), PROV_INFERRED);
+        assert!(report.provenance.iter().all(|(_, v)| *v != PROV_TOOL));
+        assert_eq!(report.awaiting_binding.len(), 1);
+        assert_eq!(report.awaiting_binding[0].block, "taxonomy");
+    }
+
+    #[test]
+    fn a_sourced_block_with_no_tool_calls_is_model_inference() {
+        let mut doc = resolved_chanterelle();
+        let mut report = enforce("forage_identify", &mut doc);
+        bind_tool_calls(Some(&mut doc), &mut report, &[]);
+        assert_eq!(doc.get("taxonomy_provenance").unwrap(), PROV_INFERRED);
+        let b = &report.binding[0];
+        assert_eq!(b.verdict, PROV_INFERRED);
+        assert_eq!(b.reason, Some(UnboundReason::NoToolCalls));
+        assert!(
+            report.awaiting_binding.is_empty(),
+            "binding drains the list"
+        );
+    }
+
+    #[test]
+    fn a_value_no_tool_returned_demotes_its_block() {
+        let mut doc = resolved_chanterelle();
+        let mut report = enforce("forage_identify", &mut doc);
+        // GBIF answered, but with a different family than the document claims.
+        let gbif = r#"{"kingdom":"Fungi","family":"Cantharellaceae","scientificName":"Cantharellus cibarius Fr.","usageKey":5249504}"#;
+        bind_tool_calls(Some(&mut doc), &mut report, &ran(gbif));
+        assert_eq!(doc.get("taxonomy_provenance").unwrap(), PROV_INFERRED);
+        let b = &report.binding[0];
+        assert_eq!(b.reason, Some(UnboundReason::ValueNotInToolOutput));
+        assert_eq!(
+            b.unmatched,
+            vec!["taxonomy.family".to_string()],
+            "exactly the leaf no tool returned is named"
+        );
+        assert!(
+            report
+                .provenance
+                .iter()
+                .any(|(blk, v)| blk == "taxonomy" && *v == PROV_INFERRED),
+            "the report and the document must agree"
+        );
+    }
+
+    #[test]
+    fn values_the_tool_returned_bind_to_tool_verified() {
+        let mut doc = resolved_chanterelle();
+        let mut report = enforce("forage_identify", &mut doc);
+        let gbif = r#"{"kingdom":"Fungi","family":"Hydnaceae","scientificName":"Cantharellus cibarius Fr.","usageKey":5249504}"#;
+        bind_tool_calls(Some(&mut doc), &mut report, &ran(gbif));
+        assert_eq!(doc.get("taxonomy_provenance").unwrap(), PROV_TOOL);
+        assert_eq!(report.binding[0].reason, None);
+    }
+
+    #[test]
+    fn binding_reads_decoded_json_and_common_number_renderings() {
+        let hay = tool_haystack(&ran(r#"{"name":"Caf\u00e9 \"Noir\"","size":245.20}"#));
+        assert!(all_leaves_in(&json!("café \"noir\""), &hay));
+        assert!(all_leaves_in(&json!(245.2), &hay));
+        assert!(!all_leaves_in(&json!(999.9), &hay));
+        let search = tool_haystack(&ran(
+            "<strong>Group</strong>  <strong>F</strong> \u{2014} draw",
+        ));
+        assert!(all_leaves_in(&json!("group f - draw"), &search), "{search}");
+        assert!(!all_leaves_in(&json!("group g - draw"), &search));
+        assert!(
+            all_leaves_in(&json!({"x_provenance": "tool_verified", "ok": true}), &hay),
+            "provenance keys and booleans are not claims to bind"
+        );
+    }
+
     /// A resolved name is a real retrieval; an unresolved one says so.
     ///
     /// This is what makes the handler checkable rather than merely honest: a
@@ -5639,7 +6082,7 @@ mod tests {
             },
             "safety": { "directive": "..." }
         });
-        enforce("forage_identify", &mut hit);
+        enforce_retrieved("forage_identify", &mut hit);
         assert_eq!(hit.get("taxonomy_provenance").unwrap(), PROV_TOOL);
         assert_eq!(hit.pointer("/taxonomy/family").unwrap(), "Hydnaceae");
 
@@ -5675,7 +6118,7 @@ mod tests {
             "taxonomy": { "family": "Amanitaceae", "matched_name": "Amanita phalloides (Vaill. ex Fr.) Link" },
             "safety": { "directive": "..." }
         });
-        let report = enforce("forage_identify", &mut doc);
+        let report = enforce_retrieved("forage_identify", &mut doc);
         assert_eq!(doc.get("taxonomy_provenance").unwrap(), PROV_TOOL);
         assert_eq!(doc.get("identification_provenance").unwrap(), PROV_INFERRED);
 
@@ -5852,7 +6295,7 @@ mod tests {
     #[test]
     fn a_regulatory_verdict_never_inherits_its_citations_strength() {
         let mut doc = evaluated_claim();
-        enforce("regulatory_lens_translator", &mut doc);
+        enforce_retrieved("regulatory_lens_translator", &mut doc);
 
         assert_eq!(
             doc.get("eu_evidence_provenance").and_then(|v| v.as_str()),
@@ -5996,7 +6439,7 @@ mod tests {
             "blocks_written": { "clip_block_count": null },
             "summary": "One clip, 36 seconds, from the only recording with a transcript."
         });
-        enforce("video_analyst", &mut doc);
+        enforce_retrieved("video_analyst", &mut doc);
 
         let stamp = |k: &str| {
             doc.get(k)
@@ -6618,7 +7061,7 @@ mod tests {
     #[test]
     fn newly_sourced_fields_come_back() {
         let mut doc = fabricated();
-        let report = enforce("genome_profiler", &mut doc);
+        let report = enforce_retrieved("genome_profiler", &mut doc);
 
         for path in ["genome.estimated_size_mb", "genome.chromosome_count"] {
             assert!(
@@ -6674,7 +7117,7 @@ mod tests {
     fn taxonomy_survives_untouched() {
         let mut doc = fabricated();
         let before = doc.get("taxonomy").cloned().unwrap();
-        enforce("genome_profiler", &mut doc);
+        enforce_retrieved("genome_profiler", &mut doc);
         assert_eq!(doc.get("taxonomy"), Some(&before));
         assert_eq!(
             doc.get("taxonomy_provenance").and_then(|v| v.as_str()),
@@ -6825,7 +7268,7 @@ mod tests {
             }],
             "summary": "One dragonfly within the scan radius poses a moderate risk."
         });
-        let report = enforce("enemy_sensor", &mut doc);
+        let report = enforce_retrieved("enemy_sensor", &mut doc);
         assert!(
             report.is_clean(),
             "enemy_sensor is well-formed; flagging it would prove the \
@@ -7547,7 +7990,7 @@ mod tests {
         })
         .to_string();
         assert_eq!(
-            response_floor("enemy_sensor", &response),
+            response_floor("enemy_sensor", &response, &ran(&response)),
             Some(PROV_INFERRED)
         );
     }
@@ -7559,7 +8002,11 @@ mod tests {
         // ungrounded by construction. This is the common case, and it is
         // supposed to look poor: that is the demand signal for tools.
         assert_eq!(
-            response_floor("enemy_sensor", "Two dragonflies are nearby. Be careful."),
+            response_floor(
+                "enemy_sensor",
+                "Two dragonflies are nearby. Be careful.",
+                &[]
+            ),
             Some(PROV_UNAVAILABLE)
         );
     }
@@ -7572,7 +8019,7 @@ mod tests {
         // value on the way. Callers that cannot represent "unknown" must refuse
         // the row, not guess it.
         let response = json!({"forecast": "rain", "confidence": 0.8}).to_string();
-        assert_eq!(response_floor(UNCONTRACTED_AGENT, &response), None);
+        assert_eq!(response_floor(UNCONTRACTED_AGENT, &response, &[]), None);
     }
 
     #[test]
@@ -7596,7 +8043,7 @@ mod tests {
         })
         .to_string();
         assert_eq!(
-            response_floor("weather_oracle", &judgements_only),
+            response_floor("weather_oracle", &judgements_only, &[]),
             Some(PROV_NO_MATCH),
             "a probability with no station and no ensemble behind it must floor \
              on the missing sourced blocks, not on the judgement"
@@ -7619,7 +8066,7 @@ mod tests {
         })
         .to_string();
         assert_eq!(
-            response_floor("weather_oracle", &complete),
+            response_floor("weather_oracle", &complete, &ran(&complete)),
             Some(PROV_INFERRED),
             "a complete document floors at the judgement ceiling"
         );
@@ -7665,7 +8112,7 @@ mod tests {
         })
         .to_string();
 
-        let bare = response_floor("weather_oracle", &doc);
+        let bare = response_floor("weather_oracle", &doc, &[]);
         assert!(
             bare.is_some(),
             "the bare fixture must grade, or this test proves nothing about the \
@@ -7689,7 +8136,7 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                response_floor("weather_oracle", &wrapped),
+                response_floor("weather_oracle", &wrapped, &[]),
                 bare,
                 "a document returned as a {label} graded differently from the \
                  same document bare. The contract must see the agent's output, \
@@ -7709,12 +8156,12 @@ mod tests {
     #[test]
     fn recovering_a_document_is_not_the_same_as_finding_content() {
         assert_eq!(
-            response_floor("weather_oracle", "No forecast is available today."),
+            response_floor("weather_oracle", "No forecast is available today.", &[]),
             Some(PROV_UNAVAILABLE),
             "a response with no braces at all has no document to grade"
         );
         // An empty object parses. It must not grade better than prose.
-        let empty = response_floor("weather_oracle", "Here you go: {}");
+        let empty = response_floor("weather_oracle", "Here you go: {}", &[]);
         assert_eq!(
             empty,
             Some(PROV_NO_MATCH),
@@ -7756,6 +8203,7 @@ mod tests {
             &Report {
                 violations: vec![],
                 provenance: vec![("advanced_metrics".to_string(), PROV_TOOL)],
+                ..Default::default()
             },
         );
         let xg: Vec<_> = graded
@@ -7783,6 +8231,7 @@ mod tests {
             &Report {
                 violations: vec![],
                 provenance: vec![],
+                ..Default::default()
             },
         );
         let xg = ungraded
@@ -7821,6 +8270,7 @@ mod tests {
             &Report {
                 violations: vec![],
                 provenance: vec![],
+                ..Default::default()
             },
         );
         assert!(
@@ -7861,8 +8311,14 @@ mod tests {
         // Before migration 199 the response text was discarded. Nothing
         // about those episodes' groundedness is recoverable, and a floor
         // computed from an empty string must not read as a finding.
-        assert_eq!(response_floor("enemy_sensor", ""), Some(PROV_UNAVAILABLE));
-        assert_eq!(response_floor("weather_oracle", ""), Some(PROV_UNAVAILABLE));
+        assert_eq!(
+            response_floor("enemy_sensor", "", &[]),
+            Some(PROV_UNAVAILABLE)
+        );
+        assert_eq!(
+            response_floor("weather_oracle", "", &[]),
+            Some(PROV_UNAVAILABLE)
+        );
     }
 
     /// **`Derived` is a promise about the platform's own work, and this is what
@@ -8211,10 +8667,26 @@ mod tests {
              blocks",
             via_card.get("ratings")
         );
+        // Not verified: neither path can see the run record (G09).
         assert_eq!(
             via_card.get("advanced_metrics_provenance").unwrap(),
-            PROV_TOOL
+            PROV_INFERRED
         );
+        // And both hand the binder the same sourced paths to check.
+        let awaiting = |r: &Report| {
+            let mut v: Vec<(String, Vec<String>)> = r
+                .awaiting_binding
+                .iter()
+                .map(|a| {
+                    let mut p = a.paths.clone();
+                    p.sort();
+                    (a.block.clone(), p)
+                })
+                .collect();
+            v.sort();
+            v
+        };
+        assert_eq!(awaiting(&card), awaiting(&table), "different binding work");
         assert_eq!(
             via_card.get("ratings_provenance").unwrap(),
             PROV_UNAVAILABLE
@@ -8266,6 +8738,7 @@ mod tests {
                 },
             ],
             provenance: vec![],
+            ..Default::default()
         };
 
         let reason = report
@@ -8524,7 +8997,7 @@ mod tests {
         doc["inventory"]["items"][0]["kg_co2e"] = json!(0.589);
         doc["inventory"]["total_kg_co2e"] = json!(0.589);
 
-        enforce("carbon_accountant", &mut doc);
+        enforce_retrieved("carbon_accountant", &mut doc);
 
         let line = doc.pointer("/inventory/items/0/kg_co2e").unwrap().as_f64();
         assert_eq!(

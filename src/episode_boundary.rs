@@ -236,6 +236,7 @@ impl Pulse {
         agent_slug: &str,
         output_contract: Option<&Value>,
         raw: Option<&str>,
+        tool_calls: &[grounding_trust::ToolOutput<'_>],
     ) -> Graded {
         // The document as claimed, kept before enforcement.
         //
@@ -275,12 +276,25 @@ impl Pulse {
         // **one** `unavailable` — `species_resolver.conservation`. Only
         // `unavailable` nulls anything, so nine of the ten can only gain
         // provenance stamps.
-        let report = match enforced.as_mut() {
+        let mut report = match enforced.as_mut() {
             Some(doc) => {
                 grounding_trust::enforce_from_output_contract(agent_slug, output_contract, doc)
             }
             None => Report::default(),
         };
+        // G09: `tool_verified` is earned by joining the sourced values against
+        // this run's tool outputs, not by the block having content.
+        grounding_trust::bind_tool_calls(enforced.as_mut(), &mut report, tool_calls);
+        for b in report.binding.iter().filter(|b| b.reason.is_some()) {
+            tracing::info!(
+                agent = %agent_slug,
+                episode = %self.episode_id,
+                block = %b.block,
+                reason = b.reason.map(|r| r.id()).unwrap_or_default(),
+                unmatched = ?b.unmatched,
+                "sourced block not bound to a tool call; stamped model_inference",
+            );
+        }
         // Every contracted field with its grade and the claim behind it,
         // computed from the report rather than by a second pass, so the two
         // cannot describe different instants.
@@ -748,8 +762,40 @@ pub async fn persist_opened(pulse: Pulse, w: Write<'_>) -> anyhow::Result<Uuid> 
     // No card here, so no `output_contract` to pass: these call sites have the
     // agent's slug and its answer, and nothing else. Enforcement therefore runs
     // from the registered contract, which is the only path on `main` anyway.
-    let graded = pulse.grade(w.agent_slug, None, w.episode.response_text.as_deref());
+    let recorded = recorded_tool_outputs(&w.episode.context);
+    let calls: Vec<grounding_trust::ToolOutput<'_>> = recorded
+        .iter()
+        .map(|(tool, output)| grounding_trust::ToolOutput { tool, output })
+        .collect();
+    let graded = pulse.grade(
+        w.agent_slug,
+        None,
+        w.episode.response_text.as_deref(),
+        &calls,
+    );
     close(pulse, &graded, w).await
+}
+
+/// `(tool_name, output)` for every call `agent_output_to_episode` recorded in
+/// `context.tool_invocations` (`src/episodes.rs:295`). An entry missing either
+/// field is skipped rather than defaulted: an empty output would bind nothing,
+/// and a fabricated one would bind everything.
+pub fn recorded_tool_outputs(context: &Value) -> Vec<(String, String)> {
+    context
+        .get("tool_invocations")
+        .and_then(|v| v.as_array())
+        .map(|calls| {
+            calls
+                .iter()
+                .filter_map(|c| {
+                    Some((
+                        c.get("tool_name")?.as_str()?.to_string(),
+                        c.get("output")?.as_str()?.to_string(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The whole boundary for a caller that invoked an agent and has its answer,

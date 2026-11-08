@@ -233,6 +233,7 @@ async fn record_delegated_episode(
         agent_slug,
         output_contract,
         episode.response_text.as_deref(),
+        &crate::grounding_trust::tool_outputs(&output.tool_invocations),
     );
     let stored = match crate::episode_boundary::close(
         pulse,

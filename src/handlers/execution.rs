@@ -447,6 +447,7 @@ pub async fn execute_agent_handler(
         &db_agent.agent_name,
         card.capabilities.output_contract.as_ref(),
         output.raw_response.as_deref(),
+        &fermi::grounding_trust::tool_outputs(&output.tool_invocations),
     );
 
     // 3.7 Does the document match the type the agent declared?

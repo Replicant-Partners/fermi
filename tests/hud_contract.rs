@@ -210,7 +210,7 @@ fn fixtures() -> Vec<(&'static str, Value)> {
 fn every_enforced_response_is_schema_valid() {
     let schema = schema();
     for (name, mut doc) in fixtures() {
-        hud_contract::enforce(AGENT, &mut doc);
+        hud_contract::enforce(AGENT, &mut doc, &[]);
         let report = schema_validate::validate(&schema, &doc);
         assert!(
             report.is_valid(),
@@ -240,7 +240,7 @@ fn no_block_is_silently_missing_a_provenance_tag() {
         "card_provenance",
     ];
     for (name, mut doc) in fixtures() {
-        hud_contract::enforce(AGENT, &mut doc);
+        hud_contract::enforce(AGENT, &mut doc, &[]);
         for key in expected {
             let v = doc.get(key).and_then(|v| v.as_str());
             assert!(
@@ -275,7 +275,7 @@ fn no_block_is_silently_missing_a_provenance_tag() {
 #[test]
 fn an_invented_edibility_verdict_is_stripped_from_field_line_and_speech() {
     let mut doc = image_with_invented_edibility();
-    let report = hud_contract::enforce(AGENT, &mut doc);
+    let report = hud_contract::enforce(AGENT, &mut doc, &[]);
 
     // 1. The structured field is nulled.
     assert_eq!(
@@ -325,7 +325,12 @@ fn an_invented_edibility_verdict_is_stripped_from_field_line_and_speech() {
 #[test]
 fn a_real_lookup_on_a_guessed_subject_does_not_render_as_sourced() {
     let mut doc = voice_only_clean();
-    let report = hud_contract::enforce(AGENT, &mut doc);
+    let retrieved = doc.to_string();
+    let ran = [fermi::grounding_trust::ToolOutput {
+        tool: "fixture",
+        output: &retrieved,
+    }];
+    let report = hud_contract::enforce(AGENT, &mut doc, &ran);
 
     // The block-level stamp is honest about the retrieval...
     assert_eq!(doc.get("taxonomy_provenance").unwrap(), PROV_TOOL);
@@ -363,7 +368,12 @@ fn a_real_lookup_on_a_guessed_subject_does_not_render_as_sourced() {
 #[test]
 fn a_sourced_common_name_still_inherits_the_guessed_subject() {
     let mut doc = voice_only_clean();
-    hud_contract::enforce(AGENT, &mut doc);
+    let retrieved = doc.to_string();
+    let ran = [fermi::grounding_trust::ToolOutput {
+        tool: "fixture",
+        output: &retrieved,
+    }];
+    hud_contract::enforce(AGENT, &mut doc, &ran);
 
     assert_eq!(
         doc.pointer("/taxonomy/vernacular_name").unwrap(),
@@ -393,7 +403,7 @@ fn a_sourced_common_name_still_inherits_the_guessed_subject() {
 #[test]
 fn the_capture_block_stays_reproducible() {
     let mut doc = voice_only_clean();
-    hud_contract::enforce(AGENT, &mut doc);
+    hud_contract::enforce(AGENT, &mut doc, &[]);
     assert_eq!(doc.get("capture_provenance").unwrap(), PROV_DERIVED);
     let line = doc
         .pointer("/card/lines")
@@ -410,7 +420,7 @@ fn the_capture_block_stays_reproducible() {
 #[test]
 fn a_tool_miss_is_distinguishable_from_a_missing_tool() {
     let mut doc = tools_asked_and_empty();
-    hud_contract::enforce(AGENT, &mut doc);
+    hud_contract::enforce(AGENT, &mut doc, &[]);
 
     assert_eq!(doc.get("taxonomy_provenance").unwrap(), PROV_NO_MATCH);
     assert_eq!(doc.get("edibility_provenance").unwrap(), PROV_UNAVAILABLE);
@@ -446,7 +456,7 @@ fn an_untagged_line_is_marked_rather_than_defaulted_to_clean() {
         .unwrap()
         .push(json!({ "text": "Peak season is late August" }));
 
-    let report = hud_contract::enforce(AGENT, &mut doc);
+    let report = hud_contract::enforce(AGENT, &mut doc, &[]);
     let added = doc.pointer("/card/lines/4").unwrap();
 
     assert_eq!(added.get("provenance").unwrap(), PROV_UNAVAILABLE);
@@ -471,7 +481,7 @@ fn a_line_naming_an_unknown_block_is_not_evidence() {
         .unwrap()
         .insert("block".into(), json!("lab_results"));
 
-    let report = hud_contract::enforce(AGENT, &mut doc);
+    let report = hud_contract::enforce(AGENT, &mut doc, &[]);
     assert_eq!(
         doc.pointer("/card/lines/0/provenance").unwrap(),
         PROV_UNAVAILABLE
@@ -494,7 +504,7 @@ fn an_over_long_title_is_reported() {
         .unwrap()
         .insert("title".into(), json!(long));
 
-    let report = hud_contract::enforce(AGENT, &mut doc);
+    let report = hud_contract::enforce(AGENT, &mut doc, &[]);
     assert!(report.findings.iter().any(|f| f.check == "hud_glanceable"));
 }
 
@@ -508,7 +518,7 @@ fn too_many_lines_is_reported() {
     while lines.len() <= MAX_LINES {
         lines.push(json!({ "text": "filler", "block": "taxonomy" }));
     }
-    let report = hud_contract::enforce(AGENT, &mut doc);
+    let report = hud_contract::enforce(AGENT, &mut doc, &[]);
     assert!(report.findings.iter().any(|f| f.check == "hud_glanceable"));
 }
 
@@ -542,7 +552,7 @@ fn every_fixture_respects_the_glanceability_budget() {
 #[test]
 fn the_rendered_card_distinguishes_evidence_from_guess_at_a_glance() {
     let mut doc = voice_only_clean();
-    hud_contract::enforce(AGENT, &mut doc);
+    hud_contract::enforce(AGENT, &mut doc, &[]);
     let out = hud_contract::render(&doc);
 
     assert_eq!(
@@ -564,7 +574,7 @@ fn the_rendered_card_distinguishes_evidence_from_guess_at_a_glance() {
 #[test]
 fn rendered_output_is_ascii() {
     for (name, mut doc) in fixtures() {
-        hud_contract::enforce(AGENT, &mut doc);
+        hud_contract::enforce(AGENT, &mut doc, &[]);
         for line in hud_contract::render(&doc) {
             assert!(
                 line.is_ascii() || !line.chars().any(|c| (c as u32) < 32),
@@ -579,9 +589,9 @@ fn rendered_output_is_ascii() {
 #[test]
 fn enforcement_is_idempotent() {
     for (name, mut doc) in fixtures() {
-        hud_contract::enforce(AGENT, &mut doc);
+        hud_contract::enforce(AGENT, &mut doc, &[]);
         let once = doc.clone();
-        let second = hud_contract::enforce(AGENT, &mut doc);
+        let second = hud_contract::enforce(AGENT, &mut doc, &[]);
         assert_eq!(
             once, doc,
             "{name}: second enforcement pass changed the document"
@@ -607,7 +617,7 @@ fn enforcement_is_idempotent() {
 #[test]
 fn a_corrected_card_stays_flagged_when_it_is_read_back() {
     let mut doc = image_with_invented_edibility();
-    let first = hud_contract::enforce(AGENT, &mut doc);
+    let first = hud_contract::enforce(AGENT, &mut doc, &[]);
     assert_eq!(first.confidence_display, CONF_FLAGGED);
     assert!(first.corrected);
 
@@ -622,7 +632,7 @@ fn a_corrected_card_stays_flagged_when_it_is_read_back() {
     );
 
     // Read back, as if from cache. The fabricated value is gone by now.
-    let second = hud_contract::enforce(AGENT, &mut doc);
+    let second = hud_contract::enforce(AGENT, &mut doc, &[]);
     assert!(
         second.grounding.is_clean(),
         "nothing should be left to strip on the second pass"
@@ -640,7 +650,7 @@ fn a_corrected_card_stays_flagged_when_it_is_read_back() {
 #[test]
 fn a_clean_card_is_not_marked_as_corrected() {
     let mut doc = voice_only_clean();
-    let report = hud_contract::enforce(AGENT, &mut doc);
+    let report = hud_contract::enforce(AGENT, &mut doc, &[]);
     assert!(!report.corrected);
     assert!(
         doc.get(hud_contract::REVIEW_MARKER).is_none(),
@@ -712,7 +722,7 @@ fn the_high_band_is_reachable_only_without_a_guessed_subject() {
     // With this agent's contract, `subject` is always an inference, so the
     // ceiling for any card it produces is `medium`.
     let mut doc = voice_only_clean();
-    let report = hud_contract::enforce(AGENT, &mut doc);
+    let report = hud_contract::enforce(AGENT, &mut doc, &[]);
     assert_ne!(
         report.confidence_display, CONF_HIGH,
         "this agent reached `high` despite inferring its subject"

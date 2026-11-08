@@ -612,6 +612,7 @@ pub async fn post_workspace_message_handler(
                             &agent_name2,
                             card.capabilities.output_contract.as_ref(),
                             output.raw_response.as_deref(),
+                            &fermi::grounding_trust::tool_outputs(&output.tool_invocations),
                         );
                         // What the workspace will read. Every member and every
                         // person here reads this message, so it carries the

@@ -405,6 +405,7 @@ pub async fn send_message_handler(
         &db_agent.agent_name,
         card.capabilities.output_contract.as_ref(),
         output.raw_response.as_deref(),
+        &fermi::grounding_trust::tool_outputs(&output.tool_invocations),
     );
 
     // ── 11. Record + store episode ────────────────────────────────────────
@@ -636,7 +637,7 @@ pub async fn get_task_handler(
                 .as_ref()
                 .and_then(|a| resolve_agent_card(&state, a).capabilities.output_contract);
             let mut enforced = raw_response.and_then(fermi::agent_backend::envelope::extract_json);
-            let report = match (enforced.as_mut(), db_agent.as_ref()) {
+            let mut report = match (enforced.as_mut(), db_agent.as_ref()) {
                 (Some(doc), Some(a)) => fermi::grounding_trust::enforce_from_output_contract(
                     &a.agent_name,
                     output_contract.as_ref(),
@@ -644,6 +645,13 @@ pub async fn get_task_handler(
                 ),
                 _ => fermi::grounding_trust::Report::default(),
             };
+            // G09: bind against the run record stored with the episode.
+            let recorded = fermi::episode_boundary::recorded_tool_outputs(&episode.context);
+            let calls: Vec<fermi::grounding_trust::ToolOutput<'_>> = recorded
+                .iter()
+                .map(|(tool, output)| fermi::grounding_trust::ToolOutput { tool, output })
+                .collect();
+            fermi::grounding_trust::bind_tool_calls(enforced.as_mut(), &mut report, &calls);
             let stripped: Vec<String> = report.violations.iter().map(|v| v.path.clone()).collect();
             let validation = fermi::agent_backend::envelope::validation_status(
                 output_contract.as_ref(),
@@ -910,6 +918,7 @@ pub async fn stream_message_handler(
                     &agent_name,
                     declared_oc.as_ref(),
                     output.raw_response.as_deref(),
+                    &fermi::grounding_trust::tool_outputs(&output.tool_invocations),
                 );
 
                 // OutputSchema gate. The status also travels on the artifact.

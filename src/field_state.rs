@@ -1170,6 +1170,7 @@ mod tests {
                 kind: crate::grounding_trust::ViolationKind::UngroundedField,
             }],
             provenance: vec![],
+            ..Default::default()
         };
 
         assert_eq!(

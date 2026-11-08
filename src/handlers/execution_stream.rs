@@ -332,6 +332,7 @@ pub async fn execute_agent_stream_handler(
                     &agent_name,
                     declared_output_contract.as_ref(),
                     output.raw_response.as_deref(),
+                    &fermi::grounding_trust::tool_outputs(&output.tool_invocations),
                 );
 
                 // Question three, filed here because `pulse` is consumed by

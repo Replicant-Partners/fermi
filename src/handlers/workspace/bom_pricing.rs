@@ -587,9 +587,9 @@ pub async fn price_bom_handler(
     .unwrap_or_else(|_| Uuid::new_v4());
 
     let query = serde_json::to_string(&query_doc).unwrap_or_default();
-    let reply = tokio::time::timeout(
+    let (reply, reply_calls) = tokio::time::timeout(
         std::time::Duration::from_secs(PRICING_TIMEOUT_SECS),
-        crate::handlers::rabble_workspace::dispatch_rabble_action(
+        crate::handlers::rabble_workspace::dispatch_rabble_action_recorded(
             &state,
             ws_uuid,
             ORACLE,
@@ -635,10 +635,16 @@ pub async fn price_bom_handler(
     // `enforce_from_output_contract` with the card is what actually applies
     // it. `FIELD_CONTRACTS` still wins if one is ever added.
     let card = crate::resolve_agent_card(&state, &db_agent);
-    let report = grounding_trust::enforce_from_output_contract(
+    let mut report = grounding_trust::enforce_from_output_contract(
         ORACLE,
         card.capabilities.output_contract.as_ref(),
         &mut doc,
+    );
+    // G09: bind sourced values to this run's tool calls.
+    grounding_trust::bind_tool_calls(
+        Some(&mut doc),
+        &mut report,
+        &grounding_trust::tool_outputs(&reply_calls),
     );
     if !report.is_clean() {
         grounding_anomaly::spawn_raise(

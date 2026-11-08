@@ -346,6 +346,7 @@ pub async fn identify_specimen(
         Some(name) => resolve_forage_taxonomy(name, &kingdom).await,
     };
 
+    let taxonomy_record = taxonomy.clone();
     let mut document = json!({
         "identification": identification,
         "taxonomy": taxonomy,
@@ -364,7 +365,20 @@ pub async fn identify_specimen(
     // The backstop. If a future prompt edit reintroduces an edibility verdict, or
     // the model volunteers one unasked, it is cleared here and the removal is
     // reported rather than shipped.
-    let grounding = fermi::grounding_trust::enforce("forage_identify", &mut document);
+    let mut grounding = fermi::grounding_trust::enforce("forage_identify", &mut document);
+    // G09: every value in `taxonomy` was copied by platform code from the
+    // GBIF/MycoBank responses (`resolve_forage_taxonomy`, this file), never
+    // written by the vision model, so that lookup is the run record it binds
+    // against. Binding it here is what keeps the stamp `tool_verified`.
+    let lookup = taxonomy_record.to_string();
+    fermi::grounding_trust::bind_tool_calls(
+        Some(&mut document),
+        &mut grounding,
+        &[fermi::grounding_trust::ToolOutput {
+            tool: "gbif_species_match",
+            output: &lookup,
+        }],
+    );
 
     if let Some(obj) = document.as_object_mut() {
         obj.insert(

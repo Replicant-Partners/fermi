@@ -811,7 +811,7 @@ pub async fn episode_trace_handler(
     //
     // `FIELD_CONTRACTS` still wins where it exists; the precedence and the
     // measurement behind it live on `enforce_from_output_contract`.
-    let report = match enforced.as_mut() {
+    let mut report = match enforced.as_mut() {
         Some(doc) => fermi::grounding_trust::enforce_from_output_contract(
             &agent_name,
             output_contract.as_ref(),
@@ -819,6 +819,20 @@ pub async fn episode_trace_handler(
         ),
         None => fermi::grounding_trust::Report::default(),
     };
+    // G09: bind against the run record stored with the episode
+    // (`src/episodes.rs:295`). A NULL or undecodable context binds nothing, so
+    // sourced blocks read `model_inference` rather than `tool_verified`.
+    let run_record: Value = row
+        .try_get::<Option<Value>, _>("context")
+        .ok()
+        .flatten()
+        .unwrap_or(Value::Null);
+    let recorded = fermi::episode_boundary::recorded_tool_outputs(&run_record);
+    let calls: Vec<fermi::grounding_trust::ToolOutput<'_>> = recorded
+        .iter()
+        .map(|(tool, output)| fermi::grounding_trust::ToolOutput { tool, output })
+        .collect();
+    fermi::grounding_trust::bind_tool_calls(enforced.as_mut(), &mut report, &calls);
     let mut graded = match claimed_doc.as_ref() {
         Some(doc) => fermi::grounding_trust::graded_fields(&agent_name, doc, &report),
         None => Vec::new(),
