@@ -185,6 +185,7 @@ mod tests {
                 kind: ViolationKind::UngroundedField,
             }],
             provenance: vec![],
+            ..Default::default()
         }
     }
 

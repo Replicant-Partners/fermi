@@ -15,7 +15,10 @@
 //! is that its evidence comes through ABW: every tool call is made by ABW,
 //! recorded on the run, and read back when the output is graded. That is the
 //! difference between `tool_verified` meaning "a tool ABW ran returned this"
-//! and meaning "the agent says so".
+//! and meaning "the agent says so". [V: a sourced block is `tool_verified` only
+//! when every checkable claimed value occurs in a recorded tool output,
+//! `src/grounding_trust.rs:5170` (`join_tool_calls`, G09); before G09 it was
+//! stamped on content alone, `src/grounding_trust.rs:5279` @ 8000415d.]
 //!
 //! # Same boundary as a hosted agent
 //!
@@ -567,7 +570,12 @@ pub async fn submit_output_handler(
 
     // The boundary, as for a hosted agent. The episode was reserved at open.
     let pulse = episode_boundary::Pulse::reserved_upstream(run.run_id);
-    let graded = pulse.grade(&db_agent.agent_name, oc, Some(&raw));
+    let graded = pulse.grade(
+        &db_agent.agent_name,
+        oc,
+        Some(&raw),
+        &fermi::grounding_trust::tool_outputs(&output.tool_invocations),
+    );
     let tools_called: Vec<&str> = output
         .tool_invocations
         .iter()

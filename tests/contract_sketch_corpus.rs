@@ -163,15 +163,17 @@ fn the_builders_worked_example_compiles() {
 
     assert_eq!(
         props.get("profile_provenance"),
-        Some(&serde_json::json!({ "enum": ["tool_verified", "tool_no_match"] })),
-        "complete coverage: two verdicts"
+        Some(&serde_json::json!({
+            "enum": ["tool_verified", "tool_no_match", "model_inference"]
+        })),
+        "complete coverage: two retrieval verdicts, plus the G09 demotion"
     );
     assert_eq!(
         props.get("fundamentals_provenance"),
         Some(&serde_json::json!({
-            "enum": ["tool_verified", "tool_no_match", "unavailable_no_tool_source"]
+            "enum": ["tool_verified", "tool_no_match", "unavailable_no_tool_source", "model_inference"]
         })),
-        "partial coverage: three verdicts — the distinction the demo exists to show"
+        "partial coverage: three verdicts plus the G09 demotion — the distinction the demo exists to show"
     );
     assert_eq!(
         props.get("assessment_provenance"),

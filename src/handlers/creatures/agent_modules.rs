@@ -232,9 +232,9 @@ pub async fn enemy_sensor_handler(
             let workspace_id = find_creature_workspace(pool, creature_id).await?;
 
             // Synchronous dispatch with timeout to prevent Railway 502
-            let assessment = tokio::time::timeout(
+            let (assessment, assessment_calls) = tokio::time::timeout(
                 std::time::Duration::from_secs(55),
-                rabble_workspace::dispatch_rabble_action(
+                rabble_workspace::dispatch_rabble_action_recorded(
                     &state,
                     workspace_id,
                     "enemy_sensor",
@@ -270,7 +270,13 @@ pub async fn enemy_sensor_handler(
             // judgement blocks rather than stripping them, and catches the
             // one thing that would be a fabrication: a threat naming a
             // creature the scan never returned.
-            let grounding = crate::grounding_trust::enforce("enemy_sensor", &mut parsed);
+            let mut grounding = crate::grounding_trust::enforce("enemy_sensor", &mut parsed);
+            // G09: join sourced values to this run's tool calls.
+            crate::grounding_trust::join_tool_calls(
+                Some(&mut parsed),
+                &mut grounding,
+                &crate::grounding_trust::tool_outputs(&assessment_calls),
+            );
             // Tell Loop 2. This path RUNS the control — the fabricated field is
             // stripped before it renders — and until now said nothing, so a
             // violation on the path where violations are most likely was caught,
@@ -647,9 +653,9 @@ pub async fn genome_profiler_handler(
             let workspace_id = find_creature_workspace(pool, creature_id).await?;
 
             // Synchronous dispatch with timeout
-            let profile = tokio::time::timeout(
+            let (profile, profile_calls) = tokio::time::timeout(
                 std::time::Duration::from_secs(55),
-                rabble_workspace::dispatch_rabble_action(
+                rabble_workspace::dispatch_rabble_action_recorded(
                     &state,
                     workspace_id,
                     "genome_profiler",
@@ -701,6 +707,12 @@ pub async fn genome_profiler_handler(
             // validator. Mixing the two would make the grounding rules
             // invisible to anyone reading either call site.
             let mut grounding = crate::grounding_trust::enforce("genome_profiler", &mut parsed);
+            // G09: join sourced values to this run's tool calls.
+            crate::grounding_trust::join_tool_calls(
+                Some(&mut parsed),
+                &mut grounding,
+                &crate::grounding_trust::tool_outputs(&profile_calls),
+            );
             // Tell Loop 2. This path RUNS the control — the fabricated field is
             // stripped before it renders — and until now said nothing, so a
             // violation on the path where violations are most likely was caught,
@@ -953,9 +965,9 @@ pub async fn prey_locator_handler(
             let workspace_id = find_creature_workspace(pool, creature_id).await?;
 
             // Synchronous dispatch with timeout
-            let result = tokio::time::timeout(
+            let (result, result_calls) = tokio::time::timeout(
                 std::time::Duration::from_secs(55),
-                rabble_workspace::dispatch_rabble_action(
+                rabble_workspace::dispatch_rabble_action_recorded(
                     &state,
                     workspace_id,
                     "prey_locator",
@@ -989,7 +1001,13 @@ pub async fn prey_locator_handler(
             // with `h3o`, which is already a dependency — see the contract
             // entry, which names this the cheapest Unsourced field in the
             // corpus to retire.
-            let grounding = crate::grounding_trust::enforce("prey_locator", &mut parsed);
+            let mut grounding = crate::grounding_trust::enforce("prey_locator", &mut parsed);
+            // G09: join sourced values to this run's tool calls.
+            crate::grounding_trust::join_tool_calls(
+                Some(&mut parsed),
+                &mut grounding,
+                &crate::grounding_trust::tool_outputs(&result_calls),
+            );
             fermi::grounding_anomaly::spawn_raise(
                 std::sync::Arc::clone(&state.memory_store),
                 "prey_locator",
@@ -1106,9 +1124,9 @@ pub async fn prey_locator_handler(
             let workspace_id = find_creature_workspace(pool, creature_id).await?;
 
             // Synchronous dispatch with timeout
-            let plan = tokio::time::timeout(
+            let (plan, plan_calls) = tokio::time::timeout(
                 std::time::Duration::from_secs(55),
-                rabble_workspace::dispatch_rabble_action(
+                rabble_workspace::dispatch_rabble_action_recorded(
                     &state,
                     workspace_id,
                     "prey_locator",
@@ -1143,7 +1161,13 @@ pub async fn prey_locator_handler(
             // coordinate in the flight plan is a number it was never given,
             // in a document meant to be flown rather than read. The strategy
             // and the difficulty rating survive; the geometry does not.
-            let grounding = crate::grounding_trust::enforce("prey_locator", &mut parsed);
+            let mut grounding = crate::grounding_trust::enforce("prey_locator", &mut parsed);
+            // G09: join sourced values to this run's tool calls.
+            crate::grounding_trust::join_tool_calls(
+                Some(&mut parsed),
+                &mut grounding,
+                &crate::grounding_trust::tool_outputs(&plan_calls),
+            );
             fermi::grounding_anomaly::spawn_raise(
                 std::sync::Arc::clone(&state.memory_store),
                 "prey_locator",

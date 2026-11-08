@@ -992,7 +992,7 @@ mod tests {
             uuid::Uuid::nil(),
             "a gate-ledger fixture",
         );
-        let _graded = pulse.grade("genome_profiler", None, Some(&raw));
+        let _graded = pulse.grade("genome_profiler", None, Some(&raw), &[]);
 
         let queued = drain();
         let rows: Vec<&PendingDecision> =

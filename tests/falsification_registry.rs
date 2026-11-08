@@ -121,6 +121,7 @@ fn graded_block_carries_reliance(provenance: Vec<(String, &'static str)>) -> boo
     let report = gt::Report {
         violations: vec![],
         provenance,
+        ..Default::default()
     };
     let fields: Vec<_> = gt::graded_fields("football_analyst", &doc, &report)
         .into_iter()
@@ -800,6 +801,7 @@ const FALSIFICATIONS: &[Falsification] = &[
                     kind: gt::ViolationKind::UngroundedField,
                 }],
                 provenance: vec![],
+                ..Default::default()
             }
             .refusal_reason()
             .is_none()
@@ -841,6 +843,7 @@ const FALSIFICATIONS: &[Falsification] = &[
                     kind: fermi::grounding_trust::ViolationKind::UngroundedField,
                 }],
                 provenance: vec![],
+                ..Default::default()
             };
             fermi::reliance::reliance(fermi::reliance::Answer {
                 document: true,
@@ -1089,6 +1092,7 @@ const FALSIFICATIONS: &[Falsification] = &[
                     kind: fermi::grounding_trust::ViolationKind::UngroundedField,
                 }],
                 provenance: vec![],
+                ..Default::default()
             };
             fermi::field_state::Observed::of(&f, &stripped, None)
                 == fermi::field_state::Observed::AbsentByContract

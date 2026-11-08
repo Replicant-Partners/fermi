@@ -649,7 +649,18 @@ fn a_compiled_card_contract_is_enforced_and_satisfies_its_own_schema() {
         uuid::Uuid::nil(),
         "a card-contract coverage fixture",
     );
-    let graded = pulse.grade("supply_chain_oracle", Some(output_contract), Some(&raw));
+    // The run record: the tool returned exactly what `items` claims, so the
+    // block joins (G09). Without it `items` is `model_inference`.
+    let tool_output = r#"{"name":"ashwagandha root","unit":"kg","currency":"USD","unit_cost":12.5,"risk_flags":["seasonal"]}"#;
+    let graded = pulse.grade(
+        "supply_chain_oracle",
+        Some(output_contract),
+        Some(&raw),
+        &[fermi::grounding_trust::ToolOutput {
+            tool: "bom_lookup",
+            output: tool_output,
+        }],
+    );
 
     let enforced = graded
         .enforced

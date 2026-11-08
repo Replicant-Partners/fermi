@@ -65,7 +65,14 @@ fn show(title: &str, note: &str, mut doc: Value) {
         .unwrap_or("(none)")
         .to_string();
 
-    let report = hud_contract::enforce(AGENT, &mut doc);
+    // A preview of the fixture as if its tool returned exactly this document,
+    // so sourced blocks join (G09).
+    let retrieved = doc.to_string();
+    let ran = [fermi::grounding_trust::ToolOutput {
+        tool: "fixture",
+        output: &retrieved,
+    }];
+    let report = hud_contract::enforce(AGENT, &mut doc, &ran);
 
     println!("\n  ┌─ ON GLASS ─────────────────────────────────────────────────┐");
     for line in hud_contract::render(&doc) {

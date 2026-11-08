@@ -1644,9 +1644,9 @@ async fn execute_carbon_run(
     )
     .await;
     let query = build_query(&lines, basis_ml, &composition, &boundary, &region, &hints);
-    let reply = tokio::time::timeout(
+    let (reply, reply_calls) = tokio::time::timeout(
         std::time::Duration::from_secs(RUN_TIMEOUT_SECS),
-        crate::handlers::rabble_workspace::dispatch_rabble_action(
+        crate::handlers::rabble_workspace::dispatch_rabble_action_recorded(
             &state,
             ws_uuid,
             ACCOUNTANT,
@@ -1703,7 +1703,13 @@ async fn execute_carbon_run(
     // The gate. Nulls ungrounded fields, performs the registered derivations,
     // stamps every block, and scans the prose for a dataset nothing came back
     // from.
-    let report = grounding_trust::enforce(ACCOUNTANT, &mut doc);
+    let mut report = grounding_trust::enforce(ACCOUNTANT, &mut doc);
+    // G09: join sourced values to this run's tool calls.
+    grounding_trust::join_tool_calls(
+        Some(&mut doc),
+        &mut report,
+        &grounding_trust::tool_outputs(&reply_calls),
+    );
 
     // ── the gate has to have actually run ─────────────────────────────────
     //

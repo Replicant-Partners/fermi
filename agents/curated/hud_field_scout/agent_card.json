@@ -206,7 +206,8 @@
           "taxonomy_provenance": {
             "enum": [
               "tool_verified",
-              "tool_no_match"
+              "tool_no_match",
+              "model_inference"
             ]
           },
           "observations": {
@@ -242,7 +243,8 @@
           "observations_provenance": {
             "enum": [
               "tool_verified",
-              "tool_no_match"
+              "tool_no_match",
+              "model_inference"
             ]
           },
           "edibility": {

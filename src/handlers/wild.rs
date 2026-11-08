@@ -134,7 +134,13 @@ pub const FORAGE_NEXT_STEPS: &[&str] = &[
 /// A lookup failure is never fatal to the response. The identification and the
 /// safety directive stand on their own, and losing the taxonomy to a network
 /// blip should not deny someone the warning.
-pub(crate) async fn resolve_forage_taxonomy(name: &str, kingdom: &str) -> serde_json::Value {
+/// Returns the taxonomy block and the raw tool responses it was copied from,
+/// as `(tool_name, raw_output)`, so the caller can join the block against
+/// what the tools actually returned (G09).
+pub(crate) async fn resolve_forage_taxonomy(
+    name: &str,
+    kingdom: &str,
+) -> (serde_json::Value, Vec<(&'static str, String)>) {
     // `fermi::`, not `crate::`: this file is `#[path]`-included into the
     // api-server binary, so `crate::` is the binary. The `crate::grounding_trust`
     // paths elsewhere in this file work only because api_server.rs re-exports
@@ -143,6 +149,7 @@ pub(crate) async fn resolve_forage_taxonomy(name: &str, kingdom: &str) -> serde_
     use fermi::agent_backend::tools::{execute_gbif_species_search, execute_mycobank_lookup};
 
     let mut out = serde_json::Map::new();
+    let mut raws: Vec<(&'static str, String)> = Vec::new();
 
     // `gbif_species_search` defaults to Insecta, so an unscoped search for a
     // mushroom returns insects whose text matches. The scope is chosen from the
@@ -158,6 +165,7 @@ pub(crate) async fn resolve_forage_taxonomy(name: &str, kingdom: &str) -> serde_
     if let Some(scope) = scope {
         let query = json!({ "query": name, "scope": scope, "limit": 1 });
         if let Ok(raw) = execute_gbif_species_search(&query).await {
+            raws.push(("gbif_species_search", raw.clone()));
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) {
                 if let Some(hit) = parsed.pointer("/species/0") {
                     for (from, to) in [
@@ -188,6 +196,7 @@ pub(crate) async fn resolve_forage_taxonomy(name: &str, kingdom: &str) -> serde_
     if kingdom == "fungi" {
         let query = json!({ "name": name, "include_synonyms": true });
         if let Ok(raw) = execute_mycobank_lookup(&query).await {
+            raws.push(("mycobank_lookup", raw.clone()));
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) {
                 if let Some(status) = parsed.get("status").filter(|v| !v.is_null()) {
                     out.insert("nomenclatural_status".into(), status.clone());
@@ -206,7 +215,7 @@ pub(crate) async fn resolve_forage_taxonomy(name: &str, kingdom: &str) -> serde_
         }
     }
 
-    serde_json::Value::Object(out)
+    (serde_json::Value::Object(out), raws)
 }
 
 // ─── the determination itself ──────────────────────────────────────────
@@ -341,8 +350,8 @@ pub async fn identify_specimen(
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_ascii_lowercase();
-    let taxonomy = match guessed {
-        None => json!({}),
+    let (taxonomy, lookups) = match guessed {
+        None => (json!({}), Vec::new()),
         Some(name) => resolve_forage_taxonomy(name, &kingdom).await,
     };
 
@@ -364,7 +373,16 @@ pub async fn identify_specimen(
     // The backstop. If a future prompt edit reintroduces an edibility verdict, or
     // the model volunteers one unasked, it is cleared here and the removal is
     // reported rather than shipped.
-    let grounding = fermi::grounding_trust::enforce("forage_identify", &mut document);
+    let mut grounding = fermi::grounding_trust::enforce("forage_identify", &mut document);
+    // G09: join `taxonomy` against the raw GBIF/MycoBank responses it was
+    // copied from, not against itself. `scope_searched` is the platform's
+    // choice of search scope (from the model's kingdom guess), so it is
+    // supported only when the response itself names that kingdom.
+    let calls: Vec<fermi::grounding_trust::ToolOutput<'_>> = lookups
+        .iter()
+        .map(|(tool, output)| fermi::grounding_trust::ToolOutput { tool, output })
+        .collect();
+    fermi::grounding_trust::join_tool_calls(Some(&mut document), &mut grounding, &calls);
 
     if let Some(obj) = document.as_object_mut() {
         obj.insert(

@@ -232,12 +232,19 @@ pub fn build(
     // applies enforcement for every agent that has one — no per-agent
     // code change required. Falls back to `FIELD_CONTRACTS` for agents
     // not yet migrated.
-    let report = match payload.as_mut() {
+    let mut report = match payload.as_mut() {
         Some(doc) => {
             crate::grounding_trust::enforce_from_output_contract(agent_name, output_contract, doc)
         }
         None => crate::grounding_trust::Report::default(),
     };
+    // G09: the hop has the producer's run record, so a sourced block reaches
+    // the coordinator as `tool_verified` only if its values are in it.
+    crate::grounding_trust::join_tool_calls(
+        payload.as_mut(),
+        &mut report,
+        &crate::grounding_trust::tool_outputs(&output.tool_invocations),
+    );
 
     // `has_contract` is true if either the compiled output_contract carries a
     // grounding map (new path) or a FIELD_CONTRACTS entry exists (legacy path).
@@ -513,6 +520,20 @@ mod tests {
     use crate::agent_backend::executor::{AgentMetadata, AgentStatus};
     use serde_json::json;
 
+    /// [`output_with`] plus one tool call that returned `raw` verbatim, so
+    /// every sourced value in it joins (G09).
+    pub(super) fn retrieved_output_with(raw: &str) -> AgentOutput {
+        let mut o = output_with(Some(raw));
+        o.tool_invocations = vec![crate::agent_backend::executor::ToolInvocation {
+            tool_name: "fixture".into(),
+            input: json!({}),
+            output: raw.to_string(),
+            duration_ms: 1,
+            iteration: 1,
+        }];
+        o
+    }
+
     pub(super) fn output_with(raw: Option<&str>) -> AgentOutput {
         AgentOutput {
             agent_name: "genome_profiler".into(),
@@ -619,7 +640,7 @@ mod tests {
         let env = build(
             "genome_profiler",
             oc.as_ref(),
-            &output_with(Some(raw)),
+            &retrieved_output_with(raw),
             Uuid::new_v4(),
         );
         let blocks = env["provenance"]["blocks"].as_array().unwrap();

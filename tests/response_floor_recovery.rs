@@ -121,7 +121,9 @@ async fn a_readable_document_is_never_graded_as_absent() {
             no_document += 1;
         }
 
-        let floor = gt::response_floor(&agent, &text);
+        // Parse recovery only; no run record is read here, so sourced blocks
+        // floor at pending (G09).
+        let floor = gt::response_floor(&agent, &text, &[]);
 
         // The assertion. Not "the floor improved" — grading a recovered document
         // may legitimately land on `unavailable`, because the contracted paths

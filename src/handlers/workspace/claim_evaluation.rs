@@ -405,9 +405,9 @@ async fn evaluate_one(
     let query = build_query(&claim, &composition, &markets);
     let started = std::time::Instant::now();
 
-    let reply = tokio::time::timeout(
+    let (reply, reply_calls) = tokio::time::timeout(
         std::time::Duration::from_secs(PER_CLAIM_TIMEOUT_SECS),
-        crate::handlers::rabble_workspace::dispatch_rabble_action(
+        crate::handlers::rabble_workspace::dispatch_rabble_action_recorded(
             &state,
             ws_uuid,
             EVALUATOR,
@@ -470,7 +470,13 @@ async fn evaluate_one(
 
     // The gate. Strips ungrounded fields, stamps every block, scans the prose
     // for authorities whose evidence block came back empty.
-    let report = grounding_trust::enforce(EVALUATOR, &mut doc);
+    let mut report = grounding_trust::enforce(EVALUATOR, &mut doc);
+    // G09: join sourced values to this run's tool calls.
+    grounding_trust::join_tool_calls(
+        Some(&mut doc),
+        &mut report,
+        &grounding_trust::tool_outputs(&reply_calls),
+    );
     if !report.is_clean() {
         grounding_anomaly::spawn_raise(
             Arc::clone(&state.memory_store),

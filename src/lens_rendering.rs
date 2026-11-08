@@ -451,9 +451,15 @@ pub fn merge_reports(a: Report, b: Report) -> Report {
         }
     }
 
+    let mut awaiting_tool_join = a.awaiting_tool_join;
+    awaiting_tool_join.extend(b.awaiting_tool_join);
+    let mut tool_join = a.tool_join;
+    tool_join.extend(b.tool_join);
     Report {
         violations,
         provenance,
+        awaiting_tool_join,
+        tool_join,
     }
 }
 
@@ -707,10 +713,12 @@ mod tests {
         let a = Report {
             violations: vec![],
             provenance: vec![("rendered_claims".to_string(), PROV_TOOL)],
+            ..Default::default()
         };
         let b = Report {
             violations: vec![],
             provenance: vec![("rendered_claims".to_string(), PROV_INFERRED)],
+            ..Default::default()
         };
 
         let merged = merge_reports(a, b);
@@ -730,10 +738,12 @@ mod tests {
         let a = Report {
             violations: vec![],
             provenance: vec![("rendered_claims".to_string(), PROV_TOOL)],
+            ..Default::default()
         };
         let b = Report {
             violations: vec![],
             provenance: vec![("allergen_block".to_string(), PROV_TOOL)],
+            ..Default::default()
         };
 
         let merged = merge_reports(a, b);
@@ -749,6 +759,7 @@ mod tests {
                 kind: ViolationKind::ContradictsCanonical,
             }],
             provenance: vec![],
+            ..Default::default()
         };
         let b = Report {
             violations: vec![Violation {
@@ -757,6 +768,7 @@ mod tests {
                 kind: ViolationKind::NarrativeLeak,
             }],
             provenance: vec![],
+            ..Default::default()
         };
 
         let merged = merge_reports(a, b);

@@ -37,3 +37,5 @@ mod pulse_always_closes;
 mod migration_ledger;
 
 mod credit_holds;
+
+mod tool_join;
