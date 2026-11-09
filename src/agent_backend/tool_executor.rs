@@ -207,10 +207,7 @@ impl ToolAwareExecutor {
         } else {
             agent.query.clone()
         };
-        let mut messages: Vec<Message> = vec![Message {
-            role: "user".to_string(),
-            content: MessageContent::Text(user_content),
-        }];
+        let mut messages: Vec<Message> = vec![first_user_message(&user_content, context)?];
 
         let mut total_input_tokens: u32 = 0;
         let mut total_output_tokens: u32 = 0;
@@ -225,18 +222,14 @@ impl ToolAwareExecutor {
         loop {
             iteration += 1;
 
-            let request = ClaudeRequest {
-                model: context.agent_card.capabilities.model.clone(),
-                max_tokens: sp.max_tokens,
-                temperature: sp.temperature,
-                top_p: sp.top_p,
-                top_k: sp.top_k,
-                thinking: thinking_block.clone(),
-                system: Some(system_prompt.clone()),
-                messages: messages.clone(),
-                tools: Some(tools.clone()),
-                tool_choice: None,
-            };
+            let request = turn_request(
+                context,
+                &sp,
+                thinking_block.clone(),
+                &system_prompt,
+                &messages,
+                &tools,
+            );
 
             // Send request
             let response = self
@@ -549,6 +542,19 @@ impl ToolAwareExecutor {
     ) -> Result<AgentOutput, ExecutionError> {
         let start = Instant::now();
         let provider = &context.agent_card.capabilities.provider;
+
+        // G26: this path carries `content` as a plain string
+        // (`OpenAIMessage.content: Option<String>`,
+        // `src/agent_backend/multi_model_executor.rs:348`), so it cannot
+        // deliver an image. Refuse before spending rather than drop it. Defence
+        // in depth: `/execute` already refuses this for the card's provider;
+        // this covers callers that build an `ExecutionContext` directly.
+        crate::attachments::ensure_deliverable(
+            &context.attachments,
+            provider,
+            &context.agent_card.capabilities.model,
+        )
+        .map_err(|e| ExecutionError::InvalidContext(e.to_string()))?;
 
         // SPEC_28 — same credential path as the Anthropic loop above.
         // Endpoint is operator config; key is per-agent from the store.
@@ -902,6 +908,57 @@ impl ToolAwareExecutor {
     }
 }
 
+/// One tool-use turn's request in the Anthropic tool loop, built from the
+/// running `messages`, whose first element is [`first_user_message`]. The
+/// flush turn builds its own request without tools (the `need_flush` branch of
+/// `execute_anthropic_loop`, `src/agent_backend/tool_executor.rs:363-421`) from
+/// the same `messages`, so it carries the frames too.
+pub(crate) fn turn_request(
+    context: &ExecutionContext,
+    sp: &crate::agent_backend::agent_card::SamplingParams,
+    thinking: Option<ClaudeThinking>,
+    system_prompt: &str,
+    messages: &[Message],
+    tools: &[crate::agent_backend::llm_executor::ClaudeTool],
+) -> ClaudeRequest {
+    ClaudeRequest {
+        model: context.agent_card.capabilities.model.clone(),
+        max_tokens: sp.max_tokens,
+        temperature: sp.temperature,
+        top_p: sp.top_p,
+        top_k: sp.top_k,
+        thinking,
+        system: Some(system_prompt.to_string()),
+        messages: messages.to_vec(),
+        tools: Some(tools.to_vec()),
+        tool_choice: None,
+    }
+}
+
+/// The opening user message of the Anthropic tool loop (G26).
+///
+/// Carries the request's image attachments ahead of the prompt, built by the
+/// same function as the single-turn path (`llm_executor::user_content`,
+/// `src/agent_backend/llm_executor.rs:595`). The tool loop used to
+/// send the text alone [V: `src/agent_backend/tool_executor.rs:210-213` @
+/// 1c79e812], so a question about a photograph was answered about nothing.
+/// Refuses before anything is sent if the model cannot see the frames.
+pub(crate) fn first_user_message(
+    prompt: &str,
+    context: &ExecutionContext,
+) -> Result<Message, ExecutionError> {
+    crate::attachments::ensure_deliverable(
+        &context.attachments,
+        &context.agent_card.capabilities.provider,
+        &context.agent_card.capabilities.model,
+    )
+    .map_err(|e| ExecutionError::InvalidContext(e.to_string()))?;
+    Ok(Message {
+        role: "user".to_string(),
+        content: crate::agent_backend::llm_executor::user_content(prompt, &context.attachments),
+    })
+}
+
 #[async_trait]
 impl AgentExecutor for ToolAwareExecutor {
     async fn execute(
@@ -1172,6 +1229,89 @@ fn parse_evidence_text(text: &str, agent_name: &str) -> (Vec<EvidenceStmt>, f64,
 
 #[cfg(test)]
 mod tests {
+
+    /// G26 / #114 done-when: the tool loop's **first request body** carries a
+    /// 1×1 PNG attachment as an image block, ahead of the prompt; a model
+    /// that cannot see is refused before any request exists; and a text-only
+    /// request is byte-identical to before.
+    ///
+    /// Built exactly as `execute_anthropic_loop` builds turn one:
+    /// `turn_request(.., &[first_user_message(..)?], ..)`. On the old code the
+    /// first message was `MessageContent::Text(user_content)` at
+    /// `tool_executor.rs:210-213` @ 1c79e812, and `source_scan` below pins
+    /// that the loop still builds it this way.
+    #[test]
+    fn the_tool_loops_first_request_carries_the_image() {
+        use super::{first_user_message, turn_request, ExecutionContext};
+        use crate::agent_backend::agent_card::AgentCard;
+        use crate::attachments::ImageAttachment;
+        // A real 1x1 RGBA PNG.
+        const PNG_1X1: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=";
+        let ctx = |model: &str, attachments: Vec<ImageAttachment>| {
+            let mut card = AgentCard::new("test_agent".to_string(), "research".to_string());
+            card.capabilities.model = model.to_string();
+            ExecutionContext::for_agent(crate::ast::Program { statements: vec![] }, card)
+                .with_attachments(attachments)
+        };
+        let png = || {
+            vec![ImageAttachment::new(
+                "image/png",
+                PNG_1X1,
+                Some("test".into()),
+            )]
+        };
+        let first = |c: &ExecutionContext, prompt: &str| {
+            let sp = c.agent_card.capabilities.resolve_sampling_params(4096);
+            first_user_message(prompt, c).map(|m| {
+                serde_json::to_value(turn_request(c, &sp, None, "sys", &[m], &[])).unwrap()
+            })
+        };
+
+        let body = first(&ctx("claude-sonnet-4-5-20250929", png()), "what is this?")
+            .expect("a vision model receives the frame");
+        let blocks = body["messages"][0]["content"]
+            .as_array()
+            .expect("multi-block content in the first request");
+        assert_eq!(blocks[0]["type"], "image", "the frame comes first: {body}");
+        assert_eq!(blocks[0]["source"]["media_type"], "image/png");
+        assert_eq!(blocks[0]["source"]["data"], PNG_1X1);
+        assert_eq!(blocks[1]["type"], "text");
+        assert_eq!(blocks[1]["text"], "what is this?");
+
+        assert!(!crate::attachments::model_can_see("claude-instant-1.2"));
+        assert!(
+            first(&ctx("claude-instant-1.2", png()), "what is this?").is_err(),
+            "a model that cannot see is refused before any request exists"
+        );
+
+        let text = first(&ctx("claude-sonnet-4-5-20250929", vec![]), "hi").unwrap();
+        assert_eq!(
+            text["messages"][0]["content"], "hi",
+            "text-only requests are byte-identical to before"
+        );
+
+        // The loop builds turn one this way. Comments stripped.
+        let src: String = include_str!("tool_executor.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap()
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let lp = &src[src
+            .find("async fn execute_anthropic_loop")
+            .expect("the loop")..];
+        let lp = &lp[..lp.find("async fn execute_openai_loop").unwrap_or(lp.len())];
+        assert!(
+            lp.contains("vec![first_user_message(") && lp.contains("turn_request("),
+            "execute_anthropic_loop must open with first_user_message and send turn_request"
+        );
+        assert!(
+            !lp.contains("MessageContent::Text(user_content)"),
+            "the text-only opening message is back"
+        );
+    }
     use super::prompt_demands_structured_output;
 
     /// Regression for issue #3 — supply_chain_oracle's actual system prompt.
