@@ -911,7 +911,7 @@ impl ToolAwareExecutor {
 /// One tool-use turn's request in the Anthropic tool loop, built from the
 /// running `messages`, whose first element is [`first_user_message`]. The
 /// flush turn builds its own request without tools (the `need_flush` branch of
-/// `execute_anthropic_loop`, `src/agent_backend/tool_executor.rs:364-421`) from
+/// `execute_anthropic_loop`, `src/agent_backend/tool_executor.rs:363-421`) from
 /// the same `messages`, so it carries the frames too.
 pub(crate) fn turn_request(
     context: &ExecutionContext,
