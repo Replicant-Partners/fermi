@@ -908,9 +908,11 @@ impl ToolAwareExecutor {
     }
 }
 
-/// One turn's request in the Anthropic tool loop. Every turn, the first
-/// included, is built here from the running `messages`, whose first element
-/// is [`first_user_message`].
+/// One tool-use turn's request in the Anthropic tool loop, built from the
+/// running `messages`, whose first element is [`first_user_message`]. The
+/// flush turn after the iteration cap builds its own request without tools
+/// (`execute_anthropic_loop`, the `hit_iteration_cap_in_tool_use` branch), from
+/// the same `messages`, so it carries the frames too.
 pub(crate) fn turn_request(
     context: &ExecutionContext,
     sp: &crate::agent_backend::agent_card::SamplingParams,
