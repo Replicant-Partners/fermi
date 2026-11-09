@@ -207,10 +207,7 @@ impl ToolAwareExecutor {
         } else {
             agent.query.clone()
         };
-        let mut messages: Vec<Message> = vec![Message {
-            role: "user".to_string(),
-            content: MessageContent::Text(user_content),
-        }];
+        let mut messages: Vec<Message> = vec![first_user_message(&user_content, context)?];
 
         let mut total_input_tokens: u32 = 0;
         let mut total_output_tokens: u32 = 0;
@@ -549,6 +546,15 @@ impl ToolAwareExecutor {
     ) -> Result<AgentOutput, ExecutionError> {
         let start = Instant::now();
         let provider = &context.agent_card.capabilities.provider;
+
+        // G26: this path carries `content` as a plain string, so it cannot
+        // deliver an image. Refuse before spending rather than drop it.
+        crate::attachments::ensure_deliverable(
+            &context.attachments,
+            provider,
+            &context.agent_card.capabilities.model,
+        )
+        .map_err(|e| ExecutionError::InvalidContext(e.to_string()))?;
 
         // SPEC_28 — same credential path as the Anthropic loop above.
         // Endpoint is operator config; key is per-agent from the store.
@@ -902,6 +908,29 @@ impl ToolAwareExecutor {
     }
 }
 
+/// The opening user message of the Anthropic tool loop (G26).
+///
+/// Carries the request's image attachments ahead of the prompt, exactly as the
+/// single-turn path does (`llm_executor::user_content`). The tool loop used to
+/// send the text alone [V: `src/agent_backend/tool_executor.rs:210-213` @
+/// 1c79e812], so a question about a photograph was answered about nothing.
+/// Refuses before anything is sent if the model cannot see the frames.
+pub(crate) fn first_user_message(
+    prompt: &str,
+    context: &ExecutionContext,
+) -> Result<Message, ExecutionError> {
+    crate::attachments::ensure_deliverable(
+        &context.attachments,
+        "anthropic",
+        &context.agent_card.capabilities.model,
+    )
+    .map_err(|e| ExecutionError::InvalidContext(e.to_string()))?;
+    Ok(Message {
+        role: "user".to_string(),
+        content: crate::agent_backend::llm_executor::user_content(prompt, &context.attachments),
+    })
+}
+
 #[async_trait]
 impl AgentExecutor for ToolAwareExecutor {
     async fn execute(
@@ -1172,6 +1201,51 @@ fn parse_evidence_text(text: &str, agent_name: &str) -> (Vec<EvidenceStmt>, f64,
 
 #[cfg(test)]
 mod tests {
+
+    /// G26: the tool loop's opening message carries the frames, ahead of the
+    /// prompt, and refuses a model that cannot see them. On the old code this
+    /// message was `MessageContent::Text(prompt)` whatever the context held.
+    #[test]
+    fn the_tool_loop_sends_the_image_it_was_given() {
+        use super::{first_user_message, ExecutionContext};
+        use crate::agent_backend::agent_card::AgentCard;
+        use crate::attachments::ImageAttachment;
+        let ctx = |model: &str| {
+            let mut card = AgentCard::new("test_agent".to_string(), "research".to_string());
+            card.capabilities.model = model.to_string();
+            ExecutionContext::for_agent(crate::ast::Program { statements: vec![] }, card)
+                .with_attachments(vec![ImageAttachment::new(
+                    "image/jpeg",
+                    "AAAAAAAAAAAA",
+                    Some("test".into()),
+                )])
+        };
+        let m = first_user_message("what is this?", &ctx("claude-sonnet-4-5-20250929"))
+            .expect("a vision model receives the frame");
+        let json = serde_json::to_value(&m).unwrap();
+        let blocks = json["content"].as_array().expect("multi-block content");
+        assert_eq!(blocks[0]["type"], "image", "the frame comes first: {json}");
+        assert_eq!(blocks[0]["source"]["data"], "AAAAAAAAAAAA");
+        assert_eq!(blocks[1]["type"], "text");
+        assert_eq!(blocks[1]["text"], "what is this?");
+
+        assert!(!crate::attachments::model_can_see("claude-instant-1.2"));
+        assert!(
+            first_user_message("what is this?", &ctx("claude-instant-1.2")).is_err(),
+            "a model that cannot see is refused before anything is sent"
+        );
+
+        let plain = ExecutionContext::for_agent(
+            crate::ast::Program { statements: vec![] },
+            AgentCard::new("t".to_string(), "research".to_string()),
+        );
+        let m = first_user_message("hi", &plain).unwrap();
+        assert_eq!(
+            serde_json::to_value(&m).unwrap()["content"],
+            "hi",
+            "text-only requests are byte-identical to before"
+        );
+    }
     use super::prompt_demands_structured_output;
 
     /// Regression for issue #3 — supply_chain_oracle's actual system prompt.
